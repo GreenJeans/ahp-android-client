@@ -14,57 +14,6 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 
-/** A reversible stand-in for Keystore AES-GCM that can lose its key or reject a blob, so the vault's rules can be tested on the JVM. */
-private class FakeBox : SecureBox {
-    var keyExists = true
-    var failNextSeals = 0
-    var destroyed = 0
-    var lastAad: ByteArray? = null
-
-    override fun seal(plain: ByteArray, aad: ByteArray): ByteArray {
-        if (failNextSeals > 0) {
-            failNextSeals--
-            throw VaultCryptoException("key unusable")
-        }
-        keyExists = true
-        lastAad = aad
-        return MAGIC + plain.reversedArray()
-    }
-
-    override fun open(blob: ByteArray, aad: ByteArray): ByteArray {
-        if (!keyExists) throw VaultCryptoException("no key")
-        if (blob.size < MAGIC.size || !blob.copyOfRange(0, MAGIC.size).contentEquals(MAGIC)) throw VaultCryptoException("bad blob")
-        if (!aad.contentEquals(lastAad)) throw VaultCryptoException("aad mismatch")
-        return blob.copyOfRange(MAGIC.size, blob.size).reversedArray()
-    }
-
-    override fun destroyKey() {
-        keyExists = false
-        destroyed++
-    }
-
-    private companion object {
-        val MAGIC = byteArrayOf(0x42, 0x58)
-    }
-}
-
-private class FakeStore : BlobStore {
-    var blob: ByteArray? = null
-    var readFailure: IOException? = null
-    var deletes = 0
-
-    override suspend fun read(): ByteArray? = readFailure?.let { throw it } ?: blob
-
-    override suspend fun write(blob: ByteArray) {
-        this.blob = blob
-    }
-
-    override suspend fun delete() {
-        blob = null
-        deletes++
-    }
-}
-
 class TokenVaultTest {
     private val token = GitHubToken(Secret("ghu_access_value"), Secret("ghr_refresh_value"), Instant.parse("2026-10-23T04:00:00Z"))
     private val box = FakeBox()

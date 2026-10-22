@@ -1,0 +1,259 @@
+package dev.ahpclient.app
+
+import dev.ahpclient.auth.DeviceFlowResult
+import dev.ahpclient.auth.GitHubAuthException
+import dev.ahpclient.auth.GitHubDeviceAuth
+import dev.ahpclient.auth.GitHubToken
+import dev.ahpclient.security.TokenVault
+import dev.ahpclient.security.VaultCryptoException
+import dev.ahpclient.security.VaultLoad
+import dev.ahpclient.state.ConnState
+import dev.ahpclient.state.HostSession
+import dev.ahpclient.tunnel.DevTunnelsClient
+import dev.ahpclient.tunnel.DevTunnelsException
+import dev.ahpclient.tunnel.TunnelInfo
+import java.io.IOException
+import java.time.Instant
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+
+/**
+ * Everything between launching the app and looking at a host: restore the saved sign-in, sign in with GitHub, list the
+ * user's hosts, connect to one. Screens render [state] and call the methods; nothing else decides what is shown.
+ *
+ * Rules worth knowing:
+ * - A sign-in GitHub or the Dev Tunnels service no longer accepts (401) wipes the saved token and goes back to the
+ *   sign-in screen with a notice, from any point, including mid-session.
+ * - The token lives in memory only while signed in, and in the [TokenVault] at rest. It never appears in [state].
+ * - Failures are shown as messages here, never thrown to the caller, because the callers are UI event handlers.
+ */
+class AppController(
+    private val auth: GitHubDeviceAuth,
+    private val vault: TokenVault,
+    private val devTunnels: DevTunnelsClient,
+    private val lastHost: LastHostStore,
+    private val sessions: HostSessionFactory,
+    private val scope: CoroutineScope,
+    private val now: () -> Instant = Instant::now,
+) {
+    private val _state = MutableStateFlow<AppState>(AppState.Restoring)
+    val state: StateFlow<AppState> = _state.asStateFlow()
+
+    @Volatile
+    private var token: GitHubToken? = null
+    private var signInJob: Job? = null
+    private var hostsJob: Job? = null
+    private var watchJob: Job? = null
+
+    fun start() {
+        scope.launch { restore() }
+    }
+
+    fun signIn() {
+        val current = _state.value
+        if (current !is AppState.SignedOut) return
+        if (current.step is SignInStep.RequestingCode || current.step is SignInStep.AwaitingApproval) return
+        launchSignIn()
+    }
+
+    fun cancelSignIn() {
+        cancelSignInJob()
+        _state.update { if (it is AppState.SignedOut) AppState.SignedOut(SignInStep.Idle, null) else it }
+    }
+
+    fun refreshHosts() {
+        if (_state.value is AppState.Hosts) showHosts()
+    }
+
+    fun connect(tunnel: TunnelInfo) {
+        if (_state.value !is AppState.Hosts) return
+        cancelHostsJob()
+        val session = sessions.create(tunnel) { token?.access ?: throw DevTunnelsException.AuthExpired() }
+        session.start()
+        _state.value = AppState.Connected(tunnel, session)
+        scope.launch {
+            try {
+                lastHost.set(tunnel.tunnelId)
+            } catch (_: IOException) {
+                // Remembering the last host is a convenience; failing to save it must not disturb a live connection.
+            }
+        }
+        launchWatch(session)
+    }
+
+    /** Leaves the live host and returns to the host list. */
+    fun disconnect() {
+        val connected = _state.value as? AppState.Connected ?: return
+        cancelWatchJob()
+        connected.session.stop()
+        showHosts()
+    }
+
+    fun signOut() {
+        scope.launch { endSignIn(notice = null) }
+    }
+
+    private suspend fun restore() {
+        val loaded = try {
+            vault.load()
+        } catch (e: IOException) {
+            _state.value = AppState.SignedOut(SignInStep.Idle, "The saved sign-in could not be read. Sign in again.")
+            return
+        }
+        when (loaded) {
+            is VaultLoad.Present -> {
+                val saved = loaded.token
+                if (saved.expiresAt?.let { !now().isBefore(it) } == true) {
+                    safeClear()
+                    _state.value = AppState.SignedOut(SignInStep.Idle, "Your GitHub sign-in expired. Sign in again.")
+                } else {
+                    token = saved
+                    showHosts()
+                }
+            }
+            VaultLoad.Absent -> _state.value = AppState.SignedOut(SignInStep.Idle, null)
+            is VaultLoad.Unreadable -> _state.value = AppState.SignedOut(SignInStep.Idle, "The saved sign-in could not be read and was removed. Sign in again.")
+        }
+    }
+
+    @Synchronized
+    private fun launchSignIn() {
+        signInJob?.cancel()
+        signInJob = scope.launch { runSignIn() }
+    }
+
+    private suspend fun runSignIn() {
+        setStep(SignInStep.RequestingCode)
+        try {
+            val code = auth.start()
+            setStep(SignInStep.AwaitingApproval(code.userCode, code.verificationUri, now().plusSeconds(code.expiresInSeconds.toLong())))
+            when (val result = auth.poll(code)) {
+                is DeviceFlowResult.Success -> {
+                    vault.save(result.token)
+                    token = result.token
+                    showHosts()
+                }
+                DeviceFlowResult.Expired -> failSignIn("The code expired before it was approved. Start again.")
+                DeviceFlowResult.Denied -> failSignIn("The sign-in was denied on GitHub.")
+                is DeviceFlowResult.Failed -> failSignIn("GitHub refused the sign-in (${result.error}).")
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: GitHubAuthException) {
+            failSignIn(e.message ?: "GitHub returned an unexpected response.")
+        } catch (e: IOException) {
+            failSignIn("Could not reach GitHub. Check the connection and try again.")
+        } catch (e: VaultCryptoException) {
+            failSignIn("Signed in, but the token could not be stored securely on this device.")
+        } catch (e: Exception) {
+            failSignIn("Sign-in failed unexpectedly (${e.javaClass.simpleName}).")
+        }
+    }
+
+    private fun setStep(step: SignInStep) {
+        _state.update { if (it is AppState.SignedOut) AppState.SignedOut(step, null) else it }
+    }
+
+    private fun failSignIn(message: String) {
+        _state.update { if (it is AppState.SignedOut) AppState.SignedOut(SignInStep.Failed(message), null) else it }
+    }
+
+    @Synchronized
+    private fun showHosts() {
+        val signedIn = token
+        if (signedIn == null) {
+            _state.value = AppState.SignedOut(SignInStep.Idle, null)
+            return
+        }
+        _state.value = AppState.Hosts(HostList.Loading, signedIn.expiresAt)
+        hostsJob?.cancel()
+        hostsJob = scope.launch { loadHosts(signedIn) }
+    }
+
+    private suspend fun loadHosts(signedIn: GitHubToken) {
+        val list = try {
+            val tunnels = devTunnels.listAgentHostTunnels(signedIn.access)
+            val last = try {
+                lastHost.get()
+            } catch (_: IOException) {
+                null
+            }
+            val hosts = tunnels
+                .sortedWith(compareByDescending<TunnelInfo> { it.tunnelId == last }.thenByDescending { it.isOnline }.thenBy { it.name.lowercase() })
+                .map { HostEntry(it, isLastUsed = it.tunnelId == last) }
+            if (hosts.isEmpty()) HostList.Empty else HostList.Loaded(hosts)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: DevTunnelsException.AuthExpired) {
+            endSignIn("GitHub no longer accepts this sign-in. Sign in again.")
+            return
+        } catch (e: DevTunnelsException.Forbidden) {
+            HostList.Failed("GitHub refused access (403). If your organization uses SSO, authorize this app for it, then try again.")
+        } catch (e: DevTunnelsException) {
+            HostList.Failed(e.message ?: "The Dev Tunnels service returned an unexpected response.")
+        } catch (e: IOException) {
+            HostList.Failed("Could not reach the Dev Tunnels service. Check the connection and try again.")
+        } catch (e: Exception) {
+            HostList.Failed("Could not load your hosts (${e.javaClass.simpleName}).")
+        }
+        // Only update while still on the host list: the user may have connected or signed out while this was loading.
+        _state.update { if (it is AppState.Hosts) AppState.Hosts(list, it.tokenExpiresAt) else it }
+    }
+
+    @Synchronized
+    private fun launchWatch(session: HostSession) {
+        watchJob?.cancel()
+        watchJob = scope.launch {
+            session.connection.collect { connection ->
+                val stillCurrent = (_state.value as? AppState.Connected)?.session === session
+                if (stillCurrent && connection is ConnState.Failed && connection.cause is DevTunnelsException.AuthExpired) {
+                    endSignIn("GitHub no longer accepts this sign-in. Sign in again.")
+                }
+            }
+        }
+    }
+
+    /** Back to the sign-in screen: stops any live session, forgets the token in memory and on disk. */
+    private suspend fun endSignIn(notice: String?) {
+        cancelSignInJob()
+        cancelHostsJob()
+        cancelWatchJob()
+        (_state.value as? AppState.Connected)?.session?.stop()
+        token = null
+        safeClear()
+        _state.value = AppState.SignedOut(SignInStep.Idle, notice)
+    }
+
+    /** A storage error while wiping must not keep the user signed in: the in-memory token is already gone. */
+    private suspend fun safeClear() {
+        try {
+            vault.clear()
+        } catch (_: IOException) {
+            // The next launch reads the old blob; if it is still valid the user is simply signed in again, which is safe.
+        }
+    }
+
+    @Synchronized
+    private fun cancelSignInJob() {
+        signInJob?.cancel()
+        signInJob = null
+    }
+
+    @Synchronized
+    private fun cancelHostsJob() {
+        hostsJob?.cancel()
+        hostsJob = null
+    }
+
+    @Synchronized
+    private fun cancelWatchJob() {
+        watchJob?.cancel()
+        watchJob = null
+    }
+}
