@@ -32,6 +32,20 @@ sdk.dir=C:/Users/<you>/AppData/Local/Android/Sdk
 
 The daemon heap is set to 3 GB in `gradle.properties`; the default 512 MB runs out building the app.
 
+## Live probe
+
+Signs in with GitHub device flow, finds your Remote Tunnel Access host, connects through the tunnel's public
+URL, and prints `initialize` and `listSessions`. It sends only READ-tier calls and checks that on the wire.
+You need VS Code running with Remote Tunnel Access on, signed in with the same GitHub account.
+
+```powershell
+.\gradlew.bat -q --console=plain :core-ahp:probe --args="--watch 45 --capture captures/live-session.jsonl"
+```
+
+Options: `--tunnel <name|id>`, `--instance <id>`, `--watch <seconds>` (print notifications for a while),
+`--capture <file>` (raw frames as JSON lines). Capture files contain session titles and local paths, so they stay
+local: `captures/` is gitignored. The device code lasts 15 minutes; approve it at the URL the probe prints.
+
 ## Pinned versions
 
 | Dependency | Version | Note |

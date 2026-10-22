@@ -38,5 +38,6 @@ tasks.register<JavaExec>("probe") {
     description = "Signs in, attaches to a Remote Tunnel Access agent host and lists sessions (read-only)."
     classpath = sourceSets.main.get().runtimeClasspath
     mainClass.set("dev.ahpclient.probe.ProbeMainKt")
+    workingDir = rootProject.projectDir // so a relative --capture path lands in the gitignored <repo>/captures/
     standardInput = System.`in`
 }
