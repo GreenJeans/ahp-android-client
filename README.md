@@ -11,8 +11,8 @@ Agents panel. The authoritative plan, acceptance criteria and progress log are t
 
 | Module | Type | Status |
 |---|---|---|
-| `core-ahp` | Pure Kotlin/JVM library: GitHub device-flow auth, Dev Tunnels REST, tunnel socket and gateway selection, AHP connection, state stores, capability allowlist | In progress |
-| `app` | Android application (Jetpack Compose). Placeholder screen that links `core-ahp`; builds a debug APK | Scaffold only |
+| `core-ahp` | Pure Kotlin/JVM library: GitHub device-flow auth, Dev Tunnels REST, tunnel socket and gateway selection, AHP connection, state stores, session list and detail models, background-monitoring logic, capability allowlist | Phase 1 complete, live-verified except where `docs/verification/phase1-readonly.md` says otherwise |
+| `app` | Android application (Jetpack Compose): sign-in, host list, sessions list, read-only session detail, opt-in background monitoring with a foreground service and needs-input notifications | Phase 1 built; debug APK |
 
 ## Build
 
@@ -27,8 +27,12 @@ sdk.dir=C:/Users/<you>/AppData/Local/Android/Sdk
 ```powershell
 .\gradlew.bat build              # core-ahp tests + app lint and debug/release checks
 .\gradlew.bat :app:assembleDebug # app/build/outputs/apk/debug/app-debug.apk
-.\gradlew.bat :core-ahp:test     # JVM-only, no Android SDK needed
+.\gradlew.bat :core-ahp:test     # JVM-only, no Android SDK needed; also writes the coverage report
+.\gradlew.bat :core-ahp:jacocoTestCoverageVerification   # fails below 80% line coverage on auth, tunnel, ahp, state
 ```
+
+Coverage report: `core-ahp/build/reports/jacoco/test/html/index.html` (and `jacocoTestReport.xml`). `build` runs the
+80% gate. The `probe` package is the live command-line probe and is not covered by unit tests.
 
 The daemon heap is set to 3 GB in `gradle.properties`; the default 512 MB runs out building the app.
 
@@ -49,6 +53,11 @@ $sdk = "$env:LOCALAPPDATA\Android\Sdk"
 `-no-window -gpu swiftshader_indirect` is the stable way to start it here: with the windowed host-GPU default the emulator crashed
 on start several times (exit `0xC0000005`, a stuck crash dialog) after earlier instances were stopped with `adb emu kill`. If it
 does, stop the leftover `emulator` and `qemu-system` processes by id and delete the AVD's stale `*.lock` files first.
+The first instrumented run after a cold boot can also report `Process crashed` with no log; run it again.
+
+The Compose accessibility checks (`AccessibilityTest`) need API 34 or newer and are skipped below that, because the checker
+silently does nothing there. A canary test in the same class feeds it a defective screen and fails if the checker stops
+catching it.
 
 Do not use `.\gradlew.bat :app:connectedDebugAndroidTest` while a real phone is attached: it runs on every attached device
 and uninstalls the app afterwards, which wipes the phone's sign-in. `tools\run-device-tests.ps1` installs on the one serial
@@ -76,7 +85,7 @@ local: `captures/` is gitignored. The device code lasts 15 minutes; approve it a
 
 | Dependency | Version | Note |
 |---|---|---|
-| `com.microsoft.agenthostprotocol:agent-host-protocol` | 1.0.0 | Offers protocol `1.0.0` and `0.9.0`; the VS Code host negotiated `0.9.0` on 2026-10-21 |
+| `com.microsoft.agenthostprotocol:agent-host-protocol` | 1.0.0 | Offers protocol `1.0.0` and `0.9.0`; the VS Code host chose `1.0.0` in every live run on 2026-10-22 (`0.9.0` on 2026-10-21) |
 | Kotlin | 2.4.21 | |
 | OkHttp | 5.5.1 | HTTP and WebSocket |
 | Gradle | 9.8.2 | Wrapper checked in |
@@ -87,3 +96,7 @@ local: `captures/` is gitignored. The device code lasts 15 minutes; approve it a
 
 The client never stores or logs a token in clear text, and Phase 1 sends only read-tier AHP methods
 (enforced by `CapabilityPolicy`). See the spec's Security section before changing either.
+
+Debug builds also write one logcat line per outbound frame under the tag `AhpWire`: the method name and nothing else
+(never parameters, URLs or headers), with `NOT-READ` in front of any method outside the read tier. Release builds log
+nothing. To check a run on a device: `adb logcat -d -s AhpWire`, and confirm no line contains `NOT-READ`.

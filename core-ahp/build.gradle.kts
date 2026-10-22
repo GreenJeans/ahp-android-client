@@ -2,6 +2,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     alias(libs.plugins.kotlin.jvm)
+    jacoco
 }
 
 // Bytecode level only: no JDK toolchain is pinned, so any JDK 17+ can build this module.
@@ -31,6 +32,40 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+    finalizedBy(tasks.jacocoTestReport)
+}
+
+tasks.jacocoTestReport {
+    dependsOn(tasks.test)
+    reports {
+        xml.required.set(true)
+        html.required.set(true)
+    }
+}
+
+// Spec Step 1.12: at least 80% line coverage on the packages that carry the protocol, sign-in and connection logic.
+tasks.jacocoTestCoverageVerification {
+    dependsOn(tasks.test)
+    violationRules {
+        rule {
+            element = "PACKAGE"
+            includes = listOf(
+                "dev.ahpclient.auth",
+                "dev.ahpclient.tunnel",
+                "dev.ahpclient.ahp",
+                "dev.ahpclient.state",
+            )
+            limit {
+                counter = "LINE"
+                value = "COVEREDRATIO"
+                minimum = "0.80".toBigDecimal()
+            }
+        }
+    }
+}
+
+tasks.check {
+    dependsOn(tasks.jacocoTestCoverageVerification)
 }
 
 // Step 1.6 live probe: .\gradlew.bat -q --console=plain :core-ahp:probe --args="--watch 20"

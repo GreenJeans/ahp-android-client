@@ -25,6 +25,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.ahpclient.app.AppState
+import dev.ahpclient.app.GITHUB_AUTHORIZED_APPS_URL
 import dev.ahpclient.app.SafeLinks
 import dev.ahpclient.app.SignInStep
 import java.time.ZoneId
@@ -51,7 +52,10 @@ fun SignInScreen(
             )
             state.notice?.let { Notice(it, Modifier.testTag("notice")) }
             when (val step = state.step) {
-                SignInStep.Idle -> StartSignIn(onSignIn, label = "Sign in with GitHub")
+                SignInStep.Idle -> {
+                    StartSignIn(onSignIn, label = "Sign in with GitHub")
+                    if (state.offerRevoke) RevokeAccess(onOpenGitHub)
+                }
                 SignInStep.RequestingCode -> {
                     Busy("Requesting a code from GitHub…")
                     TextButton(onClick = onCancel) { Text("Cancel") }
@@ -63,6 +67,18 @@ fun SignInScreen(
                 }
             }
         }
+    }
+}
+
+/** Signing out forgets the token on this phone; the grant stays on the GitHub account until it is removed there. */
+@Composable
+private fun RevokeAccess(onOpen: (String) -> Unit) {
+    Notice(
+        "You are signed out of this phone. This app keeps its access on your GitHub account until you remove it there.",
+        Modifier.testTag("revoke_notice"),
+    )
+    OutlinedButton(onClick = { onOpen(GITHUB_AUTHORIZED_APPS_URL) }, modifier = Modifier.fillMaxWidth().testTag("revoke_access")) {
+        Text("Review access on GitHub")
     }
 }
 

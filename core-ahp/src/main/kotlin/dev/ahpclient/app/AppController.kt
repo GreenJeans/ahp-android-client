@@ -123,7 +123,7 @@ class AppController(
     }
 
     fun signOut() {
-        scope.launch { endSignIn(notice = null) }
+        scope.launch { endSignIn(notice = null, offerRevoke = true) }
     }
 
     private suspend fun restore() {
@@ -247,14 +247,14 @@ class AppController(
     }
 
     /** Back to the sign-in screen: stops any live session, forgets the token in memory and on disk. */
-    private suspend fun endSignIn(notice: String?) {
+    private suspend fun endSignIn(notice: String?, offerRevoke: Boolean = false) {
         cancelSignInJob()
         cancelHostsJob()
         cancelWatchJob()
         (_state.value as? AppState.Connected)?.session?.stop()
         token = null
         safeClear()
-        _state.value = AppState.SignedOut(SignInStep.Idle, notice)
+        _state.value = AppState.SignedOut(SignInStep.Idle, notice, offerRevoke)
     }
 
     /** A storage error while wiping must not keep the user signed in: the in-memory token is already gone. */

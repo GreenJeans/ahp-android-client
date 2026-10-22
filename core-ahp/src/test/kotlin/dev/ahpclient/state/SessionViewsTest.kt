@@ -298,6 +298,49 @@ class SessionDetailTest {
     }
 
     @Test
+    fun `a tool the client is asked to run shows its name`() {
+        val request = """[{"kind":"toolClientExecution","id":"r3","chat":"c","turnId":"t","clientId":"cl","toolCall":{"status":"running",
+            "toolCallId":"tc","toolName":"read_file","displayName":"Read file","invocationMessage":"Reading","confirmed":"not-needed"}}]"""
+
+        assertEquals(listOf(InputRequestView("Tool run", "Read file")), SessionDetail.from(state(request), now).inputNeeded)
+    }
+
+    @Test
+    fun `a tool that needs sign-in shows its name, falling back to the tool id`() {
+        val auth = """{"reason":"required","resource":{"resource":"https://mcp.example"}}"""
+        val named = """[{"kind":"toolAuthentication","id":"r4","chat":"c","turnId":"t","toolCall":{"status":"auth-required",
+            "toolCallId":"tc","toolName":"mcp_search","displayName":"Search","invocationMessage":"Searching","confirmed":"not-needed","auth":$auth}}]"""
+        val unnamed = named.replace(""""displayName":"Search"""", """"displayName":""""")
+
+        assertEquals(listOf(InputRequestView("Sign-in", "Search")), SessionDetail.from(state(named), now).inputNeeded)
+        assertEquals(listOf(InputRequestView("Sign-in", "mcp_search")), SessionDetail.from(state(unnamed), now).inputNeeded)
+    }
+
+    @Test
+    fun `approving a result shows the tool and its markdown message`() {
+        val request = """[{"kind":"toolConfirmation","id":"r5","chat":"c","turnId":"t","toolCall":{"status":"pending-result-confirmation",
+            "toolCallId":"tc","toolName":"run_in_terminal","displayName":"Run command","invocationMessage":{"markdown":"Ran **npm test**"},
+            "pastTenseMessage":"Ran it","confirmed":"not-needed","success":true}}]"""
+
+        assertEquals(listOf(InputRequestView("Approval", "Run command: Ran **npm test**")), SessionDetail.from(state(request), now).inputNeeded)
+    }
+
+    @Test
+    fun `a tool confirmation of a kind this client does not know still says a tool needs approval`() {
+        val request = """[{"kind":"toolConfirmation","id":"r6","chat":"c","turnId":"t","toolCall":{"status":"hologram","toolCallId":"tc"}}]"""
+
+        assertEquals(listOf(InputRequestView("Approval", "A tool needs approval.")), SessionDetail.from(state(request), now).inputNeeded)
+    }
+
+    @Test
+    fun `the state labels are the words the screens show`() {
+        assertEquals(
+            listOf("Needs input", "In progress", "Error", "Idle"),
+            listOf(ActivityState.NEEDS_INPUT, ActivityState.IN_PROGRESS, ActivityState.ERROR, ActivityState.IDLE).map { it.label },
+        )
+    }
+
+    @Test
     fun `a request kind this client does not know is still listed`() {
         val request = """[{"kind":"somethingNew","id":"r9","payload":1}]"""
 

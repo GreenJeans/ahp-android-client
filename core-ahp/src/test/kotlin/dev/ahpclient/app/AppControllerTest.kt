@@ -40,9 +40,16 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 
 private class FakeLastHost(var id: String? = null) : LastHostStore {
-    override suspend fun get(): String? = id
+    var failReads = false
+    var failWrites = false
+
+    override suspend fun get(): String? {
+        if (failReads) throw IOException("disk unavailable")
+        return id
+    }
 
     override suspend fun set(tunnelId: String) {
+        if (failWrites) throw IOException("disk full")
         id = tunnelId
     }
 }
@@ -546,6 +553,117 @@ class AppControllerTest {
     }
 
     @Test
+    fun `a sign in GitHub refuses, or answers with garbage, says so and can be retried`() = runTest {
+        withRig {
+            server.json(deviceCode)
+            server.json("""{"error":"unsupported_grant_type"}""")
+            controller.start()
+            runCurrent()
+
+            controller.signIn()
+            val refused = assertIs<SignInStep.Failed>((await { it is AppState.SignedOut && it.step is SignInStep.Failed } as AppState.SignedOut).step)
+            assertTrue(refused.message.contains("unsupported_grant_type"), refused.message)
+        }
+        withRig {
+            server.enqueue(MockResponse().setResponseCode(502).setBody("<html>Bad gateway</html>"))
+            controller.start()
+            runCurrent()
+
+            controller.signIn()
+            val garbled = assertIs<SignInStep.Failed>((await { it is AppState.SignedOut && it.step is SignInStep.Failed } as AppState.SignedOut).step)
+            assertTrue(garbled.message.contains("non-JSON"), garbled.message)
+        }
+    }
+
+    @Test
+    fun `a token that cannot be stored securely is never kept, and the user is told`() = runTest {
+        withRig {
+            box.failNextSeals = 5 // the vault retries once with a fresh key; a persistent failure must still end in an honest message
+            server.json(deviceCode)
+            server.json(approved)
+            controller.start()
+            runCurrent()
+
+            controller.signIn()
+            val failed = assertIs<SignInStep.Failed>((await { it is AppState.SignedOut && it.step is SignInStep.Failed } as AppState.SignedOut).step)
+
+            assertTrue(failed.message.contains("stored securely"), failed.message)
+            assertEquals(VaultLoad.Absent, vault.load())
+            assertEquals(0, server.requestCount - 2, "no host list was requested with a token that was not saved")
+        }
+    }
+
+    @Test
+    fun `a failing last-host store never blocks the host list or a connection`() = runTest {
+        withRig {
+            lastHost.failReads = true
+            lastHost.failWrites = true
+            vault.save(savedToken)
+            server.json(fixture("list-tunnels.json"))
+            controller.start()
+            awaitHosts()
+            assertTrue(loaded().none { it.isLastUsed })
+
+            controller.connect(loaded().first().tunnel)
+            created.single().connection.first { it == ConnState.Online }
+            runCurrent()
+
+            assertIs<AppState.Connected>(state)
+            assertNull(lastHost.id)
+        }
+    }
+
+    @Test
+    fun `signing out still lands on the sign-in screen when the saved token cannot be deleted`() = runTest {
+        withRig {
+            vault.save(savedToken)
+            server.json(fixture("list-tunnels.json"))
+            controller.start()
+            awaitHosts()
+            store.deleteFailure = IOException("disk error")
+
+            controller.signOut()
+            await { it is AppState.SignedOut }
+
+            assertEquals(AppState.SignedOut(SignInStep.Idle, null, offerRevoke = true), state)
+        }
+    }
+
+    @Test
+    fun `the revoke offer appears only after a deliberate sign-out, and goes when signing in again`() = runTest {
+        withRig {
+            vault.save(savedToken)
+            server.json(fixture("list-tunnels.json"))
+            server.json(deviceCode)
+            controller.start()
+            awaitHosts()
+
+            controller.signOut()
+            val out = assertIs<AppState.SignedOut>(await { it is AppState.SignedOut })
+            assertTrue(out.offerRevoke)
+
+            controller.signIn()
+            val next = assertIs<AppState.SignedOut>(await { it is AppState.SignedOut && it.step !is SignInStep.Idle })
+            assertFalse(next.offerRevoke)
+        }
+        withRig {
+            vault.save(savedToken)
+            server.json("{}", code = 401)
+            controller.start()
+
+            val expired = assertIs<AppState.SignedOut>(await { it is AppState.SignedOut })
+
+            assertFalse(expired.offerRevoke, "an expired token is not a sign-out the user chose")
+        }
+    }
+
+    @Test
+    fun `the revoke link is an https GitHub page the app is willing to open`() {
+        assertTrue(SafeLinks.isSafeVerificationUri(GITHUB_AUTHORIZED_APPS_URL))
+        assertEquals("https://github.com/settings/applications", GITHUB_AUTHORIZED_APPS_URL)
+    }
+
+    @Test
     fun `focusing a session does nothing unless connected`() = runTest {
         withRig {
             controller.start()
@@ -610,7 +728,7 @@ class AppControllerTest {
             await { it is AppState.SignedOut }
             runCurrent()
 
-            assertEquals(AppState.SignedOut(SignInStep.Idle, null), state)
+            assertEquals(AppState.SignedOut(SignInStep.Idle, null, offerRevoke = true), state)
             assertEquals(ConnState.Stopped, created.single().connection.value)
             assertEquals(VaultLoad.Absent, vault.load())
             assertFalse(box.keyExists)

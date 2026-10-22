@@ -39,6 +39,7 @@ internal class FakeBox : SecureBox {
 internal class FakeStore : BlobStore {
     var blob: ByteArray? = null
     var readFailure: IOException? = null
+    var deleteFailure: IOException? = null
     var deletes = 0
 
     override suspend fun read(): ByteArray? = readFailure?.let { throw it } ?: blob
@@ -48,6 +49,7 @@ internal class FakeStore : BlobStore {
     }
 
     override suspend fun delete() {
+        deleteFailure?.let { throw it }
         blob = null
         deletes++
     }

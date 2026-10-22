@@ -53,6 +53,8 @@ class MonitorService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
             container.setMonitoring(false)
+            // The coordinator stops the service too when it sees the setting change; this covers a Stop tapped on a stale notification.
+            stopSelf()
             return START_NOT_STICKY
         }
         MonitorChannels.ensure(this)

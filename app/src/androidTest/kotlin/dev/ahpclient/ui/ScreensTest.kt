@@ -3,6 +3,7 @@ package dev.ahpclient.ui
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
@@ -75,6 +76,26 @@ class ScreensTest {
 
         assertEquals(1, taps)
         rule.onNodeWithText("Use the same GitHub account", substring = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun afterSigningOutTheUserIsOfferedAWayToRemoveTheGrantOnGitHub() {
+        val opened = mutableListOf<String>()
+        showSignIn(AppState.SignedOut(SignInStep.Idle, null, offerRevoke = true), onOpen = { opened += it })
+
+        rule.onNodeWithTag("revoke_notice").assertIsDisplayed()
+        rule.onNodeWithTag("revoke_access").assertIsDisplayed().assertTouchTargetAtLeast(48.dp).performClick()
+
+        assertEquals(listOf("https://github.com/settings/applications"), opened)
+        rule.onNodeWithTag("sign_in_button").assertIsDisplayed()
+    }
+
+    @Test
+    fun theRevokeOfferIsAbsentUnlessTheUserSignedOut() {
+        showSignIn(signedOut(SignInStep.Idle, notice = "Your GitHub sign-in expired. Sign in again."))
+
+        rule.onAllNodesWithTag("revoke_access").assertCountEquals(0)
+        rule.onAllNodesWithTag("revoke_notice").assertCountEquals(0)
     }
 
     @Test

@@ -47,8 +47,8 @@ sealed interface AppState {
     /** Reading the saved sign-in. */
     data object Restoring : AppState
 
-    /** [notice] explains why the user is back here, for example an expired sign-in. */
-    data class SignedOut(val step: SignInStep, val notice: String?) : AppState
+    /** [notice] explains why the user is back here, for example an expired sign-in. [offerRevoke] is set only after the user signed out on purpose. */
+    data class SignedOut(val step: SignInStep, val notice: String?, val offerRevoke: Boolean = false) : AppState
 
     data class Hosts(val list: HostList, val tokenExpiresAt: Instant?) : AppState
 
@@ -57,6 +57,9 @@ sealed interface AppState {
 }
 
 data class OpenSession(val uri: String, val store: SessionStore)
+
+/** Where a GitHub user removes an authorized app. Signing out here only forgets the token; this removes the grant itself. */
+const val GITHUB_AUTHORIZED_APPS_URL = "https://github.com/settings/applications"
 
 /** Only https pages on GitHub are opened from the sign-in screen; anything else is shown as text, never launched. */
 object SafeLinks {

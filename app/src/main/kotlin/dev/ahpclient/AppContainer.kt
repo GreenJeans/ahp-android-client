@@ -1,6 +1,8 @@
 package dev.ahpclient
 
 import android.content.Context
+import android.content.pm.ApplicationInfo
+import android.util.Log
 import androidx.datastore.preferences.preferencesDataStoreFile
 import dev.ahpclient.app.AppController
 import dev.ahpclient.app.HostSessionFactory
@@ -14,7 +16,9 @@ import dev.ahpclient.security.AndroidTokenVault
 import dev.ahpclient.state.HostSession
 import dev.ahpclient.state.TunnelHostConnector
 import dev.ahpclient.tunnel.DevTunnelsClient
+import dev.ahpclient.tunnel.MethodLoggingSocketOpener
 import dev.ahpclient.tunnel.OkHttpSocketOpener
+import dev.ahpclient.tunnel.SocketOpener
 import dev.ahpclient.tunnel.TunnelGateway
 import com.microsoft.agenthostprotocol.generated.Implementation
 import java.util.concurrent.TimeUnit
@@ -41,7 +45,7 @@ class AppContainer(context: Context) {
 
     val controller: AppController by lazy {
         val devTunnels = DevTunnelsClient(http, userAgent = "ahp-android-client/$versionName")
-        val gateway = TunnelGateway(OkHttpSocketOpener(http))
+        val gateway = TunnelGateway(withWireLog(OkHttpSocketOpener(http)))
         val clientInfo = Implementation(name = "ahp-android-client", version = versionName)
         AppController(
             auth = GitHubDeviceAuth(http),
@@ -70,11 +74,24 @@ class AppContainer(context: Context) {
         appScope.launch { monitor.setEnabled(on) }
     }
 
+    /**
+     * Debug builds only: one logcat line per outbound frame under the tag `AhpWire`, holding the method name and nothing
+     * else, so a run on a real device can show that only read-tier calls were sent. Release builds log nothing.
+     */
+    private fun withWireLog(opener: SocketOpener): SocketOpener {
+        val debuggable = appContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
+        return if (debuggable) MethodLoggingSocketOpener(opener) { Log.i(WIRE_TAG, it) } else opener
+    }
+
     /** Safe to call from every Activity start: only the first call begins restoring the saved sign-in. */
     fun start() {
         if (started.compareAndSet(false, true)) {
             controller.start()
             monitor.start()
         }
+    }
+
+    companion object {
+        const val WIRE_TAG = "AhpWire"
     }
 }
