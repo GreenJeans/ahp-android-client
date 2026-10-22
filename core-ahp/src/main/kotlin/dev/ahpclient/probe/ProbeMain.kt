@@ -23,6 +23,7 @@ import com.microsoft.agenthostprotocol.Ahp
 import com.microsoft.agenthostprotocol.generated.Implementation
 import com.microsoft.agenthostprotocol.generated.SUPPORTED_PROTOCOL_VERSIONS
 import com.microsoft.agenthostprotocol.generated.SessionSummary
+import com.microsoft.agenthostprotocol.generated.SnapshotState
 import com.microsoft.agenthostprotocol.generated.StateAction
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -37,7 +38,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 
-private const val USAGE = "usage: probe [--tunnel <name|id>] [--instance <id>] [--capture <file>] [--watch <seconds>]"
+private const val USAGE = "usage: probe [--tunnel <name|id>] [--instance <id>] [--capture <file>] [--watch <seconds>] [--session <title-or-uri>]"
 private const val SESSION_PAGE_SIZE = 100L
 private const val MAX_SESSION_PAGES = 10
 private const val TITLE_WIDTH = 60
@@ -47,6 +48,7 @@ internal data class ProbeArgs(
     val instance: String? = null,
     val capture: Path? = null,
     val watchSeconds: Int = 0,
+    val session: String? = null,
 ) {
     companion object {
         fun parse(args: Array<String>): ProbeArgs {
@@ -59,6 +61,7 @@ internal data class ProbeArgs(
                     "--instance" -> result = result.copy(instance = value(flag))
                     "--capture" -> result = result.copy(capture = Paths.get(value(flag)))
                     "--watch" -> result = result.copy(watchSeconds = value(flag).toIntOrNull()?.takeIf { it >= 0 } ?: throw IllegalArgumentException("--watch needs a number of seconds\n$USAGE"))
+                    "--session" -> result = result.copy(session = value(flag))
                     else -> throw IllegalArgumentException("unknown option '$flag'\n$USAGE")
                 }
                 i++
@@ -161,7 +164,31 @@ internal class Probe(private val args: ProbeArgs, private val out: (String) -> U
             log("", "  [${session.status.activityState.name.lowercase()}${if (flags.isEmpty()) "" else "+$flags"}] ${session.title.take(TITLE_WIDTH)}  chats=${session.chats?.size ?: "?"} modified=${session.modifiedAt}")
         }
 
+        if (args.session != null) checkActiveClients(ahp, sessions, args.session)
         if (args.watchSeconds > 0) watch(ahp, args.watchSeconds)
+    }
+
+    /**
+     * Subscribes to one session and reports who the host lists as an active client. This app never sends
+     * `session/activeClientSet`, so its own client id must not be among them: the host-side proof that watching a
+     * session leaves no trace there.
+     */
+    private suspend fun checkActiveClients(ahp: AhpConnection, sessions: List<SessionSummary>, wanted: String) {
+        val target = ActiveClientsReport.pick(sessions, wanted) ?: run {
+            log("FAIL", "no session matches '$wanted'")
+            return
+        }
+        log("info", "subscribing to '${target.title.take(TITLE_WIDTH)}' (${target.status.activityState.name.lowercase()})")
+        val snapshot = ahp.subscribe(target.resource).snapshot
+        val state = (snapshot?.state as? SnapshotState.Session)?.value
+        if (state == null) {
+            log("FAIL", "the subscribe result holds no session snapshot")
+            return
+        }
+        val report = ActiveClientsReport.from(state, ahp.clientId)
+        val tag = if (report.selfListed) "FAIL" else "PASS"
+        log(tag, "activeClients=${report.count}${if (report.names.isEmpty()) "" else " (${report.names.joinToString()})"}; this client ${if (report.selfListed) "IS" else "is not"} listed")
+        ahp.unsubscribe(target.resource)
     }
 
     private suspend fun listAllSessions(ahp: AhpConnection): List<SessionSummary> {

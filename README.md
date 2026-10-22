@@ -68,7 +68,8 @@ You need VS Code running with Remote Tunnel Access on, signed in with the same G
 ```
 
 Options: `--tunnel <name|id>`, `--instance <id>`, `--watch <seconds>` (print notifications for a while),
-`--capture <file>` (raw frames as JSON lines). Capture files contain session titles and local paths, so they stay
+`--session <title-or-uri>` (subscribe to one session and print which clients the host lists as active; this client
+must not be among them), `--capture <file>` (raw frames as JSON lines). Capture files contain session titles and local paths, so they stay
 local: `captures/` is gitignored. The device code lasts 15 minutes; approve it at the URL the probe prints.
 
 ## Pinned versions
