@@ -32,6 +32,23 @@ sdk.dir=C:/Users/<you>/AppData/Local/Android/Sdk
 
 The daemon heap is set to 3 GB in `gradle.properties`; the default 512 MB runs out building the app.
 
+## Emulator and device tests
+
+The token vault's tests need a real Android Keystore, so they run on a device or emulator (`app/src/androidTest`). Install
+the emulator and a system image once, create a virtual device, start it, then run the tests:
+
+```powershell
+$sdk = "$env:LOCALAPPDATA\Android\Sdk"
+& "$sdk\cmdline-tools\latest\bin\sdkmanager.bat" --sdk_root=$sdk "emulator" "system-images;android-36;google_apis;x86_64"
+& "$sdk\emulator\emulator.exe" -accel-check                      # expect: WHPX ... is installed and usable
+& "$sdk\cmdline-tools\latest\bin\avdmanager.bat" create avd --name ahp-api36 --package "system-images;android-36;google_apis;x86_64" --device pixel_8
+& "$sdk\emulator\emulator.exe" -avd ahp-api36 -no-boot-anim       # leave running
+.\gradlew.bat :app:connectedDebugAndroidTest                      # runs on every attached device
+```
+
+Results land in `app/build/outputs/androidTest-results/connected/debug/` (the root element is `testsuites`).
+JUnit 4 rejects test methods that return a value, so instrumented tests use the `runTest { }` helper, not `= runBlocking { }`.
+
 ## Live probe
 
 Signs in with GitHub device flow, finds your Remote Tunnel Access host, connects through the tunnel's public
