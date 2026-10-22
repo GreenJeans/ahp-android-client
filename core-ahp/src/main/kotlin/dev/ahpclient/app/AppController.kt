@@ -96,6 +96,16 @@ class AppController(
         if (!_state.compareAndSet(current, current.copy(open = OpenSession(uri, store)))) current.session.closeSession(uri)
     }
 
+    /** Opens the session a notification points at, replacing any detail already open. Ignores a session the host does not list. */
+    @Synchronized
+    fun focusSession(uri: String) {
+        val current = _state.value as? AppState.Connected ?: return
+        if (current.session.root.sessions.value.none { it.resource == uri }) return
+        if (current.open?.uri == uri) return
+        if (current.open != null) closeSession()
+        openSession(uri)
+    }
+
     /** Leaves the open detail and stays connected. */
     @Synchronized
     fun closeSession() {

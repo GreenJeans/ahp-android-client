@@ -524,6 +524,40 @@ class AppControllerTest {
     }
 
     @Test
+    fun `focusing a session opens it, replaces another open one, and ignores unknown or repeated requests`() = runTest {
+        withRig {
+            connectToFirstHost()
+            val other = (state as AppState.Connected).session.root.sessions.value.first { it.resource != SESSION_C }.resource
+
+            controller.focusSession("ahp-session:/not-on-this-host")
+            assertNull(assertIs<AppState.Connected>(state).open)
+
+            controller.focusSession(SESSION_C)
+            assertEquals(SESSION_C, assertIs<AppState.Connected>(state).open!!.uri)
+
+            controller.focusSession(SESSION_C)
+            assertEquals(SESSION_C, assertIs<AppState.Connected>(state).open!!.uri)
+
+            controller.focusSession(other)
+            runCurrent()
+            assertEquals(other, assertIs<AppState.Connected>(state).open!!.uri)
+            assertEquals(listOf(SESSION_C), unsubscribed())
+        }
+    }
+
+    @Test
+    fun `focusing a session does nothing unless connected`() = runTest {
+        withRig {
+            controller.start()
+            runCurrent()
+
+            controller.focusSession(SESSION_C)
+
+            assertIs<AppState.SignedOut>(state)
+        }
+    }
+
+    @Test
     fun `other connection failures stay on the connected screen so the reason can be shown`() = runTest {
         withRig(script = { HostScript(failure = DevTunnelsException.TunnelNotFound("test-tunnel-1")) }) {
             vault.save(savedToken)

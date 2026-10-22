@@ -8,6 +8,8 @@ import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.v2.createComposeRule
@@ -73,10 +75,16 @@ class SessionScreensTest {
         onOpen: (String) -> Unit = {},
         onToggle: () -> Unit = {},
         onDisconnect: () -> Unit = {},
+        monitorEnabled: Boolean = false,
+        notificationsAllowed: Boolean = true,
+        onMonitorChange: (Boolean) -> Unit = {},
     ) = rule.setContent {
         var showArchived by androidx.compose.runtime.remember { mutableStateOf(initialShowArchived) }
         AhpTheme {
-            SessionsScreen(host, connection, sessions, now, showArchived, rememberLazyListState(), { showArchived = !showArchived; onToggle() }, onOpen, onDisconnect)
+            SessionsScreen(
+                host, connection, sessions, now, showArchived, rememberLazyListState(), { showArchived = !showArchived; onToggle() }, onOpen, onDisconnect,
+                monitorEnabled = monitorEnabled, notificationsAllowed = notificationsAllowed, onMonitorChange = onMonitorChange,
+            )
         }
     }
 
@@ -158,6 +166,42 @@ class SessionScreensTest {
         rule.onNodeWithTag("disconnect").assertTouchTargetAtLeast(48.dp).performClick()
 
         assertEquals(1, back)
+    }
+
+    @Test
+    fun theMonitorSwitchIsOffByDefaultAndTurnsOnWithAFullWidthTouchTarget() {
+        val changes = mutableListOf<Boolean>()
+        showSessions(onMonitorChange = { changes += it })
+
+        rule.onNodeWithTag("monitor_toggle").assertIsOff().assertTouchTargetAtLeast(48.dp).performClick()
+
+        assertEquals(listOf(true), changes)
+        rule.onNodeWithTag("monitor_hint").assertTextContains("Off", substring = true)
+    }
+
+    @Test
+    fun anEnabledMonitorTurnsOffAndSaysWhatItDoes() {
+        val changes = mutableListOf<Boolean>()
+        showSessions(monitorEnabled = true, onMonitorChange = { changes += it })
+
+        rule.onNodeWithTag("monitor_toggle").assertIsOn().performClick()
+
+        assertEquals(listOf(false), changes)
+        rule.onNodeWithTag("monitor_hint").assertTextContains("notifies you when a session needs input", substring = true)
+    }
+
+    @Test
+    fun blockedNotificationsAreStatedSoTheUserKnowsTheyWillNotBeTold() {
+        showSessions(monitorEnabled = true, notificationsAllowed = false)
+
+        rule.onNodeWithTag("monitor_hint").assertTextContains("notifications are blocked", substring = true)
+    }
+
+    @Test
+    fun theMonitorSwitchIsStillShownWhenTheConnectionHasFailed() {
+        showSessions(connection = ConnState.Failed(IllegalStateException("x")))
+
+        rule.onNodeWithTag("monitor_toggle").assertIsDisplayed()
     }
 
     @Test

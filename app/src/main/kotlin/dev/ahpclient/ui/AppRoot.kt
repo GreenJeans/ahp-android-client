@@ -26,6 +26,9 @@ fun AppRoot(
     controller: AppController,
     onOpenGitHub: (String) -> Unit,
     onCopyCode: (String) -> Unit,
+    monitorEnabled: Boolean = false,
+    notificationsAllowed: Boolean = true,
+    onMonitorChange: (Boolean) -> Unit = {},
 ) {
     val state by controller.state.collectAsStateWithLifecycle()
     var showArchived by rememberSaveable { mutableStateOf(false) }
@@ -58,6 +61,9 @@ fun AppRoot(
                             showArchived = showArchived,
                             listState = listState,
                             onToggleArchived = { showArchived = !showArchived },
+                            monitorEnabled = monitorEnabled,
+                            notificationsAllowed = notificationsAllowed,
+                            onMonitorChange = onMonitorChange,
                             onOpen = controller::openSession,
                             onDisconnect = controller::disconnect,
                             modifier = content,

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
@@ -16,6 +17,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -54,6 +56,9 @@ fun SessionsScreen(
     onOpen: (String) -> Unit,
     onDisconnect: () -> Unit,
     modifier: Modifier = Modifier,
+    monitorEnabled: Boolean = false,
+    notificationsAllowed: Boolean = true,
+    onMonitorChange: (Boolean) -> Unit = {},
 ) {
     val model = remember(sessions, showArchived, now) { SessionListModel.from(SessionCatalog.sorted(sessions), showArchived, now) }
     Column(modifier = modifier.fillMaxSize()) {
@@ -74,6 +79,7 @@ fun SessionsScreen(
                     )
                 }
             }
+            MonitorToggle(monitorEnabled, notificationsAllowed, onMonitorChange)
         }
         if (model.rows.isEmpty()) {
             EmptyList(model, connection)
@@ -85,6 +91,39 @@ fun SessionsScreen(
                 }
             }
         }
+    }
+}
+
+/**
+ * The background-monitoring switch. The whole row is the control, so the label and its state are read together and the
+ * touch target is the full width. The words under it say what the current setting does, including when notifications
+ * are blocked and the user would not be told.
+ */
+@Composable
+private fun MonitorToggle(enabled: Boolean, notificationsAllowed: Boolean, onChange: (Boolean) -> Unit) {
+    Column(modifier = Modifier.fillMaxWidth().testTag("monitor_section")) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp)
+                .toggleable(value = enabled, role = Role.Switch, onValueChange = onChange)
+                .testTag("monitor_toggle"),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Monitor in background", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+            Switch(checked = enabled, onCheckedChange = null)
+        }
+        Text(
+            when {
+                !enabled -> "Off: the list updates only while this app is open."
+                notificationsAllowed -> "On: stays connected with the screen off and notifies you when a session needs input."
+                else -> "On, but notifications are blocked for this app, so you will not be told when a session needs input. Allow them in Android settings."
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (enabled && !notificationsAllowed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.testTag("monitor_hint"),
+        )
     }
 }
 
