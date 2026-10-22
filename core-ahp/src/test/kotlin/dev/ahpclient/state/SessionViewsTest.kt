@@ -1,0 +1,233 @@
+package dev.ahpclient.state
+
+import com.microsoft.agenthostprotocol.Ahp
+import com.microsoft.agenthostprotocol.generated.ListSessionsResult
+import com.microsoft.agenthostprotocol.generated.SessionState
+import java.time.Instant
+import java.time.ZoneId
+import java.util.Locale
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+
+class SessionListModelTest {
+    private val sessions = Ahp.json.decodeFromString(ListSessionsResult.serializer(), fixture("live/list-sessions.json")).items
+    private val now = Instant.parse("2026-10-26T10:30:00.000Z")
+
+    private fun model(showArchived: Boolean = false, list: List<com.microsoft.agenthostprotocol.generated.SessionSummary> = SessionCatalog.sorted(sessions)) =
+        SessionListModel.from(list, showArchived, now)
+
+    @Test
+    fun `archived sessions are hidden by default and counted`() {
+        val m = model()
+
+        assertEquals(5, m.rows.size)
+        assertEquals(1, m.hiddenArchived)
+        assertEquals(6, m.total)
+        assertTrue(m.rows.none { it.title == "Session A" })
+    }
+
+    @Test
+    fun `showing archived brings every session back`() {
+        val m = model(showArchived = true)
+
+        assertEquals(6, m.rows.size)
+        assertEquals(0, m.hiddenArchived)
+    }
+
+    @Test
+    fun `an archived session that needs input is never hidden`() {
+        val archivedAndWaiting = sessions.map {
+            if (it.title == "Session E (synthetic: input needed)") it.copy(status = it.status or com.microsoft.agenthostprotocol.generated.SessionStatus.IS_ARCHIVED) else it
+        }
+
+        val m = model(list = archivedAndWaiting)
+
+        assertTrue(m.rows.any { it.state == ActivityState.NEEDS_INPUT && it.isArchived })
+    }
+
+    @Test
+    fun `row order follows the order given`() {
+        assertEquals(
+            listOf("Session E (synthetic: input needed)", "Session F (synthetic: error)", "Session D", "Session C", "Session B"),
+            model().rows.map { it.title },
+        )
+    }
+
+    @Test
+    fun `counts and summary reflect what is shown`() {
+        val m = model()
+
+        assertEquals(1, m.needsInput)
+        assertEquals(1, m.inProgress)
+        assertEquals(1, m.errors)
+        assertEquals("1 needs input · 1 in progress · 1 with errors", m.summary)
+    }
+
+    @Test
+    fun `summary pluralises and stays empty when nothing is happening`() {
+        val idle = sessions.filter { it.title == "Session B" || it.title == "Session D" }
+
+        assertEquals("", model(list = idle).summary)
+        assertEquals("2 need input", SessionListModel(emptyList(), needsInput = 2, inProgress = 0, errors = 0, hiddenArchived = 0, total = 2).summary)
+    }
+
+    @Test
+    fun `a blank title gets a placeholder and the project is the subtitle`() {
+        val blank = sessions.first { it.title == "Session C" }.copy(title = "  ")
+
+        val row = model(list = listOf(blank)).rows.single()
+
+        assertEquals(SessionListModel.UNTITLED, row.title)
+        assertEquals("repo-c", row.subtitle)
+    }
+
+    @Test
+    fun `activity wins over the project as the subtitle`() {
+        val working = sessions.first { it.title == "Session C" }.copy(activity = "Running tests")
+
+        assertEquals("Running tests", model(list = listOf(working)).rows.single().subtitle)
+    }
+
+    @Test
+    fun `an empty host gives an empty model`() {
+        val m = model(list = emptyList())
+
+        assertEquals(0, m.rows.size)
+        assertEquals("", m.summary)
+    }
+}
+
+class RelativeTimeTest {
+    private val now = Instant.parse("2026-10-26T15:00:00.000Z")
+    private val utc = ZoneId.of("UTC")
+
+    private fun at(iso: String) = RelativeTime.format(iso, now, utc, Locale.US)
+
+    @Test
+    fun `under a minute is just now, and so is a timestamp slightly in the future`() {
+        assertEquals("just now", at("2026-10-26T14:59:30.000Z"))
+        assertEquals("just now", at("2026-10-26T15:00:20.000Z"))
+    }
+
+    @Test
+    fun `minutes and hours`() {
+        assertEquals("1 min ago", at("2026-10-26T14:59:00.000Z"))
+        assertEquals("59 min ago", at("2026-10-26T14:01:00.000Z"))
+        assertEquals("1 h ago", at("2026-10-26T14:00:00.000Z"))
+        assertEquals("23 h ago", at("2026-10-25T16:00:00.000Z"))
+    }
+
+    @Test
+    fun `yesterday is calendar-based, so 20 hours ago across midnight is yesterday`() {
+        assertEquals("yesterday", at("2026-10-25T09:00:00.000Z"))
+    }
+
+    @Test
+    fun `days within the week, then a date`() {
+        assertEquals("3 days ago", at("2026-10-23T09:00:00.000Z"))
+        assertEquals("Oct 10, 2026", at("2026-10-10T09:00:00.000Z"))
+    }
+
+    @Test
+    fun `an unreadable timestamp is empty rather than an error`() {
+        assertEquals("", at("not a date"))
+        assertEquals("", at(""))
+    }
+}
+
+class SessionDetailTest {
+    private val now = Instant.parse("2026-10-26T10:30:00.000Z")
+
+    private fun state(inputNeeded: String? = null, extra: String = ""): SessionState = Ahp.json.decodeFromString(
+        SessionState.serializer(),
+        """{"provider":"copilotcli","title":"Fix the build","status":56,"lifecycle":"ready","activeClients":[],
+            "project":{"uri":"file:///work/repo","displayName":"repo"},"workingDirectories":["file:///work/repo"],
+            "chats":[{"resource":"ahp-chat://default/x","title":"Main","status":56,"modifiedAt":"2026-10-26T10:29:00.000Z"}]
+            ${if (inputNeeded != null) ""","inputNeeded":$inputNeeded""" else ""}$extra}""",
+    )
+
+    @Test
+    fun `a session decodes into the fields the detail screen shows`() {
+        val d = SessionDetail.from(state(), now)
+
+        assertEquals("Fix the build", d.title)
+        assertEquals(ActivityState.NEEDS_INPUT, d.state)
+        assertEquals("copilotcli", d.provider)
+        assertEquals("repo", d.project)
+        assertEquals(listOf("file:///work/repo"), d.workingDirectories)
+        assertEquals(listOf(ChatRow("Main", ActivityState.NEEDS_INPUT, null, "1 min ago")), d.chats)
+        assertEquals(emptyList(), d.inputNeeded)
+    }
+
+    @Test
+    fun `a chat question shows its message`() {
+        val request = """[{"kind":"chatInput","id":"r1","chat":"ahp-chat://default/x","request":{"id":"q","message":"Which branch should I use?"}}]"""
+
+        assertEquals(
+            listOf(InputRequestView("Question", "Which branch should I use?")),
+            SessionDetail.from(state(request), now).inputNeeded,
+        )
+    }
+
+    @Test
+    fun `a chat question without a message shows its first question`() {
+        val request = """[{"kind":"chatInput","id":"r1","chat":"c","request":{"id":"q","questions":[
+            {"kind":"single-select","id":"a","title":"Branch","message":"Pick a branch","options":[{"id":"m","label":"main"}]}]}}]"""
+
+        assertEquals("Pick a branch", SessionDetail.from(state(request), now).inputNeeded.single().text)
+    }
+
+    @Test
+    fun `a chat question with nothing readable still says something`() {
+        val request = """[{"kind":"chatInput","id":"r1","chat":"c","request":{"id":"q"}}]"""
+
+        assertEquals("The agent has a question.", SessionDetail.from(state(request), now).inputNeeded.single().text)
+    }
+
+    @Test
+    fun `a tool approval names the tool and the intention`() {
+        val request = """[{"kind":"toolConfirmation","id":"r2","chat":"c","turnId":"t","toolCall":{"status":"pending-confirmation",
+            "toolCallId":"tc","toolName":"run_in_terminal","displayName":"Run command","intention":"Run the tests",
+            "invocationMessage":"Run npm test"}}]"""
+
+        assertEquals(
+            listOf(InputRequestView("Approval", "Run command: Run the tests")),
+            SessionDetail.from(state(request), now).inputNeeded,
+        )
+    }
+
+    @Test
+    fun `a tool approval falls back to the invocation message, then to the bare name`() {
+        val withMessage = """[{"kind":"toolConfirmation","id":"r2","chat":"c","turnId":"t","toolCall":{"status":"pending-confirmation",
+            "toolCallId":"tc","toolName":"run_in_terminal","displayName":"Run command","invocationMessage":"Run npm test"}}]"""
+        val bare = """[{"kind":"toolConfirmation","id":"r2","chat":"c","turnId":"t","toolCall":{"status":"pending-confirmation",
+            "toolCallId":"tc","toolName":"run_in_terminal","displayName":"","invocationMessage":""}}]"""
+
+        assertEquals("Run command: Run npm test", SessionDetail.from(state(withMessage), now).inputNeeded.single().text)
+        assertEquals("run_in_terminal", SessionDetail.from(state(bare), now).inputNeeded.single().text)
+    }
+
+    @Test
+    fun `a request kind this client does not know is still listed`() {
+        val request = """[{"kind":"somethingNew","id":"r9","payload":1}]"""
+
+        assertEquals(
+            listOf(InputRequestView("Input", "The agent is waiting for input.")),
+            SessionDetail.from(state(request), now).inputNeeded,
+        )
+    }
+
+    @Test
+    fun `several requests keep their order`() {
+        val request = """[{"kind":"chatInput","id":"a","chat":"c","request":{"id":"q","message":"first"}},
+            {"kind":"chatInput","id":"b","chat":"c","request":{"id":"q2","message":"second"}}]"""
+
+        assertEquals(listOf("first", "second"), SessionDetail.from(state(request), now).inputNeeded.map { it.text })
+    }
+
+    @Test
+    fun `the answer-elsewhere hint stays a constant the UI can show`() {
+        assertEquals("Answer in VS Code.", SessionDetail.ANSWER_ELSEWHERE)
+    }
+}

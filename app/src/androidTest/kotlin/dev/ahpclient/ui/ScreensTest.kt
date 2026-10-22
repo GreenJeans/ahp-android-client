@@ -215,25 +215,6 @@ class ScreensTest {
     // ---- connected --------------------------------------------------------------------------------------------
 
     @Test
-    fun connectedShowsStateAndSessionCountAndGoesBack() {
-        var back = 0
-        rule.setContent { AhpTheme { ConnectedScreen(online, ConnState.Online, 6, { back++ }) } }
-
-        rule.onNodeWithTag("connection_status").assertTextContains("Connected")
-        rule.onNodeWithTag("session_count").assertTextContains("6 sessions on this host")
-        rule.onNodeWithTag("disconnect").assertTouchTargetAtLeast(48.dp).performClick()
-
-        assertEquals(1, back)
-    }
-
-    @Test
-    fun oneSessionIsSingular() {
-        rule.setContent { AhpTheme { ConnectedScreen(online, ConnState.Online, 1, {}) } }
-
-        rule.onNodeWithTag("session_count").assertTextContains("1 session on this host")
-    }
-
-    @Test
     fun connectionProblemsAreSpelledOut() {
         val states = listOf(
             ConnState.Connecting to "Connecting",

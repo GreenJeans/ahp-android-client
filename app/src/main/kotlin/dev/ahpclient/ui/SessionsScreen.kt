@@ -1,0 +1,144 @@
+package dev.ahpclient.ui
+
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import dev.ahpclient.state.ConnState
+import dev.ahpclient.state.SessionCatalog
+import dev.ahpclient.state.SessionListModel
+import dev.ahpclient.state.SessionRow
+import dev.ahpclient.state.label
+import dev.ahpclient.tunnel.TunnelInfo
+import com.microsoft.agenthostprotocol.generated.SessionSummary
+import java.time.Instant
+
+/**
+ * The host's sessions, those needing the user first. Read-only: a tap opens the detail, and nothing here changes a session.
+ * [showArchived] and [listState] are held by the caller so they survive a trip into a session and back.
+ */
+@Composable
+fun SessionsScreen(
+    host: TunnelInfo,
+    connection: ConnState,
+    sessions: List<SessionSummary>,
+    now: Instant,
+    showArchived: Boolean,
+    listState: LazyListState,
+    onToggleArchived: () -> Unit,
+    onOpen: (String) -> Unit,
+    onDisconnect: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val model = remember(sessions, showArchived, now) { SessionListModel.from(SessionCatalog.sorted(sessions), showArchived, now) }
+    Column(modifier = modifier.fillMaxSize()) {
+        Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(host.name, style = MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() })
+            ConnectionLine(connection)
+            if (model.summary.isNotEmpty()) {
+                Text(model.summary, style = MaterialTheme.typography.titleMedium, modifier = Modifier.testTag("summary"))
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(onClick = onDisconnect, modifier = Modifier.testTag("disconnect")) { Text("Back to hosts") }
+                if (model.hiddenArchived > 0 || showArchived) {
+                    FilterChip(
+                        selected = showArchived,
+                        onClick = onToggleArchived,
+                        label = { Text(if (model.hiddenArchived > 0) "Show archived (${model.hiddenArchived})" else "Show archived") },
+                        modifier = Modifier.testTag("archived_toggle"),
+                    )
+                }
+            }
+        }
+        if (model.rows.isEmpty()) {
+            EmptyList(model, connection)
+        } else {
+            LazyColumn(state = listState, modifier = Modifier.weight(1f).fillMaxWidth().testTag("session_list")) {
+                items(model.rows, key = { it.resource }) { row ->
+                    SessionRowItem(row, onOpen)
+                    HorizontalDivider()
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EmptyList(model: SessionListModel, connection: ConnState) {
+    Box(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp).testTag("empty_list")) {
+        when {
+            model.total > 0 -> Text("All ${model.total} sessions are archived. Use Show archived to see them.", style = MaterialTheme.typography.bodyLarge)
+            connection == ConnState.Online -> Text("No sessions on this host yet.", style = MaterialTheme.typography.bodyLarge)
+            connection is ConnState.Failed -> Unit
+            else -> Busy("Loading sessions…")
+        }
+    }
+}
+
+/** One row. Its spoken description joins every part, so TalkBack reads the title, state and age as a single item. */
+@Composable
+private fun SessionRowItem(row: SessionRow, onOpen: (String) -> Unit) {
+    val description = listOfNotNull(
+        row.title,
+        row.state.label,
+        row.subtitle,
+        row.whenText.ifEmpty { null },
+        if (row.isRead) null else "unread",
+        if (row.isArchived) "archived" else null,
+    ).joinToString(", ")
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 72.dp)
+            .semantics(mergeDescendants = true) { contentDescription = description }
+            .clickable(onClickLabel = "Open session", role = Role.Button) { onOpen(row.resource) }
+            .padding(horizontal = 24.dp, vertical = 12.dp)
+            .testTag("session_row"),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                row.title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = if (row.isRead) FontWeight.Normal else FontWeight.Bold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            row.subtitle?.let {
+                Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            StatusChip(row.state)
+            if (row.whenText.isNotEmpty()) {
+                Text(row.whenText, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}

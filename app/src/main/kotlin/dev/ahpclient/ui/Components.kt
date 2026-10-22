@@ -12,10 +12,14 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import dev.ahpclient.state.ActivityState
+import dev.ahpclient.state.ConnState
+import dev.ahpclient.state.label
 
 /** Why the user is looking at this screen, for example an expired sign-in. Announced to TalkBack when it appears. */
 @Composable
@@ -57,5 +61,44 @@ fun Busy(label: String, modifier: Modifier = Modifier) {
 fun ScreenColumn(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     Column(modifier = modifier.padding(horizontal = 24.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         content()
+    }
+}
+
+/** The words for each connection state. Never includes a token: the causes are typed errors with fixed messages. */
+fun describe(connection: ConnState): String = when (connection) {
+    ConnState.Stopped -> "Disconnected"
+    ConnState.Connecting -> "Connecting…"
+    ConnState.Online -> "Connected"
+    is ConnState.Reconnecting -> "Connection lost. Reconnecting (attempt ${connection.attempt})…"
+    is ConnState.Failed -> connection.cause.message ?: "Could not connect (${connection.cause.javaClass.simpleName})."
+}
+
+/** Where the connection stands, as text. A failure is an error; anything short of connected is announced when it changes. */
+@Composable
+fun ConnectionLine(connection: ConnState, modifier: Modifier = Modifier) {
+    if (connection is ConnState.Failed) {
+        ErrorText(describe(connection), modifier.testTag("connection_status"))
+    } else {
+        Text(describe(connection), style = MaterialTheme.typography.bodyLarge, modifier = modifier.testTag("connection_status"))
+    }
+}
+
+/** The state in words, tinted with a role colour. The label always carries the meaning, so colour is never the only cue. */
+@Composable
+fun StatusChip(state: ActivityState, modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.colorScheme
+    val (container, content) = when (state) {
+        ActivityState.NEEDS_INPUT -> colors.tertiaryContainer to colors.onTertiaryContainer
+        ActivityState.IN_PROGRESS -> colors.primaryContainer to colors.onPrimaryContainer
+        ActivityState.ERROR -> colors.errorContainer to colors.onErrorContainer
+        ActivityState.IDLE -> colors.surfaceVariant to colors.onSurfaceVariant
+    }
+    Surface(
+        color = container,
+        contentColor = content,
+        shape = MaterialTheme.shapes.small,
+        modifier = modifier.semantics(mergeDescendants = true) {}.testTag("status_chip"),
+    ) {
+        Text(state.label, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp))
     }
 }

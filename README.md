@@ -43,8 +43,12 @@ $sdk = "$env:LOCALAPPDATA\Android\Sdk"
 & "$sdk\emulator\emulator.exe" -accel-check                      # expect: WHPX ... is installed and usable
 & "$sdk\cmdline-tools\latest\bin\avdmanager.bat" create avd --name ahp-api36 --package "system-images;android-36;google_apis;x86_64" --device pixel_8
 & "$sdk\emulator\emulator.exe" -avd ahp-api36 -no-boot-anim       # leave running
-.\gradlew.bat :app:connectedDebugAndroidTest                      # runs on every attached device
+.\tools\run-device-tests.ps1 -Serial emulator-5554                 # one named emulator; refuses a physical phone
 ```
+
+Do not use `.\gradlew.bat :app:connectedDebugAndroidTest` while a real phone is attached: it runs on every attached device
+and uninstalls the app afterwards, which wipes the phone's sign-in. `tools\run-device-tests.ps1` installs on the one serial
+you name, runs the instrumentation there and leaves the app installed.
 
 Results land in `app/build/outputs/androidTest-results/connected/debug/` (the root element is `testsuites`).
 JUnit 4 rejects test methods that return a value, so instrumented tests use the `runTest { }` helper, not `= runBlocking { }`.

@@ -2,6 +2,7 @@ package dev.ahpclient.app
 
 import dev.ahpclient.auth.Secret
 import dev.ahpclient.state.HostSession
+import dev.ahpclient.state.SessionStore
 import dev.ahpclient.tunnel.TunnelInfo
 import java.time.Instant
 
@@ -51,8 +52,11 @@ sealed interface AppState {
 
     data class Hosts(val list: HostList, val tokenExpiresAt: Instant?) : AppState
 
-    data class Connected(val host: TunnelInfo, val session: HostSession) : AppState
+    /** [open] is the session whose detail is on screen; its [OpenSession.store] stays subscribed until the user goes back. */
+    data class Connected(val host: TunnelInfo, val session: HostSession, val open: OpenSession? = null) : AppState
 }
+
+data class OpenSession(val uri: String, val store: SessionStore)
 
 /** Only https pages on GitHub are opened from the sign-in screen; anything else is shown as text, never launched. */
 object SafeLinks {

@@ -87,6 +87,23 @@ class AppController(
         launchWatch(session)
     }
 
+    /** Opens the detail for [uri]. Ignored unless connected with no detail open, so a double tap cannot subscribe twice. */
+    @Synchronized
+    fun openSession(uri: String) {
+        val current = _state.value as? AppState.Connected ?: return
+        if (current.open != null) return
+        val store = current.session.openSession(uri)
+        if (!_state.compareAndSet(current, current.copy(open = OpenSession(uri, store)))) current.session.closeSession(uri)
+    }
+
+    /** Leaves the open detail and stays connected. */
+    @Synchronized
+    fun closeSession() {
+        val current = _state.value as? AppState.Connected ?: return
+        val open = current.open ?: return
+        if (_state.compareAndSet(current, current.copy(open = null))) current.session.closeSession(open.uri)
+    }
+
     /** Leaves the live host and returns to the host list. */
     fun disconnect() {
         val connected = _state.value as? AppState.Connected ?: return

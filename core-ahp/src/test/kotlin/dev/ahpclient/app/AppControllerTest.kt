@@ -13,6 +13,7 @@ import dev.ahpclient.state.HostConnector
 import dev.ahpclient.state.HostScript
 import dev.ahpclient.state.HostSession
 import dev.ahpclient.state.ScriptedConnector
+import dev.ahpclient.state.SESSION_C
 import dev.ahpclient.state.fixture
 import dev.ahpclient.tunnel.DevTunnelsClient
 import dev.ahpclient.tunnel.DevTunnelsException
@@ -25,6 +26,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -32,6 +34,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 
@@ -61,6 +65,7 @@ class AppControllerTest {
         val lastHost: FakeLastHost,
         val tokensSeenByHost: MutableList<String>,
         val created: MutableList<HostSession>,
+        val connectors: MutableList<ScriptedConnector>,
     ) {
         val state get() = controller.state.value
     }
@@ -82,8 +87,9 @@ class AppControllerTest {
         val lastHost = FakeLastHost()
         val seen = mutableListOf<String>()
         val created = mutableListOf<HostSession>()
+        val connectors = mutableListOf<ScriptedConnector>()
         val factory = HostSessionFactory { tunnel: TunnelInfo, accessToken ->
-            val scripted = ScriptedConnector(script())
+            val scripted = ScriptedConnector(script()).also { connectors += it }
             val connector = HostConnector { clientId, seq, scope: CoroutineScope ->
                 seen += accessToken().reveal()
                 scripted.connect(clientId, seq, scope)
@@ -99,7 +105,7 @@ class AppControllerTest {
             scope = backgroundScope,
             now = now,
         )
-        Rig(server, controller, vault, box, store, lastHost, seen, created).block()
+        Rig(server, controller, vault, box, store, lastHost, seen, created, connectors).block()
     }
 
     private suspend fun Rig.await(match: (AppState) -> Boolean): AppState = controller.state.first(match)
@@ -107,6 +113,23 @@ class AppControllerTest {
     private suspend fun Rig.awaitHosts(): HostList = (await { it is AppState.Hosts && it.list !is HostList.Loading } as AppState.Hosts).list
 
     private fun Rig.loaded(): List<HostEntry> = ((state as AppState.Hosts).list as HostList.Loaded).hosts
+
+    /** Channels the app asked the host to stop sending, in order. */
+    private fun Rig.unsubscribed(): List<String> = connectors.single().sockets.single().sent
+        .filter { it["method"]?.jsonPrimitive?.content == "unsubscribe" }
+        .map { it["params"]!!.jsonObject["channel"]!!.jsonPrimitive.content }
+
+    /** Signs in from the vault, connects to the first host and waits until the connection is online. */
+    private suspend fun Rig.connectToFirstHost(): AppState.Connected {
+        vault.save(savedToken)
+        server.json(fixture("list-tunnels.json"))
+        controller.start()
+        awaitHosts()
+        controller.connect(loaded().first().tunnel)
+        val connected = assertIs<AppState.Connected>(state)
+        connected.session.connection.first { it == ConnState.Online }
+        return connected
+    }
 
     @Test
     fun `starts signed out when nothing is saved`() = runTest {
@@ -400,6 +423,103 @@ class AppControllerTest {
             assertTrue(out.notice!!.contains("no longer accepts"))
             assertEquals(VaultLoad.Absent, vault.load())
             assertEquals(ConnState.Stopped, created.single().connection.value)
+        }
+    }
+
+    @Test
+    fun `opening a session shows its live state, and going back unsubscribes and stays connected`() = runTest {
+        withRig {
+            val connected = connectToFirstHost()
+
+            controller.openSession(SESSION_C)
+            val open = assertIs<AppState.Connected>(state).open!!
+            open.store.state.first { it != null }
+            runCurrent()
+
+            assertEquals(SESSION_C, open.uri)
+            assertEquals("Session C", open.store.state.value!!.title)
+            assertEquals(emptyList(), unsubscribed())
+
+            controller.closeSession()
+            runCurrent()
+
+            assertNull(assertIs<AppState.Connected>(state).open)
+            assertSame(connected.session, assertIs<AppState.Connected>(state).session)
+            assertEquals(listOf(SESSION_C), unsubscribed())
+        }
+    }
+
+    @Test
+    fun `a second open while one is showing is ignored, so one back releases the subscription`() = runTest {
+        withRig {
+            connectToFirstHost()
+
+            controller.openSession(SESSION_C)
+            controller.openSession("ahp-session:/other")
+            assertEquals(SESSION_C, assertIs<AppState.Connected>(state).open!!.uri)
+            controller.closeSession()
+            runCurrent()
+
+            assertEquals(listOf(SESSION_C), unsubscribed())
+        }
+    }
+
+    @Test
+    fun `opening and closing a session do nothing unless connected`() = runTest {
+        withRig {
+            controller.start()
+            runCurrent()
+
+            controller.openSession(SESSION_C)
+            controller.closeSession()
+
+            assertIs<AppState.SignedOut>(state)
+            assertTrue(created.isEmpty())
+        }
+    }
+
+    @Test
+    fun `closing with nothing open does nothing`() = runTest {
+        withRig {
+            connectToFirstHost()
+
+            controller.closeSession()
+            runCurrent()
+
+            assertNull(assertIs<AppState.Connected>(state).open)
+            assertEquals(emptyList(), unsubscribed())
+        }
+    }
+
+    @Test
+    fun `leaving the host with a session open returns to the host list`() = runTest {
+        withRig {
+            server.json(fixture("list-tunnels.json"))
+            connectToFirstHost()
+            controller.openSession(SESSION_C)
+
+            controller.disconnect()
+            val list = awaitHosts()
+
+            assertIs<HostList.Loaded>(list)
+            assertEquals(ConnState.Stopped, created.single().connection.value)
+        }
+    }
+
+    @Test
+    fun `losing the sign in with a session open returns to sign in`() = runTest {
+        withRig(script = { HostScript(failure = DevTunnelsException.AuthExpired()) }) {
+            vault.save(savedToken)
+            server.json(fixture("list-tunnels.json"))
+            controller.start()
+            awaitHosts()
+
+            controller.connect(loaded().first().tunnel)
+            controller.openSession(SESSION_C)
+            val out = assertIs<AppState.SignedOut>(await { it is AppState.SignedOut })
+
+            assertTrue(out.notice!!.contains("no longer accepts"))
+            assertEquals(VaultLoad.Absent, vault.load())
         }
     }
 
