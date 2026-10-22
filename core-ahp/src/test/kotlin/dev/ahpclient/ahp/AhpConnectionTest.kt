@@ -1,0 +1,269 @@
+package dev.ahpclient.ahp
+
+import com.microsoft.agenthostprotocol.generated.Implementation
+import com.microsoft.agenthostprotocol.generated.SessionStatus
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertIs
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
+
+@OptIn(ExperimentalCoroutinesApi::class)
+class AhpConnectionTest {
+    private val clientInfo = Implementation(name = "ahp-android-client", version = "0.1.0")
+
+    private val initResult = """{"protocolVersion":"0.9.0","serverSeq":43087,"snapshots":[]}"""
+
+    private fun TestScope.connection(socket: FakeSocket, timeoutMs: Long = 30_000, serverSeq: Long = 0) =
+        AhpConnection(socket, backgroundScope, CapabilityPolicy.READ, clientId = "client-1", initialServerSeq = serverSeq, requestTimeoutMs = timeoutMs)
+
+    private fun action(seq: Long, title: String = "t") =
+        """{"jsonrpc":"2.0","method":"action","params":{"channel":"ahp-session:/abc","action":{"type":"session/titleChanged","title":"$title"},"serverSeq":$seq}}"""
+
+    @Test
+    fun `initialize offers both protocol versions and subscribes to the root channel`() = runTest {
+        val socket = FakeSocket { method, id, _ -> if (method == "initialize") result(id, initResult) else null }
+        val connection = connection(socket)
+
+        val result = connection.initialize(clientInfo)
+
+        val frame = socket.sent.single()
+        assertEquals("2.0", frame["jsonrpc"]!!.jsonPrimitive.content)
+        assertEquals(1L, frame["id"]!!.jsonPrimitive.long)
+        assertEquals("initialize", frame["method"]!!.jsonPrimitive.content)
+        val params = frame["params"]!!.jsonObject
+        assertEquals("ahp-root://", params["channel"]!!.jsonPrimitive.content)
+        assertEquals(listOf("1.0.0", "0.9.0"), params["protocolVersions"]!!.jsonArray.map { it.jsonPrimitive.content })
+        assertEquals("client-1", params["clientId"]!!.jsonPrimitive.content)
+        assertEquals("ahp-android-client", params["clientInfo"]!!.jsonObject["name"]!!.jsonPrimitive.content)
+        assertEquals(listOf("ahp-root://"), params["initialSubscriptions"]!!.jsonArray.map { it.jsonPrimitive.content })
+        assertEquals("0.9.0", result.protocolVersion)
+        assertEquals(43087L, connection.lastServerSeq)
+    }
+
+    @Test
+    fun `listSessions sends paging params and decodes status as a bitset`() = runTest {
+        val socket = FakeSocket { method, id, _ ->
+            if (method == "listSessions") result(id, """{"items":[{"provider":"copilot","title":"Fix bug","status":24,"resource":"ahp-session:/a","createdAt":"2026-10-22T10:00:00.000Z","modifiedAt":"2026-10-22T10:05:00.000Z"}],"nextCursor":"c2"}""") else null
+        }
+
+        val page = connection(socket).listSessions(cursor = "c1", limit = 50)
+
+        val params = socket.sent.single()["params"]!!.jsonObject
+        assertEquals("ahp-root://", params["channel"]!!.jsonPrimitive.content)
+        assertEquals("c1", params["cursor"]!!.jsonPrimitive.content)
+        assertEquals(50L, params["limit"]!!.jsonPrimitive.long)
+        assertEquals("c2", page.nextCursor)
+        val status = page.items.single().status
+        assertTrue(SessionStatus.INPUT_NEEDED in status)
+        assertTrue(SessionStatus.IN_PROGRESS in status, "InputNeeded includes InProgress")
+        assertFalse(SessionStatus.ERROR in status)
+    }
+
+    @Test
+    fun `optional params are omitted when unset`() = runTest {
+        val socket = FakeSocket { method, id, _ -> if (method == "listSessions") result(id, """{"items":[]}""") else null }
+
+        connection(socket).listSessions()
+
+        val params = socket.sent.single()["params"]!!.jsonObject
+        assertEquals(setOf("channel"), params.keys)
+    }
+
+    @Test
+    fun `subscribe and fetchTurns target the given channel`() = runTest {
+        val socket = FakeSocket { method, id, _ -> if (method == "subscribe" || method == "fetchTurns") result(id, "{}") else null }
+        val connection = connection(socket)
+
+        connection.subscribe("ahp-session:/abc")
+        connection.fetchTurns("ahp-chat:/abc", cursor = "older")
+
+        assertEquals("ahp-session:/abc", socket.sent[0]["params"]!!.jsonObject["channel"]!!.jsonPrimitive.content)
+        val fetch = socket.sent[1]["params"]!!.jsonObject
+        assertEquals("ahp-chat:/abc", fetch["channel"]!!.jsonPrimitive.content)
+        assertEquals("older", fetch["cursor"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `unsubscribe is a notification without an id`() = runTest {
+        val socket = FakeSocket()
+
+        connection(socket).unsubscribe("ahp-session:/abc")
+
+        val frame = socket.sent.single()
+        assertEquals("unsubscribe", frame["method"]!!.jsonPrimitive.content)
+        assertNull(frame["id"])
+        assertEquals("ahp-session:/abc", frame["params"]!!.jsonObject["channel"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `action notifications are decoded and track the highest server sequence`() = runTest {
+        val socket = FakeSocket()
+        val connection = connection(socket, serverSeq = 10)
+        socket.serverSends(action(42))
+        socket.serverSends(action(40))
+
+        val first = connection.notifications.take(2).toList()
+
+        val envelope = assertIs<ServerNotification.Action>(first[0]).envelope
+        assertEquals(42L, envelope.serverSeq)
+        assertEquals("ahp-session:/abc", envelope.channel)
+        assertEquals(42L, connection.lastServerSeq, "an older envelope never moves the sequence back")
+    }
+
+    @Test
+    fun `other notifications are routed by method name`() = runTest {
+        val socket = FakeSocket()
+        val connection = connection(socket)
+        socket.serverSends("""{"jsonrpc":"2.0","method":"root/sessionAdded","params":{"channel":"ahp-root://","summary":{"provider":"copilot","title":"x","status":1}}}""")
+
+        val note = assertIs<ServerNotification.Named>(connection.notifications.first())
+
+        assertEquals("root/sessionAdded", note.method)
+        assertEquals("ahp-root://", note.params["channel"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `an undecodable frame is reported and the loop keeps running`() = runTest {
+        val socket = FakeSocket()
+        val connection = connection(socket)
+        socket.serverSends("not json")
+        socket.serverSends("""{"jsonrpc":"2.0","method":"action","params":{"channel":"x"}}""")
+        socket.serverSends("""{"jsonrpc":"2.0","method":"root/sessionRemoved","params":{"channel":"ahp-root://","session":"ahp-session:/a"}}""")
+
+        val notes = connection.notifications.take(3).toList()
+
+        assertNull(assertIs<ServerNotification.Undecodable>(notes[0]).method)
+        assertEquals("action", assertIs<ServerNotification.Undecodable>(notes[1]).method)
+        assertEquals("root/sessionRemoved", assertIs<ServerNotification.Named>(notes[2]).method)
+    }
+
+    @Test
+    fun `an error response becomes an Rpc exception`() = runTest {
+        val socket = FakeSocket { method, id, _ -> if (method == "subscribe") error(id, -32001, "no such session") else null }
+
+        val failure = assertFailsWith<AhpException.Rpc> { connection(socket).subscribe("ahp-session:/gone") }
+
+        assertEquals(-32001, failure.code)
+        assertTrue(failure.message!!.contains("no such session"))
+    }
+
+    @Test
+    fun `an unsupported protocol version carries what was offered and what the host supports`() = runTest {
+        val socket = FakeSocket { method, id, _ ->
+            if (method == "initialize") error(id, -32005, "unsupported", """{"supportedVersions":["2.0.0"]}""") else null
+        }
+
+        val failure = assertFailsWith<AhpException.UnsupportedProtocolVersion> { connection(socket).initialize(clientInfo) }
+
+        assertEquals(listOf("1.0.0", "0.9.0"), failure.offered)
+        assertEquals(listOf("2.0.0"), failure.supported)
+    }
+
+    @Test
+    fun `a silent host times out`() = runTest {
+        val connection = connection(FakeSocket(), timeoutMs = 5_000)
+
+        assertFailsWith<AhpException.Timeout> { connection.ping() }
+    }
+
+    @Test
+    fun `a socket that closes mid request fails the request and every later one`() = runTest {
+        lateinit var socket: FakeSocket
+        socket = FakeSocket { method, _, _ ->
+            if (method == "ping") socket.serverCloses(1011)
+            null
+        }
+        val connection = connection(socket)
+
+        assertFailsWith<AhpException.ConnectionClosed> { connection.ping() }
+        assertFailsWith<AhpException.ConnectionClosed> { connection.listSessions() }
+    }
+
+    @Test
+    fun `notifications complete on a clean close and throw on an abnormal one`() = runTest {
+        val clean = FakeSocket()
+        val cleanConnection = connection(clean)
+        clean.serverSends(action(1))
+        clean.serverCloses(1000)
+        assertEquals(1, cleanConnection.notifications.toList().size)
+
+        val abnormal = FakeSocket()
+        val abnormalConnection = connection(abnormal)
+        abnormal.serverCloses(1011)
+        assertFailsWith<AhpException.ConnectionClosed> { abnormalConnection.notifications.toList() }
+    }
+
+    @Test
+    fun `a request the host sends is answered with method not found and nothing else`() = runTest {
+        val socket = FakeSocket()
+        connection(socket)
+        socket.serverSends("""{"jsonrpc":"2.0","id":7,"method":"resourceRequest","params":{}}""")
+
+        runCurrent() // advanceUntilIdle() ignores backgroundScope work, which is where the reader runs
+
+        val reply = socket.sent.single()
+        assertNull(reply["method"], "an error response is not a call")
+        assertEquals(7L, reply["id"]!!.jsonPrimitive.long)
+        assertEquals(-32601L, reply["error"]!!.jsonObject["code"]!!.jsonPrimitive.long)
+    }
+
+    @Test
+    fun `a full session only ever sends read tier methods`() = runTest {
+        val socket = FakeSocket { method, id, _ ->
+            when (method) {
+                "initialize" -> result(id, initResult)
+                "listSessions" -> result(id, """{"items":[]}""")
+                "reconnect" -> result(id, """{"type":"replay","actions":[],"missing":[]}""")
+                "ping", "subscribe", "fetchTurns" -> result(id, "{}")
+                else -> null
+            }
+        }
+        val connection = connection(socket)
+
+        connection.initialize(clientInfo)
+        connection.listSessions()
+        connection.subscribe("ahp-session:/a")
+        connection.fetchTurns("ahp-chat:/a")
+        connection.ping()
+        connection.reconnect(listOf("ahp-root://"))
+        connection.unsubscribe("ahp-session:/a")
+
+        val readTier = setOf("initialize", "reconnect", "ping", "subscribe", "unsubscribe", "listSessions", "fetchTurns")
+        assertEquals(7, socket.sentMethods.size)
+        assertTrue(readTier.containsAll(socket.sentMethods), "sent: ${socket.sentMethods}")
+    }
+
+    @Test
+    fun `reconnect resumes from the last seen sequence with the same client id`() = runTest {
+        val socket = FakeSocket { method, id, _ -> if (method == "reconnect") result(id, """{"type":"replay","actions":[],"missing":[]}""") else null }
+        val connection = connection(socket, serverSeq = 99)
+
+        connection.reconnect(listOf("ahp-root://", "ahp-session:/a"))
+
+        val params = socket.sent.single()["params"]!!.jsonObject
+        assertEquals("client-1", params["clientId"]!!.jsonPrimitive.content)
+        assertEquals(99L, params["lastSeenServerSeq"]!!.jsonPrimitive.long)
+        assertEquals(listOf("ahp-root://", "ahp-session:/a"), params["subscriptions"]!!.jsonArray.map { it.jsonPrimitive.content })
+    }
+
+    @Test
+    fun `a result of the wrong shape is a Protocol error, not a crash`() = runTest {
+        val socket = FakeSocket { method, id, _ -> if (method == "listSessions") result(id, """{"items":"nope"}""") else null }
+
+        assertFailsWith<AhpException.Protocol> { connection(socket).listSessions() }
+    }
+}
