@@ -155,7 +155,7 @@ class SessionDetailTest {
         assertEquals(ActivityState.NEEDS_INPUT, d.state)
         assertEquals("copilotcli", d.provider)
         assertEquals("repo", d.project)
-        assertEquals(listOf("file:///work/repo"), d.workingDirectories)
+        assertEquals(listOf("file:///work/repo").map(::displayPath), d.workingDirectories)
         assertEquals(listOf(ChatRow("Main", ActivityState.NEEDS_INPUT, null, "1 min ago")), d.chats)
         assertEquals(emptyList(), d.inputNeeded)
     }
@@ -206,6 +206,33 @@ class SessionDetailTest {
 
         assertEquals("Run command: Run npm test", SessionDetail.from(state(withMessage), now).inputNeeded.single().text)
         assertEquals("run_in_terminal", SessionDetail.from(state(bare), now).inputNeeded.single().text)
+    }
+
+    @Test
+    fun `a file uri is shown as the path it names`() {
+        assertEquals("c:/Users/me/source/repos/app", displayPath("file:///c%3A/Users/me/source/repos/app"))
+        assertEquals("C:/My Projects/app", displayPath("file:///C:/My%20Projects/app"))
+        assertEquals("/home/me/app", displayPath("file:///home/me/app"))
+    }
+
+    @Test
+    fun `anything that is not a file uri is left alone, and a malformed one does not throw`() {
+        assertEquals("vscode-remote://ssh-remote+box/home/me", displayPath("vscode-remote://ssh-remote+box/home/me"))
+        assertEquals("not a uri at all", displayPath("not a uri at all"))
+        assertEquals("", displayPath(""))
+    }
+
+    @Test
+    fun `working directories on the detail are shown as paths`() {
+        val d = SessionDetail.from(
+            Ahp.json.decodeFromString(
+                SessionState.serializer(),
+                """{"provider":"p","title":"t","status":1,"lifecycle":"ready","activeClients":[],"chats":[],"workingDirectories":["file:///c%3A/work/repo"]}""",
+            ),
+            now,
+        )
+
+        assertEquals(listOf("c:/work/repo"), d.workingDirectories)
     }
 
     @Test

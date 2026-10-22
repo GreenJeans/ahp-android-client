@@ -42,9 +42,13 @@ $sdk = "$env:LOCALAPPDATA\Android\Sdk"
 & "$sdk\cmdline-tools\latest\bin\sdkmanager.bat" --sdk_root=$sdk "emulator" "system-images;android-36;google_apis;x86_64"
 & "$sdk\emulator\emulator.exe" -accel-check                      # expect: WHPX ... is installed and usable
 & "$sdk\cmdline-tools\latest\bin\avdmanager.bat" create avd --name ahp-api36 --package "system-images;android-36;google_apis;x86_64" --device pixel_8
-& "$sdk\emulator\emulator.exe" -avd ahp-api36 -no-boot-anim       # leave running
+& "$sdk\emulator\emulator.exe" -avd ahp-api36 -no-boot-anim -gpu swiftshader_indirect -no-window   # leave running
 .\tools\run-device-tests.ps1 -Serial emulator-5554                 # one named emulator; refuses a physical phone
 ```
+
+`-no-window -gpu swiftshader_indirect` is the stable way to start it here: with the windowed host-GPU default the emulator crashed
+on start several times (exit `0xC0000005`, a stuck crash dialog) after earlier instances were stopped with `adb emu kill`. If it
+does, stop the leftover `emulator` and `qemu-system` processes by id and delete the AVD's stale `*.lock` files first.
 
 Do not use `.\gradlew.bat :app:connectedDebugAndroidTest` while a real phone is attached: it runs on every attached device
 and uninstalls the app afterwards, which wipes the phone's sign-in. `tools\run-device-tests.ps1` installs on the one serial

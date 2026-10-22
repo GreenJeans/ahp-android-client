@@ -9,7 +9,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -20,7 +19,6 @@ import dev.ahpclient.app.AppController
 import dev.ahpclient.app.AppState
 import dev.ahpclient.app.SignInStep
 import dev.ahpclient.ui.theme.AhpTheme
-import java.time.Instant
 
 /** Picks the screen for the current [AppState]. Holds no state of its own beyond what the controller exposes. */
 @Composable
@@ -51,8 +49,7 @@ fun AppRoot(
                     val open = current.open
                     if (open == null) {
                         val sessions by current.session.root.sessions.collectAsStateWithLifecycle()
-                        // Ages are computed when the list changes, which is often enough for "5 min ago".
-                        val now = remember(sessions) { Instant.now() }
+                        val now by rememberNow()
                         SessionsScreen(
                             host = current.host,
                             connection = connection,
@@ -68,7 +65,7 @@ fun AppRoot(
                     } else {
                         val sessionState by open.store.state.collectAsStateWithLifecycle()
                         val error by open.store.error.collectAsStateWithLifecycle()
-                        val now = remember(sessionState) { Instant.now() }
+                        val now by rememberNow()
                         SessionDetailScreen(sessionState, error, connection, now, controller::closeSession, content)
                     }
                 }

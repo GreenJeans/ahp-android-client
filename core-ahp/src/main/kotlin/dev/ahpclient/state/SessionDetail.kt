@@ -31,6 +31,19 @@ data class ChatRow(
     val whenText: String,
 )
 
+/** A working directory as a person reads it: a `file:` URI becomes its decoded path, anything else is shown unchanged. */
+fun displayPath(uri: String): String {
+    val parsed = try {
+        java.net.URI(uri)
+    } catch (_: java.net.URISyntaxException) {
+        return uri
+    }
+    val path = parsed.path ?: return uri
+    if (parsed.scheme != "file") return uri
+    // A Windows drive path arrives as /c:/Users/..., and the leading slash is noise.
+    return if (Regex("^/[A-Za-z]:").containsMatchIn(path)) path.substring(1) else path
+}
+
 data class SessionDetail(
     val title: String,
     val state: ActivityState,
@@ -52,7 +65,7 @@ data class SessionDetail(
             provider = state.provider,
             activity = state.activity?.takeIf { it.isNotBlank() },
             project = state.project?.displayName?.takeIf { it.isNotBlank() },
-            workingDirectories = state.workingDirectories.orEmpty(),
+            workingDirectories = state.workingDirectories.orEmpty().map(::displayPath),
             chats = state.chats.map { chat ->
                 ChatRow(
                     title = chat.title.ifBlank { SessionListModel.UNTITLED },

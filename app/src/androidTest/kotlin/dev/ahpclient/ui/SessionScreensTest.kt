@@ -16,11 +16,14 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.ahpclient.state.ActivityState
 import dev.ahpclient.state.ConnState
+import dev.ahpclient.state.RelativeTime
 import dev.ahpclient.state.SessionGoneException
 import dev.ahpclient.tunnel.TunnelInfo
 import dev.ahpclient.ui.theme.AhpTheme
@@ -271,5 +274,20 @@ class SessionScreensTest {
         val chips = rule.onAllNodesWithTag("status_chip")
         chips.assertCountEquals(4)
         listOf("Needs input", "In progress", "Error", "Idle").forEachIndexed { i, words -> chips[i].assertTextEquals(words) }
+    }
+
+    @Test
+    fun agesKeepCountingBetweenHostUpdates() {
+        var clockNow = Instant.parse("2026-10-26T10:30:00Z")
+        rule.setContent {
+            val ticking by rememberNow(periodMs = 1_000) { clockNow }
+            AhpTheme { androidx.compose.material3.Text(RelativeTime.format("2026-10-26T10:29:00.000Z", ticking), Modifier.testTag("age")) }
+        }
+        rule.onNodeWithTag("age").assertTextEquals("1 min ago")
+
+        clockNow = Instant.parse("2026-10-26T10:33:00Z")
+        rule.mainClock.advanceTimeBy(1_100)
+
+        rule.onNodeWithTag("age").assertTextEquals("4 min ago")
     }
 }

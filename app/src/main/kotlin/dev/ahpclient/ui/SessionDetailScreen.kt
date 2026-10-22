@@ -25,7 +25,6 @@ import androidx.compose.ui.unit.dp
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.SessionDetail
 import dev.ahpclient.state.SessionGoneException
-import dev.ahpclient.state.label
 import com.microsoft.agenthostprotocol.generated.SessionState
 import java.time.Instant
 
@@ -112,7 +111,6 @@ private fun Facts(detail: SessionDetail) {
         Fact("Agent", detail.provider)
         detail.project?.let { Fact("Project", it) }
         detail.workingDirectories.forEach { Fact("Folder", it) }
-        Fact("State", detail.state.label)
     }
 }
 
