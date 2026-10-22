@@ -17,4 +17,4 @@ dependencyResolutionManagement {
 }
 
 include(":core-ahp")
-// The :app module (Android) is added once an Android SDK is available; see README.
+include(":app")
