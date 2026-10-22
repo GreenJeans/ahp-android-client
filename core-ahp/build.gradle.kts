@@ -31,3 +31,12 @@ dependencies {
 tasks.test {
     useJUnitPlatform()
 }
+
+// Step 1.6 live probe: .\gradlew.bat -q --console=plain :core-ahp:probe --args="--watch 20"
+tasks.register<JavaExec>("probe") {
+    group = "verification"
+    description = "Signs in, attaches to a Remote Tunnel Access agent host and lists sessions (read-only)."
+    classpath = sourceSets.main.get().runtimeClasspath
+    mainClass.set("dev.ahpclient.probe.ProbeMainKt")
+    standardInput = System.`in`
+}
