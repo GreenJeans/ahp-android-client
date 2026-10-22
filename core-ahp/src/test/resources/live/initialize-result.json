@@ -1,0 +1,58 @@
+{
+  "protocolVersion": "1.0.0",
+  "serverSeq": 126551,
+  "snapshots": [
+    {
+      "resource": "ahp-root://",
+      "fromSeq": 126551,
+      "state": {
+        "agents": [
+          {
+            "provider": "copilotcli",
+            "displayName": "Copilot",
+            "description": "Copilot SDK agent running in the local agent host process",
+            "models": [
+              {
+                "id": "auto",
+                "provider": "copilotcli",
+                "name": "Auto",
+                "supportsVision": false
+              },
+              {
+                "id": "claude-sonnet-5.5",
+                "provider": "copilotcli",
+                "name": "Claude Sonnet 5.5",
+                "supportsVision": true
+              }
+            ],
+            "capabilities": {
+              "multipleChats": {
+                "fork": true,
+                "sideChat": true
+              },
+              "multipleWorkingDirectories": {
+                "immutablePrimary": true
+              }
+            }
+          }
+        ],
+        "activeSessions": 3,
+        "terminals": [],
+        "config": {
+          "schema": {
+            "type": "object",
+            "properties": {}
+          },
+          "values": {}
+        }
+      }
+    }
+  ],
+  "completionTriggerCharacters": [
+    "@",
+    "#",
+    "/",
+    " "
+  ],
+  "terminalCommandPrefix": "!"
+}

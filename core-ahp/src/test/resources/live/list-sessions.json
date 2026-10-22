@@ -1,0 +1,226 @@
+{
+  "items": [
+    {
+      "resource": "ahp-session:/00000000-0000-4000-8000-000000000001",
+      "provider": "claude",
+      "title": "Session A",
+      "status": 97,
+      "createdAt": "2026-10-20T09:00:00.000Z",
+      "modifiedAt": "2026-10-20T10:30:00.000Z",
+      "project": {
+        "uri": "file:///work/repo-a",
+        "displayName": "repo-a"
+      },
+      "workingDirectories": [
+        "file:///work/repo-a"
+      ],
+      "changes": {
+        "additions": 2448,
+        "deletions": 24,
+        "files": 17
+      },
+      "chats": [
+        {
+          "resource": "ahp-chat://default/YWhwLXNlc3Npb246LzAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMQ",
+          "title": "Chat 1",
+          "status": 33,
+          "interactivity": "full",
+          "origin": {
+            "kind": "user"
+          },
+          "changes": {
+            "additions": 3283,
+            "deletions": 55,
+            "files": 29
+          }
+        }
+      ],
+      "defaultChat": "ahp-chat://default/YWhwLXNlc3Npb246LzAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMQ"
+    },
+    {
+      "resource": "ahp-session:/00000000-0000-4000-8000-000000000002",
+      "provider": "claude",
+      "title": "Session B",
+      "status": 33,
+      "createdAt": "2026-10-21T09:00:00.000Z",
+      "modifiedAt": "2026-10-21T10:30:00.000Z",
+      "workingDirectories": [
+        "file:///work/repo-b"
+      ],
+      "chats": [
+        {
+          "resource": "ahp-chat://default/YWhwLXNlc3Npb246LzAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMg",
+          "title": "Chat 1",
+          "interactivity": "full"
+        }
+      ],
+      "defaultChat": "ahp-chat://default/YWhwLXNlc3Npb246LzAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMg"
+    },
+    {
+      "resource": "ahp-session:/00000000-0000-4000-8000-000000000003",
+      "provider": "copilotcli",
+      "title": "Session C",
+      "status": 40,
+      "createdAt": "2026-10-22T09:00:00.000Z",
+      "modifiedAt": "2026-10-22T10:30:00.000Z",
+      "project": {
+        "uri": "file:///work/repo-c",
+        "displayName": "repo-c"
+      },
+      "workingDirectories": [
+        "file:///work/repo-c"
+      ],
+      "changes": {
+        "additions": 3016,
+        "deletions": 77,
+        "files": 61
+      },
+      "chats": [
+        {
+          "resource": "ahp-chat://default/YWhwLXNlc3Npb246LzAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMw",
+          "title": "Chat 1",
+          "status": 8,
+          "origin": {
+            "kind": "user"
+          },
+          "changes": {
+            "additions": 3130,
+            "deletions": 76,
+            "files": 65
+          }
+        }
+      ],
+      "defaultChat": "ahp-chat://default/YWhwLXNlc3Npb246LzAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMw"
+    },
+    {
+      "resource": "ahp-session:/00000000-0000-4000-8000-000000000004",
+      "provider": "claude",
+      "title": "Session D",
+      "status": 33,
+      "createdAt": "2026-10-23T09:00:00.000Z",
+      "modifiedAt": "2026-10-23T10:30:00.000Z",
+      "project": {
+        "uri": "file:///work/repo-d",
+        "displayName": "repo-d"
+      },
+      "workingDirectories": [
+        "file:///work/repo-d"
+      ],
+      "changes": {
+        "additions": 9032,
+        "deletions": 1727,
+        "files": 78
+      },
+      "chats": [
+        {
+          "resource": "ahp-chat://default/YWhwLXNlc3Npb246LzAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwNA",
+          "title": "Chat 1",
+          "status": 33,
+          "origin": {
+            "kind": "user"
+          },
+          "changes": {
+            "additions": 9171,
+            "deletions": 1012,
+            "files": 102
+          }
+        },
+        {
+          "resource": "ahp-chat://default/YWhwLXNlc3Npb246LzAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwNA-1",
+          "title": "Chat 2",
+          "status": 33,
+          "interactivity": "full",
+          "origin": {
+            "kind": "fork",
+            "chat": "ahp-chat://default/YWhwLXNlc3Npb246LzAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwNA",
+            "turnId": "turn-1"
+          }
+        },
+        {
+          "resource": "ahp-chat://default/YWhwLXNlc3Npb246LzAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwNA-2",
+          "title": "Chat 3",
+          "status": 33,
+          "interactivity": "full",
+          "origin": {
+            "kind": "fork",
+            "chat": "ahp-chat://default/YWhwLXNlc3Npb246LzAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwNA",
+            "turnId": "turn-2"
+          }
+        }
+      ],
+      "defaultChat": "ahp-chat://default/YWhwLXNlc3Npb246LzAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwNA"
+    },
+    {
+      "resource": "ahp-session:/00000000-0000-4000-8000-0000000000e1",
+      "provider": "copilotcli",
+      "title": "Session E (synthetic: input needed)",
+      "status": 56,
+      "createdAt": "2026-10-24T09:00:00.000Z",
+      "modifiedAt": "2026-10-24T10:30:00.000Z",
+      "project": {
+        "uri": "file:///work/repo-e",
+        "displayName": "repo-e"
+      },
+      "workingDirectories": [
+        "file:///work/repo-e"
+      ],
+      "changes": {
+        "additions": 3016,
+        "deletions": 77,
+        "files": 61
+      },
+      "chats": [
+        {
+          "resource": "ahp-chat://default/YWhwLXNlc3Npb246LzAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMw",
+          "title": "Chat 1",
+          "status": 8,
+          "origin": {
+            "kind": "user"
+          },
+          "changes": {
+            "additions": 3130,
+            "deletions": 76,
+            "files": 65
+          }
+        }
+      ],
+      "defaultChat": "ahp-chat://default/YWhwLXNlc3Npb246LzAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMw"
+    },
+    {
+      "resource": "ahp-session:/00000000-0000-4000-8000-0000000000e2",
+      "provider": "copilotcli",
+      "title": "Session F (synthetic: error)",
+      "status": 2,
+      "createdAt": "2026-10-25T09:00:00.000Z",
+      "modifiedAt": "2026-10-25T10:30:00.000Z",
+      "project": {
+        "uri": "file:///work/repo-f",
+        "displayName": "repo-f"
+      },
+      "workingDirectories": [
+        "file:///work/repo-f"
+      ],
+      "changes": {
+        "additions": 3016,
+        "deletions": 77,
+        "files": 61
+      },
+      "chats": [
+        {
+          "resource": "ahp-chat://default/YWhwLXNlc3Npb246LzAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMw",
+          "title": "Chat 1",
+          "status": 8,
+          "origin": {
+            "kind": "user"
+          },
+          "changes": {
+            "additions": 3130,
+            "deletions": 76,
+            "files": 65
+          }
+        }
+      ],
+      "defaultChat": "ahp-chat://default/YWhwLXNlc3Npb246LzAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMw"
+    }
+  ]
+}
