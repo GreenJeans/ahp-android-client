@@ -1,0 +1,16 @@
+{
+  "tunnelId": "test-tunnel-1",
+  "clusterId": "usw2",
+  "labels": ["dev-box", "protocolv6", "vscode-server-launcher", "_flag3"],
+  "status": { "hostConnectionCount": { "current": 1 } },
+  "ports": [{ "portNumber": 31545 }, { "portNumber": 31546 }],
+  "endpoints": [
+    {
+      "connectionMode": "TunnelRelay",
+      "hostId": "host-1",
+      "portUriFormat": "https://abc123-{port}.usw2.devtunnels.ms/",
+      "portSshCommandFormat": "ssh ..."
+    }
+  ],
+  "accessTokens": { "connect": "connect-token-value" }
+}

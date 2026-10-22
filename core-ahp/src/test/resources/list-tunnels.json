@@ -1,0 +1,38 @@
+{
+  "value": [
+    {
+      "clusterId": "usw2",
+      "value": [
+        {
+          "tunnelId": "test-tunnel-1",
+          "clusterId": "usw2",
+          "name": "ignored-because-a-label-names-it",
+          "labels": ["dev-box", "protocolv6", "vscode-server-launcher", "_flag3"],
+          "status": { "hostConnectionCount": { "current": 1 } },
+          "ports": [{ "portNumber": 31545 }, { "portNumber": 31546 }],
+          "accessTokens": { "connect": "list-token-ignored" }
+        },
+        {
+          "tunnelId": "test-tunnel-2",
+          "clusterId": "usw2",
+          "labels": ["old-laptop", "protocolv5", "vscode-server-launcher"],
+          "status": { "hostConnectionCount": 0 },
+          "ports": [{ "portNumber": 31546 }]
+        }
+      ]
+    },
+    {
+      "clusterId": "euw",
+      "value": [
+        {
+          "tunnelId": "test-tunnel-3",
+          "clusterId": "euw",
+          "name": "legacy",
+          "labels": ["vscode-server-launcher"],
+          "status": { "hostConnectionCount": 1 },
+          "ports": []
+        }
+      ]
+    }
+  ]
+}
