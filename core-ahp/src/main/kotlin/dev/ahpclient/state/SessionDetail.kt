@@ -1,5 +1,6 @@
 package dev.ahpclient.state
 
+import com.microsoft.agenthostprotocol.generated.ChatInputOption
 import com.microsoft.agenthostprotocol.generated.ChatInputQuestion
 import com.microsoft.agenthostprotocol.generated.ChatInputQuestionBoolean
 import com.microsoft.agenthostprotocol.generated.ChatInputQuestionMultiSelect
@@ -22,6 +23,18 @@ import java.time.Instant
 data class InputRequestView(
     val kind: String,
     val text: String,
+    val questions: List<QuestionView> = emptyList(),
+)
+
+/**
+ * One question of a chat request. [prompt] is null when it is already the request's headline, so the screen does not
+ * say it twice. [options] holds the choices of a pick-one or pick-any question, so the user can tell from the phone what
+ * the agent is asking before going to VS Code to answer.
+ */
+data class QuestionView(
+    val prompt: String?,
+    val answerKind: String,
+    val options: List<String>,
 )
 
 data class ChatRow(
@@ -80,7 +93,7 @@ data class SessionDetail(
 
         /** Total: a request kind this client does not know is still shown rather than dropped. */
         fun describe(request: SessionInputRequest): InputRequestView = when (request) {
-            is SessionInputRequestChatInput -> InputRequestView("Question", chatInputText(request))
+            is SessionInputRequestChatInput -> chatInputView(request)
             is SessionInputRequestToolConfirmation -> InputRequestView("Approval", toolText(request.value.toolCall))
             is SessionInputRequestToolClientExecution -> {
                 val call = request.value.toolCall
@@ -93,10 +106,32 @@ data class SessionDetail(
             else -> InputRequestView("Input", "The agent is waiting for input.")
         }
 
-        private fun chatInputText(request: SessionInputRequestChatInput): String {
+        private fun chatInputView(request: SessionInputRequestChatInput): InputRequestView {
             val input = request.value.request
-            val first = input.questions.orEmpty().firstNotNullOfOrNull(::questionText)
-            return input.message?.takeIf { it.isNotBlank() } ?: first ?: "The agent has a question."
+            val questions = input.questions.orEmpty()
+            val headline = input.message?.takeIf { it.isNotBlank() }
+                ?: questions.firstNotNullOfOrNull(::questionText)
+                ?: "The agent has a question."
+            return InputRequestView("Question", headline, questions.map { questionView(it, headline) })
+        }
+
+        private fun questionView(question: ChatInputQuestion, headline: String): QuestionView {
+            val text = questionText(question)
+            val prompt = if (text == null) "A question this app cannot show." else text.takeIf { it != headline }
+            return when (question) {
+                is ChatInputQuestionText -> QuestionView(prompt, "Free text", emptyList())
+                is ChatInputQuestionNumber -> QuestionView(prompt, "Number", emptyList())
+                is ChatInputQuestionBoolean -> QuestionView(prompt, "Yes or no", emptyList())
+                is ChatInputQuestionSingleSelect -> QuestionView(prompt, "Pick one", question.value.options.orEmpty().map(::optionText))
+                is ChatInputQuestionMultiSelect -> QuestionView(prompt, "Pick any", question.value.options.orEmpty().map(::optionText))
+                else -> QuestionView(prompt, "Unknown", emptyList())
+            }
+        }
+
+        private fun optionText(option: ChatInputOption): String = buildString {
+            append(option.label.ifBlank { option.id })
+            option.description?.takeIf { it.isNotBlank() }?.let { append(" — ").append(it) }
+            if (option.recommended == true) append(" (recommended)")
         }
 
         private fun questionText(question: ChatInputQuestion): String? = when (question) {

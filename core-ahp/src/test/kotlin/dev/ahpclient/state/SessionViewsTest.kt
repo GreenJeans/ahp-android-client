@@ -236,6 +236,68 @@ class SessionDetailTest {
     }
 
     @Test
+    fun `a pick-one question lists its options, with description and the recommended one marked`() {
+        val request = """[{"kind":"chatInput","id":"r1","chat":"c","request":{"id":"q","questions":[
+            {"kind":"single-select","id":"a","message":"Which branch?","options":[
+                {"id":"m","label":"main","description":"the default","recommended":true},{"id":"d","label":"develop"}]}]}}]"""
+
+        val view = SessionDetail.from(state(request), now).inputNeeded.single()
+
+        assertEquals("Which branch?", view.text)
+        assertEquals(
+            listOf(QuestionView(prompt = null, answerKind = "Pick one", options = listOf("main — the default (recommended)", "develop"))),
+            view.questions,
+        )
+    }
+
+    @Test
+    fun `a message headline keeps every question below it, each with its own prompt`() {
+        val request = """[{"kind":"chatInput","id":"r1","chat":"c","request":{"id":"q","message":"A few things","questions":[
+            {"kind":"multi-select","id":"a","message":"Which files?","options":[{"id":"1","label":"a.ts"},{"id":"2","label":"b.ts"}]},
+            {"kind":"boolean","id":"b","message":"Run the tests?"},
+            {"kind":"text","id":"c","title":"Notes","message":""},
+            {"kind":"number","id":"d","message":"How many?"}]}}]"""
+
+        val view = SessionDetail.from(state(request), now).inputNeeded.single()
+
+        assertEquals("A few things", view.text)
+        assertEquals(
+            listOf(
+                QuestionView("Which files?", "Pick any", listOf("a.ts", "b.ts")),
+                QuestionView("Run the tests?", "Yes or no", emptyList()),
+                QuestionView("Notes", "Free text", emptyList()),
+                QuestionView("How many?", "Number", emptyList()),
+            ),
+            view.questions,
+        )
+    }
+
+    @Test
+    fun `an option with no label falls back to its id`() {
+        val request = """[{"kind":"chatInput","id":"r1","chat":"c","request":{"id":"q","questions":[
+            {"kind":"single-select","id":"a","message":"Pick","options":[{"id":"opt-1","label":""}]}]}}]"""
+
+        assertEquals(listOf("opt-1"), SessionDetail.from(state(request), now).inputNeeded.single().questions.single().options)
+    }
+
+    @Test
+    fun `a question kind this client does not know is still listed`() {
+        val request = """[{"kind":"chatInput","id":"r1","chat":"c","request":{"id":"q","message":"Hmm","questions":[{"kind":"hologram","id":"a"}]}}]"""
+
+        assertEquals(
+            listOf(QuestionView("A question this app cannot show.", "Unknown", emptyList())),
+            SessionDetail.from(state(request), now).inputNeeded.single().questions,
+        )
+    }
+
+    @Test
+    fun `a request with only a message has no question rows`() {
+        val request = """[{"kind":"chatInput","id":"r1","chat":"c","request":{"id":"q","message":"Ready?"}}]"""
+
+        assertEquals(emptyList(), SessionDetail.from(state(request), now).inputNeeded.single().questions)
+    }
+
+    @Test
     fun `a request kind this client does not know is still listed`() {
         val request = """[{"kind":"somethingNew","id":"r9","payload":1}]"""
 

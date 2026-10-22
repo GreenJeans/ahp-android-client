@@ -23,6 +23,7 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import dev.ahpclient.state.ConnState
+import dev.ahpclient.state.QuestionView
 import dev.ahpclient.state.SessionDetail
 import dev.ahpclient.state.SessionGoneException
 import com.microsoft.agenthostprotocol.generated.SessionState
@@ -76,6 +77,7 @@ private fun DetailBody(detail: SessionDetail) {
                         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Text(request.kind, style = MaterialTheme.typography.labelLarge)
                             Text(request.text, style = MaterialTheme.typography.bodyLarge)
+                            request.questions.forEach { question -> QuestionBlock(question) }
                         }
                     }
                 }
@@ -101,6 +103,17 @@ private fun DetailBody(detail: SessionDetail) {
                     StatusChip(chat.state)
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun QuestionBlock(question: QuestionView) {
+    Column(modifier = Modifier.padding(top = 8.dp).testTag("question"), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        question.prompt?.let { Text(it, style = MaterialTheme.typography.bodyLarge) }
+        Text(question.answerKind, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        question.options.forEach { option ->
+            Text("• $option", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(start = 8.dp).testTag("question_option"))
         }
     }
 }

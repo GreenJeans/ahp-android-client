@@ -237,6 +237,21 @@ class SessionScreensTest {
     }
 
     @Test
+    fun aQuestionWithOptionsListsThemSoTheChoiceIsClearFromThePhone() {
+        val request = """[{"kind":"chatInput","id":"r1","chat":"c","request":{"id":"q","questions":[
+            {"kind":"single-select","id":"a","message":"Which branch?","options":[
+                {"id":"m","label":"main","recommended":true},{"id":"d","label":"develop"}]}]}}]"""
+        showDetail(detailState(request))
+
+        val options = rule.onAllNodesWithTag("question_option", useUnmergedTree = true)
+        options.assertCountEquals(2)
+        options[0].assertTextEquals("• main (recommended)")
+        options[1].assertTextEquals("• develop")
+        rule.onNodeWithTag("input_request").assertTextContains("Pick one", substring = true)
+        rule.onNodeWithTag("input_request").assertTextContains("Which branch?", substring = true)
+    }
+
+    @Test
     fun detailOffersNoWaitingSectionWhenNothingIsPending() {
         showDetail(detailState())
 
