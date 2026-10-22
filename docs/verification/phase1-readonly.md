@@ -58,6 +58,12 @@ Pass criteria:
   `fetchTurns` and `ping`; the `NOT-READ` search is False.
 - While the screen was off, `initialize` was sent once for the connection, not again: a second `initialize` or a
   `reconnect` during the lock means the socket dropped despite the service.
+- **Doze (the main open risk).** A foreground service keeps the app running but Android can still suspend its network
+  once the phone has been idle: screen off, unplugged and not moving for a while. Run a second, longer pass: unplug,
+  lock, put the phone down and leave it for 45 to 60 minutes, then ask a question in VS Code. If no notification arrives
+  and `AhpWire` shows a second `initialize` or `reconnect` after the idle period, the socket was cut. The usual remedies
+  are asking the user to exempt the app from battery optimization (a system dialog, and a Play policy question) or
+  accepting that alerts can be late on an idle phone. Decide with the result, not before.
 - Exactly one "Needs your input" notification for the question; a locked screen showed no session title; tapping it
   opened that session.
 - Stop removed the persistent notification and nothing was left running; sign-out did the same.
