@@ -17,9 +17,10 @@ kotlin {
 }
 
 dependencies {
+    // api, not implementation: OkHttpClient, CoroutineScope and the Flow types appear in this module's public signatures.
     api(libs.ahp)
-    implementation(libs.okhttp)
-    implementation(libs.coroutines.core)
+    api(libs.okhttp)
+    api(libs.coroutines.core)
 
     testImplementation(platform(libs.junit.bom))
     testImplementation(kotlin("test"))
