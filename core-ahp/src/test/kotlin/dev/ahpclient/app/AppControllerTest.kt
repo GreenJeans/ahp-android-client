@@ -10,6 +10,12 @@ import dev.ahpclient.security.VaultLoad
 import dev.ahpclient.state.Backoff
 import dev.ahpclient.state.CHAT_A
 import dev.ahpclient.state.CHAT_B
+import dev.ahpclient.state.ApprovalGate
+import dev.ahpclient.state.ChatInteractor
+import dev.ahpclient.state.DispatchOutcome
+import dev.ahpclient.state.InteractResult
+import dev.ahpclient.state.SNAPSHOT_SEQ
+import dev.ahpclient.state.echoOf
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.HostConnector
 import dev.ahpclient.state.HostScript
@@ -91,6 +97,7 @@ class AppControllerTest {
         devTunnelsUrl: ((MockWebServer) -> String)? = null,
         githubUrl: ((MockWebServer) -> String)? = null,
         interaction: InteractionConsent = InteractionConsent(),
+        approvalGate: ApprovalGate? = null,
         block: suspend Rig.() -> Unit,
     ) = MockWebServer().use { server ->
         server.start()
@@ -111,16 +118,14 @@ class AppControllerTest {
             }
             HostSession(connector, backgroundScope, clientInfo, Backoff(), clientId = "client-${tunnel.tunnelId}").also { created += it }
         }
-        val controller = AppController(
-            auth = GitHubDeviceAuth(baseUrl = githubUrl?.invoke(server) ?: server.url("/").toString(), now = now),
-            vault = vault,
-            devTunnels = DevTunnelsClient(serviceUrl = devTunnelsUrl?.invoke(server) ?: server.url("/").toString()),
-            lastHost = lastHost,
-            sessions = factory,
-            scope = backgroundScope,
-            now = now,
-            interaction = interaction,
-        )
+        val auth = GitHubDeviceAuth(baseUrl = githubUrl?.invoke(server) ?: server.url("/").toString(), now = now)
+        val tunnels = DevTunnelsClient(serviceUrl = devTunnelsUrl?.invoke(server) ?: server.url("/").toString())
+        // With no gate given the controller's own default is used, which is the one a test of the default must see.
+        val controller = if (approvalGate == null) {
+            AppController(auth, vault, tunnels, lastHost, factory, backgroundScope, now, interaction)
+        } else {
+            AppController(auth, vault, tunnels, lastHost, factory, backgroundScope, now, interaction, approvalGate)
+        }
         Rig(server, controller, vault, box, store, lastHost, seen, created, connectors, interaction).block()
     }
 
@@ -1000,6 +1005,75 @@ class AppControllerTest {
 
             assertFalse(controller.interactionAllowed.value)
             assertFalse(settings.saved, "it is off on disk too, so the next sign-in starts read only")
+        }
+    }
+
+    private val pendingTool =
+        """{"id":"t9","message":{"text":"go","origin":{"kind":"user"}},"startedAt":"2026-10-22T10:05:00.000Z","responseParts":[
+            {"kind":"toolCall","toolCall":{"status":"pending-confirmation","toolCallId":"c1","toolName":"run_in_terminal","displayName":"Run in Terminal",
+            "invocationMessage":"Run it","toolInput":"{}","confirmationTitle":"Run?","options":[]}}]}"""
+
+    private suspend fun TestScope.openChatInteractor(rig: Rig): ChatInteractor {
+        rig.controller.openSession(SESSION_C)
+        assertIs<AppState.Connected>(rig.state).open!!.store.state.first { it != null }
+        runCurrent()
+        rig.controller.openChat(CHAT_A)
+        val open = assertIs<AppState.Connected>(rig.state).open!!.chat!!
+        // Until the chat has loaded nothing can be done in it, whatever the tier: wait, so a test of the tier tests the tier.
+        open.store.state.first { it != null }
+        return open.interactor
+    }
+
+    private fun Rig.dispatches() = connectors.single().sockets.flatMap { it.sent }.filter { it["method"]?.jsonPrimitive?.content == "dispatchAction" }
+
+    @Test
+    fun `an open chat sends a message only once interaction is allowed, and it reaches the host as one dispatch`() = runTest {
+        var clientId = ""
+        val script = { HostScript(sessionChats = "[${chatSummaryJson(CHAT_A)}]", onDispatch = { echoOf(it, SNAPSHOT_SEQ + 1, clientId = clientId) }) }
+        withRig(script = script) {
+            val connected = connectToFirstHost()
+            clientId = "client-${connected.host.tunnelId}"
+            val interactor = openChatInteractor(this)
+
+            assertEquals(InteractResult.NotAllowed, interactor.send("hello"), "read only until the user allows more")
+            assertTrue(dispatches().isEmpty())
+
+            assertTrue(controller.setInteraction(true))
+            connected.session.canInteract.first { it }
+            runCurrent()
+
+            assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), interactor.send("hello"))
+            assertEquals(1, dispatches().size)
+        }
+    }
+
+    @Test
+    fun `with the default gate no approval is ever sent, and a gate that says yes lets one through`() = runTest {
+        var clientId = ""
+        val script = {
+            HostScript(
+                sessionChats = "[${chatSummaryJson(CHAT_A)}]",
+                chatActiveTurn = pendingTool,
+                onDispatch = { echoOf(it, SNAPSHOT_SEQ + 1, clientId = clientId) },
+            )
+        }
+        withRig(script = script, interaction = InteractionConsent(FakeInteractionSettings(saved = true))) {
+            val connected = connectToFirstHost()
+            clientId = "client-${connected.host.tunnelId}"
+            val interactor = openChatInteractor(this)
+            runCurrent()
+
+            assertEquals(InteractResult.NotConfirmed, interactor.approve("c1"), "a build with no device check cannot approve")
+            assertTrue(dispatches().isEmpty())
+        }
+        withRig(script = script, interaction = InteractionConsent(FakeInteractionSettings(saved = true)), approvalGate = ApprovalGate { true }) {
+            val connected = connectToFirstHost()
+            clientId = "client-${connected.host.tunnelId}"
+            val interactor = openChatInteractor(this)
+            runCurrent()
+
+            assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), interactor.approve("c1"))
+            assertEquals(1, dispatches().size)
         }
     }
 }

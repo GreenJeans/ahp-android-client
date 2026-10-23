@@ -8,6 +8,8 @@ import dev.ahpclient.security.TokenVault
 import dev.ahpclient.security.VaultCryptoException
 import dev.ahpclient.security.VaultLoad
 import dev.ahpclient.state.ConnState
+import dev.ahpclient.state.ApprovalGate
+import dev.ahpclient.state.ChatInteractor
 import dev.ahpclient.state.ExpansionState
 import dev.ahpclient.state.HostSession
 import dev.ahpclient.tunnel.DevTunnelsClient
@@ -43,6 +45,8 @@ class AppController(
     private val scope: CoroutineScope,
     private val now: () -> Instant = Instant::now,
     private val interaction: InteractionConsent = InteractionConsent(),
+    /** The device check in front of every tool approval. The default refuses everything, so a build with no gate can never approve. */
+    private val approvalGate: ApprovalGate = ApprovalGate { false },
 ) {
     private val _state = MutableStateFlow<AppState>(AppState.Restoring)
     val state: StateFlow<AppState> = _state.asStateFlow()
@@ -151,7 +155,15 @@ class AppController(
         val listed = open.store.state.value?.chats?.any { it.resource == uri } == true
         if (!listed) return
         val store = current.session.openChat(uri)
-        if (!_state.compareAndSet(current, current.copy(open = open.copy(chat = OpenChat(uri, store, expansionFor(uri)))))) current.session.closeChat(uri)
+        val session = current.session
+        val interactor = ChatInteractor(
+            chatUri = uri,
+            chat = { store.state.value },
+            canInteract = { session.canInteract.value },
+            dispatch = session::dispatch,
+            gate = approvalGate,
+        )
+        if (!_state.compareAndSet(current, current.copy(open = open.copy(chat = OpenChat(uri, store, expansionFor(uri), interactor))))) current.session.closeChat(uri)
     }
 
     /** Leaves the open transcript and returns to the session detail. */
