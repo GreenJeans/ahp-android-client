@@ -4,15 +4,17 @@ Native Android client for VS Code agent sessions, built on the open
 [Agent Host Protocol](https://github.com/microsoft/agent-host-protocol) (AHP) and the same Dev Tunnel
 that backs **Remote Tunnel Access** (the blue **A** in VS Code) and `vscode.dev/agents`.
 
-Phase 1 is a **read-only monitor**; the long-term goal is a near-full replacement for the VS Code
-Agents panel. The authoritative plan, acceptance criteria and progress log are tracked separately.
+Phases 1 and 2 are a **read-only monitor** with a read-only chat transcript. Phase 3 adds acting for the user (send a message,
+answer a question, approve or deny a tool call, stop the agent), **off by default** and behind an explicit switch; the
+long-term goal is a near-full replacement for the VS Code Agents panel. The authoritative plan, acceptance criteria and
+progress log are tracked separately.
 
 ## Modules
 
 | Module | Type | Status |
 |---|---|---|
-| `core-ahp` | Pure Kotlin/JVM library: GitHub device-flow auth, Dev Tunnels REST, tunnel socket and gateway selection, AHP connection, state stores (sessions and chats, with older-turn paging), session list and detail models, the transcript model, background-monitoring logic, capability allowlist | Phase 1 complete, live-verified except where `docs/verification/phase1-readonly.md` says otherwise; Phase 2 in progress |
-| `app` | Android application (Jetpack Compose): sign-in, host list, sessions list, read-only session detail, a read-only chat transcript with markdown and collapsible reasoning, tool-call and result blocks, opt-in background monitoring with a foreground service and needs-input notifications | Phase 1 built; Phase 2 transcript built; debug APK |
+| `core-ahp` | Pure Kotlin/JVM library: GitHub device-flow auth, Dev Tunnels REST, tunnel socket and gateway selection, AHP connection, state stores (sessions and chats, with older-turn paging), session list and detail models, the transcript model, background-monitoring logic, the capability allowlist, and the write path (action builders, the interactor, the question form model, the consent setting) | Phase 1 complete, live-verified except where `docs/verification/phase1-readonly.md` says otherwise; Phase 2 built; Phase 3 built and tested, not yet live-tested |
+| `app` | Android application (Jetpack Compose): sign-in, host list, sessions list, read-only session detail, a chat transcript with markdown and collapsible reasoning, tool-call and result blocks, opt-in background monitoring with a foreground service and needs-input notifications, and, when the user turns it on, a message box, tool approval buttons behind the phone's own device check, and a form for the agent's questions | Phase 1 built; Phase 2 transcript built; Phase 3 built; debug APK |
 
 ## Build
 
@@ -93,15 +95,36 @@ local: `captures/` is gitignored. The device code lasts 15 minutes; approve it a
 | Android Gradle Plugin | 9.4.1 | Built-in Kotlin; only the Compose compiler plugin is applied |
 | Compose BOM | 2026.09.00 | Needs `compileSdk` 37 |
 | `com.mikepenz:multiplatform-markdown-renderer-m3` | 0.46.0 | Apache-2.0. Renders agent output. Its JetBrains Compose artifacts resolve to metadata-only redirects onto the AndroidX ones, so there is one Compose runtime. No image loader (Coil) is added on purpose |
+| `androidx.biometric:biometric` | 1.1.0 | The phone's own prompt in front of tool approvals. Last stable release; the newer ones are alphas, which a security gate should not be built on |
+| `androidx.fragment:fragment` | 1.9.1 | Pinned because biometric 1.1.0 pulls an old Fragment that breaks the ActivityResult API under `FragmentActivity` (lint caught it) |
 
 ## Security
 
-The client never stores or logs a token in clear text, and Phase 1 sends only read-tier AHP methods
-(enforced by `CapabilityPolicy`). See the spec's Security section before changing either.
+The client never stores or logs a token in clear text. Its outbound AHP traffic is controlled by one gate,
+`CapabilityPolicy`, with two tiers: `READ` (the default: connect, subscribe, list, page through history) and `INTERACT`
+(`READ` plus `dispatchAction` for exactly eight chat action types). See the spec's Security section before changing either.
+
+**Acting for the user is off by default.** The `INTERACT` tier is used only after the user turns on "Let this app act for me"
+and confirms a dialog that says what it allows. Turning it off ends the live connection at once and reconnects read-only;
+signing out turns it off. A saved choice that cannot be read counts as off, and a turn-on that cannot be saved is not granted.
+Everything the user does goes out through `ChatInteractor`, which refuses unless the connection allows it and the host shows
+the chat as interactive, and the screen shows nothing as done until the host has echoed the action back (no optimistic
+state). A host's refusal is never applied to local state.
+
+**Approving a tool call is the one action that lets the agent run something on the user's machine**, so it alone is behind
+the phone's own device check (`BiometricApprovalGate`: strong biometric or screen lock on Android 11+; a weak biometric or
+screen lock before that). The prompt names the tool. It is skipped for deny, refused when the app is not on screen, and is
+checked twice (before the prompt and again after it, in case the call finished meanwhile). It proves a person unlocked the
+phone; it does not bind a key to the approval. A build with no gate refuses every approval. Never allowed at any tier without
+a new decision: `terminal/input`, file writes, session creation or disposal, and signing in to anything on the user's behalf.
+
+When the outcome of an action is unknown (no echo in time, or the connection dropped first) the message stays in the box
+with a warning not to send it twice, because resending would duplicate it.
 
 Debug builds also write one logcat line per outbound frame under the tag `AhpWire`: the method name and nothing else
 (never parameters, URLs or headers), with `NOT-READ` in front of any method outside the read tier. Release builds log
-nothing. To check a run on a device: `adb logcat -d -s AhpWire`, and confirm no line contains `NOT-READ`.
+nothing. To check a run on a device: `adb logcat -d -s AhpWire`, and confirm no line contains `NOT-READ` while acting for the
+user is off. With it on, a `dispatchAction` line carries `NOT-READ` by design; the log does not name the action type.
 
 Text in a chat transcript is written by the agent or by whatever it read, so it is treated as untrusted. It is rendered as
 markdown but never as HTML; no image loader is installed, so an image link is never fetched; and tapping a link opens a
