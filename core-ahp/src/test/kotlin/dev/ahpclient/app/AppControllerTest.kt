@@ -77,6 +77,7 @@ class AppControllerTest {
         val tokensSeenByHost: MutableList<String>,
         val created: MutableList<HostSession>,
         val connectors: MutableList<ScriptedConnector>,
+        val interaction: InteractionConsent,
     ) {
         val state get() = controller.state.value
     }
@@ -89,6 +90,7 @@ class AppControllerTest {
         now: () -> Instant = { Instant.parse("2026-10-22T12:00:00Z") },
         devTunnelsUrl: ((MockWebServer) -> String)? = null,
         githubUrl: ((MockWebServer) -> String)? = null,
+        interaction: InteractionConsent = InteractionConsent(),
         block: suspend Rig.() -> Unit,
     ) = MockWebServer().use { server ->
         server.start()
@@ -100,9 +102,11 @@ class AppControllerTest {
         val created = mutableListOf<HostSession>()
         val connectors = mutableListOf<ScriptedConnector>()
         val factory = HostSessionFactory { tunnel: TunnelInfo, accessToken ->
-            val scripted = ScriptedConnector(script()).also { connectors += it }
+            // Enough scripts for a reconnect or two, which tests of the interaction setting cause on purpose.
+            val scripted = ScriptedConnector(script(), script(), script()).also { connectors += it }
             val connector = HostConnector { clientId, seq, scope: CoroutineScope ->
                 seen += accessToken().reveal()
+                scripted.policy = interaction.policy()
                 scripted.connect(clientId, seq, scope)
             }
             HostSession(connector, backgroundScope, clientInfo, Backoff(), clientId = "client-${tunnel.tunnelId}").also { created += it }
@@ -115,8 +119,9 @@ class AppControllerTest {
             sessions = factory,
             scope = backgroundScope,
             now = now,
+            interaction = interaction,
         )
-        Rig(server, controller, vault, box, store, lastHost, seen, created, connectors).block()
+        Rig(server, controller, vault, box, store, lastHost, seen, created, connectors, interaction).block()
     }
 
     private suspend fun Rig.await(match: (AppState) -> Boolean): AppState = controller.state.first(match)
@@ -931,6 +936,70 @@ class AppControllerTest {
             assertEquals(ConnState.Stopped, created.single().connection.value)
             assertEquals(VaultLoad.Absent, vault.load())
             assertFalse(box.keyExists)
+        }
+    }
+
+    @Test
+    fun `turning interaction on reconnects the live session under the interact tier, and off drops that connection`() = runTest {
+        withRig {
+            val session = connectToFirstHost().session
+            assertFalse(session.canInteract.value, "read only until the user allows more")
+            assertFalse(controller.interactionAllowed.value)
+
+            assertTrue(controller.setInteraction(true))
+            session.canInteract.first { it }
+            assertTrue(controller.interactionAllowed.value)
+
+            assertTrue(controller.setInteraction(false))
+            assertFalse(session.canInteract.value, "the controls go the moment the permission does")
+            assertFalse(controller.interactionAllowed.value)
+            runCurrent()
+            session.connection.first { it == ConnState.Online }
+            assertFalse(session.canInteract.value)
+            assertEquals(3, connectors.single().sockets.size, "one connection for each tier change")
+        }
+    }
+
+    @Test
+    fun `a saved yes is read before the first connection, which is then made under the interact tier`() = runTest {
+        withRig(interaction = InteractionConsent(FakeInteractionSettings(saved = true))) {
+            val session = connectToFirstHost().session
+            runCurrent()
+
+            assertTrue(session.canInteract.value)
+            assertEquals(1, connectors.single().sockets.size, "no reconnect was needed")
+        }
+    }
+
+    @Test
+    fun `a yes that cannot be saved is not granted and does not disturb the session`() = runTest {
+        val settings = FakeInteractionSettings().apply { failWrites = true }
+        withRig(interaction = InteractionConsent(settings)) {
+            val session = connectToFirstHost().session
+
+            assertFalse(controller.setInteraction(true))
+            runCurrent()
+
+            assertFalse(controller.interactionAllowed.value)
+            assertFalse(session.canInteract.value)
+            assertEquals(1, connectors.single().sockets.size, "nothing changed, so nothing reconnected")
+        }
+    }
+
+    @Test
+    fun `signing out takes the permission back`() = runTest {
+        val settings = FakeInteractionSettings()
+        withRig(interaction = InteractionConsent(settings)) {
+            connectToFirstHost()
+            assertTrue(controller.setInteraction(true))
+            assertTrue(controller.interactionAllowed.value)
+
+            controller.signOut()
+            await { it is AppState.SignedOut }
+            runCurrent()
+
+            assertFalse(controller.interactionAllowed.value)
+            assertFalse(settings.saved, "it is off on disk too, so the next sign-in starts read only")
         }
     }
 }

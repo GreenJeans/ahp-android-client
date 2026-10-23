@@ -42,9 +42,13 @@ class AppController(
     private val sessions: HostSessionFactory,
     private val scope: CoroutineScope,
     private val now: () -> Instant = Instant::now,
+    private val interaction: InteractionConsent = InteractionConsent(),
 ) {
     private val _state = MutableStateFlow<AppState>(AppState.Restoring)
     val state: StateFlow<AppState> = _state.asStateFlow()
+
+    /** Whether the user has allowed this app to act for them. Off until they turn it on, and off again after signing out. */
+    val interactionAllowed: StateFlow<Boolean> get() = interaction.allowed
 
     @Volatile
     private var token: GitHubToken? = null
@@ -56,7 +60,24 @@ class AppController(
     private val expansions = LinkedHashMap<String, ExpansionState>()
 
     fun start() {
-        scope.launch { restore() }
+        // The saved choice is read before anything can connect, so the first connection already uses the right tier.
+        scope.launch {
+            interaction.load()
+            restore()
+        }
+    }
+
+    /**
+     * Allows or forbids this app to send messages, answers and approvals as the user, and reconnects the live session so
+     * the new tier applies now rather than at the next drop. Turning it off ends the connection that held the permission.
+     *
+     * @return true when the choice was saved. Turning it off takes effect either way.
+     */
+    suspend fun setInteraction(on: Boolean): Boolean {
+        val saved = interaction.set(on)
+        // Reconnect only when the permission really changed: a turn-on that could not be saved changed nothing.
+        if (interaction.allowed.value == on) (_state.value as? AppState.Connected)?.session?.restart()
+        return saved
     }
 
     fun signIn() {
@@ -282,6 +303,7 @@ class AppController(
         cancelWatchJob()
         forgetExpansions()
         (_state.value as? AppState.Connected)?.session?.stop()
+        interaction.set(false)
         token = null
         safeClear()
         _state.value = AppState.SignedOut(SignInStep.Idle, notice, offerRevoke)

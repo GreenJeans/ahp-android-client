@@ -6,8 +6,10 @@ import android.util.Log
 import androidx.datastore.preferences.preferencesDataStoreFile
 import dev.ahpclient.app.AppController
 import dev.ahpclient.app.HostSessionFactory
+import dev.ahpclient.app.InteractionConsent
 import dev.ahpclient.app.MonitorCoordinator
 import dev.ahpclient.auth.GitHubDeviceAuth
+import dev.ahpclient.data.PrefsInteractionSettings
 import dev.ahpclient.data.PrefsLastHostStore
 import dev.ahpclient.data.PrefsMonitorSettings
 import dev.ahpclient.monitor.AndroidMonitorService
@@ -53,11 +55,15 @@ class AppContainer(context: Context) {
             devTunnels = devTunnels,
             lastHost = PrefsLastHostStore(prefs),
             sessions = HostSessionFactory { tunnel, accessToken ->
-                HostSession(TunnelHostConnector(devTunnels, gateway, tunnel, accessToken), appScope, clientInfo)
+                HostSession(TunnelHostConnector(devTunnels, gateway, tunnel, accessToken, policy = interaction::policy), appScope, clientInfo)
             },
             scope = appScope,
+            interaction = interaction,
         )
     }
+
+    /** Off until the user turns it on, and off again at sign-out. Decides the tier of every new connection. */
+    private val interaction by lazy { InteractionConsent(PrefsInteractionSettings(prefs)) }
 
     private val monitorService by lazy { AndroidMonitorService(appContext) }
 

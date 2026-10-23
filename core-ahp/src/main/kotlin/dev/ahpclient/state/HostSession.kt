@@ -135,6 +135,7 @@ class HostSession(
      */
     fun restart() {
         epoch.incrementAndGet()
+        _canInteract.value = false
         current?.close()
     }
 
