@@ -32,6 +32,7 @@ dependencies {
     implementation(libs.activity.compose)
     implementation(libs.datastore.preferences)
     implementation(libs.browser)
+    implementation(libs.biometric)
     implementation(libs.lifecycle.runtime.compose)
     implementation(libs.markdown.renderer.m3)
     debugImplementation(libs.compose.ui.tooling)

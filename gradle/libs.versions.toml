@@ -9,6 +9,7 @@ composeBom = "2026.09.00"
 activityCompose = "1.13.0"
 datastore = "1.3.0"
 browser = "1.10.0"
+biometric = "1.1.0"
 lifecycleCompose = "2.11.0"
 markdown = "0.46.0"
 androidxTestExtJunit = "1.3.0"
@@ -31,6 +32,7 @@ compose-ui-tooling = { module = "androidx.compose.ui:ui-tooling" }
 activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }
 datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "datastore" }
 browser = { module = "androidx.browser:browser", version.ref = "browser" }
+biometric = { module = "androidx.biometric:biometric", version.ref = "biometric" }
 lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycleCompose" }
 markdown-renderer-m3 = { module = "com.mikepenz:multiplatform-markdown-renderer-m3", version.ref = "markdown" }
 compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }

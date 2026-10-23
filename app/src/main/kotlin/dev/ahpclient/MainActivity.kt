@@ -7,7 +7,6 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -15,13 +14,15 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.fragment.app.FragmentActivity
 import dev.ahpclient.monitor.EXTRA_SESSION_URI
 import dev.ahpclient.app.MonitorToggle
 import dev.ahpclient.ui.AppRoot
 import dev.ahpclient.ui.copyToClipboard
 import dev.ahpclient.ui.openInBrowser
 
-class MainActivity : ComponentActivity() {
+// A FragmentActivity because the device check that stands in front of tool approvals (BiometricPrompt) needs one.
+class MainActivity : FragmentActivity() {
     private var notificationsAllowed by mutableStateOf(true)
     private val container get() = (application as AhpApp).container
 
@@ -68,6 +69,16 @@ class MainActivity : ComponentActivity() {
                 onMonitorChange = ::setMonitoring,
             )
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        container.approvalGate.attach(this)
+    }
+
+    override fun onStop() {
+        container.approvalGate.detach(this)
+        super.onStop()
     }
 
     override fun onNewIntent(intent: Intent) {

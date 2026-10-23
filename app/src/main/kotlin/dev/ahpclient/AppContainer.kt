@@ -15,6 +15,7 @@ import dev.ahpclient.data.PrefsMonitorSettings
 import dev.ahpclient.monitor.AndroidMonitorService
 import dev.ahpclient.monitor.NotificationInputNeededSink
 import dev.ahpclient.security.AndroidTokenVault
+import dev.ahpclient.security.BiometricApprovalGate
 import dev.ahpclient.state.HostSession
 import dev.ahpclient.state.TunnelHostConnector
 import dev.ahpclient.tunnel.DevTunnelsClient
@@ -45,6 +46,9 @@ class AppContainer(context: Context) {
     private val versionName: String = appContext.packageManager.getPackageInfo(appContext.packageName, 0).versionName ?: "0"
     private val prefs by lazy { PrefsLastHostStore.dataStoreFor(appContext.preferencesDataStoreFile("ahp_prefs"), ioScope) }
 
+    /** The phone's own prompt in front of every tool approval. Attached to the activity while it is on screen. */
+    val approvalGate = BiometricApprovalGate()
+
     val controller: AppController by lazy {
         val devTunnels = DevTunnelsClient(http, userAgent = "ahp-android-client/$versionName")
         val gateway = TunnelGateway(withWireLog(OkHttpSocketOpener(http)))
@@ -59,6 +63,7 @@ class AppContainer(context: Context) {
             },
             scope = appScope,
             interaction = interaction,
+            approvalGate = approvalGate,
         )
     }
 
