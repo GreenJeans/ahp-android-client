@@ -38,10 +38,11 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 
-private const val USAGE = "usage: probe [--tunnel <name|id>] [--instance <id>] [--capture <file>] [--watch <seconds>] [--session <title-or-uri>]"
+private const val USAGE = "usage: probe [--tunnel <name|id>] [--instance <id>] [--capture <file>] [--watch <seconds>] [--session <title-or-uri>] [--chat <title-or-uri>]"
 private const val SESSION_PAGE_SIZE = 100L
 private const val MAX_SESSION_PAGES = 10
 private const val TITLE_WIDTH = 60
+private const val DEFAULT_CHAT_WATCH_SECONDS = 30
 
 internal data class ProbeArgs(
     val tunnel: String? = null,
@@ -49,6 +50,7 @@ internal data class ProbeArgs(
     val capture: Path? = null,
     val watchSeconds: Int = 0,
     val session: String? = null,
+    val chat: String? = null,
 ) {
     companion object {
         fun parse(args: Array<String>): ProbeArgs {
@@ -62,6 +64,7 @@ internal data class ProbeArgs(
                     "--capture" -> result = result.copy(capture = Paths.get(value(flag)))
                     "--watch" -> result = result.copy(watchSeconds = value(flag).toIntOrNull()?.takeIf { it >= 0 } ?: throw IllegalArgumentException("--watch needs a number of seconds\n$USAGE"))
                     "--session" -> result = result.copy(session = value(flag))
+                    "--chat" -> result = result.copy(chat = value(flag))
                     else -> throw IllegalArgumentException("unknown option '$flag'\n$USAGE")
                 }
                 i++
@@ -165,7 +168,44 @@ internal class Probe(private val args: ProbeArgs, private val out: (String) -> U
         }
 
         if (args.session != null) checkActiveClients(ahp, sessions, args.session)
-        if (args.watchSeconds > 0) watch(ahp, args.watchSeconds)
+        if (args.chat != null) traceChat(ahp, sessions, args.chat) else if (args.watchSeconds > 0) watch(ahp, args.watchSeconds)
+    }
+
+    /**
+     * Phase 2 groundwork: subscribes to a session's chat, decodes its snapshot, asks for older turns if the host says
+     * there are some, then applies every chat action that arrives with the library's own reducer. The report is counts
+     * and type names only. A FAIL means the pinned library met traffic it does not know, which is what this exists to find.
+     */
+    private suspend fun traceChat(ahp: AhpConnection, sessions: List<SessionSummary>, wanted: String) {
+        val target = ActiveClientsReport.pick(sessions, wanted) ?: return log("FAIL", "no session matches '$wanted'")
+        val session = (ahp.subscribe(target.resource).snapshot?.state as? SnapshotState.Session)?.value
+            ?: return log("FAIL", "the session snapshot holds no session state")
+        val chatUri = session.defaultChat ?: session.chats.firstOrNull()?.resource ?: return log("FAIL", "the session lists no chat")
+        log("info", "session is ${session.status.activityState.name.lowercase()}, ${session.chats.size} chat(s); subscribing to the first")
+        val chat = (ahp.subscribe(chatUri).snapshot?.state as? SnapshotState.Chat)?.value
+            ?: return log("FAIL", "the chat snapshot holds no chat state")
+        val trace = ChatTrace(chat)
+        log("PASS", "chat snapshot decoded: turns=${chat.turns.size} activeTurn=${chat.activeTurn != null} olderTurnsAvailable=${chat.turnsNextCursor != null} parts=${trace.partKinds()}")
+        chat.turnsNextCursor?.let { cursor ->
+            ahp.fetchTurns(chatUri, cursor)
+            log("info", "asked for older turns (they arrive as a chat/turnsLoaded action)")
+        }
+        val seconds = if (args.watchSeconds > 0) args.watchSeconds else DEFAULT_CHAT_WATCH_SECONDS
+        log("info", "applying chat actions for ${seconds}s: use or start work in the session in VS Code now")
+        withTimeoutOrNull(seconds * 1000L) {
+            ahp.notifications.collect { note ->
+                if (note is ServerNotification.Action && note.envelope.channel == chatUri) trace.apply(note.envelope.action)
+            }
+        }
+        log("info", "actions applied: ${trace.actionTypes.entries.joinToString { "${it.key}=${it.value}" }.ifEmpty { "none" }}")
+        log("info", "transcript now: turns=${trace.state.turns.size} activeTurn=${trace.state.activeTurn != null} parts=${trace.partKinds()}")
+        if (trace.ok) {
+            log("PASS", "every chat action decoded and reduced (${trace.actionTypes.values.sum()} applied)")
+        } else {
+            log("FAIL", "unknown action types: ${trace.unknownTypes.ifEmpty { setOf("none") }.joinToString()}; reduce failures: ${trace.reduceFailures}")
+        }
+        ahp.unsubscribe(chatUri)
+        ahp.unsubscribe(target.resource)
     }
 
     /**

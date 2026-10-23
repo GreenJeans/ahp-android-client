@@ -86,6 +86,13 @@ class ProbeArgsTest {
     }
 
     @Test
+    fun `the chat option is parsed`() {
+        assertEquals("scratch", ProbeArgs.parse(arrayOf("--chat", "scratch")).chat)
+        assertNull(ProbeArgs.parse(emptyArray()).chat)
+        assertEquals("a", ProbeArgs.parse(arrayOf("--session", "a", "--chat", "b")).session)
+    }
+
+    @Test
     fun `a missing value or unknown option is rejected with the usage line`() {
         assertTrue(assertFailsWith<IllegalArgumentException> { ProbeArgs.parse(arrayOf("--session")) }.message!!.contains("usage: probe"))
         assertTrue(assertFailsWith<IllegalArgumentException> { ProbeArgs.parse(arrayOf("--bogus")) }.message!!.contains("unknown option"))
