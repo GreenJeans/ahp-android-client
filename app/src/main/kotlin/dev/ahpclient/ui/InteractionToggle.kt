@@ -28,33 +28,38 @@ import androidx.compose.ui.unit.dp
  * question. The whole row is the control, so the label and its state are read together.
  */
 @Composable
-fun InteractionToggle(allowed: Boolean, onChange: (Boolean) -> Unit, modifier: Modifier = Modifier) {
+fun InteractionToggle(allowed: Boolean, onChange: (Boolean) -> Unit, modifier: Modifier = Modifier, supported: Boolean = true) {
     var asking by rememberSaveable { mutableStateOf(false) }
     Column(modifier = modifier.fillMaxWidth().testTag("interaction_section")) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 48.dp)
-                .toggleable(value = allowed, role = Role.Switch, onValueChange = { on -> if (on) asking = true else onChange(false) })
+                .toggleable(
+                    value = allowed,
+                    enabled = supported,
+                    role = Role.Switch,
+                    onValueChange = { on -> if (on) asking = true else onChange(false) },
+                )
                 .testTag("interaction_toggle"),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text("Let this app act for me", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-            Switch(checked = allowed, onCheckedChange = null)
+            Switch(checked = allowed, onCheckedChange = null, enabled = supported)
         }
         Text(
-            if (allowed) {
-                "On: this app can send messages, answer questions, approve tool calls and stop the agent, as you. Approving asks for your fingerprint, face or screen lock first."
-            } else {
-                "Off: this app only watches. Nothing you do here changes a session."
+            when {
+                !supported -> "Not available: acting for you needs Android 11 or newer, for the fingerprint, face or screen-lock check on approvals. This app only watches."
+                allowed -> "On: this app can send messages, answer questions, approve tool calls and stop the agent, as you. Approving asks for your fingerprint, face or screen lock first."
+                else -> "Off: this app only watches. Nothing you do here changes a session."
             },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.testTag("interaction_hint"),
         )
     }
-    if (asking) {
+    if (asking && supported) {
         AlertDialog(
             onDismissRequest = { asking = false },
             title = { Text("Let this app act for you?") },

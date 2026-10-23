@@ -966,6 +966,24 @@ class AppControllerTest {
     }
 
     @Test
+    fun `on an unsupported phone the session stays read only and the switch cannot be turned on`() = runTest {
+        val settings = FakeInteractionSettings(saved = true)
+        withRig(interaction = InteractionConsent(settings, supported = false)) {
+            val session = connectToFirstHost().session
+            runCurrent()
+
+            assertFalse(controller.interactionSupported)
+            assertFalse(controller.interactionAllowed.value, "a saved yes is ignored")
+            assertFalse(session.canInteract.value)
+            assertFalse(controller.setInteraction(true))
+            runCurrent()
+
+            assertFalse(session.canInteract.value)
+            assertEquals(1, connectors.single().sockets.size, "nothing reconnected")
+        }
+    }
+
+    @Test
     fun `a saved yes is read before the first connection, which is then made under the interact tier`() = runTest {
         withRig(interaction = InteractionConsent(FakeInteractionSettings(saved = true))) {
             val session = connectToFirstHost().session

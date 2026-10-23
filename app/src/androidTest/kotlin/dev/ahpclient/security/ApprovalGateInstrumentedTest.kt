@@ -4,7 +4,6 @@ import android.app.KeyguardManager
 import android.content.Context
 import androidx.test.core.app.ActivityScenario
 import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG
-import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_WEAK
 import androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -81,13 +80,20 @@ class ApprovalGateInstrumentedTest {
     }
 
     @Test
-    fun theChoiceOfWhatMaySatisfyTheCheckIsPinnedPerAndroidVersion() {
-        // The authenticator choice is the whole policy; pinned so a change to it is a visible decision.
-        val old = BIOMETRIC_WEAK or DEVICE_CREDENTIAL
-        val modern = BIOMETRIC_STRONG or DEVICE_CREDENTIAL
-        assertTrue(BiometricApprovalGate.authenticatorsFor(26) == old)
-        assertTrue(BiometricApprovalGate.authenticatorsFor(29) == old)
-        assertTrue(BiometricApprovalGate.authenticatorsFor(30) == modern)
-        assertTrue(BiometricApprovalGate.authenticatorsFor(36) == modern)
+    fun theCheckOnlyExistsFromAndroid11AndAcceptsStrongBiometricsOrTheScreenLock() {
+        // Pinned so a change to what may satisfy the check is a visible decision.
+        assertFalse(BiometricApprovalGate.isSupported(26))
+        assertFalse(BiometricApprovalGate.isSupported(29))
+        assertTrue(BiometricApprovalGate.isSupported(30))
+        assertTrue(BiometricApprovalGate.isSupported(36))
+        assertTrue(BiometricApprovalGate.AUTHENTICATORS == (BIOMETRIC_STRONG or DEVICE_CREDENTIAL))
+    }
+
+    @Test
+    fun refusesBeforeAndroid11() {
+        // Cannot tell this guard from the library failing on its own at that version: both fail closed. It pins the outcome.
+        assumeTrue("needs a device older than Android 11", android.os.Build.VERSION.SDK_INT < 30)
+
+        assertFalse(withAttachedGate(::confirm))
     }
 }

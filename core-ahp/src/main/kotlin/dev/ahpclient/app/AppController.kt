@@ -54,6 +54,9 @@ class AppController(
     /** Whether the user has allowed this app to act for them. Off until they turn it on, and off again after signing out. */
     val interactionAllowed: StateFlow<Boolean> get() = interaction.allowed
 
+    /** False on a phone that cannot run the device check in front of approvals (Android before 11): the switch is shown but cannot be turned on. */
+    val interactionSupported: Boolean get() = interaction.supported
+
     @Volatile
     private var token: GitHubToken? = null
     private var signInJob: Job? = null

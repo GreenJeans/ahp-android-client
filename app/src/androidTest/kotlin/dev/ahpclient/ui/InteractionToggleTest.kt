@@ -4,6 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertTextContains
@@ -25,11 +26,24 @@ class InteractionToggleTest {
 
     private val changes = mutableListOf<Boolean>()
 
-    private fun show(initial: Boolean) {
+    private fun show(initial: Boolean, supported: Boolean = true) {
         var allowed by mutableStateOf(initial)
         rule.setContent {
-            AhpTheme { InteractionToggle(allowed = allowed, onChange = { changes += it; allowed = it }) }
+            AhpTheme { InteractionToggle(allowed = allowed, onChange = { changes += it; allowed = it }, supported = supported) }
         }
+    }
+
+    @Test
+    fun onAPhoneBeforeAndroid11TheSwitchCannotBeUsedAndSaysWhy() {
+        show(initial = false, supported = false)
+
+        rule.onNodeWithTag("interaction_toggle").assertIsNotEnabled()
+        rule.onNodeWithTag("interaction_hint").assertTextContains("Android 11", substring = true)
+
+        rule.onNodeWithTag("interaction_toggle").performClick()
+
+        rule.onNodeWithTag("interaction_dialog_text").assertDoesNotExist()
+        assertEquals(emptyList<Boolean>(), changes)
     }
 
     @Test

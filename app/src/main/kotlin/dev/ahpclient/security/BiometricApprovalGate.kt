@@ -3,7 +3,6 @@ package dev.ahpclient.security
 import android.os.Build
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG
-import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_WEAK
 import androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
@@ -22,10 +21,10 @@ import kotlinx.coroutines.withContext
  * lock set, no strong biometric, the app not on screen, or any error. A prompt cannot be shown without an activity, so
  * an approval that arrives while the app is in the background is refused rather than waiting to be tapped later.
  *
- * Strong biometrics or the screen lock from Android 11. On Android 8 to 10 the library does not support the screen lock on
- * its own, so the choice there is any biometric Android calls weak, or the screen lock (measured on an Android 8
- * emulator: the screen lock alone is reported unsupported). No cryptographic key is bound to the approval: the check
- * proves a person is present, and nothing else vouches for what the host then does.
+ * Strong biometrics or the screen lock, from Android 11 only. Before that the library cannot offer the combination, and
+ * the write tier is not available at all (see `InteractionConsent.supported`), so this gate refuses there instead of
+ * accepting something weaker. No cryptographic key is bound to the approval: the check proves a person is present, and
+ * nothing else vouches for what the host then does.
  */
 class BiometricApprovalGate : ApprovalGate {
     @Volatile
@@ -42,19 +41,20 @@ class BiometricApprovalGate : ApprovalGate {
     }
 
     override suspend fun confirm(request: ApprovalRequest): Boolean {
+        // Before Android 11 the check cannot run (and consent cannot be turned on); refuse rather than ask for something weaker.
+        if (!isSupported(Build.VERSION.SDK_INT)) return false
         val activity = host?.get() ?: return false
-        val authenticators = authenticatorsFor(Build.VERSION.SDK_INT)
         // Prompts belong to the main thread, and checking first means a phone with no screen lock is told no, not shown nothing.
         return withContext(Dispatchers.Main) {
-            if (BiometricManager.from(activity).canAuthenticate(authenticators) != BiometricManager.BIOMETRIC_SUCCESS) {
+            if (BiometricManager.from(activity).canAuthenticate(AUTHENTICATORS) != BiometricManager.BIOMETRIC_SUCCESS) {
                 false
             } else {
-                prompt(activity, request, authenticators)
+                prompt(activity, request)
             }
         }
     }
 
-    private suspend fun prompt(activity: FragmentActivity, request: ApprovalRequest, authenticators: Int): Boolean =
+    private suspend fun prompt(activity: FragmentActivity, request: ApprovalRequest): Boolean =
         suspendCancellableCoroutine { continuation ->
             val callback = object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
@@ -71,7 +71,7 @@ class BiometricApprovalGate : ApprovalGate {
                 .setTitle("Approve this tool call?")
                 .setSubtitle(request.toolName.take(MAX_TITLE))
                 .setDescription(request.summary?.take(MAX_SUMMARY))
-                .setAllowedAuthenticators(authenticators)
+                .setAllowedAuthenticators(AUTHENTICATORS)
                 .setConfirmationRequired(true)
                 .build()
             continuation.invokeOnCancellation { prompt.cancelAuthentication() }
@@ -82,8 +82,10 @@ class BiometricApprovalGate : ApprovalGate {
         private const val MAX_TITLE = 80
         private const val MAX_SUMMARY = 200
 
-        /** What may satisfy the check on this Android version. */
-        internal fun authenticatorsFor(sdk: Int): Int =
-            if (sdk >= Build.VERSION_CODES.R) BIOMETRIC_STRONG or DEVICE_CREDENTIAL else BIOMETRIC_WEAK or DEVICE_CREDENTIAL
+        /** Strong biometrics or the screen lock. */
+        internal const val AUTHENTICATORS = BIOMETRIC_STRONG or DEVICE_CREDENTIAL
+
+        /** Android 11 is the first version where the library supports that combination, so it is the first where the check can run at all. */
+        internal fun isSupported(sdk: Int): Boolean = sdk >= Build.VERSION_CODES.R
     }
 }

@@ -110,4 +110,47 @@ class InteractionConsentTest {
         assertFalse(consent.allowed.value)
         assertFalse(settings.saved)
     }
+
+    @Test
+    fun `on a phone that cannot run the device check it cannot be turned on, and nothing is written`() = runTest {
+        val settings = FakeInteractionSettings()
+        val consent = InteractionConsent(settings, supported = false)
+
+        assertFalse(consent.supported)
+        assertFalse(consent.set(true))
+
+        assertFalse(consent.allowed.value)
+        assertSame(CapabilityPolicy.READ, consent.policy())
+        assertEquals(emptyList<Boolean>(), settings.writes)
+    }
+
+    @Test
+    fun `a saved yes is ignored on a phone that cannot run the device check`() = runTest {
+        val consent = InteractionConsent(FakeInteractionSettings(saved = true), supported = false)
+
+        consent.load()
+
+        assertFalse(consent.allowed.value)
+        assertSame(CapabilityPolicy.READ, consent.policy())
+    }
+
+    @Test
+    fun `turning it off still works on a phone that cannot run the device check`() = runTest {
+        val settings = FakeInteractionSettings(saved = true)
+        val consent = InteractionConsent(settings, supported = false)
+
+        assertTrue(consent.set(false))
+
+        assertFalse(settings.saved, "a stale yes is cleared on disk too")
+    }
+
+    @Test
+    fun `a supported phone behaves as before`() = runTest {
+        val consent = InteractionConsent(FakeInteractionSettings(saved = true), supported = true)
+
+        consent.load()
+
+        assertTrue(consent.supported)
+        assertSame(CapabilityPolicy.INTERACT, consent.policy())
+    }
 }

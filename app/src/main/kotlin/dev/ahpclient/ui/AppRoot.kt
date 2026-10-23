@@ -79,6 +79,7 @@ fun AppRoot(
                             notificationsAllowed = notificationsAllowed,
                             onMonitorChange = onMonitorChange,
                             interactionAllowed = interactionAllowed,
+                            interactionSupported = controller.interactionSupported,
                             onInteractionChange = { on ->
                                 scope.launch { if (!controller.setInteraction(on)) Toast.makeText(context, "Could not save the setting", Toast.LENGTH_SHORT).show() }
                             },

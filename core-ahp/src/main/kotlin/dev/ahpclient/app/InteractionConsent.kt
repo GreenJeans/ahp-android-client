@@ -30,19 +30,26 @@ class InMemoryInteractionSettings : InteractionSettings {
  * Whether the user has allowed this app to act for them, and the [CapabilityPolicy] that follows from it. Off by
  * default, and anything that goes wrong reads as off: a damaged or unreadable setting never grants the permission.
  *
+ * [supported] is false on a phone that cannot run the device check in front of tool approvals (Android before 11). There
+ * the permission cannot be turned on at all, and a saved "yes" (from a backup, or a phone that was upgraded and rolled
+ * back) is ignored: the tier is READ, whatever is stored.
+ *
  * The policy is applied when a connection is made, so a change only takes effect once the session reconnects;
  * [AppController.setInteraction] does that.
  */
-class InteractionConsent(private val settings: InteractionSettings = InMemoryInteractionSettings()) {
+class InteractionConsent(
+    private val settings: InteractionSettings = InMemoryInteractionSettings(),
+    val supported: Boolean = true,
+) {
     private val _allowed = MutableStateFlow(false)
     val allowed: StateFlow<Boolean> = _allowed.asStateFlow()
 
     /** The tier a new connection should be made under right now. */
     fun policy(): CapabilityPolicy = if (_allowed.value) CapabilityPolicy.INTERACT else CapabilityPolicy.READ
 
-    /** Reads the saved choice. An unreadable one counts as off. */
+    /** Reads the saved choice. An unreadable one counts as off, and so does any choice on a phone that is not [supported]. */
     suspend fun load() {
-        _allowed.value = try {
+        _allowed.value = supported && try {
             settings.enabled.first()
         } catch (_: IOException) {
             false
@@ -52,10 +59,12 @@ class InteractionConsent(private val settings: InteractionSettings = InMemoryInt
     /**
      * Turns the permission on or off. Off takes effect at once, before anything is written, so it cannot be held up by
      * a full disk; on takes effect only once the choice is saved, so a consent that could not be recorded is not granted.
+     * On is refused outright, and nothing is written, when the phone is not [supported].
      *
      * @return true when the choice was saved. Turning it off always takes effect, whatever this returns.
      */
     suspend fun set(on: Boolean): Boolean {
+        if (on && !supported) return false
         if (!on) _allowed.value = false
         return try {
             settings.setEnabled(on)

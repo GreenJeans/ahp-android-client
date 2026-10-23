@@ -2,6 +2,7 @@ package dev.ahpclient
 
 import android.content.Context
 import android.content.pm.ApplicationInfo
+import android.os.Build
 import android.util.Log
 import androidx.datastore.preferences.preferencesDataStoreFile
 import dev.ahpclient.app.AppController
@@ -68,7 +69,10 @@ class AppContainer(context: Context) {
     }
 
     /** Off until the user turns it on, and off again at sign-out. Decides the tier of every new connection. */
-    private val interaction by lazy { InteractionConsent(PrefsInteractionSettings(prefs)) }
+    private val interaction by lazy {
+        // The device check in front of approvals needs Android 11 (R); before that the tier can never be INTERACT.
+        InteractionConsent(PrefsInteractionSettings(prefs), supported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
+    }
 
     private val monitorService by lazy { AndroidMonitorService(appContext) }
 
