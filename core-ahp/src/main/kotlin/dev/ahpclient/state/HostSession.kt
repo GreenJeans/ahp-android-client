@@ -14,6 +14,7 @@ import com.microsoft.agenthostprotocol.generated.ReconnectResultSnapshot
 import com.microsoft.agenthostprotocol.generated.SessionSummary
 import com.microsoft.agenthostprotocol.generated.Snapshot
 import com.microsoft.agenthostprotocol.generated.SnapshotState
+import java.io.IOException
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -59,7 +60,7 @@ class Backoff(private val baseMs: Long = 1_000, private val maxMs: Long = 30_000
 }
 
 /**
- * One host, kept live: connects, mirrors the root state and the session list, and keeps open sessions subscribed,
+ * One host, kept live: connects, mirrors the root state and the session list, and keeps open sessions and chats subscribed,
  * reconnecting with backoff when the socket drops. Read-only by construction: it only calls what [AhpConnection]
  * allows under its capability policy.
  *
@@ -85,6 +86,7 @@ class HostSession(
     val undecodableFrames: StateFlow<Int> = _undecodableFrames.asStateFlow()
 
     private val sessions = LinkedHashMap<String, SessionStore>()
+    private val chats = LinkedHashMap<String, ChatStore>()
     private val subscribeLock = Mutex()
 
     @Volatile
@@ -129,6 +131,34 @@ class HostSession(
             if (store.openers > 0) false else sessions.remove(uri) != null
         }
         if (dropped) current?.unsubscribe(uri)
+    }
+
+    /** The store for the chat at [uri], subscribing now if online or on the next connection. Pair every call with [closeChat]. */
+    fun openChat(uri: String): ChatStore {
+        val store = synchronized(chats) { chats.getOrPut(uri) { ChatStore(uri, scope, fetchOlder = { cursor -> fetchTurns(uri, cursor) }) }.also { it.openers++ } }
+        scope.launch {
+            try {
+                subscribeLock.withLock { subscribeIfNeeded(current ?: return@launch, store) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // The connection dropped mid-subscribe; the next one subscribes because the store still needs it.
+            }
+        }
+        return store
+    }
+
+    fun closeChat(uri: String) {
+        val dropped = synchronized(chats) {
+            val store = chats[uri] ?: return
+            store.openers--
+            if (store.openers > 0) false else chats.remove(uri) != null
+        }
+        if (dropped) current?.unsubscribe(uri)
+    }
+
+    private suspend fun fetchTurns(uri: String, cursor: String) {
+        (current ?: throw IOException("Not connected to the host")).fetchTurns(uri, cursor)
     }
 
     private suspend fun supervise() {
@@ -180,7 +210,7 @@ class HostSession(
     }
 
     private suspend fun attach(ahp: AhpConnection, resume: Boolean) {
-        val open = synchronized(sessions) { sessions.keys.toList() }
+        val open = openChannels()
         if (resume) {
             try {
                 applyReconnect(ahp.reconnect(listOf(ROOT_CHANNEL) + open), open)
@@ -192,7 +222,10 @@ class HostSession(
             initialize(ahp, open)
         }
         refreshCatalog(ahp)
-        subscribeLock.withLock { sessionsNeedingSubscribe().forEach { subscribeIfNeeded(ahp, it) } }
+        subscribeLock.withLock {
+            sessionsNeedingSubscribe().forEach { subscribeIfNeeded(ahp, it) }
+            chatsNeedingSubscribe().forEach { subscribeIfNeeded(ahp, it) }
+        }
     }
 
     private suspend fun initialize(ahp: AhpConnection, open: List<String>) {
@@ -203,12 +236,18 @@ class HostSession(
         when (result) {
             is ReconnectResultReplay -> {
                 result.value.actions.forEach { route(ServerNotification.Action(it)) }
-                result.value.missing.forEach { uri -> storeFor(uri)?.markGone() }
+                result.value.missing.forEach { uri ->
+                    storeFor(uri)?.markGone()
+                    chatFor(uri)?.markGone()
+                }
             }
             is ReconnectResultSnapshot -> {
                 applySnapshots(result.value.snapshots)
                 val covered = result.value.snapshots.map { it.resource }.toSet()
-                open.filter { it !in covered }.forEach { storeFor(it)?.invalidate() }
+                open.filter { it !in covered }.forEach {
+                    storeFor(it)?.invalidate()
+                    chatFor(it)?.invalidate()
+                }
             }
         }
     }
@@ -218,6 +257,7 @@ class HostSession(
             when (val state = snapshot.state) {
                 is SnapshotState.Root -> root.seedRoot(state.value)
                 is SnapshotState.Session -> storeFor(snapshot.resource)?.seed(snapshot)
+                is SnapshotState.Chat -> chatFor(snapshot.resource)?.seed(snapshot)
                 else -> Unit
             }
         }
@@ -238,6 +278,18 @@ class HostSession(
     private fun sessionsNeedingSubscribe(): List<SessionStore> =
         synchronized(sessions) { sessions.values.filter { it.needsSubscribe } }
 
+    private fun chatsNeedingSubscribe(): List<ChatStore> =
+        synchronized(chats) { chats.values.filter { it.needsSubscribe } }
+
+    private suspend fun subscribeIfNeeded(ahp: AhpConnection, store: ChatStore) {
+        if (!store.needsSubscribe) return
+        try {
+            ahp.subscribe(store.uri).snapshot?.let(store::seed)
+        } catch (e: AhpException.Rpc) {
+            if (e.code == AhpErrorCodes.SESSION_NOT_FOUND || e.code == AhpErrorCodes.NOT_FOUND) store.markGone() else throw e
+        }
+    }
+
     private suspend fun subscribeIfNeeded(ahp: AhpConnection, store: SessionStore) {
         if (!store.needsSubscribe) return
         try {
@@ -251,7 +303,11 @@ class HostSession(
         when (note) {
             is ServerNotification.Action -> {
                 val envelope = note.envelope
-                if (envelope.channel == ROOT_CHANNEL) root.applyAction(envelope.action) else storeFor(envelope.channel)?.apply(envelope)
+                if (envelope.channel == ROOT_CHANNEL) {
+                    root.applyAction(envelope.action)
+                } else {
+                    storeFor(envelope.channel)?.apply(envelope) ?: chatFor(envelope.channel)?.apply(envelope)
+                }
             }
             is ServerNotification.Named -> root.applyNotification(note.method, note.params)
             is ServerNotification.Undecodable -> _undecodableFrames.update { it + 1 }
@@ -259,6 +315,10 @@ class HostSession(
     }
 
     private fun storeFor(uri: String): SessionStore? = synchronized(sessions) { sessions[uri] }
+
+    private fun chatFor(uri: String): ChatStore? = synchronized(chats) { chats[uri] }
+
+    private fun openChannels(): List<String> = synchronized(sessions) { sessions.keys.toList() } + synchronized(chats) { chats.keys.toList() }
 
     private companion object {
         const val MAX_LIST_PAGES = 50

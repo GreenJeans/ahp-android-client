@@ -44,11 +44,14 @@ internal class HostScript(
     /** What a subscribed session reports as waiting on the user, as the JSON array of `inputNeeded`; null for none. */
     val inputNeeded: String? = null,
     val onReconnect: (id: Long?) -> String = { id -> result(id, """{"type":"replay","actions":[],"missing":[]}""") },
+    /** The `turnsNextCursor` a subscribed chat reports; null for a chat with nothing older. */
+    val chatCursor: String? = null,
 ) {
     fun reply(method: String, id: Long?, params: JsonObject): String? = when (method) {
         "initialize" -> initializeReply(id, params)
         "listSessions" -> result(id, listJson)
         "subscribe" -> subscribeReply(id, params["channel"]!!.jsonPrimitive.content)
+        "fetchTurns" -> result(id, "{}")
         "reconnect" -> onReconnect(id)
         else -> null
     }
@@ -63,8 +66,12 @@ internal class HostScript(
         return result(id, merged.toString())
     }
 
-    private fun subscribeReply(id: Long?, channel: String): String =
-        if (channel in missingSessions) error(id, -32001, "no such session") else result(id, """{"snapshot":${sessionSnapshot(channel, SNAPSHOT_SEQ, inputNeeded = inputNeeded)}}""")
+    private fun subscribeReply(id: Long?, channel: String): String = when {
+        channel.startsWith("ahp-chat:/") ->
+            if (channel in missingSessions) error(id, -32008, "no such chat") else result(id, """{"snapshot":${chatSnapshotJson(channel, SNAPSHOT_SEQ, cursor = chatCursor)}}""")
+        channel in missingSessions -> error(id, -32001, "no such session")
+        else -> result(id, """{"snapshot":${sessionSnapshot(channel, SNAPSHOT_SEQ, inputNeeded = inputNeeded)}}""")
+    }
 }
 
 /** Hands out one fake host connection per attempt, in order, and records how each was opened. */
