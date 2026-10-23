@@ -1,10 +1,11 @@
 package dev.ahpclient.app
 
 /**
- * The "Monitor in background" switch. Turning it on starts a foreground service whose notification Android silently
- * drops when the notification permission is missing at that moment, and does not bring back once the permission is
- * granted. So the permission is asked for first, and monitoring starts only after the answer. A "no" still turns
- * monitoring on: keeping the connection alive works without alerts, and the screen says that alerts are off.
+ * The "Monitor in background" switch. Turning it on starts a foreground service that posts a persistent notification at
+ * once. Android drops a foreground-service notification posted while the notification permission is missing, and it does
+ * not appear until the app posts it again, which here can be a long wait (observed: about 23 minutes). So the
+ * permission is asked for first, and monitoring starts only after the answer. A "no" still turns monitoring on:
+ * keeping the connection alive works without alerts, and the screen says that alerts are off.
  *
  * [askForPermission] must call its argument once the user has answered, whichever way.
  */
