@@ -207,6 +207,24 @@ class HostSessionChatTest {
     }
 
     @Test
+    fun `opening, paging and closing a chat sends only read-tier methods`() = runTest {
+        val rig = rig(HostScript(chatCursor = "c1")).start()
+        val store = rig.host.openChat(CHAT_A)
+        runCurrent()
+        store.loadOlder()
+        runCurrent()
+        rig.socket.serverSends(actionFrame(CHAT_A, turnsLoadedJson(listOf(turnJson("old")), null), SNAPSHOT_SEQ + 1))
+        runCurrent()
+        settle()
+        rig.host.closeChat(CHAT_A)
+        runCurrent()
+
+        val readTier = setOf("initialize", "reconnect", "ping", "subscribe", "unsubscribe", "listSessions", "fetchTurns")
+        assertEquals(setOf("initialize", "listSessions", "subscribe", "fetchTurns", "unsubscribe"), rig.socket.sentMethods.toSet())
+        assertTrue(rig.socket.sentMethods.all { it in readTier }, "sent: ${rig.socket.sentMethods}")
+    }
+
+    @Test
     fun `loadOlder while the connection is down reports it and keeps what is loaded`() = runTest {
         val rig = rig(HostScript(chatCursor = "c1"), HostScript(chatCursor = "c1")).start()
         val store = rig.host.openChat(CHAT_A)
