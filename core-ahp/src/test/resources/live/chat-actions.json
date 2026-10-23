@@ -1,0 +1,1019 @@
+[
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329139,
+    "action": {
+      "type": "chat/toolCallStart",
+      "turnId": "turn-8",
+      "toolCallId": "call-13",
+      "toolName": "tool-4",
+      "displayName": "Nisi Nulla Irure",
+      "_meta": {
+        "toolKind": "terminal",
+        "language": "powershell"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329140,
+    "action": {
+      "type": "chat/toolCallDelta",
+      "turnId": "turn-8",
+      "toolCallId": "call-13",
+      "invocationMessage": "Lorem Nisi Nulla Irure irure",
+      "content": "",
+      "_meta": {
+        "toolKind": "terminal",
+        "language": "powershell"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329142,
+    "action": {
+      "type": "chat/toolCallDelta",
+      "turnId": "turn-8",
+      "toolCallId": "call-13",
+      "invocationMessage": {
+        "markdown": "Lorem `Consectetur-Sed $tempor:FUGIAT\\nisi-tempor.laboris | Culpa-Minim -Ullamco 30`"
+      },
+      "content": "",
+      "_meta": {
+        "toolKind": "terminal",
+        "language": "powershell"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329144,
+    "action": {
+      "type": "chat/usage",
+      "turnId": "turn-8",
+      "usage": {
+        "inputTokens": 67123,
+        "outputTokens": 103,
+        "cacheReadTokens": 66886,
+        "model": "model-a"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329145,
+    "action": {
+      "type": "chat/toolCallReady",
+      "turnId": "turn-8",
+      "toolCallId": "call-13",
+      "intention": "Officia tempor officia",
+      "confirmed": "not-needed",
+      "invocationMessage": {
+        "markdown": "Lorem `Consectetur-Sed $tempor:FUGIAT\\nisi-tempor.laboris | Culpa-Minim -Ullamco 30`"
+      },
+      "toolInput": "{\"command\":\"Consectetur-Sed $tempor:FUGIAT\\\\nisi-tempor.laboris | Culpa-Minim -Ullamco 30\",\"description\":\"Officia tempor officia\"}",
+      "_meta": {
+        "toolKind": "terminal",
+        "language": "powershell"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329147,
+    "action": {
+      "type": "chat/usage",
+      "turnId": "turn-8",
+      "usage": {
+        "inputTokens": 67123,
+        "outputTokens": 103,
+        "cacheReadTokens": 66886,
+        "model": "model-a"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329150,
+    "action": {
+      "type": "chat/toolCallContentChanged",
+      "turnId": "turn-8",
+      "toolCallId": "call-13",
+      "content": [
+        {
+          "type": "terminal",
+          "resource": "ahp-terminal:/00000000-0000-4000-8000-b00000000004",
+          "title": "Nisi Nulla Irure",
+          "isPty": false
+        }
+      ]
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329211,
+    "action": {
+      "type": "chat/toolCallComplete",
+      "turnId": "turn-8",
+      "toolCallId": "call-13",
+      "result": {
+        "success": true,
+        "pastTenseMessage": {
+          "markdown": "Fugiat `Consectetur-Sed $tempor:FUGIAT\\nisi-tempor.laboris | Culpa-Minim -Ullamco 30`"
+        },
+        "content": [
+          {
+            "type": "terminal",
+            "resource": "ahp-terminal:/00000000-0000-4000-8000-b00000000004",
+            "title": "Nisi Nulla Irure",
+            "isPty": false,
+            "result": {
+              "exitCode": 0,
+              "preview": "[     ]   [ullamco+officia+cupidatat] officia excepteur  veniam=1 amet=7777-10-21Excepteur17:34:59.777Nostrud\n[     ]   [ullamco+officia+cupidatat] nisi tempor  veniam=1 amet=7777-10-20Excepteur19:41:56.777Nostrud\n[     ]   [ullamco+officia+cupidatat] DO magna ut laboris culpa  veniam=1 amet=7777-10-23Excepteur02:22:55.777Nostrud"
+            }
+          },
+          {
+            "type": "text",
+            "text": "[     ]   [ullamco+officia+cupidatat] officia excepteur  veniam=1 amet=7777-10-21Excepteur17:34:59.777Nostrud\n[     ]   [ullamco+officia+cupidatat] nisi tempor  veniam=1 amet=7777-10-20Excepteur19:41:56.777Nostrud\n[     ]   [ullamco+officia+cupidatat] DO magna ut laboris culpa  veniam=1 amet=7777-10-23Excepteur02:22:55.777Nostrud"
+          }
+        ]
+      },
+      "_meta": {
+        "toolKind": "terminal",
+        "language": "powershell"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329212,
+    "action": {
+      "type": "chat/responsePart",
+      "turnId": "turn-8",
+      "part": {
+        "kind": "reasoning",
+        "id": "part-19",
+        "content": "Cillum excepteur Esse'nisi"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329213,
+    "action": {
+      "type": "chat/reasoning",
+      "turnId": "turn-8",
+      "partId": "part-19",
+      "content": " do et voluptate"
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329214,
+    "action": {
+      "type": "chat/reasoning",
+      "turnId": "turn-8",
+      "partId": "part-19",
+      "content": ", Esse cillum ut pariatur laborum"
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329215,
+    "action": {
+      "type": "chat/reasoning",
+      "turnId": "turn-8",
+      "partId": "part-19",
+      "content": " dolor et 777sunt"
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329216,
+    "action": {
+      "type": "chat/reasoning",
+      "turnId": "turn-8",
+      "partId": "part-19",
+      "content": " ipsum officia—"
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329217,
+    "action": {
+      "type": "chat/reasoning",
+      "turnId": "turn-8",
+      "partId": "part-19",
+      "content": "lorem nulla est dolore amet culpa"
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329218,
+    "action": {
+      "type": "chat/reasoning",
+      "turnId": "turn-8",
+      "partId": "part-19",
+      "content": " Aliqua esse"
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329219,
+    "action": {
+      "type": "chat/reasoning",
+      "turnId": "turn-8",
+      "partId": "part-19",
+      "content": "aliquip minim ut, duis nulla"
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329220,
+    "action": {
+      "type": "chat/reasoning",
+      "turnId": "turn-8",
+      "partId": "part-19",
+      "content": " aliquip, laboris dolor"
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329221,
+    "action": {
+      "type": "chat/reasoning",
+      "turnId": "turn-8",
+      "partId": "part-19",
+      "content": "elit nulla officia ut"
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329222,
+    "action": {
+      "type": "chat/reasoning",
+      "turnId": "turn-8",
+      "partId": "part-19",
+      "content": "."
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329223,
+    "action": {
+      "type": "chat/reasoning",
+      "turnId": "turn-8",
+      "partId": "part-19",
+      "content": "\n\n"
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329224,
+    "action": {
+      "type": "chat/toolCallStart",
+      "turnId": "turn-8",
+      "toolCallId": "call-14",
+      "toolName": "tool-4",
+      "displayName": "Nisi Nulla Irure",
+      "_meta": {
+        "toolKind": "terminal",
+        "language": "powershell"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329225,
+    "action": {
+      "type": "chat/toolCallDelta",
+      "turnId": "turn-8",
+      "toolCallId": "call-14",
+      "invocationMessage": "Lorem Nisi Nulla Irure irure",
+      "content": "",
+      "_meta": {
+        "toolKind": "terminal",
+        "language": "powershell"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329226,
+    "action": {
+      "type": "chat/toolCallDelta",
+      "turnId": "turn-8",
+      "toolCallId": "call-14",
+      "invocationMessage": {
+        "markdown": "Lorem `1..5 | Excepteur-Minim { \"enim $_\"; Dolore-Dolore 6 }; Consectetur-Voluptate Est:\\Commodo\\Commodo...`"
+      },
+      "content": "",
+      "_meta": {
+        "toolKind": "terminal",
+        "language": "powershell"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329227,
+    "action": {
+      "type": "chat/toolCallStart",
+      "turnId": "turn-8",
+      "toolCallId": "call-15",
+      "toolName": "tool-2",
+      "displayName": "Ut",
+      "_meta": {
+        "toolKind": "search"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329228,
+    "action": {
+      "type": "chat/toolCallDelta",
+      "turnId": "turn-8",
+      "toolCallId": "call-15",
+      "invocationMessage": "Ut pariatur",
+      "content": "",
+      "_meta": {
+        "toolKind": "search"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329229,
+    "action": {
+      "type": "chat/toolCallDelta",
+      "turnId": "turn-8",
+      "toolCallId": "call-15",
+      "invocationMessage": {
+        "markdown": "Ut minim `commodo Veniam`"
+      },
+      "content": "",
+      "_meta": {
+        "toolKind": "search"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329234,
+    "action": {
+      "type": "chat/usage",
+      "turnId": "turn-8",
+      "usage": {
+        "inputTokens": 68720,
+        "outputTokens": 462,
+        "cacheReadTokens": 67119,
+        "model": "model-a"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329236,
+    "action": {
+      "type": "chat/toolCallReady",
+      "turnId": "turn-8",
+      "toolCallId": "call-14",
+      "intention": "Ut aliquip laborum magna tempor lorem",
+      "confirmed": "not-needed",
+      "invocationMessage": {
+        "markdown": "Lorem `1..5 | Excepteur-Minim { \"enim $_\"; Dolore-Dolore 6 }; Consectetur-Voluptate Est:\\Commodo\\Commodo...`"
+      },
+      "toolInput": "{\"command\":\"1..5 | Excepteur-Minim { \\\"enim $_\\\"; Dolore-Dolore 6 }; Consectetur-Voluptate Est:\\\\Commodo\\\\Amet.Aliqua\\\\dolore\\\\incididunt\\\\anim-anim-consequat\\\\quis-anim\\\\elit\\\\magna\\\\est\\\\amet\\\\enim\\\\anim\",\"description\":\"Ut aliquip laborum magna tempor lorem\",\"arg1\":60}",
+      "_meta": {
+        "toolKind": "terminal",
+        "language": "powershell"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329237,
+    "action": {
+      "type": "chat/toolCallReady",
+      "turnId": "turn-8",
+      "toolCallId": "call-15",
+      "intention": "commodo Veniam",
+      "confirmed": "not-needed",
+      "invocationMessage": {
+        "markdown": "Ut minim `commodo Veniam`"
+      },
+      "toolInput": "{\"pattern\":\"commodo Veniam\",\"arg1\":[\"Est:\\\\Commodo\\\\Amet.Aliqua\\\\dolore\\\\incididunt\\\\anim-anim-consequat\\\\quis-anim\\\\elit\\\\magna\"],\"arg2\":\"sed\",\"arg3\":true}",
+      "_meta": {
+        "toolKind": "search"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329238,
+    "action": {
+      "type": "chat/usage",
+      "turnId": "turn-8",
+      "usage": {
+        "inputTokens": 68720,
+        "outputTokens": 462,
+        "cacheReadTokens": 67119,
+        "model": "model-a"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329288,
+    "action": {
+      "type": "chat/toolCallContentChanged",
+      "turnId": "turn-8",
+      "toolCallId": "call-14",
+      "content": [
+        {
+          "type": "terminal",
+          "resource": "ahp-terminal:/00000000-0000-4000-8000-b00000000005",
+          "title": "Nisi Nulla Irure",
+          "isPty": false
+        }
+      ]
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329290,
+    "action": {
+      "type": "chat/toolCallComplete",
+      "turnId": "turn-8",
+      "toolCallId": "call-15",
+      "result": {
+        "success": true,
+        "pastTenseMessage": {
+          "markdown": "Ut minim `commodo Veniam`"
+        },
+        "content": [
+          {
+            "type": "text",
+            "text": "Est:\\Commodo\\Amet.Aliqua\\dolore\\incididunt\\anim-anim-consequat\\quis-anim\\elit\\magna\\est\\amet\\enim\\officia\\tempor\\Veniam.eiusmod:21:enim commodo Veniam(laboris: Nostrud) {"
+          }
+        ]
+      },
+      "_meta": {
+        "toolKind": "search"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329368,
+    "action": {
+      "type": "chat/toolCallComplete",
+      "turnId": "turn-8",
+      "toolCallId": "call-14",
+      "result": {
+        "success": true,
+        "pastTenseMessage": {
+          "markdown": "Fugiat `1..5 | Excepteur-Minim { \"enim $_\"; Dolore-Dolore 6 }; Consectetur-Voluptate Est:\\Commodo\\Commodo...`"
+        },
+        "content": [
+          {
+            "type": "terminal",
+            "resource": "ahp-terminal:/00000000-0000-4000-8000-b00000000005",
+            "title": "Nisi Nulla Irure",
+            "isPty": false,
+            "result": {
+              "exitCode": 0,
+              "preview": "enim 1\nenim 2\nenim 3\nenim 4\nenim 5\n\nDolor                   Amet\n----                   ------\nConsequat.eiusmod   7777\nVeniam.eiusmod             7777\nDo.eiusmod              7777\nSint.eiusmod            77777\n\n"
+            }
+          },
+          {
+            "type": "text",
+            "text": "enim 1\nenim 2\nenim 3\nenim 4\nenim 5\n\nDolor                   Amet\n----                   ------\nConsequat.eiusmod   7777\nVeniam.eiusmod             7777\nDo.eiusmod              7777\nSint.eiusmod            77777\n<sed: 777 elit minim velit eiusmod 0>"
+          }
+        ]
+      },
+      "_meta": {
+        "toolKind": "terminal",
+        "language": "powershell"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329370,
+    "action": {
+      "type": "chat/toolCallStart",
+      "turnId": "turn-8",
+      "toolCallId": "call-16",
+      "toolName": "tool-4",
+      "displayName": "Nisi Nulla Irure",
+      "_meta": {
+        "toolKind": "terminal",
+        "language": "powershell"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329371,
+    "action": {
+      "type": "chat/toolCallDelta",
+      "turnId": "turn-8",
+      "toolCallId": "call-16",
+      "invocationMessage": "Lorem Nisi Nulla Irure irure",
+      "content": "",
+      "_meta": {
+        "toolKind": "terminal",
+        "language": "powershell"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329372,
+    "action": {
+      "type": "chat/toolCallDelta",
+      "turnId": "turn-8",
+      "toolCallId": "call-16",
+      "invocationMessage": {
+        "markdown": "Lorem `Dolore-Dolore 75; Consectetur-Sed $tempor:FUGIAT\\nisi`"
+      },
+      "content": "",
+      "_meta": {
+        "toolKind": "terminal",
+        "language": "powershell"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329373,
+    "action": {
+      "type": "chat/toolCallDelta",
+      "turnId": "turn-8",
+      "toolCallId": "call-16",
+      "invocationMessage": {
+        "markdown": "Lorem `Dolore-Dolore 75; Consectetur-Sed $tempor:FUGIAT\\nisi-tempor.laboris | Culpa-Minim -Ullamco 14`"
+      },
+      "content": "",
+      "_meta": {
+        "toolKind": "terminal",
+        "language": "powershell"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329375,
+    "action": {
+      "type": "chat/usage",
+      "turnId": "turn-8",
+      "usage": {
+        "inputTokens": 69434,
+        "outputTokens": 146,
+        "cacheReadTokens": 68718,
+        "model": "model-a"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329377,
+    "action": {
+      "type": "chat/toolCallReady",
+      "turnId": "turn-8",
+      "toolCallId": "call-16",
+      "intention": "Exercitation minim ipsum officia culpa culpa laboris officia et occaecat",
+      "confirmed": "not-needed",
+      "invocationMessage": {
+        "markdown": "Lorem `Dolore-Dolore 75; Consectetur-Sed $tempor:FUGIAT\\nisi-tempor.laboris | Culpa-Minim -Ullamco 14`"
+      },
+      "toolInput": "{\"command\":\"Dolore-Dolore 75; Consectetur-Sed $tempor:FUGIAT\\\\nisi-tempor.laboris | Culpa-Minim -Ullamco 14\",\"description\":\"Exercitation minim ipsum officia culpa culpa laboris officia et occaecat\",\"arg1\":100}",
+      "_meta": {
+        "toolKind": "terminal",
+        "language": "powershell"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329378,
+    "action": {
+      "type": "chat/usage",
+      "turnId": "turn-8",
+      "usage": {
+        "inputTokens": 69434,
+        "outputTokens": 146,
+        "cacheReadTokens": 68718,
+        "model": "model-a"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329434,
+    "action": {
+      "type": "chat/toolCallContentChanged",
+      "turnId": "turn-8",
+      "toolCallId": "call-16",
+      "content": [
+        {
+          "type": "terminal",
+          "resource": "ahp-terminal:/00000000-0000-4000-8000-b00000000006",
+          "title": "Nisi Nulla Irure",
+          "isPty": false
+        }
+      ]
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329459,
+    "action": {
+      "type": "chat/toolCallComplete",
+      "turnId": "turn-8",
+      "toolCallId": "call-16",
+      "result": {
+        "success": true,
+        "pastTenseMessage": {
+          "markdown": "Fugiat `Dolore-Dolore 75; Consectetur-Sed $tempor:FUGIAT\\nisi-tempor.laboris | Culpa-Minim -Ullamco 14`"
+        },
+        "content": [
+          {
+            "type": "terminal",
+            "resource": "ahp-terminal:/00000000-0000-4000-8000-b00000000006",
+            "title": "Nisi Nulla Irure",
+            "isPty": false,
+            "result": {
+              "exitCode": 0,
+              "preview": "[     ]   [ullamco+officia+cupidatat] ullamco Voluptate Et mollit  veniam=2 amet=7777-10-21Excepteur22:02:09.777Nostrud\n[     ]   [ullamco+officia+cupidatat] REPREHENDERIT voluptate mollit velit  veniam=1 amet=7777-10-21Excepteur19:48:22.777Nostrud\n[     ]   [ullamco+officia+cupidatat] Aute  veniam=1 amet=7777-10-15Excepteur18:58:42.777Nostrud\n[     ]   [ullamco+officia+cupidatat] Voluptate laboris duis velit-excepteur.tempor  veniam=1 amet=7777-10-22Excepteur15:03:48.777Nostrud"
+            }
+          },
+          {
+            "type": "text",
+            "text": "[     ]   [ullamco+officia+cupidatat] ullamco Voluptate Et mollit  veniam=2 amet=7777-10-21Excepteur22:02:09.777Nostrud\n[     ]   [ullamco+officia+cupidatat] REPREHENDERIT voluptate mollit velit  veniam=1 amet=7777-10-21Excepteur19:48:22.777Nostrud\n[     ]   [ullamco+officia+cupidatat] Aute  veniam=1 amet=7777-10-15Excepteur18:58:42.777Nostrud\n[     ]   [ullamco+officia+cupidatat] Voluptate laboris duis velit-excepteur.tempor  veniam=1 amet=7777-10-22Excepteur15:03:48.777Nostrud"
+          }
+        ]
+      },
+      "_meta": {
+        "toolKind": "terminal",
+        "language": "powershell"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329460,
+    "action": {
+      "type": "chat/responsePart",
+      "turnId": "turn-8",
+      "part": {
+        "kind": "reasoning",
+        "id": "part-20",
+        "content": "Et ipsum enim nisi"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329461,
+    "action": {
+      "type": "chat/reasoning",
+      "turnId": "turn-8",
+      "partId": "part-20",
+      "content": "sunt "
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329462,
+    "action": {
+      "type": "chat/reasoning",
+      "turnId": "turn-8",
+      "partId": "part-20",
+      "content": "777 "
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329463,
+    "action": {
+      "type": "chat/reasoning",
+      "turnId": "turn-8",
+      "partId": "part-20",
+      "content": "cillum occaecat"
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329464,
+    "action": {
+      "type": "chat/reasoning",
+      "turnId": "turn-8",
+      "partId": "part-20",
+      "content": " et voluptate, laboris officia"
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329465,
+    "action": {
+      "type": "chat/reasoning",
+      "turnId": "turn-8",
+      "partId": "part-20",
+      "content": " nisi 2.5 ipsum"
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329466,
+    "action": {
+      "type": "chat/reasoning",
+      "turnId": "turn-8",
+      "partId": "part-20",
+      "content": "et deserunt anim, mollit Esse cillum"
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329467,
+    "action": {
+      "type": "chat/reasoning",
+      "turnId": "turn-8",
+      "partId": "part-20",
+      "content": " dolore"
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329468,
+    "action": {
+      "type": "chat/reasoning",
+      "turnId": "turn-8",
+      "partId": "part-20",
+      "content": "duis anim nulla aute officia incididunt"
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329469,
+    "action": {
+      "type": "chat/reasoning",
+      "turnId": "turn-8",
+      "partId": "part-20",
+      "content": " anim deserunt."
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329470,
+    "action": {
+      "type": "chat/reasoning",
+      "turnId": "turn-8",
+      "partId": "part-20",
+      "content": "\n\n"
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329471,
+    "action": {
+      "type": "chat/toolCallStart",
+      "turnId": "turn-8",
+      "toolCallId": "call-17",
+      "toolName": "tool-4",
+      "displayName": "Nisi Nulla Irure",
+      "_meta": {
+        "toolKind": "terminal",
+        "language": "powershell"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329472,
+    "action": {
+      "type": "chat/toolCallDelta",
+      "turnId": "turn-8",
+      "toolCallId": "call-17",
+      "invocationMessage": "Lorem Nisi Nulla Irure irure",
+      "content": "",
+      "_meta": {
+        "toolKind": "terminal",
+        "language": "powershell"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329473,
+    "action": {
+      "type": "chat/toolCallDelta",
+      "turnId": "turn-8",
+      "toolCallId": "call-17",
+      "invocationMessage": {
+        "markdown": "Lorem `$excepteur=0; magna($excepteur -sed 90){ labore(-magna (Consectetur-Aliqua -Ipsum (Consectetur-Sed $tempor:FUGIAT\\nisi-...`"
+      },
+      "content": "",
+      "_meta": {
+        "toolKind": "terminal",
+        "language": "powershell"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329475,
+    "action": {
+      "type": "chat/usage",
+      "turnId": "turn-8",
+      "usage": {
+        "inputTokens": 70286,
+        "outputTokens": 366,
+        "cacheReadTokens": 69432,
+        "model": "model-a"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329477,
+    "action": {
+      "type": "chat/toolCallReady",
+      "turnId": "turn-8",
+      "toolCallId": "call-17",
+      "intention": "Exercitation minim et tempor'sunt nisi tempor",
+      "confirmed": "not-needed",
+      "invocationMessage": {
+        "markdown": "Lorem `$excepteur=0; magna($excepteur -sed 90){ labore(-magna (Consectetur-Aliqua -Ipsum (Consectetur-Sed $tempor:FUGIAT\\nisi-...`"
+      },
+      "toolInput": "{\"command\":\"$excepteur=0; magna($excepteur -sed 90){ labore(-magna (Consectetur-Aliqua -Ipsum (Consectetur-Sed $tempor:FUGIAT\\\\nisi-tempor.laboris -Veniam | Laboris-Voluptate; 0) -Fugiat Commodo)){}; $cupidatat=@(Consectetur-Sed $\",\"description\":\"Exercitation minim et tempor'sunt nisi tempor\",\"arg1\":100}",
+      "_meta": {
+        "toolKind": "terminal",
+        "language": "powershell"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329478,
+    "action": {
+      "type": "chat/usage",
+      "turnId": "turn-8",
+      "usage": {
+        "inputTokens": 70286,
+        "outputTokens": 366,
+        "cacheReadTokens": 69432,
+        "model": "model-a"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329480,
+    "action": {
+      "type": "chat/toolCallContentChanged",
+      "turnId": "turn-8",
+      "toolCallId": "call-17",
+      "content": [
+        {
+          "type": "terminal",
+          "resource": "ahp-terminal:/00000000-0000-4000-8000-b00000000007",
+          "title": "Nisi Nulla Irure",
+          "isPty": false
+        }
+      ]
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329486,
+    "action": {
+      "type": "chat/toolCallComplete",
+      "turnId": "turn-8",
+      "toolCallId": "call-17",
+      "result": {
+        "success": true,
+        "pastTenseMessage": {
+          "markdown": "Fugiat `$excepteur=0; magna($excepteur -sed 90){ labore(-magna (Consectetur-Aliqua -Ipsum (Consectetur-Sed $tempor:FUGIAT\\nisi-...`"
+        },
+        "content": [
+          {
+            "type": "terminal",
+            "resource": "ahp-terminal:/00000000-0000-4000-8000-b00000000007",
+            "title": "Nisi Nulla Irure",
+            "isPty": false,
+            "result": {
+              "exitCode": 1,
+              "preview": "Velit: \nUt |\n   2 |  . reprehenderit -Ipsum (Consectetur-Sed $tempor:FUGIAT\\nisi-tempor.laboris -Veniam | Laboris-Voluptate; 0) -Velit .\n     |                                                                 ~\n     | Deserunt cupidatat ')' tempor culpa.\n"
+            }
+          },
+          {
+            "type": "text",
+            "text": "Velit: \nUt |\n   2 |  . reprehenderit -Ipsum (Consectetur-Sed $tempor:FUGIAT\\nisi-tempor.laboris -Veniam | Laboris-Voluptate; 0) -Velit .\n     |                                                                 ~\n     | Deserunt cupidatat ')' tempor culpa.\n<sed: 777 elit minim velit eiusmod 1>"
+          }
+        ]
+      },
+      "_meta": {
+        "toolKind": "terminal",
+        "language": "powershell"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329524,
+    "action": {
+      "type": "chat/toolCallStart",
+      "turnId": "turn-8",
+      "toolCallId": "call-18",
+      "toolName": "tool-4",
+      "displayName": "Nisi Nulla Irure",
+      "_meta": {
+        "toolKind": "terminal",
+        "language": "powershell"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329525,
+    "action": {
+      "type": "chat/toolCallDelta",
+      "turnId": "turn-8",
+      "toolCallId": "call-18",
+      "invocationMessage": "Lorem Nisi Nulla Irure irure",
+      "content": "",
+      "_meta": {
+        "toolKind": "terminal",
+        "language": "powershell"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329526,
+    "action": {
+      "type": "chat/toolCallDelta",
+      "turnId": "turn-8",
+      "toolCallId": "call-18",
+      "invocationMessage": {
+        "markdown": "Lorem `$excepteur=0; magna($excepteur -sed 90){ $cupidatat=@(Consectetur-Sed $tempor:FUGIAT\\nisi-tempor.laboris); labore($cupidatat[-1]...`"
+      },
+      "content": "",
+      "_meta": {
+        "toolKind": "terminal",
+        "language": "powershell"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329528,
+    "action": {
+      "type": "chat/usage",
+      "turnId": "turn-8",
+      "usage": {
+        "inputTokens": 70761,
+        "outputTokens": 254,
+        "cacheReadTokens": 70284,
+        "model": "model-a"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329530,
+    "action": {
+      "type": "chat/toolCallReady",
+      "turnId": "turn-8",
+      "toolCallId": "call-18",
+      "intention": "Exercitation minim et tempor'sunt nisi tempor",
+      "confirmed": "not-needed",
+      "invocationMessage": {
+        "markdown": "Lorem `$excepteur=0; magna($excepteur -sed 90){ $cupidatat=@(Consectetur-Sed $tempor:FUGIAT\\nisi-tempor.laboris); labore($cupidatat[-1]...`"
+      },
+      "toolInput": "{\"command\":\"$excepteur=0; magna($excepteur -sed 90){ $cupidatat=@(Consectetur-Sed $tempor:FUGIAT\\\\nisi-tempor.laboris); labore($cupidatat[-1] -minim 'nisi nisi magna'){ullamco}; Dolore-Dolore 5; $excepteur+=5 }; $cupidatat | Culpa-Sunt\",\"description\":\"Exercitation minim et tempor'sunt nisi tempor\",\"arg1\":100}",
+      "_meta": {
+        "toolKind": "terminal",
+        "language": "powershell"
+      }
+    }
+  },
+  {
+    "channel": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "serverSeq": 329531,
+    "action": {
+      "type": "chat/usage",
+      "turnId": "turn-8",
+      "usage": {
+        "inputTokens": 70761,
+        "outputTokens": 254,
+        "cacheReadTokens": 70284,
+        "model": "model-a"
+      }
+    }
+  }
+]

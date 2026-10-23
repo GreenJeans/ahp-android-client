@@ -13,7 +13,31 @@ node tools/redact-capture.mjs captures/live-session.jsonl
 | `initialize-result.json` | The `initialize` reply: real shape, one agent with two models, no terminals, no config values, no paths. |
 | `list-sessions.json` | Six sessions. A to D are real shapes: archived with project and changes, read and idle, in progress, and one with three chats including two forks. **E and F are synthetic** (input needed, error): the capture had neither. |
 | `session-summary-changed.json` | A `root/sessionSummaryChanged` params object. The live capture only ever carried `_meta` changes, so the values here are synthetic; the shape (`channel`, `session`, `changes`) is real. |
+| `chat-subscribe-result.json` | A chat `subscribe` result: 7 of a live chat's 44 turns, chosen to cover every part kind and tool-result content type in the capture, plus the active turn. Real shapes; all text is placeholder words. |
+| `chat-actions.json` | The 67 `chat/*` actions that streamed in after that snapshot, as action envelopes (`channel`, `serverSeq`, `action`), in order and on the snapshot's active turn. |
 
 Titles, project names, paths, ids, turn ids and git metadata are replaced with neutral values. The script builds each file
 from a whitelist of fields and refuses to write anything if an original string, a home-directory path or the OS username
 survives. The raw capture never leaves `captures/`, which is gitignored.
+
+## Chat fixtures
+
+```powershell
+.\gradlew.bat -q --console=plain :core-ahp:probe --args="--chat 'some session title' --watch 180 --capture captures/chat-session.jsonl"
+node tools/redact-chat.mjs captures/chat-session.jsonl
+node --test "tools/*.test.mjs"
+```
+
+`tools/redact-chat.mjs` rebuilds every object by field name, so an unknown field is dropped, and an unknown part kind, tool-result
+content type or chat action type stops the run. Free text (messages, reasoning, tool input and output) is never copied: each run of
+letters becomes a placeholder word, and line breaks, punctuation, short numbers, markdown and code-fence structure stay. Ids, paths, names and times are replaced.
+`_meta` is dropped entirely: it carries paths, branch names and quota data. `tools/redaction-check.mjs` then compares the result with the capture:
+a string equal to an original, a run of 16 characters shared with one, a word outside the placeholder vocabulary, the user name, a drive or home path or a real-looking
+uuid or token all abort the write. Its tests are in `tools/redaction-check.test.mjs`. If a decode test fails after regenerating, check that the whitelist
+kept every field the library requires (it once dropped `title` from subagent content).
+
+**Not in the capture, so not covered by real data:** `chat/delta`, `chat/turnStarted`, `chat/turnComplete`, `chat/turnsLoaded` (and so `fetchTurns` paging: the host sent the whole history in the snapshot), tool calls
+that are streaming, awaiting confirmation or awaiting authorization, input-request and error response parts, and image content other than one embedded PNG. The unit tests build those from
+the library's own types instead (`ChatTraceTest`).
+
+**Size:** the live snapshot was one 10.6 MB frame for a 44-turn chat. These fixtures are 7 turns so they stay small; they say nothing about decode time or memory for a payload like the real one.

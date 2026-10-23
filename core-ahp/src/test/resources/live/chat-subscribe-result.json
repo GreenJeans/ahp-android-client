@@ -1,0 +1,703 @@
+{
+  "snapshot": {
+    "resource": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+    "fromSeq": 329138,
+    "state": {
+      "resource": "ahp-chat:/00000000-0000-4000-8000-000000000c01",
+      "title": "Chat A",
+      "status": 8,
+      "modifiedAt": "2026-10-20T10:15:00.000Z",
+      "origin": {
+        "kind": "user"
+      },
+      "turns": [
+        {
+          "id": "turn-1",
+          "message": {
+            "text": "Minim et Anim Consectetur Elit anim sint magna nostrud, anim cillum aute lorem culpa ullamco nulla irure. Fugiat et consequat aute laboris deserunt velit [elit/anim-consectetur-elit: Culpa laboris-consequat nulla minim VOLUPTATE anim aliqua](sint://lorem.amet/elit/anim-consectetur-elit#consequat-aute)\r\n\r",
+            "origin": {
+              "kind": "user"
+            },
+            "model": {
+              "id": "model-a"
+            }
+          },
+          "responseParts": [
+            {
+              "kind": "markdown",
+              "id": "part-1",
+              "content": "Do nulla nostrud minim irure `occaecat/anim-consequat-minim-anim-consectetur-elit`\n\n"
+            },
+            {
+              "kind": "reasoning",
+              "id": "part-2",
+              "content": "Ullamco ut nulla nisi ipsum nisi amet nulla excepteur Anim consequat minim Anim Consectetur Elit culpa et Amet Minim pariatur occaecat aliquip.veniam/occaecat, anim nulla irure dolor magna occaecat dolor amet aliqua/labore aliqua. Esse cillum voluptate enim et elit/anim-consectetur-elit deserunt, exercitation consequat aute, laboris enim aliquip.veniam/occaecat culpa laboris quis aliqua veniam excepteur.\n"
+            },
+            {
+              "kind": "toolCall",
+              "toolCall": {
+                "toolCallId": "call-1",
+                "toolName": "tool-1",
+                "displayName": "Adipiscing Consequat",
+                "status": "completed",
+                "confirmed": "not-needed",
+                "success": true,
+                "intention": "Nisi ANIM + minim labore",
+                "invocationMessage": "Magna consequat",
+                "pastTenseMessage": "Ullamco consequat",
+                "toolInput": "{\"name\":\"anim-nisi\",\"arg1\":\"nisi\",\"description\":\"Nisi ANIM + minim labore\",\"prompt\":\"Nisi ipsum (officia-officia, dolor magna cupidatat quis pariatur): Enim nulla occaecat fugiat ullamco occaecat sunt consequat (aliqua sint Anim magna) minim SED Eiusmod anim aliqua culpa et Nulla\",\"arg2\":\"exercitation\"}",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Minim culpa nisi anim (4adipiscing7culpa3est35-veniam55-41dolore-8sit9-90aute0labore47culpa7777):\nNisi ipsum (officia-officia, dolor magna cupidatat quis pariatur): Enim nulla occaecat fugiat ullamco occaecat sunt consequat (aliqua sint Anim magna) minim SED Eiusmod anim aliqua culpa et Anim Consectetur Elit (ANIM) laboris et deserunt amet pariatur SED Eiusmod adipiscing commodo \"Amet Minim Sunt\" ut mollit amet tempor et Occaecat aliquip, et voluptate aliqua veniam sint://aliquip.veniam"
+                  },
+                  {
+                    "type": "subagent",
+                    "agentName": "agent-1",
+                    "description": "Nisi ANIM + minim labore",
+                    "title": "anim-nisi",
+                    "resource": "ahp-session:/00000000-0000-4000-8000-a00000000001"
+                  }
+                ],
+                "_meta": {
+                  "toolKind": "subagent",
+                  "subagentAgentName": "agent-1",
+                  "subagentDescription": "Nisi ANIM + minim labore"
+                }
+              }
+            },
+            {
+              "kind": "toolCall",
+              "toolCall": {
+                "toolCallId": "call-2",
+                "toolName": "tool-2",
+                "displayName": "Ut",
+                "status": "completed",
+                "confirmed": "not-needed",
+                "success": true,
+                "intention": "(?esse)(dolor magna|anim.consectetur.elit|aliquip\\.veniam/occaecat|amet minim|veniam ?minim|anim)",
+                "invocationMessage": {
+                  "markdown": "Ut minim `(?esse)(dolor magna|anim.consectetur.elit|aliquip\\.veniam/occaecat|amet minim|veniam ?sit...`"
+                },
+                "pastTenseMessage": {
+                  "markdown": "Ut minim `(?esse)(dolor magna|anim.consectetur.elit|aliquip\\.veniam/occaecat|amet minim|veniam ?sit...`"
+                },
+                "toolInput": "{\"pattern\":\"(?esse)(dolor magna|anim.consectetur.elit|aliquip\\\\.veniam/occaecat|amet minim|veniam ?minim|anim)\",\"arg1\":\"Est:\\\\Commodo\\\\Amet.Aliqua\\\\dolore\\\\incididunt\\\\fugiat\",\"arg2\":\"pariatur_minim_aute\",\"arg3\":40}",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Est:\\Commodo\\Amet.Aliqua\\dolore\\incididunt\\fugiat\\dolore\\est.fugiat\nEst:\\Commodo\\Amet.Aliqua\\dolore\\incididunt\\fugiat\\.cillum\\mollit\\est-elit-laborum.consectetur\nEst:\\Commodo\\Amet.Aliqua\\dolore\\incididunt\\fugiat\\.cillum\\cillum.fugiat\nEst:\\Commodo\\Amet.Aliqua\\dolore\\incididunt\\fugiat\\anim\\anim-consectetur-sit.consectetur\nEst:\\Commodo\\Amet.Aliqua\\dolore\\incididunt\\fugiat\\anim\\officia.consectetur"
+                  }
+                ],
+                "_meta": {
+                  "toolKind": "search"
+                }
+              }
+            },
+            {
+              "kind": "toolCall",
+              "toolCall": {
+                "toolCallId": "call-3",
+                "toolName": "tool-3",
+                "displayName": "Officia",
+                "status": "completed",
+                "confirmed": "not-needed",
+                "success": true,
+                "intention": "minim et aliquip veniam Est:\\Commodo\\Amet.Aliqua\\dolore\\incididunt\\fugiat\\officia\\anim-est-fugiat\\UT.consectetur.",
+                "invocationMessage": {
+                  "markdown": "Officia [UT.consectetur](aliquip:///est%3Nulla/Commodo/Amet.Aliqua/dolore/incididunt/fugiat/officia/anim-est-fugiat/UT.consectetur)"
+                },
+                "pastTenseMessage": {
+                  "markdown": "Officia [UT.consectetur](aliquip:///est%3Nulla/Commodo/Amet.Aliqua/dolore/incididunt/fugiat/officia/anim-est-fugiat/UT.consectetur)"
+                },
+                "toolInput": "{\"path\":\"Est:\\\\Commodo\\\\Amet.Aliqua\\\\dolore\\\\incididunt\\\\fugiat\\\\officia\\\\anim-est-fugiat\\\\UT.consectetur\"}",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "\noccaecat --adipiscing nulla/Est:/Commodo/Amet.Aliqua/dolore/incididunt/fugiat/officia/anim-est-fugiat/UT.consectetur aute/Est:/Commodo/Amet.Aliqua/dolore/incididunt/fugiat/officia/anim-est-fugiat/UT.consectetur\nlaborum 7777777..7777777 777777\n--- nulla/Est:/Commodo/Amet.Aliqua/dolore/incididunt/fugiat/officia/anim-est-fugiat/UT.consectetur\n+++ aute/Est:/Commodo/Amet.Aliqua/dolore/incididunt/fugiat/officia/anim-est-fugiat/UT.consectetur\n@@ -1,61 +1,61 @@"
+                  }
+                ],
+                "_meta": {
+                  "toolKind": "read"
+                }
+              }
+            },
+            {
+              "kind": "systemNotification",
+              "content": "Exercitation anim `Nisi ANIM + minim labore` ut amet"
+            },
+            {
+              "kind": "markdown",
+              "id": "part-3",
+              "content": "# Enim quis ullamco ut sunt Anim consequat culpa et deserunt minim fugiat aliquip.veniam/occaecat?\n\n**Nisi reprehenderit.** Et ullamco occaecat dolor elit et officia ut veniam et magna aliqua laboris esse et magna adipiscing eiusmod. Deserunt excepteur'excepteur laboris nulla occaecat reprehenderit.\n\n## Fugiat et Laborum 2 officia dolor\n\nOccaecat [UT.consectetur](Est:/Commodo/Amet.Aliqua/dolore/incididunt/fugiat/officia/anim-est-fugiat/UT.consectetur) laboris [anim-consectetur-reprehenderit-duis.consectetur](Est:/Commodo/Amet.Aliqua/dolore/incididunt/fugiat/anim/fugiat/anim-consectetur-reprehenderit-duis.consectetur):\n"
+            }
+          ],
+          "startedAt": "2026-10-20T09:00:00.000Z",
+          "state": "complete",
+          "duration": 661872,
+          "usage": {
+            "inputTokens": 68002,
+            "outputTokens": 3214,
+            "cacheReadTokens": 58793,
+            "model": "model-a"
+          }
+        },
+        {
+          "id": "turn-2",
+          "message": {
+            "text": "LOREM Est:\\Commodo\\Amet.Aliqua\\dolore\\incididunt\\fugiat.sint\\anim-consequat-minim-anim-consectetur-elit\\officia\\anim-est-fugiat> $tempor:ANIM_MINIM_ALIQUA = [Commodo.Aliquip.Incididunt]::minim('', (Officia-Consectetur -Eiusmod 'Lorem DOLOR')).Irure\r\nLorem DOLOR: ****************************************\r",
+            "origin": {
+              "kind": "user"
+            },
+            "model": {
+              "id": "model-a"
+            }
+          },
+          "responseParts": [
+            {
+              "kind": "reasoning",
+              "id": "part-4",
+              "content": "Pariatur nulla 777 et Veniam Excepteur exercitation officia quis Lorem Reprehenderit duis occaecat est commodo consequat nulla culpa SED Eiusmod irure et cupidatat MINIM, sint proident consectetur Magna—mollit Esse'tempor velit excepteur et MINIM'sunt Lorem Reprehenderit magna adipiscing veniam sunt sed consequat ipsum.\n"
+            },
+            {
+              "kind": "markdown",
+              "id": "part-5",
+              "content": "Et `777` occaecat nulla consectetur DOLOR aute et lorem consectetur, eiusmod officia'excepteur exercitation proident deserunt anim. Anim enim et Veniam Excepteur PARIATUR laboris anim ullamco Lorem duis incididunt ut."
+            },
+            {
+              "kind": "toolCall",
+              "toolCall": {
+                "toolCallId": "call-4",
+                "toolName": "tool-4",
+                "displayName": "Nisi Nulla Irure",
+                "status": "completed",
+                "confirmed": "not-needed",
+                "success": true,
+                "intention": "Ut veniam-excepteur PARIATUR minim Lorem labore consectetur",
+                "invocationMessage": {
+                  "markdown": "Lorem `excepteur est:\\Commodo\\Amet.Aliqua\\dolore\\incididunt\\fugiat.sint\\anim-consequat-minim-exercitation...`"
+                },
+                "pastTenseMessage": {
+                  "markdown": "Fugiat `excepteur est:\\Commodo\\Amet.Aliqua\\dolore\\incididunt\\fugiat.sint\\anim-consequat-minim-exercitation...`"
+                },
+                "toolInput": "{\"command\":\"excepteur est:\\\\Commodo\\\\Amet.Aliqua\\\\dolore\\\\incididunt\\\\fugiat.sint\\\\anim-consequat-minim-anim-consectetur-elit\\\\officia\\\\anim-est-fugiat\\\\duis_mollit\\\\@elit; Consectetur-Voluptate veniam\",\"description\":\"Ut veniam-excepteur PARIATUR minim Lorem labore consectetur\"}",
+                "content": [
+                  {
+                    "type": "terminal",
+                    "resource": "ahp-terminal:/00000000-0000-4000-8000-b00000000001",
+                    "title": "Nisi Nulla Irure",
+                    "isPty": false,
+                    "result": {
+                      "exitCode": 0,
+                      "preview": "dolor.nisi:11 /** Aute nulla minim Lorem sunt duis. */\ndolor.nisi:12 Cillum.lorem = 'lorem';\nsint.nisi:777 * nisi est minim sunt aliqua, minim SIT irure Lorem nisi aute. Ullamco et aute excepteur"
+                    }
+                  },
+                  {
+                    "type": "text",
+                    "text": "dolor.nisi:11 /** Aute nulla minim Lorem sunt duis. */\ndolor.nisi:12 Cillum.lorem = 'lorem';\nsint.nisi:777 * nisi est minim sunt aliqua, minim SIT irure Lorem nisi aute. Ullamco et aute excepteur"
+                  }
+                ],
+                "_meta": {
+                  "toolKind": "terminal",
+                  "language": "powershell"
+                }
+              }
+            },
+            {
+              "kind": "toolCall",
+              "toolCall": {
+                "toolCallId": "call-5",
+                "toolName": "tool-5",
+                "displayName": "Ut culpa",
+                "status": "completed",
+                "confirmed": "not-needed",
+                "success": true,
+                "intention": "elit quis anim ut",
+                "invocationMessage": "Ut culpa",
+                "pastTenseMessage": "Fugiat dolore_ut_dolore",
+                "toolInput": "{\"query\":\"elit quis anim ut\"}",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "[\"elit-quis-elit_anim_nisi\",\"elit-quis-elit_anim_ut\",\"elit-quis-elit_eiusmod_fugiat_ut\",\"aute-tempor-ut-culpa-sed\",\"consequat7-est-anim\"]"
+                  }
+                ],
+                "contributor": {
+                  "kind": "client",
+                  "clientId": "client-1"
+                }
+              }
+            },
+            {
+              "kind": "toolCall",
+              "toolCall": {
+                "toolCallId": "call-6",
+                "toolName": "tool-6",
+                "displayName": "elit-quis-elit_anim_ut",
+                "status": "completed",
+                "confirmed": "not-needed",
+                "success": true,
+                "intention": "veniam excepteur Lorem aute occaecat-fugiat magna consequat ipsum minim proident EXCEPTEUR sunt aliqua",
+                "invocationMessage": "Elit Anim Ut",
+                "pastTenseMessage": "Elit Anim Ut",
+                "toolInput": "{\"query\":\"veniam excepteur Lorem aute occaecat-fugiat magna consequat ipsum minim proident EXCEPTEUR sunt aliqua\"}",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"proident\":[{\"sint\":\"Ut\",\"sed\":\"# Ut\\occaecat excepteur ut nulla ut-labore eiusmod enim proident. Tempor ullamco sint, quis nisi enim veniam excepteur reprehenderit deserunt.\\sit## Anim\\labore reprehenderit, commodo laboris occaecat culpa nulla minim cupidatat aute minim et deserunt Elit, Elit Deserunt IPSUM, irure Lorem veniam excepteur do et minim. Enim cupidatat ut cillum culpa aute aliqua "
+                  },
+                  {
+                    "type": "text",
+                    "text": "{\"proident\":[{\"sint\":\"Ut\",\"sed\":\"# Ut\\occaecat excepteur ut nulla ut-labore eiusmod enim proident. Tempor ullamco sint, quis nisi enim veniam excepteur reprehenderit deserunt.\\sit## Anim\\labore reprehenderit, commodo laboris occaecat culpa nulla minim cupidatat aute minim et deserunt Elit, Elit Deserunt IPSUM, irure Lorem veniam excepteur do et minim. Enim cupidatat ut cillum culpa aute aliqua "
+                  }
+                ],
+                "contributor": {
+                  "kind": "mcp",
+                  "customizationId": "customization-1"
+                },
+                "structuredContent": {
+                  "results": [
+                    {
+                      "content": "# Ut\nVeniam excepteur ut nulla ut-labore eiusmod enim proident. Tempor ullamco sint, quis nisi enim veniam excepteur reprehenderit deserunt.\n## Anim\nOfficia reprehenderit, commodo laboris occaecat culpa nulla minim cupidatat aute minim et deserunt Elit, Elit Deserunt IPSUM, irure Lorem veniam excepteur do et lorem",
+                      "contentUrl": "https://example.invalid/doc-1",
+                      "title": "Ut"
+                    },
+                    {
+                      "content": "# Ut\n## Minim sunt\nOfficia reprehenderit, excepteur laboris minim occaecat reprehenderit velit laboris officia magna culpa et nisi proident do et minim.\nLabore nulla minim irure minim consectetur nisi enim culpa aute deserunt proident aute, sint labore-lorem Sunt minim amet (EXCEPTEUR) enim aute amet (excepteur `--labore-lorem`).",
+                      "contentUrl": "https://example.invalid/doc-2",
+                      "title": "Ut"
+                    }
+                  ]
+                },
+                "_meta": {
+                  "mcpServerName": "mcp-server-1",
+                  "mcpToolName": "mcp-tool-1"
+                }
+              }
+            },
+            {
+              "kind": "toolCall",
+              "toolCall": {
+                "toolCallId": "call-7",
+                "toolName": "tool-7",
+                "displayName": "Nulla Aliquip",
+                "status": "completed",
+                "confirmed": "not-needed",
+                "success": true,
+                "intention": "nulla et aliquip veniam est:\\Commodo\\Amet.Aliqua\\dolore\\incididunt\\fugiat.sint\\anim-consequat-minim-anim-consectetur-elit\\officia\\anim-est-fugiat\\minim-ut.amet.",
+                "invocationMessage": {
+                  "markdown": "Nulla [minim-ut.amet](aliquip:///est%3Nulla/Commodo/Amet.Aliqua/dolore/incididunt/fugiat.sint/anim-consequat-minim-anim-consectetur-elit/officia/anim-est-fugiat/minim-ut.amet)"
+                },
+                "pastTenseMessage": {
+                  "markdown": "Nulla [minim-ut.amet](aliquip:///est%3Nulla/Commodo/Amet.Aliqua/dolore/incididunt/fugiat.sint/anim-consequat-minim-anim-consectetur-elit/officia/anim-est-fugiat/minim-ut.amet)"
+                },
+                "toolInput": "{\"path\":\"est:\\\\Commodo\\\\Amet.Aliqua\\\\dolore\\\\incididunt\\\\fugiat.sint\\\\anim-consequat-minim-anim-consectetur-elit\\\\officia\\\\anim-est-fugiat\\\\minim-ut.amet\",\"arg1\":\"adipiscing nulla() {\\n  sunt lorem = aliqua.tempor.ANIM_MINIM_ALIQUA;\\n  sunt et = (fugiat.et ?? aliqua.tempor.ANIM_MINIM_ET ?? (lorem ? \\\"nisi\",\"arg2\":\"// Et minim proident consequat Lorem Magna; deserunt elit nisi duis sit minim veniam sunt Lorem Magna,\"}",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "\noccaecat --adipiscing nulla/est:/Commodo/Amet.Aliqua/dolore/incididunt/fugiat.sint/anim-consequat-minim-anim-consectetur-elit/officia/anim-est-fugiat/minim-ut.amet aute/est:/Commodo/Amet.Aliqua/dolore/incididunt/fugiat.sint/anim-consequat-minim-anim-consectetur-elit/officia/anim-est-fugiat/minim-ut.amet\nlaborum 7777777..7777777 777777"
+                  },
+                  {
+                    "type": "fileEdit",
+                    "before": {
+                      "uri": "file:///work/repo-a/src/file-1.txt",
+                      "content": {
+                        "uri": "ahp-content:/blob-1"
+                      }
+                    },
+                    "after": {
+                      "uri": "file:///work/repo-a/src/file-1.txt",
+                      "content": {
+                        "uri": "ahp-content:/blob-2"
+                      }
+                    },
+                    "diff": {
+                      "added": 31,
+                      "removed": 6
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "kind": "markdown",
+              "id": "part-6",
+              "content": "Velit ullamco minim et pariatur Esse nulla. Esse fugiat et deserunt'sunt elit `duis --et` veniam sit culpa [officia/anim-est-fugiat/](Est:/Commodo/Amet.Aliqua/dolore/incididunt/fugiat.sint/anim-consequat-minim-anim-consectetur-elit/officia/anim-est-fugiat):\n\n- **`duis --et officia/anim-est-fugiat/ullamco.amet`:** 1 et, 1 anim, 0 culpa.\n- **`duis --veniam minim-ut.amet`:** ullamco.\n"
+            }
+          ],
+          "startedAt": "2026-10-20T09:10:00.000Z",
+          "state": "complete",
+          "duration": 137724,
+          "usage": {
+            "inputTokens": 135581,
+            "outputTokens": 492,
+            "cacheReadTokens": 135110,
+            "model": "model-a"
+          }
+        },
+        {
+          "id": "turn-3",
+          "message": {
+            "text": "LOREM Est:\\Commodo\\Amet.Aliqua\\dolore\\incididunt\\fugiat.sint\\anim-consequat-minim-anim-consectetur-elit\\officia\\anim-est-fugiat> duis nisi minim -- --et lorem\r\n\r\n> anim-est-fugiat@0.1.0 minim\r\n> duis minim-ut.amet --et lorem\r\n\r",
+            "origin": {
+              "kind": "user"
+            },
+            "model": {
+              "id": "model-a"
+            }
+          },
+          "responseParts": [
+            {
+              "kind": "reasoning",
+              "id": "part-7",
+              "content": "Aliquip pariatur labore, et ut nulla magna occaecat. Cillum Esse enim culpa duis pariatur consequat tempor aliqua — et aliquip exercitation est et magna labore duis aliqua nulla adipiscing ipsum culpa ipsum aliqua, laboris excepteur/sunt cupidatat'excepteur lorem esse occaecat commodo.nisi. Esse lorem enim culpa labore ullamco occaecat: ipsum et UT officia reprehenderit, dolor nulla reprehenderit duis anim minim AUTE-5, laboris reprehenderit nulla cillum amet esse et cillum elit officia proident .cillum/cillum.fugiat laboris labore.consectetur tempor et nostrud.\n"
+            },
+            {
+              "kind": "markdown",
+              "id": "part-8",
+              "content": "Aliquip minim anim. Pariatur et occaecat: tempor ut duis, UT/duis reprehenderit, cillum amet."
+            },
+            {
+              "kind": "toolCall",
+              "toolCall": {
+                "toolCallId": "call-8",
+                "toolName": "tool-8",
+                "displayName": "Ut",
+                "status": "completed",
+                "confirmed": "not-needed",
+                "success": false,
+                "intention": "cillum*",
+                "invocationMessage": {
+                  "markdown": "Anim pariatur fugiat `cillum*`"
+                },
+                "pastTenseMessage": "\"Ut\" culpa",
+                "toolInput": "{\"arg1\":\"est:\\\\Commodo\\\\Amet.Aliqua\\\\dolore\\\\incididunt\\\\fugiat.sint\\\\anim-consequat-minim-anim-consectetur-elit\\\\.lorem\\\\quis\",\"pattern\":\"cillum*\"}",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "incididunt: est:\\Commodo\\Amet.Aliqua\\dolore\\incididunt\\fugiat.sint\\anim-consequat-minim-anim-consectetur-elit\\.lorem\\quis: CUPIDATAT do minim voluptate amet est:\\Commodo\\Amet.Aliqua\\dolore\\incididunt\\fugiat.sint\\anim-consequat-minim-anim-consectetur-elit\\.lorem\\quis: Et commodo nostrud anim et aliquip enim. (incididunt do 2)"
+                  }
+                ],
+                "error": {
+                  "code": "failure",
+                  "message": "incididunt: est:\\Commodo\\Amet.Aliqua\\dolore\\incididunt\\fugiat.sint\\anim-consequat-minim-anim-consectetur-elit\\.lorem\\quis: CUPIDATAT do minim voluptate amet est:\\Commodo\\Amet.Aliqua\\dolore\\incididunt\\fugiat.sint\\anim"
+                },
+                "_meta": {
+                  "toolKind": "search"
+                }
+              }
+            },
+            {
+              "kind": "toolCall",
+              "toolCall": {
+                "toolCallId": "call-9",
+                "toolName": "tool-4",
+                "displayName": "Nisi Nulla Irure",
+                "status": "completed",
+                "confirmed": "not-needed",
+                "success": true,
+                "intention": "Minim labore ipsum cillum.fugiat",
+                "invocationMessage": {
+                  "markdown": "Lorem `excepteur est:\\Commodo\\Amet.Aliqua\\dolore\\incididunt\\fugiat.sint\\anim-consequat-minim-exercitation...`"
+                },
+                "pastTenseMessage": {
+                  "markdown": "Fugiat `excepteur est:\\Commodo\\Amet.Aliqua\\dolore\\incididunt\\fugiat.sint\\anim-consequat-minim-exercitation...`"
+                },
+                "toolInput": "{\"command\":\"excepteur est:\\\\Commodo\\\\Amet.Aliqua\\\\dolore\\\\incididunt\\\\fugiat.sint\\\\anim-consequat-minim-anim-consectetur-elit\\\\.cillum; $mollit = Consectetur-Sed cillum.fugiat; $sit=$mollit.Exercitation; \\\"mollit $sit\\\";\",\"description\":\"Minim labore ipsum cillum.fugiat\"}",
+                "content": [
+                  {
+                    "type": "terminal",
+                    "resource": "ahp-terminal:/00000000-0000-4000-8000-b00000000002",
+                    "title": "Nisi Nulla Irure",
+                    "isPty": false,
+                    "result": {
+                      "exitCode": 0,
+                      "preview": "mollit 777\n    { \"ipsum\": \"EXERCITATION-777\", \"cillum\": \"ADIPISCING\", \"reprehenderit\": \"Amet\", \"et\": \"mollit/velit-elit-laborum.consectetur\", \"sint\": \"Minim nulla proident anim Velit ullamco dolore amet fugiat Eiusmod aliqua occaecat `eiusmod` excepteur dolore veniam, mollit nulla minim eiusmod excepteur sunt minim adipiscing_veniam sit duis fugiat; officia et consequat `veniam_elit` ut\", \"et\": [\"culpa/elit-tempor/velit.amet (nulla Velit anim)\",\"et Nisi-sit",
+                      "truncated": true
+                    }
+                  },
+                  {
+                    "type": "text",
+                    "text": "Ut elit sint culpa officia veniam irure (13.8 AUTE). Occaecat culpa: Est:\\Commodo\\AMET~1.PARIATUR\\Aliquip\\Fugiat\\Fugiat\\7777777777777-mollit-dolore-ut-77777-7excepteur8est3aute-exercitation-777labore-84culpa6-2culpa777est7777excepteur.proident\nEst culpa culpa culpa officia (minim consequat), minim/labore (minim duis dolore/consequat), minim minim minim_quis (minim est ipsum), irure labore (minim FUGIAT) culpa deserunt laborum ipsum et ut.\n\nExercitation (incididunt 777 proident):\nmollit 777"
+                  }
+                ],
+                "_meta": {
+                  "toolKind": "terminal",
+                  "language": "powershell"
+                }
+              }
+            },
+            {
+              "kind": "toolCall",
+              "toolCall": {
+                "toolCallId": "call-10",
+                "toolName": "tool-4",
+                "displayName": "Nisi Nulla Irure",
+                "status": "completed",
+                "confirmed": "not-needed",
+                "success": true,
+                "intention": "Duis cillum minim deserunt est",
+                "invocationMessage": {
+                  "markdown": "Lorem `duis culpa\\veniam-cillum.amet 2>&1 | Culpa-Minim -Ullamco 8`"
+                },
+                "pastTenseMessage": {
+                  "markdown": "Fugiat `duis culpa\\veniam-cillum.amet 2>&1 | Culpa-Minim -Ullamco 8`"
+                },
+                "toolInput": "{\"command\":\"duis culpa\\\\veniam-cillum.amet 2>&1 | Culpa-Minim -Ullamco 8\",\"description\":\"Duis cillum minim deserunt est\"}",
+                "content": [
+                  {
+                    "type": "terminal",
+                    "resource": "ahp-terminal:/00000000-0000-4000-8000-b00000000003",
+                    "title": "Nisi Nulla Irure",
+                    "isPty": false,
+                    "result": {
+                      "exitCode": 1,
+                      "preview": "cillum-veniam: labore.consectetur: mollit ullamco 3 quis eiusmod et aliquip consequat 4 cillum velit\ncillum-veniam: 1 occaecat(sunt). Et fugiat mollit reprehenderit et dolore ipsum aliqua: duis et laborum culpa eiusmod cupidatat (fugiat cillum EXERCITATION-54).\n"
+                    }
+                  },
+                  {
+                    "type": "text",
+                    "text": "cillum-veniam: labore.consectetur: mollit ullamco 3 quis eiusmod et aliquip consequat 4 cillum velit\ncillum-veniam: 1 occaecat(sunt). Et fugiat mollit reprehenderit et dolore ipsum aliqua: duis et laborum culpa eiusmod cupidatat (fugiat cillum EXERCITATION-54).\n<sed: 777 elit minim velit eiusmod 1>"
+                  }
+                ],
+                "_meta": {
+                  "toolKind": "terminal",
+                  "language": "powershell"
+                }
+              }
+            },
+            {
+              "kind": "markdown",
+              "id": "part-9",
+              "content": "Reprehenderit, quis enim ullamco ut sunt consequat amet et deserunt pariatur. Deserunt nisi elit aliqua aliquip minim (`cupidatat=LABORE minim=LABORE`), laboris et anim consectetur mollit et elit'sunt `excepteur` (`0.9.0`) minim deserunt consequat nulla: occaecat, amet aliqua, dolore laboris commodo. Et aliqua/labore occaecat excepteur commodo et anim dolor-magna adipiscing ut ipsum.\n\n## Enim et Anim magna sint excepteur\n\n| Aliquip | Nostrud et magna nisi |\n|---|---|"
+            }
+          ],
+          "startedAt": "2026-10-20T09:20:00.000Z",
+          "state": "complete",
+          "duration": 174637,
+          "usage": {
+            "inputTokens": 156623,
+            "outputTokens": 1447,
+            "cacheReadTokens": 155895,
+            "model": "model-a"
+          }
+        },
+        {
+          "id": "turn-4",
+          "message": {
+            "text": "velit, ut et duis",
+            "origin": {
+              "kind": "user"
+            },
+            "model": {
+              "id": "model-a"
+            }
+          },
+          "responseParts": [
+            {
+              "kind": "reasoning",
+              "id": "part-10",
+              "content": "Esse enim nulla mollit minim et duis magna, exercitation anim/fugiat/ tempor et nostrud, excepteur exercitation nisi. Esse'tempor sit et exercitation pariatur mollit duis-pariatur-veniam minim magna sed Fugiat duis veniam, laboris duis et quis laboris fugiat pariatur reprehenderit laborum culpa nulla, Esse cillum excepteur excepteur nulla incididunt incididunt commodo.\n\n"
+            },
+            {
+              "kind": "toolCall",
+              "toolCall": {
+                "toolCallId": "call-11",
+                "toolName": "tool-9",
+                "displayName": "Officia Nulla",
+                "status": "completed",
+                "confirmed": "not-needed",
+                "success": true,
+                "invocationMessage": {
+                  "markdown": "Officia nulla [duis-pariatur-veniam](aliquip:///est%3Nulla/Commodo/Amet.Aliqua/.mollit/pariatur/duis-pariatur-veniam/NULLA.consectetur)"
+                },
+                "pastTenseMessage": {
+                  "markdown": "Officia nulla [duis-pariatur-veniam](aliquip:///est%3Nulla/Commodo/Amet.Aliqua/.mollit/pariatur/duis-pariatur-veniam/NULLA.consectetur)"
+                },
+                "toolInput": "{\"arg1\":\"duis-pariatur-veniam\"}"
+              }
+            },
+            {
+              "kind": "markdown",
+              "id": "part-11",
+              "content": "Incididunt Esse exercitation et duis Esse enim aliqua nisi. Officia **nisi** culpa proident aliquip, irure eiusmod fugiat nostrud culpa pariatur.\n\n1. **Aliquip mollit: `anim/fugiat/anim-anim-dolor-duis.consectetur` tempor ullamco nostrud.** Excepteur'sunt ipsum ullamco deserunt sit veniam fugiat, sunt culpa et AUTE-5 et do tempor `anim-consectetur-reprehenderit-duis.consectetur`. Et duis cupidatat'sunt reprehenderit reprehenderit, `.lorem/fugiat/`, officia'excepteur quis velit. Et aliquip officia'excepteur quis anim, mollit fugiat ipsum deserunt."
+            }
+          ],
+          "startedAt": "2026-10-20T09:30:00.000Z",
+          "state": "complete",
+          "duration": 180391,
+          "usage": {
+            "inputTokens": 178253,
+            "outputTokens": 1929,
+            "cacheReadTokens": 177099,
+            "model": "model-a"
+          }
+        },
+        {
+          "id": "turn-5",
+          "message": {
+            "text": "laboris",
+            "origin": {
+              "kind": "user"
+            },
+            "model": {
+              "id": "model-a"
+            }
+          },
+          "responseParts": [
+            {
+              "kind": "reasoning",
+              "id": "part-12",
+              "content": "Cillum Esse'tempor aliqua et nostrud-tempor laboris minim dolor mollit, sunt nulla `Sed` excepteur lorem commodo aliqua Lorem dolore labore—consequat et nisi eiusmod minim nulla labore occaecat, voluptate et lorem EXERCITATION proident Excepteur Proident, laboris reprehenderit proident `Eiusmod` culpa laborum et aliqua tempor `Voluptate`, minim nulla anim proident commodo et veniam eiusmod eiusmod et occaecat esse minim Amet.\n"
+            },
+            {
+              "kind": "markdown",
+              "id": "part-13",
+              "content": "Sint Aliquip 1.9. Et enim ut et sit excepteur consequat cillum mollit do: et cupidatat excepteur culpa nostrud et nisi reprehenderit est tempor `quis-anim` fugiat nulla aute, EXERCITATION-deserunt `Velit` (dolor, nostrud-tempor, consectetur deserunt, excepteur, cupidatat veniam). Et Velit mollit reprehenderit laboris dolore ipsum veniam nulla, mollit Esse enim et et proident nisi laboris excepteur et magna culpa mollit et proident cupidatat.\n\nIncididunt, nulla sunt esse: et exercitation do reprehenderit `velit` tempor occaecat et aliquip, laboris et exercitation pariatur enim cupidatat elit."
+            },
+            {
+              "kind": "toolCall",
+              "toolCall": {
+                "toolCallId": "call-12",
+                "toolName": "tool-3",
+                "displayName": "Officia",
+                "status": "completed",
+                "confirmed": "not-needed",
+                "success": true,
+                "intention": "minim et aliquip veniam Est:\\Commodo\\AMET~1.PARIATUR\\Aliquip\\Fugiat\\Fugiat\\anim-sunt1.anim.",
+                "invocationMessage": {
+                  "markdown": "Officia [anim-sunt1.anim](aliquip:///est%3Nulla/Commodo/AMET~1.PARIATUR/Aliquip/Fugiat/Fugiat/anim-sunt1.anim)"
+                },
+                "pastTenseMessage": {
+                  "markdown": "Officia [anim-sunt1.anim](aliquip:///est%3Nulla/Commodo/AMET~1.PARIATUR/Aliquip/Fugiat/Fugiat/anim-sunt1.anim)"
+                },
+                "toolInput": "{\"path\":\"Est:\\\\Commodo\\\\AMET~1.PARIATUR\\\\Aliquip\\\\Fugiat\\\\Fugiat\\\\anim-sunt1.anim\"}",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Duis est aliquip veniam culpa Est:\\Commodo\\AMET~1.PARIATUR\\Aliquip\\Fugiat\\Fugiat\\anim-sunt1.anim"
+                  },
+                  {
+                    "type": "embeddedResource",
+                    "contentType": "image/png",
+                    "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+                  }
+                ],
+                "_meta": {
+                  "toolKind": "read"
+                }
+              }
+            },
+            {
+              "kind": "markdown",
+              "id": "part-14",
+              "content": "Et enim Fugiat veniam ullamco. Et enim ut pariatur consectetur minim deserunt aliqua, mollit et consequat veniam aliqua et magna et'excepteur sunt.\n\n## Fugiat veniam\nCulpa: tempor nulla, et fugiat ullamco, et cillum-est pariatur, `veniam-cillum` (777 quis) laboris `adipiscing occaecat --veniam`. Fugiat tempor et Fugiat nostrud sed duis et ullamco labore; et do enim ut tempor et minim deserunt. Esse excepteur'excepteur nisi `duis nisi ullamco`: deserunt consequat sed labore amet sunt pariatur, laboris et nostrud pariatur nostrud veniam aliqua et.\n\n## Consectetur amet est"
+            }
+          ],
+          "startedAt": "2026-10-20T09:40:00.000Z",
+          "state": "complete",
+          "duration": 1864907,
+          "usage": {
+            "inputTokens": 641678,
+            "outputTokens": 474,
+            "cacheReadTokens": 639184,
+            "model": "model-a"
+          }
+        },
+        {
+          "id": "turn-6",
+          "message": {
+            "text": "consectetur'sunt dolor et et ipsum et consequat laboris",
+            "origin": {
+              "kind": "user"
+            },
+            "model": {
+              "id": "model-a"
+            }
+          },
+          "responseParts": [
+            {
+              "kind": "systemNotification",
+              "content": "Pariatur ipsum irure officia deserunt nisi duis mollit magna aute tempor. Cupidatat minim et nostrud adipiscing. Laborum aliquip.ipsum.deserunt culpa minim labore: Eiusmod, Sunt DO consectetur esse",
+              "_meta": {
+                "kind": "managedPluginPreparationFailure",
+                "severity": "warning"
+              }
+            },
+            {
+              "kind": "reasoning",
+              "id": "part-15",
+              "content": "Esse enim culpa ut enim culpa mollit nulla reprehenderit laboris laboris 2 cillum, et cupidatat nulla reprehenderit-veniam laborum. Esse mollit excepteur quis sunt aliquip fugiat et et cupidatat: deserunt'sunt \"Tempor officia\" dolor quis elit laboris cillum laboris culpa \"Ullamco\" irure quis elit deserunt, elit Esse enim'excepteur aliqua est excepteur laboris. Occaecat do ut culpa dolore nulla exercitation aliqua excepteur sunt et minim cupidatat laboris incididunt et, exercitation consequat quis elit laboris consectetur nulla lorem sed incididunt fugiat dolor culpa veniam et proident.\n"
+            },
+            {
+              "kind": "markdown",
+              "id": "part-16",
+              "content": "Cillum ut lorem (13 cupidatat) laboris et minim ut amet et consequat aliquip deserunt. Dolor sunt tempor SED Eiusmod, tempor quis aliquip est nulla'excepteur mollit culpa. Pariatur et minim irure minim et magna amet et deserunt.\n\n1. Mollit nulla eiusmod minim, minim enim \"laboris excepteur\". Sed Tempor officia, exercitation Ullamco.\n2. Mollit nulla minim excepteur est et anim minim est nulla ipsum, minim enim \"Minim fugiat et reprehenderit Esse ipsum culpa et ipsum dolore, exercitation exercitation minim quis est.\" Sed Excepteur amet. Nostrud deserunt sint minim nisi 30 sunt, exercitation est deserunt."
+            }
+          ],
+          "startedAt": "2026-10-20T09:50:00.000Z",
+          "state": "complete",
+          "duration": 136439,
+          "usage": {
+            "inputTokens": 249715,
+            "outputTokens": 579,
+            "cacheReadTokens": 248359,
+            "model": "model-a"
+          }
+        },
+        {
+          "id": "turn-7",
+          "message": {
+            "text": "cillum Esse dolor ullamco tempor nulla minim aliquip, irure nisi deserunt deserunt culpa aute tempor sint exercitation occaecat?",
+            "origin": {
+              "kind": "user"
+            },
+            "model": {
+              "id": "model-a"
+            }
+          },
+          "responseParts": [
+            {
+              "kind": "reasoning",
+              "id": "part-17",
+              "content": "Lorem sit laboris, eiusmod nulla minim aliquip ut reprehenderit duis deserunt incididunt ipsum minim exercitation enim laboris laboris fugiat mollit deserunt sit dolor esse fugiat nulla MINIM officia irure sit. Esse'magna dolore esse occaecat et Occaecat aliquip sint proident commodo quis nostrud aliquip.\n\n"
+            },
+            {
+              "kind": "markdown",
+              "id": "part-18",
+              "content": "Minim aliquip ut sit. Dolore deserunt occaecat et Occaecat aliquip, tempor quis reprehenderit.\n\n- **Fugiat nulla minim occaecat:** deserunt sit dolor tempor et cillum fugiat nulla minim officia, et lorem pariatur excepteur minim aliqua occaecat consequat.\n- **Veniam ullamco aliquip:** Esse'tempor culpa deserunt laboris cillum, laboris veniam reprehenderit sint laboris minim quis sunt sed.\n- **Veniam aliqua minim sed enim:** deserunt aliqua tempor tempor officia sint do et elit.\n\nNisi dolor irure enim tempor excepteur occaecat aliquip, tempor laboris."
+            }
+          ],
+          "startedAt": "2026-10-20T10:00:00.000Z",
+          "state": "cancelled",
+          "duration": 415832,
+          "usage": {
+            "inputTokens": 250352,
+            "outputTokens": 261,
+            "cacheReadTokens": 249711,
+            "model": "model-a"
+          }
+        }
+      ],
+      "changes": {
+        "additions": 808,
+        "deletions": 5,
+        "files": 6
+      },
+      "activeTurn": {
+        "id": "turn-8",
+        "message": {
+          "text": "velit",
+          "origin": {
+            "kind": "user"
+          },
+          "model": {
+            "id": "model-a"
+          }
+        },
+        "responseParts": [],
+        "startedAt": "2026-10-20T10:10:00.000Z"
+      }
+    }
+  }
+}
