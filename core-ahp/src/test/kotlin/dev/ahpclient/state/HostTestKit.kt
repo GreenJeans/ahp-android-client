@@ -26,8 +26,8 @@ internal const val SESSION_E = "ahp-session:/00000000-0000-4000-8000-0000000000e
 internal const val INITIAL_SEQ = 126_551L
 internal const val SNAPSHOT_SEQ = 126_560L
 
-internal fun sessionSnapshot(uri: String, fromSeq: Long, title: String = "Session C", status: Int = 8, inputNeeded: String? = null) =
-    """{"resource":"$uri","fromSeq":$fromSeq,"state":{"provider":"copilotcli","title":"$title","status":$status,"lifecycle":"ready","activeClients":[],"chats":[]${inputNeeded?.let { ""","inputNeeded":$it""" }.orEmpty()}}}"""
+internal fun sessionSnapshot(uri: String, fromSeq: Long, title: String = "Session C", status: Int = 8, inputNeeded: String? = null, chats: String = "[]") =
+    """{"resource":"$uri","fromSeq":$fromSeq,"state":{"provider":"copilotcli","title":"$title","status":$status,"lifecycle":"ready","activeClients":[],"chats":$chats${inputNeeded?.let { ""","inputNeeded":$it""" }.orEmpty()}}}"""
 
 internal fun actionFrame(channel: String, actionJson: String, seq: Long) =
     """{"jsonrpc":"2.0","method":"action","params":{"channel":"$channel","action":$actionJson,"serverSeq":$seq}}"""
@@ -46,6 +46,8 @@ internal class HostScript(
     val onReconnect: (id: Long?) -> String = { id -> result(id, """{"type":"replay","actions":[],"missing":[]}""") },
     /** The `turnsNextCursor` a subscribed chat reports; null for a chat with nothing older. */
     val chatCursor: String? = null,
+    /** The chats a subscribed session lists, as a JSON array of chat summaries. */
+    val sessionChats: String = "[]",
 ) {
     fun reply(method: String, id: Long?, params: JsonObject): String? = when (method) {
         "initialize" -> initializeReply(id, params)
@@ -70,7 +72,7 @@ internal class HostScript(
         channel.startsWith("ahp-chat:/") ->
             if (channel in missingSessions) error(id, -32008, "no such chat") else result(id, """{"snapshot":${chatSnapshotJson(channel, SNAPSHOT_SEQ, cursor = chatCursor)}}""")
         channel in missingSessions -> error(id, -32001, "no such session")
-        else -> result(id, """{"snapshot":${sessionSnapshot(channel, SNAPSHOT_SEQ, inputNeeded = inputNeeded)}}""")
+        else -> result(id, """{"snapshot":${sessionSnapshot(channel, SNAPSHOT_SEQ, inputNeeded = inputNeeded, chats = sessionChats)}}""")
     }
 }
 

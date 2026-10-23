@@ -8,12 +8,15 @@ import dev.ahpclient.security.FakeStore
 import dev.ahpclient.security.TokenVault
 import dev.ahpclient.security.VaultLoad
 import dev.ahpclient.state.Backoff
+import dev.ahpclient.state.CHAT_A
+import dev.ahpclient.state.CHAT_B
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.HostConnector
 import dev.ahpclient.state.HostScript
 import dev.ahpclient.state.HostSession
 import dev.ahpclient.state.ScriptedConnector
 import dev.ahpclient.state.SESSION_C
+import dev.ahpclient.state.chatSummaryJson
 import dev.ahpclient.state.fixture
 import dev.ahpclient.tunnel.DevTunnelsClient
 import dev.ahpclient.tunnel.DevTunnelsException
@@ -531,6 +534,117 @@ class AppControllerTest {
     }
 
     @Test
+    fun `a chat opens over its session, going back leaves the session open, and each release unsubscribes exactly its own channel`() = runTest {
+        withRig(script = { HostScript(sessionChats = "[${chatSummaryJson(CHAT_A)}]") }) {
+            connectToFirstHost()
+            controller.openSession(SESSION_C)
+            val session = assertIs<AppState.Connected>(state).open!!
+            session.store.state.first { it != null }
+            runCurrent()
+
+            controller.openChat(CHAT_A)
+            val chat = assertIs<AppState.Connected>(state).open!!.chat!!
+            chat.store.state.first { it != null }
+            runCurrent()
+
+            assertEquals(CHAT_A, chat.uri)
+            assertEquals("Chat", chat.store.state.value!!.title)
+            assertEquals(emptyList(), unsubscribed())
+
+            controller.closeChat()
+            runCurrent()
+
+            val after = assertIs<AppState.Connected>(state).open!!
+            assertEquals(SESSION_C, after.uri)
+            assertNull(after.chat)
+            assertEquals(listOf(CHAT_A), unsubscribed())
+        }
+    }
+
+    @Test
+    fun `a chat the session does not list is ignored, and so is a second open while one is showing`() = runTest {
+        withRig(script = { HostScript(sessionChats = "[${chatSummaryJson(CHAT_A)}, ${chatSummaryJson(CHAT_B, "Second")}]") }) {
+            connectToFirstHost()
+            controller.openSession(SESSION_C)
+            controller.openChat(CHAT_A)
+            assertNull(assertIs<AppState.Connected>(state).open!!.chat, "the session snapshot had not arrived, so no chat could be checked against it")
+            assertEquals(emptyList(), unsubscribed())
+
+            assertIs<AppState.Connected>(state).open!!.store.state.first { it != null }
+            runCurrent()
+            controller.openChat("ahp-chat:/not-in-this-session")
+            assertNull(assertIs<AppState.Connected>(state).open!!.chat)
+
+            controller.openChat(CHAT_A)
+            controller.openChat(CHAT_B)
+            assertEquals(CHAT_A, assertIs<AppState.Connected>(state).open!!.chat!!.uri)
+            controller.closeChat()
+            runCurrent()
+
+            assertEquals(listOf(CHAT_A), unsubscribed())
+        }
+    }
+
+    @Test
+    fun `leaving the session with a chat open releases the chat and the session`() = runTest {
+        withRig(script = { HostScript(sessionChats = "[${chatSummaryJson(CHAT_A)}]") }) {
+            connectToFirstHost()
+            controller.openSession(SESSION_C)
+            assertIs<AppState.Connected>(state).open!!.store.state.first { it != null }
+            runCurrent()
+            controller.openChat(CHAT_A)
+            runCurrent()
+
+            controller.closeSession()
+            runCurrent()
+
+            assertNull(assertIs<AppState.Connected>(state).open)
+            assertEquals(setOf(CHAT_A, SESSION_C), unsubscribed().toSet())
+            assertEquals(2, unsubscribed().size)
+        }
+    }
+
+    @Test
+    fun `a chat cannot be opened or closed without an open session, or when not connected`() = runTest {
+        withRig {
+            controller.start()
+            runCurrent()
+            controller.openChat(CHAT_A)
+            controller.closeChat()
+            assertIs<AppState.SignedOut>(state)
+            assertTrue(created.isEmpty())
+        }
+        withRig {
+            connectToFirstHost()
+
+            controller.openChat(CHAT_A)
+            controller.closeChat()
+            runCurrent()
+
+            assertNull(assertIs<AppState.Connected>(state).open)
+            assertEquals(emptyList(), unsubscribed())
+        }
+    }
+
+    @Test
+    fun `leaving the host with a chat open returns to the host list`() = runTest {
+        withRig(script = { HostScript(sessionChats = "[${chatSummaryJson(CHAT_A)}]") }) {
+            server.json(fixture("list-tunnels.json"))
+            connectToFirstHost()
+            controller.openSession(SESSION_C)
+            assertIs<AppState.Connected>(state).open!!.store.state.first { it != null }
+            runCurrent()
+            controller.openChat(CHAT_A)
+
+            controller.disconnect()
+            val list = awaitHosts()
+
+            assertIs<HostList.Loaded>(list)
+            assertEquals(ConnState.Stopped, created.single().connection.value)
+        }
+    }
+
+    @Test
     fun `focusing a session opens it, replaces another open one, and ignores unknown or repeated requests`() = runTest {
         withRig {
             connectToFirstHost()
@@ -737,6 +851,48 @@ class AppControllerTest {
 }
 
 class SafeLinksTest {
+    @Test
+    fun `any plain https page is an acceptable web link`() {
+        listOf(
+            "https://example.com",
+            "https://example.com/path/to/page?q=1&r=two#section",
+            "https://docs.example.co.uk:8443/a",
+            "https://sub-domain.example.com/%E2%9C%93",
+        ).forEach { assertTrue(SafeLinks.isSafeWebLink(it), it) }
+    }
+
+    @Test
+    fun `a web link must be https with a real ASCII host name and no credentials`() {
+        listOf(
+            "http://example.com/",
+            "javascript:alert(1)",
+            "intent://example.com#Intent;scheme=https;end",
+            "file:///sdcard/secret.txt",
+            "content://com.android.contacts/contacts",
+            "data:text/html,<script>alert(1)</script>",
+            "mailto:someone@example.com",
+            "tel:+15551234567",
+            "https://user:pass@example.com/",
+            "https://example.com@evil.example/",
+            "https://аpple.com/",
+            "https://exаmple.com/",
+            "https:///no-host",
+            "https://",
+            "//example.com/x",
+            "example.com/x",
+            "https://exa mple.com/",
+            "https://example.com/a b",
+            "",
+            "not a uri at all",
+        ).forEach { assertFalse(SafeLinks.isSafeWebLink(it), it) }
+    }
+
+    @Test
+    fun `an enormous web link is refused`() {
+        assertFalse(SafeLinks.isSafeWebLink("https://example.com/" + "a".repeat(3_000)))
+        assertTrue(SafeLinks.isSafeWebLink("https://example.com/" + "a".repeat(1_000)))
+    }
+
     @Test
     fun `only https github pages are opened`() {
         assertTrue(SafeLinks.isSafeVerificationUri("https://github.com/login/device"))

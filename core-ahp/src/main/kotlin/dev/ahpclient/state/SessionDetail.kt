@@ -7,6 +7,7 @@ import com.microsoft.agenthostprotocol.generated.ChatInputQuestionMultiSelect
 import com.microsoft.agenthostprotocol.generated.ChatInputQuestionNumber
 import com.microsoft.agenthostprotocol.generated.ChatInputQuestionSingleSelect
 import com.microsoft.agenthostprotocol.generated.ChatInputQuestionText
+import com.microsoft.agenthostprotocol.generated.ChatInputRequest
 import com.microsoft.agenthostprotocol.generated.SessionInputRequest
 import com.microsoft.agenthostprotocol.generated.SessionInputRequestChatInput
 import com.microsoft.agenthostprotocol.generated.SessionInputRequestToolAuthentication
@@ -38,6 +39,7 @@ data class QuestionView(
 )
 
 data class ChatRow(
+    val uri: String,
     val title: String,
     val state: ActivityState,
     val activity: String?,
@@ -81,6 +83,7 @@ data class SessionDetail(
             workingDirectories = state.workingDirectories.orEmpty().map(::displayPath),
             chats = state.chats.map { chat ->
                 ChatRow(
+                    uri = chat.resource,
                     title = chat.title.ifBlank { SessionListModel.UNTITLED },
                     state = chat.status.activityState,
                     activity = chat.activity?.takeIf { it.isNotBlank() },
@@ -106,8 +109,10 @@ data class SessionDetail(
             else -> InputRequestView("Input", "The agent is waiting for input.")
         }
 
-        private fun chatInputView(request: SessionInputRequestChatInput): InputRequestView {
-            val input = request.value.request
+        private fun chatInputView(request: SessionInputRequestChatInput): InputRequestView = describeChatInput(request.value.request)
+
+        /** A question the agent asked in a chat, in words; shared by the session detail and the transcript. */
+        fun describeChatInput(input: ChatInputRequest): InputRequestView {
             val questions = input.questions.orEmpty()
             val headline = input.message?.takeIf { it.isNotBlank() }
                 ?: questions.firstNotNullOfOrNull(::questionText)
@@ -153,7 +158,7 @@ data class SessionDetail(
             return if (detail.isNullOrBlank()) name else "$name: $detail"
         }
 
-        private fun plain(text: StringOrMarkdown?): String? = when (text) {
+        internal fun plain(text: StringOrMarkdown?): String? = when (text) {
             is StringOrMarkdown.Plain -> text.value
             is StringOrMarkdown.Markdown -> text.value
             else -> null

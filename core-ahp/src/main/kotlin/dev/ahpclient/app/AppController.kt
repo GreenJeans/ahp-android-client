@@ -111,7 +111,31 @@ class AppController(
     fun closeSession() {
         val current = _state.value as? AppState.Connected ?: return
         val open = current.open ?: return
-        if (_state.compareAndSet(current, current.copy(open = null))) current.session.closeSession(open.uri)
+        if (_state.compareAndSet(current, current.copy(open = null))) {
+            open.chat?.let { current.session.closeChat(it.uri) }
+            current.session.closeSession(open.uri)
+        }
+    }
+
+    /** Opens the transcript of one of the open session's chats. Ignores a chat the session does not list, and a second tap while one is open. */
+    @Synchronized
+    fun openChat(uri: String) {
+        val current = _state.value as? AppState.Connected ?: return
+        val open = current.open ?: return
+        if (open.chat != null) return
+        val listed = open.store.state.value?.chats?.any { it.resource == uri } == true
+        if (!listed) return
+        val store = current.session.openChat(uri)
+        if (!_state.compareAndSet(current, current.copy(open = open.copy(chat = OpenChat(uri, store))))) current.session.closeChat(uri)
+    }
+
+    /** Leaves the open transcript and returns to the session detail. */
+    @Synchronized
+    fun closeChat() {
+        val current = _state.value as? AppState.Connected ?: return
+        val open = current.open ?: return
+        val chat = open.chat ?: return
+        if (_state.compareAndSet(current, current.copy(open = open.copy(chat = null)))) current.session.closeChat(chat.uri)
     }
 
     /** Leaves the live host and returns to the host list. */
