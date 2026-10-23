@@ -5,9 +5,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -25,27 +28,44 @@ import dev.ahpclient.state.ToolDetail
 import dev.ahpclient.state.ToolResultView
 import java.text.NumberFormat
 
-/** What a tool call was asked and what it produced, as the body of its expanded block. [approveHere] is set when the buttons to decide it are on screen, so the block does not send the person elsewhere. */
+/**
+ * What a tool call was asked and what it produced, as the body of its expanded block. [approveHere] is set when the buttons
+ * to decide it are on screen, so the block does not send the person elsewhere. [onShowAll] is set when something was left
+ * out for length and the person may ask for more. [onOpenSubagent] opens a subagent's own transcript. The text can be
+ * selected and copied.
+ */
 @Composable
-internal fun ToolDetailBody(detail: ToolDetail, approveHere: Boolean = false) {
-    detail.waitingFor?.let { waiting ->
-        Column(modifier = Modifier.semantics(mergeDescendants = true) {}.testTag("tool_waiting"), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(waiting, style = MaterialTheme.typography.titleSmall)
-            if (!approveHere) Text(ToolDetail.APPROVE_ELSEWHERE, style = MaterialTheme.typography.bodyMedium)
-        }
-    }
-    if (detail.input.isNotEmpty()) {
-        Column(modifier = Modifier.testTag("tool_input"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("Input", style = MaterialTheme.typography.labelLarge)
-            detail.input.forEach { line -> InputLineView(line) }
-            if (detail.moreInput > 0) {
-                Text("${detail.moreInput} more fields not shown.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+internal fun ToolDetailBody(
+    detail: ToolDetail,
+    approveHere: Boolean = false,
+    onShowAll: (() -> Unit)? = null,
+    onOpenSubagent: ((String) -> Unit)? = null,
+) {
+    SelectionContainer {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            detail.waitingFor?.let { waiting ->
+                Column(modifier = Modifier.semantics(mergeDescendants = true) {}.testTag("tool_waiting"), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(waiting, style = MaterialTheme.typography.titleSmall)
+                    if (!approveHere) Text(ToolDetail.APPROVE_ELSEWHERE, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+            if (detail.input.isNotEmpty()) {
+                Column(modifier = Modifier.testTag("tool_input"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Input", style = MaterialTheme.typography.labelLarge)
+                    detail.input.forEach { line -> InputLineView(line) }
+                    if (detail.moreInput > 0) {
+                        Text("${detail.moreInput} more fields not shown.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+            detail.results.forEach { result -> ToolResultRow(result, onOpenSubagent) }
+            detail.error?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("tool_error")) }
+            if (detail.isEmpty) Text("No further details.", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("tool_nothing"))
+            if (onShowAll != null) {
+                OutlinedButton(onClick = onShowAll, modifier = Modifier.heightIn(min = 48.dp).testTag("show_all")) { Text("Show all") }
             }
         }
     }
-    detail.results.forEach { result -> ToolResultRow(result) }
-    detail.error?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("tool_error")) }
-    if (detail.isEmpty) Text("No further details.", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("tool_nothing"))
 }
 
 @Composable
@@ -57,16 +77,24 @@ private fun InputLineView(line: InputLine) {
 }
 
 @Composable
-internal fun ToolResultRow(result: ToolResultView) {
+internal fun ToolResultRow(result: ToolResultView, onOpenSubagent: ((String) -> Unit)? = null) {
     when (result) {
         is ToolResultView.Text -> MonoBlock(result.body, Modifier.testTag("result_text"))
         is ToolResultView.Terminal -> TerminalResult(result)
         is ToolResultView.FileEdit -> FileEditResult(result)
-        is ToolResultView.Subagent -> Column(modifier = Modifier.semantics(mergeDescendants = true) {}.testTag("result_subagent"), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(result.title, style = MaterialTheme.typography.titleSmall)
-            if (result.agentName.isNotBlank()) Text(result.agentName, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (result.description.isNotBlank()) Text(result.description, style = MaterialTheme.typography.bodyMedium)
-            Text("Its own transcript is not shown yet.", style = MaterialTheme.typography.bodySmall, fontStyle = FontStyle.Italic, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        is ToolResultView.Subagent -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            val chatUri = result.chatUri
+            val canOpen = chatUri != null && onOpenSubagent != null
+            // The words are one stop for a screen reader; the button below stays a control of its own.
+            Column(modifier = Modifier.semantics(mergeDescendants = true) {}.testTag("result_subagent"), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(result.title, style = MaterialTheme.typography.titleSmall)
+                if (result.agentName.isNotBlank()) Text(result.agentName, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (result.description.isNotBlank()) Text(result.description, style = MaterialTheme.typography.bodyMedium)
+                if (!canOpen) Text("Its own transcript is not available.", style = MaterialTheme.typography.bodySmall, fontStyle = FontStyle.Italic, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (chatUri != null && onOpenSubagent != null) {
+                OutlinedButton(onClick = { onOpenSubagent(chatUri) }, modifier = Modifier.heightIn(min = 48.dp).testTag("subagent_open")) { Text("Open its transcript") }
+            }
         }
         is ToolResultView.Attachment -> Text(result.label, style = MaterialTheme.typography.bodyMedium, fontStyle = FontStyle.Italic, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("result_attachment"))
         ToolResultView.Unknown -> Text("A result this app cannot show.", style = MaterialTheme.typography.bodyMedium, fontStyle = FontStyle.Italic, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("result_unknown"))

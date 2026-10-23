@@ -6,6 +6,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
@@ -21,6 +22,7 @@ import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.DispatchOutcome
 import dev.ahpclient.state.FormOption
 import dev.ahpclient.state.FormQuestion
+import dev.ahpclient.state.FormValue
 import dev.ahpclient.state.InputForm
 import dev.ahpclient.state.InputRequestView
 import dev.ahpclient.state.InteractResult
@@ -48,10 +50,14 @@ class InteractionUiTest {
 
     private class Calls {
         val sent = mutableListOf<String>()
+        val steered = mutableListOf<String>()
         var cancels = 0
         val approved = mutableListOf<Pair<String, String?>>()
         val denied = mutableListOf<Pair<String, String?>>()
+        val resultApproved = mutableListOf<String>()
+        val resultDenied = mutableListOf<String>()
         val answered = mutableListOf<Pair<String, Map<String, AnswerValue>>>()
+        val drafts = mutableListOf<Triple<String, String, AnswerValue?>>()
         val declined = mutableListOf<String>()
         val dismissed = mutableListOf<String>()
         var result: InteractResult = InteractResult.Sent(DispatchOutcome.Accepted)
@@ -60,10 +66,14 @@ class InteractionUiTest {
     private fun actions(calls: Calls, running: Boolean = false) = ChatActionsUi(
         running = running,
         send = { calls.sent += it; calls.result },
+        steer = { calls.steered += it; calls.result },
         cancel = { calls.cancels++; calls.result },
         approve = { id, option -> calls.approved += id to option; calls.result },
         deny = { id, option -> calls.denied += id to option; calls.result },
+        approveResult = { calls.resultApproved += it; calls.result },
+        denyResult = { calls.resultDenied += it; calls.result },
         answer = { id, answers -> calls.answered += id to answers; calls.result },
+        saveDraft = { id, question, answer -> calls.drafts += Triple(id, question, answer); calls.result },
         decline = { calls.declined += it; calls.result },
         dismiss = { calls.dismissed += it; calls.result },
     )
@@ -86,6 +96,11 @@ class InteractionUiTest {
     private val running = TranscriptItem.Tool(
         "t2/c2", "Read file", null, ToolState.RUNNING,
         call(""""status":"running","toolCallId":"c2","toolName":"read","displayName":"Read file","invocationMessage":"Reading","toolInput":"{}","confirmed":"user-action""""),
+    )
+
+    private val resultWaiting = TranscriptItem.Tool(
+        "t3/c1", "Run in Terminal", "Run the tests", ToolState.WAITING_FOR_APPROVAL,
+        call(""""status":"pending-result-confirmation",$common,"invocationMessage":"Run it","toolInput":"{}","pastTenseMessage":"Ran it","confirmed":"not-needed","success":true,"intention":"Run the tests""""),
     )
 
     private fun question(form: InputForm?) =
@@ -336,6 +351,133 @@ class InteractionUiTest {
 
         rule.onNodeWithTag("question_form").assertDoesNotExist()
         rule.onNodeWithTag("row_question_note").assertTextContains("Answer in VS Code", substring = true)
+    }
+
+    // ---- steering -----------------------------------------------------------------------------------------------
+
+    @Test
+    fun steerIsOfferedOnlyWhileTheAgentIsWorkingAndSteersInsteadOfQueueing() {
+        val calls = Calls()
+        show(transcript(), actions(calls, running = true))
+
+        rule.onNodeWithTag("composer_steer").assertIsNotEnabled()
+        rule.onNodeWithTag("composer_input").performTextInput(" turn left ")
+        rule.onNodeWithTag("composer_steer").assertIsEnabled().performClick()
+
+        rule.waitUntil(5_000) { calls.steered.isNotEmpty() }
+        assertEquals(listOf(" turn left "), calls.steered)
+        assertTrue("steering is not queueing", calls.sent.isEmpty())
+        rule.waitUntil(5_000) { !textInBox(" turn left ") }
+    }
+
+    @Test
+    fun anIdleChatHasNoSteerButton() {
+        show(transcript(), actions(Calls(), running = false))
+
+        rule.onNodeWithTag("composer_steer").assertDoesNotExist()
+    }
+
+    @Test
+    fun aSteerTheHostRefusedKeepsTheTextWithTheReason() {
+        val calls = Calls().apply { result = InteractResult.Sent(DispatchOutcome.Rejected("turn over")) }
+        show(transcript(), actions(calls, running = true))
+
+        rule.onNodeWithTag("composer_input").performTextInput("hello")
+        rule.onNodeWithTag("composer_steer").performClick()
+
+        rule.waitUntil(5_000) { rule.onAllNodesWithTagCount("composer_notice") == 1 }
+        rule.onNodeWithTag("composer_notice").assertTextContains("The host refused it: turn over")
+        assertTrue(textInBox("hello"))
+    }
+
+    // ---- approving what a tool produced -------------------------------------------------------------------------
+
+    @Test
+    fun aResultWaitingForTheUserHasItsOwnButtonsThatUseTheResultActions() {
+        val calls = Calls()
+        show(transcript(resultWaiting), actions(calls))
+
+        rule.onNodeWithTag("approve_plain").assertDoesNotExist()
+        rule.onNodeWithTag("deny_plain").assertDoesNotExist()
+        rule.onNodeWithTag("approve_result").assertIsDisplayed().performClick()
+        rule.onNodeWithTag("deny_result").performClick()
+
+        rule.waitUntil(5_000) { calls.resultApproved.isNotEmpty() && calls.resultDenied.isNotEmpty() }
+        assertEquals(listOf("c1"), calls.resultApproved)
+        assertEquals(listOf("c1"), calls.resultDenied)
+        assertTrue("the call's own approval is a different action", calls.approved.isEmpty() && calls.denied.isEmpty())
+        rule.onNodeWithText("Let the agent see the result").assertExists()
+    }
+
+    @Test
+    fun aResultWaitingInAReadOnlyChatHasNoButtons() {
+        show(transcript(resultWaiting), actions = null)
+
+        rule.onNodeWithTag("approve_result").assertDoesNotExist()
+        rule.onNodeWithTag("deny_result").assertDoesNotExist()
+    }
+
+    // ---- drafts -------------------------------------------------------------------------------------------------
+
+    @Test
+    fun whatIsTypedIsSentAsADraftOnlyAfterAPauseAndOnlyTheLatestText() {
+        val calls = Calls()
+        show(transcript(question(form(text("a"), text("b", required = false)))), actions(calls))
+        rule.mainClock.autoAdvance = false
+
+        rule.onNodeWithTag("field_a").performTextInput("A")
+        rule.mainClock.advanceTimeBy(400)
+        rule.onNodeWithTag("field_a").performTextInput("da")
+        rule.mainClock.advanceTimeBy(400)
+        assertTrue("the pause starts over with each change", calls.drafts.isEmpty())
+
+        rule.mainClock.advanceTimeBy(1_000)
+        assertEquals(listOf(Triple("req-1", "a", AnswerValue.Text("Ada"))), calls.drafts)
+    }
+
+    @Test
+    fun aDraftTheHostAlreadyHoldsIsNotSentBackButClearingItIs() {
+        val calls = Calls()
+        val seeded = InputForm("req-1", null, listOf(text("a"), text("b", required = false)), drafts = mapOf("a" to FormValue.Text("from VS Code")))
+        show(transcript(question(seeded)), actions(calls))
+        rule.mainClock.autoAdvance = false
+
+        rule.onNodeWithTag("field_a").assertTextContains("from VS Code")
+        rule.onNodeWithTag("field_b").performTextInput("x")
+        rule.mainClock.advanceTimeBy(1_500)
+        assertEquals(listOf(Triple("req-1", "b", AnswerValue.Text("x"))), calls.drafts)
+
+        rule.onNodeWithTag("field_a").performTextClearance()
+        rule.mainClock.advanceTimeBy(1_500)
+        assertEquals(Triple("req-1", "a", null), calls.drafts.last())
+        assertEquals(2, calls.drafts.size)
+    }
+
+    @Test
+    fun noDraftFollowsADecline() {
+        val calls = Calls()
+        show(transcript(question(form(text()))), actions(calls))
+        rule.mainClock.autoAdvance = false
+
+        rule.onNodeWithTag("field_a").performTextInput("typed")
+        rule.onNodeWithTag("question_decline").performClick()
+        rule.mainClock.advanceTimeBy(2_000)
+
+        assertEquals(listOf("req-1"), calls.declined)
+        assertTrue("a draft sent after the decline could bring the question back", calls.drafts.isEmpty())
+    }
+
+    @Test
+    fun aDeclineTheHostRefusedLetsDraftsResume() {
+        val calls = Calls().apply { result = InteractResult.Sent(DispatchOutcome.Rejected("no")) }
+        show(transcript(question(form(text()))), actions(calls))
+        rule.mainClock.autoAdvance = false
+
+        rule.onNodeWithTag("field_a").performTextInput("typed")
+        rule.onNodeWithTag("question_decline").performClick()
+        rule.mainClock.advanceTimeBy(2_000)
+
+        assertEquals(listOf(Triple("req-1", "a", AnswerValue.Text("typed"))), calls.drafts)
     }
 
     // ---- helpers ------------------------------------------------------------------------------------------------

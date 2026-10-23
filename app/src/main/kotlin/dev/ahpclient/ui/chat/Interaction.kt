@@ -19,14 +19,17 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -45,6 +48,8 @@ import dev.ahpclient.state.InputForm
 import dev.ahpclient.state.InteractMessages
 import dev.ahpclient.state.InteractResult
 import dev.ahpclient.state.QuestionKind
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 /**
@@ -54,19 +59,26 @@ import kotlinx.coroutines.launch
  */
 @Stable
 class ChatActionsUi(
-    /** True while the agent is working: a message sent now waits its turn, and there is something to stop. */
+    /** True while the agent is working: a message sent now waits its turn, can steer the turn, and there is something to stop. */
     val running: Boolean,
     val send: suspend (String) -> InteractResult,
+    val steer: suspend (String) -> InteractResult,
     val cancel: suspend () -> InteractResult,
     val approve: suspend (toolCallId: String, optionId: String?) -> InteractResult,
     val deny: suspend (toolCallId: String, optionId: String?) -> InteractResult,
+    val approveResult: suspend (toolCallId: String) -> InteractResult,
+    val denyResult: suspend (toolCallId: String) -> InteractResult,
     val answer: suspend (requestId: String, answers: Map<String, AnswerValue>) -> InteractResult,
+    val saveDraft: suspend (requestId: String, questionId: String, answer: AnswerValue?) -> InteractResult,
     val decline: suspend (requestId: String) -> InteractResult,
     val dismiss: suspend (requestId: String) -> InteractResult,
 )
 
 /** The host's own words on a button or a field are untrusted display text: shown as plain text and cut to a sane length. */
 private const val MAX_LABEL = 80
+
+/** How long a form waits after the last change before it tells the host what has been entered. */
+private const val DRAFT_PAUSE_MS = 700L
 
 @Composable
 private fun Notice(text: String?, tag: String) {
@@ -119,21 +131,39 @@ internal fun Composer(actions: ChatActionsUi, modifier: Modifier = Modifier) {
             ) { Text(if (actions.running) "Queue" else "Send") }
         }
         if (actions.running) {
-            OutlinedButton(
-                onClick = { scope.launch { busy = true; notice = InteractMessages.describe(actions.cancel()); busy = false } },
-                enabled = !busy,
-                modifier = Modifier.heightIn(min = 48.dp).testTag("composer_stop"),
-            ) { Text("Stop the agent") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Steer reaches the turn that is running now; Queue (the main button) waits for it to end.
+                OutlinedButton(
+                    onClick = {
+                        val sending = text
+                        scope.launch {
+                            busy = true
+                            val result = actions.steer(sending)
+                            notice = InteractMessages.describe(result)
+                            if (InteractMessages.succeeded(result) && text == sending) text = ""
+                            busy = false
+                        }
+                    },
+                    enabled = text.isNotBlank() && !busy,
+                    modifier = Modifier.heightIn(min = 48.dp).testTag("composer_steer"),
+                ) { Text("Steer now") }
+                OutlinedButton(
+                    onClick = { scope.launch { busy = true; notice = InteractMessages.describe(actions.cancel()); busy = false } },
+                    enabled = !busy,
+                    modifier = Modifier.heightIn(min = 48.dp).testTag("composer_stop"),
+                ) { Text("Stop the agent") }
+            }
         }
     }
 }
 
 /**
- * The buttons on a tool call that is waiting for the person: the host's own options if it offered any, else Approve and
- * Deny. Approving asks for the device check first; the screen cannot skip it, because that lives behind the interactor.
+ * The buttons on a tool call (or, with [forResult], its output) that is waiting for the person: the host's own options if
+ * it offered any, else Approve and Deny. Approving asks for the device check first; the screen cannot skip it, because
+ * that lives behind the interactor.
  */
 @Composable
-internal fun ApprovalButtons(choices: List<ApprovalChoice>, toolCallId: String, actions: ChatActionsUi, modifier: Modifier = Modifier) {
+internal fun ApprovalButtons(choices: List<ApprovalChoice>, toolCallId: String, forResult: Boolean, actions: ChatActionsUi, modifier: Modifier = Modifier) {
     var busy by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -142,14 +172,19 @@ internal fun ApprovalButtons(choices: List<ApprovalChoice>, toolCallId: String, 
             val run = {
                 scope.launch {
                     busy = true
-                    val result = if (choice.approves) actions.approve(toolCallId, choice.optionId) else actions.deny(toolCallId, choice.optionId)
+                    val result = when {
+                        forResult && choice.approves -> actions.approveResult(toolCallId)
+                        forResult -> actions.denyResult(toolCallId)
+                        choice.approves -> actions.approve(toolCallId, choice.optionId)
+                        else -> actions.deny(toolCallId, choice.optionId)
+                    }
                     notice = InteractMessages.describe(result)
                     busy = false
                 }
                 Unit
             }
-            val tag = (if (choice.approves) "approve_" else "deny_") + (choice.optionId ?: "plain")
-            val label = choice.label.take(MAX_LABEL)
+            val tag = (if (choice.approves) "approve_" else "deny_") + (choice.optionId ?: if (forResult) "result" else "plain")
+            val label = (if (forResult) (if (choice.approves) "Let the agent see the result" else "Keep the result back") else choice.label).take(MAX_LABEL)
             if (choice.approves) {
                 Button(onClick = run, enabled = !busy, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag(tag)) { Text(label) }
             } else {
@@ -161,8 +196,10 @@ internal fun ApprovalButtons(choices: List<ApprovalChoice>, toolCallId: String, 
 }
 
 /**
- * A question the agent is waiting on, as a form. Nothing is sent until the person taps Send answer and every field
- * passes the checks in [InputForm.check]; the problems are shown against the fields that have them.
+ * A question the agent is waiting on, as a form. Nothing is submitted until the person taps Send answer and every field
+ * passes the checks in [InputForm.check]; the problems are shown against the fields that have them. While it is filled in,
+ * what has been entered so far is sent to the host as a draft after a short pause, one question at a time, so another
+ * screen showing the same question can follow along. Drafts are best effort and never shown as errors.
  */
 @Composable
 internal fun QuestionForm(form: InputForm, actions: ChatActionsUi, modifier: Modifier = Modifier) {
@@ -170,11 +207,33 @@ internal fun QuestionForm(form: InputForm, actions: ChatActionsUi, modifier: Mod
     var problems by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var busy by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<String?>(null) }
+    // Once an answer, a decline or a dismissal is on its way, a late draft must not follow it.
+    var finished by remember(form.requestId) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val currentActions by rememberUpdatedState(actions)
+    LaunchedEffect(form.requestId) {
+        // What the host already holds is not sent back.
+        val sent = HashMap<String, AnswerValue?>().apply { form.questions.forEach { put(it.id, form.draftFor(it, form.initial(it))) } }
+        snapshotFlow { values.toMap() }.collectLatest { now ->
+            delay(DRAFT_PAUSE_MS)
+            if (finished) return@collectLatest
+            for (question in form.questions) {
+                val draft = form.draftFor(question, now[question.id] ?: continue)
+                if (draft != sent[question.id]) {
+                    sent[question.id] = draft
+                    currentActions.saveDraft(form.requestId, question.id, draft)
+                }
+            }
+        }
+    }
     fun finish(call: suspend () -> InteractResult) {
+        finished = true
         scope.launch {
             busy = true
-            notice = InteractMessages.describe(call())
+            val result = call()
+            notice = InteractMessages.describe(result)
+            // A refusal leaves the question waiting, so drafts may resume.
+            if (!InteractMessages.succeeded(result)) finished = false
             busy = false
         }
     }

@@ -65,11 +65,13 @@ fun ChatScreen(
     expanded: Set<String> = emptySet(),
     onToggle: (String) -> Unit = {},
     actions: ChatActionsUi? = null,
+    onOpenSubagent: ((String) -> Unit)? = null,
+    backLabel: String = "Back to session",
 ) {
     var pendingLink by rememberSaveable { mutableStateOf<String?>(null) }
     Column(modifier = modifier.fillMaxSize()) {
         Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onBack, modifier = Modifier.testTag("back")) { Text("Back to session") }
+            OutlinedButton(onClick = onBack, modifier = Modifier.testTag("back")) { Text(backLabel) }
             if (connection != ConnState.Online) ConnectionLine(connection)
             if (transcript != null) {
                 Text(transcript.title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() }.testTag("chat_title"))
@@ -81,7 +83,7 @@ fun ChatScreen(
         }
         when {
             error is ChatGoneException -> ErrorText("This chat is no longer on the host.", Modifier.padding(horizontal = 24.dp).testTag("chat_gone"))
-            transcript != null -> TranscriptList(transcript, loadingOlder, olderError, onLoadOlder, { pendingLink = it }, expanded, onToggle, actions, Modifier.weight(1f))
+            transcript != null -> TranscriptList(transcript, loadingOlder, olderError, onLoadOlder, { pendingLink = it }, expanded, onToggle, actions, onOpenSubagent, Modifier.weight(1f))
             error != null -> ErrorText("Could not load this chat (${error.javaClass.simpleName}).", Modifier.padding(horizontal = 24.dp).testTag("chat_error"))
             else -> Busy("Loading chat…", Modifier.padding(horizontal = 24.dp).testTag("chat_loading"))
         }
@@ -107,6 +109,7 @@ private fun TranscriptList(
     expanded: Set<String>,
     onToggle: (String) -> Unit,
     actions: ChatActionsUi?,
+    onOpenSubagent: ((String) -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
@@ -151,7 +154,7 @@ private fun TranscriptList(
             verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Bottom),
         ) {
             items(newestFirst, key = { it.key }, contentType = { it::class }) { row ->
-                TranscriptRow(row, onOpenLink, expanded = row.key in expanded, onToggle = { onToggle(row.key) }, actions = actions)
+                TranscriptRow(row, onOpenLink, expanded = row.key in expanded, onToggle = { onToggle(row.key) }, actions = actions, onOpenSubagent = onOpenSubagent)
             }
             if (loadingOlder || olderError != null || transcript.hasOlder) {
                 item(key = OLDER_KEY, contentType = OLDER_KEY) { OlderRow(loadingOlder, olderError, onLoadOlder) }

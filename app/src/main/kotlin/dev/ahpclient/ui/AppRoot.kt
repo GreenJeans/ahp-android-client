@@ -109,10 +109,14 @@ fun AppRoot(
                                     ChatActionsUi(
                                         running = running,
                                         send = chat.interactor::send,
+                                        steer = chat.interactor::steer,
                                         cancel = chat.interactor::cancel,
                                         approve = chat.interactor::approve,
                                         deny = chat.interactor::deny,
+                                        approveResult = chat.interactor::approveResult,
+                                        denyResult = chat.interactor::denyResult,
                                         answer = chat.interactor::answer,
+                                        saveDraft = chat.interactor::saveDraft,
                                         decline = chat.interactor::declineInput,
                                         dismiss = chat.interactor::dismissInput,
                                     )
@@ -132,6 +136,8 @@ fun AppRoot(
                                 expanded = expanded,
                                 onToggle = chat.expansion::toggle,
                                 actions = actions,
+                                onOpenSubagent = controller::openSubagentChat,
+                                backLabel = if (chat.parent != null) "Back to chat" else "Back to session",
                                 modifier = content,
                             )
                         }

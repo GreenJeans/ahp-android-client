@@ -238,6 +238,22 @@ class ChatScreenTest {
         assertEquals(1, back)
     }
 
+    @Test
+    fun theBackButtonNamesWhereItGoes() {
+        show(transcript(rows(1..2)))
+        rule.onNodeWithTag("back").assertTextEquals("Back to session")
+    }
+
+    @Test
+    fun insideASubagentTranscriptBackSaysItReturnsToTheChat() {
+        var back = 0
+        rule.setContent { AhpTheme { ChatScreen(transcript(rows(1..2)), null, false, null, ConnState.Online, { back++ }, {}, {}, backLabel = "Back to chat") } }
+
+        rule.onNodeWithTag("back").assertTextEquals("Back to chat").performClick()
+
+        assertEquals(1, back)
+    }
+
     // ---- links -------------------------------------------------------------------------------------------------
 
     private fun showLink(markdown: String, onOpenLink: (String) -> Unit = {}) {

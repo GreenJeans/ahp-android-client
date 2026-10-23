@@ -6,11 +6,15 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -37,18 +41,21 @@ internal fun TranscriptRow(
     expanded: Boolean = false,
     onToggle: () -> Unit = {},
     actions: ChatActionsUi? = null,
+    onOpenSubagent: ((String) -> Unit)? = null,
 ) {
     when (item) {
         is TranscriptItem.User -> UserRow(item, modifier)
-        is TranscriptItem.Markdown -> MarkdownPart(item.text, onOpenLink, modifier.fillMaxWidth().testTag("row_markdown"))
+        is TranscriptItem.Markdown -> SelectionContainer { MarkdownPart(item.text, onOpenLink, modifier.fillMaxWidth().testTag("row_markdown")) }
         is TranscriptItem.Reasoning -> ReasoningBlock(item, expanded, onToggle, onOpenLink, modifier)
-        is TranscriptItem.Tool -> ToolCallBlock(item, expanded, onToggle, actions, modifier)
-        is TranscriptItem.Notice -> Text(
-            item.text,
-            style = MaterialTheme.typography.labelLarge,
-            color = if (item.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = modifier.testTag("row_notice"),
-        )
+        is TranscriptItem.Tool -> ToolCallBlock(item, expanded, onToggle, actions, onOpenSubagent, modifier)
+        is TranscriptItem.Notice -> SelectionContainer {
+            Text(
+                item.text,
+                style = MaterialTheme.typography.labelLarge,
+                color = if (item.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = modifier.testTag("row_notice"),
+            )
+        }
         is TranscriptItem.Question -> Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
             InputRequestCard(item.request)
             val form = item.form
@@ -82,7 +89,7 @@ private fun UserRow(item: TranscriptItem.User, modifier: Modifier) {
     ) {
         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text("You", style = MaterialTheme.typography.labelMedium)
-            Text(item.text, style = MaterialTheme.typography.bodyLarge)
+            SelectionContainer { Text(item.text, style = MaterialTheme.typography.bodyLarge) }
         }
     }
 }
@@ -102,13 +109,13 @@ private fun ReasoningBlock(item: TranscriptItem.Reasoning, expanded: Boolean, on
         modifier = modifier.testTag("row_reasoning"),
         header = { Text(label, style = style, fontStyle = FontStyle.Italic, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f)) },
     ) {
-        MarkdownPart(item.text, onOpenLink, Modifier.fillMaxWidth())
+        SelectionContainer { MarkdownPart(item.text, onOpenLink, Modifier.fillMaxWidth()) }
     }
 }
 
 /** A tool call opens to its input and its results. One made without the host's record has nothing to open and stays a plain row. */
 @Composable
-private fun ToolCallBlock(item: TranscriptItem.Tool, expanded: Boolean, onToggle: () -> Unit, actions: ChatActionsUi?, modifier: Modifier) {
+private fun ToolCallBlock(item: TranscriptItem.Tool, expanded: Boolean, onToggle: () -> Unit, actions: ChatActionsUi?, onOpenSubagent: ((String) -> Unit)?, modifier: Modifier) {
     val source = item.source
     if (source == null) {
         Row(
@@ -128,10 +135,16 @@ private fun ToolCallBlock(item: TranscriptItem.Tool, expanded: Boolean, onToggle
             header = { ToolHeader(item, Modifier.weight(1f), approveHere = waiting != null) },
         ) {
             // Built here, so only a block the user opens pays for parsing its input and clipping its results.
-            val detail = remember(source) { ToolDetail.from(source) }
-            ToolDetailBody(detail, approveHere = waiting != null)
+            var showAll by remember(source) { mutableStateOf(false) }
+            val detail = remember(source, showAll) { ToolDetail.from(source, if (showAll) ToolDetail.Limits.ALL else ToolDetail.Limits.DEFAULT) }
+            ToolDetailBody(
+                detail,
+                approveHere = waiting != null,
+                onShowAll = if (!showAll && detail.hasMore) ({ showAll = true }) else null,
+                onOpenSubagent = onOpenSubagent,
+            )
         }
-        if (actions != null && waiting != null) ApprovalButtons(waiting.choices, waiting.toolCallId, actions)
+        if (actions != null && waiting != null) ApprovalButtons(waiting.choices, waiting.toolCallId, waiting.forResult, actions)
     }
 }
 

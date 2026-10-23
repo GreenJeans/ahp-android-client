@@ -25,6 +25,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.ahpclient.state.ActivityState
@@ -61,8 +62,8 @@ class CollapsibleBlocksTest {
 
     private fun transcript(vararg items: TranscriptItem) = Transcript("Fix the build", ActivityState.IN_PROGRESS, null, items.toList(), hasOlder = false)
 
-    private fun show(transcript: Transcript, expanded: Set<String> = emptySet(), onToggle: (String) -> Unit = {}) =
-        rule.setContent { AhpTheme { ChatScreen(transcript, null, false, null, ConnState.Online, {}, {}, {}, expanded = expanded, onToggle = onToggle) } }
+    private fun show(transcript: Transcript, expanded: Set<String> = emptySet(), onToggle: (String) -> Unit = {}, onOpenSubagent: ((String) -> Unit)? = null) =
+        rule.setContent { AhpTheme { ChatScreen(transcript, null, false, null, ConnState.Online, {}, {}, {}, expanded = expanded, onToggle = onToggle, onOpenSubagent = onOpenSubagent) } }
 
     private fun headerOf(text: String) = hasTestTag("block_header") and hasText(text)
 
@@ -252,6 +253,59 @@ class CollapsibleBlocksTest {
         show(transcript(tool("t1", source)), expanded = setOf("t1"))
 
         rule.onNodeWithTag("result_attachment").assertTextEquals("Attachment: image/png")
+    }
+
+    @Test
+    fun showAllLoadsTheRestOfALongResultAndThenGoesAway() {
+        val big = "x".repeat(30_000)
+        show(transcript(tool("t1", completed("""{"type":"text","text":"$big"}"""))), expanded = setOf("t1"))
+
+        rule.onNodeWithTag("clipped_note").assertTextContains("30,000", substring = true)
+        rule.onNodeWithTag("show_all").performScrollTo().performClick()
+
+        rule.onNodeWithTag("clipped_note").assertDoesNotExist()
+        rule.onNodeWithTag("show_all").assertDoesNotExist()
+    }
+
+    @Test
+    fun aResultThatFitsHasNoShowAll() {
+        show(transcript(tool("t1", completed("""{"type":"text","text":"short"}"""))), expanded = setOf("t1"))
+
+        rule.onNodeWithTag("result_text").assertExists()
+        rule.onNodeWithTag("show_all").assertDoesNotExist()
+    }
+
+    // ---- subagents ---------------------------------------------------------------------------------------------
+
+    private fun subagent(resource: String) =
+        completed("""{"type":"subagent","resource":${JsonPrimitive(resource)},"title":"Explore","agentName":"explore","description":"Look around"}""")
+
+    @Test
+    fun aSubagentResultOffersItsTranscriptAndHandsOverTheAddressItWasGiven() {
+        val opened = mutableListOf<String>()
+        show(transcript(tool("t1", subagent("ahp-chat:/s"))), expanded = setOf("t1"), onOpenSubagent = { opened += it })
+
+        rule.onNodeWithTag("subagent_open").performScrollTo().assertTextEquals("Open its transcript").performClick()
+
+        assertEquals(listOf("ahp-chat:/s"), opened)
+    }
+
+    @Test
+    fun aSubagentWhoseAddressIsNotAChatIsNeverOffered() {
+        val opened = mutableListOf<String>()
+        show(transcript(tool("t1", subagent("https://example.test/x"))), expanded = setOf("t1"), onOpenSubagent = { opened += it })
+
+        rule.onNodeWithTag("subagent_open").assertDoesNotExist()
+        rule.onNodeWithText("Its own transcript is not available.").assertExists()
+        assertTrue(opened.isEmpty())
+    }
+
+    @Test
+    fun aSubagentIsNotOfferedWhereThereIsNowhereToOpenIt() {
+        show(transcript(tool("t1", subagent("ahp-chat:/s"))), expanded = setOf("t1"))
+
+        rule.onNodeWithTag("subagent_open").assertDoesNotExist()
+        rule.onNodeWithText("Its own transcript is not available.").assertExists()
     }
 
     // ---- state -------------------------------------------------------------------------------------------------
