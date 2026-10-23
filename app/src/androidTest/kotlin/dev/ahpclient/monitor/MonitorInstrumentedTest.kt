@@ -65,6 +65,22 @@ class MonitorInstrumentedTest {
     }
 
     @Test
+    fun theAlertShowsWhatTheSessionWaitsForWithTheTitleBesideItAndHidesBothOnALockedScreen() {
+        NotificationInputNeededSink(context).post(InputNeeded("ahp-session:/abc", "Color preference", "Which season do you prefer?"))
+
+        val shown = checkNotNull(waitForNotification("ahp-session:/abc")) { "the notification was never posted" }.notification
+        assertEquals("Needs your input", shown.extras.getString(Notification.EXTRA_TITLE))
+        assertEquals("Which season do you prefer?", shown.extras.getString(Notification.EXTRA_TEXT))
+        assertEquals("Color preference", shown.extras.getString(Notification.EXTRA_SUB_TEXT))
+        assertEquals("Which season do you prefer?", shown.extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString())
+        val lockScreen = checkNotNull(shown.publicVersion) { "no lock-screen version" }
+        assertEquals("A session needs your input", lockScreen.extras.getString(Notification.EXTRA_TITLE))
+        val everythingOnTheLockScreen = lockScreen.extras.keySet().mapNotNull { lockScreen.extras.get(it)?.toString() }.joinToString("\n")
+        assertFalse("the question must not reach the lock screen", everythingOnTheLockScreen.contains("season"))
+        assertFalse("the title must not reach the lock screen", everythingOnTheLockScreen.contains("Color preference"))
+    }
+
+    @Test
     fun postingTheSameSessionAgainReplacesItAndClearingRemovesIt() {
         val sink = NotificationInputNeededSink(context)
         sink.post(InputNeeded("ahp-session:/abc", "First"))

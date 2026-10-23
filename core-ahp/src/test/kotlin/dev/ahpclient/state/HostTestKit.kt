@@ -26,8 +26,8 @@ internal const val SESSION_E = "ahp-session:/00000000-0000-4000-8000-0000000000e
 internal const val INITIAL_SEQ = 126_551L
 internal const val SNAPSHOT_SEQ = 126_560L
 
-internal fun sessionSnapshot(uri: String, fromSeq: Long, title: String = "Session C", status: Int = 8) =
-    """{"resource":"$uri","fromSeq":$fromSeq,"state":{"provider":"copilotcli","title":"$title","status":$status,"lifecycle":"ready","activeClients":[],"chats":[]}}"""
+internal fun sessionSnapshot(uri: String, fromSeq: Long, title: String = "Session C", status: Int = 8, inputNeeded: String? = null) =
+    """{"resource":"$uri","fromSeq":$fromSeq,"state":{"provider":"copilotcli","title":"$title","status":$status,"lifecycle":"ready","activeClients":[],"chats":[]${inputNeeded?.let { ""","inputNeeded":$it""" }.orEmpty()}}}"""
 
 internal fun actionFrame(channel: String, actionJson: String, seq: Long) =
     """{"jsonrpc":"2.0","method":"action","params":{"channel":"$channel","action":$actionJson,"serverSeq":$seq}}"""
@@ -41,6 +41,8 @@ internal class HostScript(
     val listJson: String = fixture("live/list-sessions.json"),
     val failure: Throwable? = null,
     val missingSessions: Set<String> = emptySet(),
+    /** What a subscribed session reports as waiting on the user, as the JSON array of `inputNeeded`; null for none. */
+    val inputNeeded: String? = null,
     val onReconnect: (id: Long?) -> String = { id -> result(id, """{"type":"replay","actions":[],"missing":[]}""") },
 ) {
     fun reply(method: String, id: Long?, params: JsonObject): String? = when (method) {
@@ -62,7 +64,7 @@ internal class HostScript(
     }
 
     private fun subscribeReply(id: Long?, channel: String): String =
-        if (channel in missingSessions) error(id, -32001, "no such session") else result(id, """{"snapshot":${sessionSnapshot(channel, SNAPSHOT_SEQ)}}""")
+        if (channel in missingSessions) error(id, -32001, "no such session") else result(id, """{"snapshot":${sessionSnapshot(channel, SNAPSHOT_SEQ, inputNeeded = inputNeeded)}}""")
 }
 
 /** Hands out one fake host connection per attempt, in order, and records how each was opened. */

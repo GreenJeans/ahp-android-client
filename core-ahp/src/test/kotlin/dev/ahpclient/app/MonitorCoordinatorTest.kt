@@ -5,6 +5,7 @@ import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.HostScript
 import dev.ahpclient.state.HostSession
 import dev.ahpclient.state.InputNeeded
+import dev.ahpclient.state.SESSION_C
 import dev.ahpclient.state.ScriptedConnector
 import dev.ahpclient.tunnel.TunnelInfo
 import com.microsoft.agenthostprotocol.generated.Implementation
@@ -21,6 +22,8 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 private class FakeSettings(initial: Boolean) : MonitorSettings {
     val flow = MutableStateFlow(initial)
@@ -68,7 +71,10 @@ class MonitorCoordinatorTest {
         val service: FakeService,
         val sink: FakeSink,
         val coordinator: MonitorCoordinator,
-    )
+    ) {
+        /** The scripted connection of the last [connect], so a test can read what was sent on it. */
+        var connector: ScriptedConnector? = null
+    }
 
     private fun TestScope.rig(enabled: Boolean = true): Rig {
         val state = MutableStateFlow<AppState>(AppState.Hosts(HostList.Loading, null))
@@ -81,13 +87,23 @@ class MonitorCoordinatorTest {
         return Rig(state, settings, service, sink, coordinator)
     }
 
-    private suspend fun TestScope.connect(rig: Rig): HostSession {
-        val host = HostSession(ScriptedConnector(HostScript()), backgroundScope, clientInfo, Backoff(), clientId = "c")
+    private suspend fun TestScope.connect(rig: Rig, script: HostScript = HostScript()): HostSession {
+        val connector = ScriptedConnector(script).also { rig.connector = it }
+        val host = HostSession(connector, backgroundScope, clientInfo, Backoff(), clientId = "c")
         host.start()
         host.connection.first { it == ConnState.Online }
         rig.state.value = AppState.Connected(tunnel, host)
         runCurrent()
         return host
+    }
+
+    /** Channels the app subscribed to or left on its single connection, by method. */
+    private fun Rig.channels(method: String): List<String> = connector!!.sockets.single().sent
+        .filter { it["method"]?.jsonPrimitive?.content == method }
+        .map { it["params"]!!.jsonObject["channel"]!!.jsonPrimitive.content }
+
+    private fun waitingOn(host: HostSession, title: String) {
+        host.root.replaceCatalog(host.root.sessions.value.map { if (it.title == title) it.copy(status = SessionStatus.INPUT_NEEDED) else it })
     }
 
     @Test
@@ -184,6 +200,86 @@ class MonitorCoordinatorTest {
         advanceTimeBy(200)
 
         assertEquals(listOf("Session D"), rig.sink.posted.map { it.title })
+    }
+
+    @Test
+    fun `the alert says what the session is waiting for, read with one subscribe and one unsubscribe`() = runTest {
+        val question = """[{"kind":"chatInput","id":"r1","chat":"c","request":{"id":"q","message":"Which season do you prefer?"}}]"""
+        val rig = rig()
+        val host = connect(rig, HostScript(inputNeeded = question))
+        advanceTimeBy(10_000)
+
+        waitingOn(host, "Session C")
+        runCurrent()
+        advanceTimeBy(3_500)
+
+        val alert = rig.sink.posted.single()
+        assertEquals("Session C", alert.title)
+        assertEquals("Which season do you prefer?", alert.detail)
+        assertEquals(listOf(SESSION_C), rig.channels("subscribe").filter { it == SESSION_C })
+        assertEquals(listOf(SESSION_C), rig.channels("unsubscribe"))
+    }
+
+    @Test
+    fun `an approval request is described by the tool and what it will do`() = runTest {
+        val approval = """[{"kind":"toolConfirmation","id":"r2","chat":"c","turnId":"t","toolCall":{"status":"pending-confirmation",
+            "toolCallId":"tc","toolName":"run_in_terminal","displayName":"Run command","intention":"Run the tests","invocationMessage":"Run npm test"}}]"""
+        val rig = rig()
+        val host = connect(rig, HostScript(inputNeeded = approval))
+        advanceTimeBy(10_000)
+
+        waitingOn(host, "Session C")
+        runCurrent()
+        advanceTimeBy(3_500)
+
+        assertEquals("Run command: Run the tests", rig.sink.posted.single().detail)
+    }
+
+    @Test
+    fun `a session with nothing readable still alerts, with its title alone`() = runTest {
+        val rig = rig()
+        val host = connect(rig, HostScript())
+        advanceTimeBy(10_000)
+
+        waitingOn(host, "Session C")
+        runCurrent()
+        advanceTimeBy(3_500)
+
+        val alert = rig.sink.posted.single()
+        assertEquals("Session C", alert.title)
+        assertNull(alert.detail)
+    }
+
+    @Test
+    fun `a session the host has just dropped still alerts, and is left again`() = runTest {
+        val rig = rig()
+        val host = connect(rig, HostScript(missingSessions = setOf(SESSION_C)))
+        advanceTimeBy(10_000)
+
+        waitingOn(host, "Session C")
+        runCurrent()
+        advanceTimeBy(3_500)
+
+        assertNull(rig.sink.posted.single().detail)
+        assertEquals(listOf(SESSION_C), rig.channels("unsubscribe"))
+    }
+
+    @Test
+    fun `a session that starts waiting is alerted once and only reads the session once`() = runTest {
+        val question = """[{"kind":"chatInput","id":"r1","chat":"c","request":{"id":"q","message":"Which season do you prefer?"}}]"""
+        val rig = rig()
+        val host = connect(rig, HostScript(inputNeeded = question))
+        advanceTimeBy(10_000)
+
+        waitingOn(host, "Session C")
+        runCurrent()
+        advanceTimeBy(3_500)
+        host.root.replaceCatalog(host.root.sessions.value.map { if (it.title == "Session C") it.copy(activity = "still waiting") else it })
+        runCurrent()
+        advanceTimeBy(10_000)
+
+        assertEquals(1, rig.sink.posted.size)
+        assertEquals(1, rig.channels("subscribe").count { it == SESSION_C })
     }
 
     @Test

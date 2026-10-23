@@ -2,14 +2,19 @@ package dev.ahpclient.state
 
 import com.microsoft.agenthostprotocol.generated.SessionSummary
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
-/** A session that has just started waiting on the user. */
-data class InputNeeded(val resource: String, val title: String)
+/**
+ * A session that has just started waiting on the user. [detail] is what it is waiting for (the question, or the tool to
+ * approve) when that could be read in time; null means only the session [title] is known.
+ */
+data class InputNeeded(val resource: String, val title: String, val detail: String? = null)
 
 /**
  * Finds the sessions that have begun waiting on the user between one list and the next. The first list only records
@@ -32,14 +37,18 @@ class InputNeededDetector {
 
 /**
  * Turns session lists into notifications. A session must still be waiting [debounceMs] after it started, so a question
- * that is answered or withdrawn straight away does not buzz the phone. [resolved] is called when a session that was
- * notified stops waiting, so a stale notification can be removed.
+ * that is answered or withdrawn straight away does not buzz the phone. The session list does not say what the session is
+ * waiting for, so after the debounce [readDetail] is asked for it; it gets [readTimeoutMs], and if it is slow, fails or
+ * has nothing, the alert goes out with the session title alone rather than not at all. [resolved] is called when a
+ * session that was notified stops waiting, so a stale notification can be removed.
  */
 class InputNeededNotifier(
     private val sessions: Flow<List<SessionSummary>>,
     private val notify: (InputNeeded) -> Unit,
     private val resolved: (String) -> Unit = {},
     private val debounceMs: Long = DEFAULT_DEBOUNCE_MS,
+    private val readDetail: suspend (String) -> String? = { null },
+    private val readTimeoutMs: Long = DEFAULT_READ_TIMEOUT_MS,
 ) {
     private val detector = InputNeededDetector()
     private val pending = ConcurrentHashMap<String, Job>()
@@ -57,16 +66,35 @@ class InputNeededNotifier(
             detector.onSessions(list).forEach { started ->
                 pending[started.resource] = launch {
                     delay(debounceMs)
+                    // The job stays registered while the question is read, so a session that stops waiting meanwhile cancels it.
+                    val detail = read(started.resource)
                     pending.remove(started.resource)
                     notified += started.resource
-                    notify(started)
+                    notify(started.copy(detail = detail))
                 }
             }
         }
     }
 
+    private suspend fun read(resource: String): String? = try {
+        withTimeoutOrNull(readTimeoutMs) { readDetail(resource) }?.let(::tidy)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        null
+    }
+
     companion object {
         const val DEFAULT_DEBOUNCE_MS = 3_000L
+        const val DEFAULT_READ_TIMEOUT_MS = 4_000L
+        const val MAX_DETAIL_CHARS = 240
+
+        /** One line of plain text, short enough for a notification. Null when nothing readable is left. */
+        fun tidy(text: String): String? {
+            val oneLine = text.replace(Regex("\\s+"), " ").trim()
+            if (oneLine.isEmpty()) return null
+            return if (oneLine.length <= MAX_DETAIL_CHARS) oneLine else oneLine.take(MAX_DETAIL_CHARS - 1).trimEnd() + "…"
+        }
     }
 }
 

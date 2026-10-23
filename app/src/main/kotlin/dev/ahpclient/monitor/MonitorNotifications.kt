@@ -35,7 +35,9 @@ object MonitorChannels {
 
 /**
  * One notification per session that starts waiting on the user, posted by tag so it can be replaced or cleared when the
- * question goes away. The session's title can be sensitive, so a locked screen shows only that something needs input.
+ * question goes away. The body is what the session is waiting for (the question, or the tool to approve) with the session
+ * title beside it; when that could not be read in time it is the title alone. Both can be sensitive, so a phone set to hide
+ * sensitive content shows only that something needs input.
  */
 class NotificationInputNeededSink(private val context: Context) : InputNeededSink {
     private val manager = context.getSystemService(NotificationManager::class.java)
@@ -54,17 +56,19 @@ class NotificationInputNeededSink(private val context: Context) : InputNeededSin
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("A session needs your input")
             .build()
-        val notification = Notification.Builder(context, MonitorChannels.INPUT_NEEDED)
+        val builder = Notification.Builder(context, MonitorChannels.INPUT_NEEDED)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("Needs your input")
-            .setContentText(request.title)
+            .setContentText(request.detail ?: request.title)
             .setContentIntent(open)
             .setAutoCancel(true)
             .setCategory(Notification.CATEGORY_MESSAGE)
             .setVisibility(Notification.VISIBILITY_PRIVATE)
             .setPublicVersion(lockScreen)
-            .build()
-        manager.notify(request.resource, NOTIFICATION_ID, notification)
+        request.detail?.let { detail ->
+            builder.setSubText(request.title).setStyle(Notification.BigTextStyle().bigText(detail))
+        }
+        manager.notify(request.resource, NOTIFICATION_ID, builder.build())
     }
 
     override fun clear(resource: String) {
