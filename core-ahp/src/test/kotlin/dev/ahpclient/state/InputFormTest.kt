@@ -236,4 +236,38 @@ class InteractMessagesTest {
         listOf(InteractResult.NotAllowed, InteractResult.NoActiveTurn, InteractResult.NoSuchRequest, InteractResult.NotConfirmed, InteractResult.NotSent(java.io.IOException()))
             .forEach { assertTrue(!InteractMessages.describe(it).isNullOrBlank(), "$it") }
     }
+
+    @Test
+    fun `a decision the host took is plainly approved or denied`() {
+        val done = InteractResult.Sent(DispatchOutcome.Accepted)
+
+        assertEquals("Approved.", InteractMessages.describeDecision(approved = true, done))
+        assertEquals("Denied.", InteractMessages.describeDecision(approved = false, done))
+    }
+
+    @Test
+    fun `a decision that did not happen says why, and never says it was approved or denied`() {
+        val refused = listOf(
+            InteractResult.NotAllowed,
+            InteractResult.NoSuchRequest,
+            InteractResult.NotConfirmed,
+            InteractResult.NotSent(java.io.IOException("offline")),
+            InteractResult.Sent(DispatchOutcome.Rejected("no")),
+            InteractResult.Sent(DispatchOutcome.NoReply),
+            InteractResult.Sent(DispatchOutcome.Interrupted),
+        )
+
+        for (result in refused) {
+            for (approved in listOf(true, false)) {
+                val text = InteractMessages.describeDecision(approved, result)
+                assertEquals(false, text == "Approved." || text == "Denied.", "$result said it was done")
+                assertEquals(InteractMessages.describe(result), text)
+            }
+        }
+    }
+
+    @Test
+    fun `a decision with nothing to say still says that nothing was sent`() {
+        assertEquals("Nothing was sent.", InteractMessages.describeDecision(approved = true, InteractResult.Blank))
+    }
 }

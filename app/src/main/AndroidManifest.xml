@@ -26,6 +26,17 @@
             android:name=".monitor.MonitorService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+        <!-- Reached only by this app's own notification (immutable intents), never by another app. -->
+        <activity
+            android:name=".monitor.ApproveActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleInstance"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+        <receiver
+            android:name=".monitor.DecisionReceiver"
+            android:exported="false" />
     </application>
 
 </manifest>

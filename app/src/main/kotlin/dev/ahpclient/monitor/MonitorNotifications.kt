@@ -6,9 +6,12 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.graphics.drawable.Icon
+import android.net.Uri
 import dev.ahpclient.MainActivity
 import dev.ahpclient.R
 import dev.ahpclient.app.InputNeededSink
+import dev.ahpclient.state.ApprovalTarget
 import dev.ahpclient.state.InputNeeded
 
 /** The extra that carries the session a notification points at. The app only opens it if the host lists that session. */
@@ -38,8 +41,17 @@ object MonitorChannels {
  * question goes away. The body is what the session is waiting for (the question, or the tool to approve) with the session
  * title beside it; when that could not be read in time it is the title alone. Both can be sensitive, so a phone set to hide
  * sensitive content shows only that something needs input.
+ *
+ * When what it waits for is one plain tool call and the app may act for the user ([canDecide]), the notification also has
+ * Deny and Approve buttons, on the lock screen version too. Deny needs no check. Approve opens a screenless activity so the
+ * phone's own device check can appear (after unlocking, on a locked phone) and name the tool before anything is sent. The
+ * buttons carry only which call to decide; the live chat is what says whether it still can be.
  */
-class NotificationInputNeededSink(private val context: Context) : InputNeededSink {
+class NotificationInputNeededSink(
+    private val context: Context,
+    /** Asked each time one is posted: only while the user has allowed the app to act for them are buttons offered. */
+    private val canDecide: () -> Boolean = { false },
+) : InputNeededSink {
     private val manager = context.getSystemService(NotificationManager::class.java)
 
     override fun post(request: InputNeeded) {
@@ -55,7 +67,6 @@ class NotificationInputNeededSink(private val context: Context) : InputNeededSin
         val lockScreen = Notification.Builder(context, MonitorChannels.INPUT_NEEDED)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("A session needs your input")
-            .build()
         val builder = Notification.Builder(context, MonitorChannels.INPUT_NEEDED)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("Needs your input")
@@ -64,16 +75,60 @@ class NotificationInputNeededSink(private val context: Context) : InputNeededSin
             .setAutoCancel(true)
             .setCategory(Notification.CATEGORY_MESSAGE)
             .setVisibility(Notification.VISIBILITY_PRIVATE)
-            .setPublicVersion(lockScreen)
         request.detail?.let { detail ->
             builder.setSubText(request.title).setStyle(Notification.BigTextStyle().bigText(detail))
         }
+        request.approval?.takeIf { canDecide() }?.let { target ->
+            decisionActions(request.resource, target).forEach { action ->
+                builder.addAction(action)
+                lockScreen.addAction(action)
+            }
+        }
+        builder.setPublicVersion(lockScreen.build())
         manager.notify(request.resource, NOTIFICATION_ID, builder.build())
     }
 
     override fun clear(resource: String) {
         manager.cancel(resource, NOTIFICATION_ID)
     }
+
+    private fun decisionActions(resource: String, target: ApprovalTarget): List<Notification.Action> {
+        val deny = PendingIntent.getBroadcast(
+            context,
+            0,
+            decisionIntent(Intent(context, DecisionReceiver::class.java).setAction(ACTION_DENY_TOOL_CALL), resource, target, "deny"),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val approve = PendingIntent.getActivity(
+            context,
+            0,
+            decisionIntent(Intent(context, ApproveActivity::class.java), resource, target, "approve"),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val icon = Icon.createWithResource(context, R.drawable.ic_notification)
+        return listOf(
+            Notification.Action.Builder(icon, "Deny", deny).build(),
+            Notification.Action.Builder(icon, "Approve", approve).build(),
+        )
+    }
+
+    /**
+     * Android treats two intents that differ only in their extras as the same one, so a second notification's buttons would
+     * overwrite the first's. The data address differs for every session, call and button, which keeps each button its own.
+     */
+    private fun decisionIntent(intent: Intent, resource: String, target: ApprovalTarget, button: String): Intent =
+        intent
+            .putExtra(EXTRA_CHAT_URI, target.chat)
+            .putExtra(EXTRA_TOOL_CALL_ID, target.toolCallId)
+            .setData(
+                Uri.Builder()
+                    .scheme("ahp-decision")
+                    .authority(button)
+                    .appendQueryParameter("session", resource)
+                    .appendQueryParameter("chat", target.chat)
+                    .appendQueryParameter("call", target.toolCallId)
+                    .build(),
+            )
 
     private companion object {
         const val NOTIFICATION_ID = 1

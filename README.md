@@ -14,7 +14,7 @@ progress log live in this repo: [`docs/spec.md`](docs/spec.md).
 | Module | Type | Status |
 |---|---|---|
 | `core-ahp` | Pure Kotlin/JVM library: GitHub device-flow auth, Dev Tunnels REST, tunnel socket and gateway selection, AHP connection, state stores (sessions and chats, with older-turn paging), session list and detail models, the transcript model, background-monitoring logic, the capability allowlist, and the write path (action builders, the interactor, the question form model, the consent setting) | Phase 1 complete, live-verified except where `docs/verification/phase1-readonly.md` says otherwise; Phase 2 built; Phase 3 built and tested, not yet live-tested |
-| `app` | Android application (Jetpack Compose): sign-in, host list, sessions list, read-only session detail, a chat transcript with markdown and collapsible reasoning, tool-call and result blocks, opt-in background monitoring with a foreground service and needs-input notifications, and, when the user turns it on, a message box, tool approval buttons behind the phone's own device check, and a form for the agent's questions | Phase 1 built; Phase 2 transcript built; Phase 3 built; debug APK |
+| `app` | Android application (Jetpack Compose): sign-in, host list, sessions list, read-only session detail, a chat transcript with markdown and collapsible reasoning, tool-call and result blocks (selectable text, "Show all", subagent transcripts), opt-in background monitoring with a foreground service and needs-input notifications, and, when the user turns it on (Android 11+), a message box with steering, tool and tool-result approval behind the phone's own device check (also from a notification), and a form for the agent's questions with draft sync | Phase 1 built; Phase 2 transcript built; Phase 3 built; debug APK |
 
 ## Build
 
@@ -105,18 +105,30 @@ The client never stores or logs a token in clear text. Its outbound AHP traffic 
 (`READ` plus `dispatchAction` for exactly eight chat action types). See the spec's Security section before changing either.
 
 **Acting for the user is off by default.** The `INTERACT` tier is used only after the user turns on "Let this app act for me"
-and confirms a dialog that says what it allows. Turning it off ends the live connection at once and reconnects read-only;
+and confirms a dialog that says what it allows. It exists on Android 11 and newer only: below that the switch is disabled with
+a reason, and a saved "yes" is ignored. Turning it off ends the live connection at once and reconnects read-only;
 signing out turns it off. A saved choice that cannot be read counts as off, and a turn-on that cannot be saved is not granted.
 Everything the user does goes out through `ChatInteractor`, which refuses unless the connection allows it and the host shows
 the chat as interactive, and the screen shows nothing as done until the host has echoed the action back (no optimistic
-state). A host's refusal is never applied to local state.
+state). A host's refusal is never applied to local state. What it can do: send a message (queued, or steering the running
+turn), stop the turn, answer the agent's questions (with what is typed sent to the host as a draft as it is entered), and
+approve or deny a tool call or what a tool produced.
 
-**Approving a tool call is the one action that lets the agent run something on the user's machine**, so it alone is behind
-the phone's own device check (`BiometricApprovalGate`: strong biometric or screen lock on Android 11+; a weak biometric or
-screen lock before that). The prompt names the tool. It is skipped for deny, refused when the app is not on screen, and is
+**Approving a tool call, or what a tool produced, is what lets the agent run something on the user's machine**, so it alone
+is behind the phone's own device check (`BiometricApprovalGate`: strong biometric or screen lock, which is why the write tier
+needs Android 11+). The prompt names the tool. It is skipped for deny, refused when no screen of the app is up, and is
 checked twice (before the prompt and again after it, in case the call finished meanwhile). It proves a person unlocked the
 phone; it does not bind a key to the approval. A build with no gate refuses every approval. Never allowed at any tier without
 a new decision: `terminal/input`, file writes, session creation or disposal, and signing in to anything on the user's behalf.
+
+**Approving from a notification.** While monitoring is on, the "needs your input" notification for a session that waits on
+exactly one plain tool call (the host offered no options of its own, and the chat is one the session lists) has Deny and
+Approve buttons, on its lock-screen version too, and only while acting for the user is on. The buttons carry only which call
+to decide; the live chat is what says whether it can still be decided, through the same `ChatInteractor` checks as on screen.
+Deny needs no check and works from the lock screen. Approve starts a screenless activity so the device check has somewhere to
+appear (after unlocking, on a locked phone), and the prompt names the tool before anything is sent. The activity and the Deny
+receiver are not exported and their intents are immutable, so only this app's own notification can reach them. A question,
+a tool with options of the host's own, a session waiting on more than one thing, and a tool's output are decided in the app.
 
 When the outcome of an action is unknown (no echo in time, or the connection dropped first) the message stays in the box
 with a warning not to send it twice, because resending would duplicate it.

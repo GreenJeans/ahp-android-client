@@ -18,6 +18,7 @@ import dev.ahpclient.monitor.NotificationInputNeededSink
 import dev.ahpclient.security.AndroidTokenVault
 import dev.ahpclient.security.BiometricApprovalGate
 import dev.ahpclient.state.HostSession
+import dev.ahpclient.state.InteractResult
 import dev.ahpclient.state.TunnelHostConnector
 import dev.ahpclient.tunnel.DevTunnelsClient
 import dev.ahpclient.tunnel.MethodLoggingSocketOpener
@@ -27,10 +28,12 @@ import dev.ahpclient.tunnel.TunnelGateway
 import com.microsoft.agenthostprotocol.generated.Implementation
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 
 /**
@@ -82,9 +85,27 @@ class AppContainer(context: Context) {
             state = controller.state,
             settings = PrefsMonitorSettings(prefs),
             service = monitorService,
-            sink = NotificationInputNeededSink(appContext),
+            // Buttons on a notification are offered only while the user has let the app act for them.
+            sink = NotificationInputNeededSink(appContext, canDecide = { controller.interactionAllowed.value }),
             scope = appScope,
         )
+    }
+
+    /**
+     * Decides one waiting tool call for a notification button, off the main thread, and reports back on it. The decision
+     * itself is [AppController.decideToolCall]: nothing here adds a way around its checks.
+     */
+    fun decideFromNotification(chatUri: String, toolCallId: String, approve: Boolean, done: (InteractResult) -> Unit) {
+        appScope.launch {
+            val result = try {
+                controller.decideToolCall(chatUri, toolCallId, approve)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                InteractResult.NotSent(e)
+            }
+            withContext(Dispatchers.Main) { done(result) }
+        }
     }
 
     /** Starts the service again if monitoring is on, which posts its notification afresh. Safe to repeat. */

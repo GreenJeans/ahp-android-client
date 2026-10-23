@@ -24,4 +24,8 @@ object InteractMessages {
 
     /** True when the thing the person tried is done, so a composer can clear and a form can close. */
     fun succeeded(result: InteractResult): Boolean = result is InteractResult.Sent && result.outcome == DispatchOutcome.Accepted
+
+    /** What a notification button says afterwards, where there is no screen to show it on: plainly done, or why not. */
+    fun describeDecision(approved: Boolean, result: InteractResult): String =
+        if (succeeded(result)) (if (approved) "Approved." else "Denied.") else describe(result) ?: "Nothing was sent."
 }
