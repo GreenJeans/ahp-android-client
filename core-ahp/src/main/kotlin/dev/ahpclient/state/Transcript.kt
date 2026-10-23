@@ -49,7 +49,7 @@ sealed interface TranscriptItem {
 
     data class Notice(override val key: String, val text: String, val isError: Boolean = false) : TranscriptItem
 
-    data class Question(override val key: String, val request: InputRequestView, val answered: Boolean) : TranscriptItem
+    data class Question(override val key: String, val request: InputRequestView, val answered: Boolean, val form: InputForm? = null) : TranscriptItem
 
     /** A part this client does not render yet, named so the reader knows something is there. */
     data class Other(override val key: String, val label: String) : TranscriptItem
@@ -104,8 +104,16 @@ data class Transcript(
                 is ResponsePartToolCall -> tool(part.value.toolCall).let { facts -> TranscriptItem.Tool(key(facts.id), facts.name, facts.summary, facts.state, part.value.toolCall) }
                 is ResponsePartSystemNotification -> TranscriptItem.Notice(key(null), plain(part.value.content).orEmpty())
                 is ResponsePartError -> TranscriptItem.Notice(key(null), part.value.error.message.ifBlank { "The agent reported an error." }, isError = true)
-                is ResponsePartInputRequest ->
-                    TranscriptItem.Question(key(part.value.request.id), SessionDetail.describeChatInput(part.value.request), answered = part.value.response != null)
+                is ResponsePartInputRequest -> {
+                    val answered = part.value.response != null
+                    // A form only for a question still waiting; an answered one is history.
+                    TranscriptItem.Question(
+                        key(part.value.request.id),
+                        SessionDetail.describeChatInput(part.value.request),
+                        answered,
+                        form = if (answered) null else InputForm.from(part.value.request),
+                    )
+                }
                 is ResponsePartContentRef -> TranscriptItem.Other(key(null), "Attached content (${part.value.contentType ?: "unknown type"})")
                 else -> TranscriptItem.Other(key(null), "Content this app cannot show")
             }

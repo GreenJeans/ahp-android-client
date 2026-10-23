@@ -6,6 +6,7 @@ import com.microsoft.agenthostprotocol.generated.ConfirmationOptionKind
 import com.microsoft.agenthostprotocol.generated.ResponsePartToolCall
 import com.microsoft.agenthostprotocol.generated.StateAction
 import com.microsoft.agenthostprotocol.generated.ToolCallPendingConfirmationState
+import com.microsoft.agenthostprotocol.generated.ToolCallState
 import com.microsoft.agenthostprotocol.generated.ToolCallStatePendingConfirmation
 import java.time.Instant
 import java.util.UUID
