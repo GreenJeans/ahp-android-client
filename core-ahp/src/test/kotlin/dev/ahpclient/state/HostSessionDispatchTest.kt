@@ -9,6 +9,7 @@ import java.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -152,6 +153,73 @@ class HostSessionDispatchTest {
         assertFailsWith<CapabilityDeniedException> { rig.host.dispatch(CHAT_A, startTurn) }
 
         assertTrue(rig.dispatched().isEmpty())
+    }
+
+    @Test
+    fun `canInteract follows the tier of the live connection`() = runTest {
+        val interact = rig(HostScript(), policy = CapabilityPolicy.INTERACT).start()
+        val readOnly = rig(HostScript(), policy = CapabilityPolicy.READ).start()
+
+        assertTrue(interact.host.canInteract.value)
+        assertFalse(readOnly.host.canInteract.value)
+
+        interact.host.stop()
+        assertFalse(interact.host.canInteract.value, "a stopped session offers nothing")
+    }
+
+    @Test
+    fun `canInteract is false while reconnecting`() = runTest {
+        val rig = rig(HostScript(), HostScript(), policy = CapabilityPolicy.INTERACT).start()
+
+        rig.socket.serverCloses(1011)
+        rig.host.awaitState { it is ConnState.Reconnecting }
+
+        assertFalse(rig.host.canInteract.value)
+        rig.host.awaitState { it == ConnState.Online }
+        assertTrue(rig.host.canInteract.value)
+    }
+
+    @Test
+    fun `restart ends the live connection at once and the next one uses the tier then in force`() = runTest {
+        val rig = rig(HostScript(), HostScript(), policy = CapabilityPolicy.INTERACT).start()
+        val firstSocket = rig.socket
+        assertTrue(rig.host.canInteract.value)
+
+        rig.connector.policy = CapabilityPolicy.READ
+        rig.host.restart()
+        rig.host.awaitState { it is ConnState.Connecting }
+        rig.host.awaitState { it == ConnState.Online }
+
+        assertEquals(2, rig.connector.sockets.size)
+        assertTrue(rig.socket !== firstSocket)
+        assertFalse(rig.host.canInteract.value, "the permission was taken away, so the connection that held it is gone")
+        assertFailsWith<CapabilityDeniedException> { rig.host.dispatch(CHAT_A, startTurn) }
+        assertTrue(testScheduler.currentTime < 1_000, "a deliberate restart does not wait out the reconnect backoff")
+    }
+
+    @Test
+    fun `a restart asked for while connecting discards the connection made under the old tier`() = runTest {
+        val inner = ScriptedConnector(HostScript(), HostScript(), policy = CapabilityPolicy.INTERACT)
+        lateinit var host: HostSession
+        var first = true
+        val connector = HostConnector { clientId, serverSeq, scope ->
+            inner.connect(clientId, serverSeq, scope).also {
+                if (first) {
+                    first = false
+                    inner.policy = CapabilityPolicy.READ
+                    host.restart()
+                }
+            }
+        }
+        host = HostSession(connector, backgroundScope, info, Backoff(), "client-1")
+
+        host.start()
+        host.awaitState { it == ConnState.Online }
+        runCurrent()
+
+        assertEquals(2, inner.sockets.size)
+        assertFalse(host.canInteract.value)
+        assertFailsWith<CapabilityDeniedException> { host.dispatch(CHAT_A, startTurn) }
     }
 
     @Test

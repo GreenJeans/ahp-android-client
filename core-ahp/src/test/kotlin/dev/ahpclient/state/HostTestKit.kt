@@ -99,7 +99,8 @@ internal class HostScript(
 /** Hands out one fake host connection per attempt, in order, and records how each was opened. */
 internal class ScriptedConnector(
     vararg scripts: HostScript,
-    private val policy: CapabilityPolicy = CapabilityPolicy.READ,
+    /** The tier the next connection is made under; a test may change it between connections. */
+    var policy: CapabilityPolicy = CapabilityPolicy.READ,
 ) : dev.ahpclient.state.HostConnector {
     private val queue = ArrayDeque(scripts.toList())
     val connects = mutableListOf<Pair<String, Long>>()

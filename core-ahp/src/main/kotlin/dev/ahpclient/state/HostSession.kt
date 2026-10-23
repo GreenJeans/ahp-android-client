@@ -86,6 +86,11 @@ class HostSession(
     private val _connection = MutableStateFlow<ConnState>(ConnState.Stopped)
     val connection: StateFlow<ConnState> = _connection.asStateFlow()
 
+    private val _canInteract = MutableStateFlow(false)
+
+    /** True only while the live connection's tier lets this client send actions. What the UI shows write controls from, not a setting. */
+    val canInteract: StateFlow<Boolean> = _canInteract.asStateFlow()
+
     private val _undecodableFrames = MutableStateFlow(0)
 
     /** Frames from the host that could not be decoded. Skipped, not fatal: unknown actions already decode as no-ops. */
@@ -98,6 +103,9 @@ class HostSession(
     // Owned here, not by a connection, so it keeps increasing when a reconnect reuses this client id.
     private val nextClientSeq = AtomicLong(1)
     private val awaiting = ConcurrentHashMap<Long, CompletableDeferred<DispatchOutcome>>()
+
+    // Counts restart requests, so a connection made before one is never used after it.
+    private val epoch = AtomicLong(0)
 
     @Volatile
     private var current: AhpConnection? = null
@@ -116,7 +124,18 @@ class HostSession(
         job?.cancel()
         job = null
         current?.close()
+        _canInteract.value = false
         _connection.value = ConnState.Stopped
+    }
+
+    /**
+     * Drops the live connection and connects again at once, asking the [HostConnector] for its tier afresh. Used when
+     * what this client may do changes: a permission taken away must end the connection that held it, not wait for the
+     * next drop. A connection that was still being made when this was called is discarded, not used.
+     */
+    fun restart() {
+        epoch.incrementAndGet()
+        current?.close()
     }
 
     /** The store for [uri], subscribing now if online or on the next connection. Pair every call with [closeSession]. */
@@ -198,16 +217,20 @@ class HostSession(
         var lastError: Throwable? = null
         while (true) {
             if (attempt == 0) _connection.value = ConnState.Connecting
+            val generation = epoch.get()
             val parent = currentCoroutineContext()
             val connectionScope = CoroutineScope(parent + SupervisorJob(parent[Job]))
             var ahp: AhpConnection? = null
             try {
                 ahp = connector.connect(clientId, lastSeq, connectionScope)
                 attach(ahp, resume)
-                current = ahp
                 resume = true
+                // A restart asked for while this was being made means it was made under the old rules: drop it and go again.
+                if (epoch.get() != generation) continue
+                current = ahp
                 attempt = 0
                 lastError = null
+                _canInteract.value = ahp.canDispatch
                 _connection.value = ConnState.Online
                 ahp.notifications.collect(::route)
             } catch (e: CancellationException) {
@@ -220,6 +243,7 @@ class HostSession(
                 lastError = e
             } finally {
                 current = null
+                _canInteract.value = false
                 ahp?.let {
                     lastSeq = maxOf(lastSeq, it.lastServerSeq)
                     it.close()
@@ -228,6 +252,7 @@ class HostSession(
                 awaiting.values.forEach { it.complete(DispatchOutcome.Interrupted) }
                 connectionScope.cancel()
             }
+            if (epoch.get() != generation) continue
             attempt++
             _connection.value = ConnState.Reconnecting(attempt, lastError)
             delay(backoff.delayMs(attempt))

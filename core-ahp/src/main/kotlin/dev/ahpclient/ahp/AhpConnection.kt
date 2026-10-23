@@ -105,6 +105,9 @@ class AhpConnection(
 
     val notifications: Flow<ServerNotification> = inbox.receiveAsFlow()
 
+    /** Whether this connection's tier lets it send any action at all. */
+    val canDispatch: Boolean get() = policy.canDispatch
+
     init {
         scope.launch { readLoop() }
     }
