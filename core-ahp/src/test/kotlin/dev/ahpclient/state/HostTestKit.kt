@@ -10,9 +10,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 
 internal fun fixture(name: String): String =
     checkNotNull(HostScript::class.java.getResourceAsStream("/$name")) { "missing fixture $name" }.bufferedReader().use { it.readText() }
@@ -36,6 +38,21 @@ internal fun titleChanged(title: String) = """{"type":"session/titleChanged","ti
 
 internal fun notification(method: String, paramsJson: String) = """{"jsonrpc":"2.0","method":"$method","params":$paramsJson}"""
 
+/**
+ * The echo a host sends for a dispatched action, built from the dispatch's own params: applied under [serverSeq], or,
+ * when [rejection] is set, refused with that reason. Only the originating client ever sees a rejection.
+ */
+internal fun echoOf(params: JsonObject, serverSeq: Long, clientId: String = "client-1", rejection: String? = null): String {
+    val envelope = buildJsonObject {
+        put("channel", params["channel"]!!)
+        put("action", params["action"]!!)
+        put("serverSeq", serverSeq)
+        put("origin", buildJsonObject { put("clientId", clientId); put("clientSeq", params["clientSeq"]!!) })
+        rejection?.let { put("rejectionReason", it) }
+    }
+    return notification("action", envelope.toString())
+}
+
 /** One scripted connection: what a host answers, or why connecting fails. */
 internal class HostScript(
     val listJson: String = fixture("live/list-sessions.json"),
@@ -48,6 +65,8 @@ internal class HostScript(
     val chatCursor: String? = null,
     /** The chats a subscribed session lists, as a JSON array of chat summaries. */
     val sessionChats: String = "[]",
+    /** What the host sends back when the client dispatches an action; null is a host that stays silent. */
+    val onDispatch: (params: JsonObject) -> String? = { null },
 ) {
     fun reply(method: String, id: Long?, params: JsonObject): String? = when (method) {
         "initialize" -> initializeReply(id, params)
@@ -55,6 +74,7 @@ internal class HostScript(
         "subscribe" -> subscribeReply(id, params["channel"]!!.jsonPrimitive.content)
         "fetchTurns" -> result(id, "{}")
         "reconnect" -> onReconnect(id)
+        "dispatchAction" -> onDispatch(params)
         else -> null
     }
 
@@ -77,7 +97,10 @@ internal class HostScript(
 }
 
 /** Hands out one fake host connection per attempt, in order, and records how each was opened. */
-internal class ScriptedConnector(vararg scripts: HostScript) : dev.ahpclient.state.HostConnector {
+internal class ScriptedConnector(
+    vararg scripts: HostScript,
+    private val policy: CapabilityPolicy = CapabilityPolicy.READ,
+) : dev.ahpclient.state.HostConnector {
     private val queue = ArrayDeque(scripts.toList())
     val connects = mutableListOf<Pair<String, Long>>()
     val sockets = mutableListOf<FakeSocket>()
@@ -88,6 +111,6 @@ internal class ScriptedConnector(vararg scripts: HostScript) : dev.ahpclient.sta
         script.failure?.let { throw it }
         val socket = FakeSocket(script::reply)
         sockets += socket
-        return AhpConnection(socket, scope, CapabilityPolicy.READ, clientId, initialServerSeq, requestTimeoutMs = 5_000)
+        return AhpConnection(socket, scope, policy, clientId, initialServerSeq, requestTimeoutMs = 5_000)
     }
 }

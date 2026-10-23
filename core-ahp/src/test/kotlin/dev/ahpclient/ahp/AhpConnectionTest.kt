@@ -122,33 +122,32 @@ class AhpConnectionTest {
     }
 
     @Test
-    fun `dispatchAction is a notification carrying channel, an increasing clientSeq and the action`() = runTest {
+    fun `dispatchAction is a notification carrying channel, the caller's clientSeq and the action`() = runTest {
         val socket = FakeSocket()
         val connection = connection(socket, policy = CapabilityPolicy.INTERACT)
 
-        val first = connection.dispatchAction("ahp-chat:/a", cancelTurn)
-        val second = connection.dispatchAction("ahp-chat:/b", cancelTurn)
+        connection.dispatchAction("ahp-chat:/a", cancelTurn, clientSeq = 41)
+        connection.dispatchAction("ahp-chat:/b", cancelTurn, clientSeq = 42)
 
-        assertEquals(listOf(1L, 2L), listOf(first, second))
         val frame = socket.sent[0]
         assertEquals("2.0", frame["jsonrpc"]!!.jsonPrimitive.content)
         assertEquals("dispatchAction", frame["method"]!!.jsonPrimitive.content)
         assertNull(frame["id"], "a notification has no id")
         val params = frame["params"]!!.jsonObject
         assertEquals("ahp-chat:/a", params["channel"]!!.jsonPrimitive.content)
-        assertEquals(1L, params["clientSeq"]!!.jsonPrimitive.long)
+        assertEquals(41L, params["clientSeq"]!!.jsonPrimitive.long)
         val action = params["action"]!!.jsonObject
         assertEquals("chat/turnCancelled", action["type"]!!.jsonPrimitive.content)
         assertEquals("turn-1", action["turnId"]!!.jsonPrimitive.content)
         assertEquals(5L, action["duration"]!!.jsonPrimitive.long)
-        assertEquals(2L, socket.sent[1]["params"]!!.jsonObject["clientSeq"]!!.jsonPrimitive.long)
+        assertEquals(42L, socket.sent[1]["params"]!!.jsonObject["clientSeq"]!!.jsonPrimitive.long)
     }
 
     @Test
     fun `the READ tier refuses to dispatch and sends nothing`() = runTest {
         val socket = FakeSocket()
 
-        val error = assertFailsWith<CapabilityDeniedException> { connection(socket).dispatchAction("ahp-chat:/a", cancelTurn) }
+        val error = assertFailsWith<CapabilityDeniedException> { connection(socket).dispatchAction("ahp-chat:/a", cancelTurn, clientSeq = 1) }
 
         assertEquals("dispatchAction", error.method)
         assertTrue(socket.sent.isEmpty())
@@ -159,21 +158,10 @@ class AhpConnectionTest {
         val socket = FakeSocket()
         val connection = connection(socket, policy = CapabilityPolicy.INTERACT)
 
-        val error = assertFailsWith<CapabilityDeniedException> { connection.dispatchAction("ahp-session:/a", renameSession) }
+        val error = assertFailsWith<CapabilityDeniedException> { connection.dispatchAction("ahp-session:/a", renameSession, clientSeq = 1) }
 
         assertEquals("session/titleChanged", error.actionType)
         assertTrue(socket.sent.isEmpty())
-    }
-
-    @Test
-    fun `a refused dispatch does not use up a clientSeq`() = runTest {
-        val socket = FakeSocket()
-        val connection = connection(socket, policy = CapabilityPolicy.INTERACT)
-
-        assertFailsWith<CapabilityDeniedException> { connection.dispatchAction("ahp-session:/a", renameSession) }
-        val sent = connection.dispatchAction("ahp-chat:/a", cancelTurn)
-
-        assertEquals(1L, sent)
     }
 
     @Test
@@ -183,7 +171,7 @@ class AhpConnectionTest {
         socket.serverCloses()
         runCurrent()
 
-        assertFailsWith<AhpException.ConnectionClosed> { connection.dispatchAction("ahp-chat:/a", cancelTurn) }
+        assertFailsWith<AhpException.ConnectionClosed> { connection.dispatchAction("ahp-chat:/a", cancelTurn, clientSeq = 1) }
 
         assertTrue(socket.sent.isEmpty())
     }
@@ -192,9 +180,9 @@ class AhpConnectionTest {
     fun `an echo of our own action is decoded with its origin and a rejection with its reason`() = runTest {
         val socket = FakeSocket()
         val connection = connection(socket, policy = CapabilityPolicy.INTERACT)
-        val clientSeq = connection.dispatchAction("ahp-chat:/a", cancelTurn)
+        connection.dispatchAction("ahp-chat:/a", cancelTurn, clientSeq = 1)
         socket.serverSends(
-            """{"jsonrpc":"2.0","method":"action","params":{"channel":"ahp-chat:/a","action":{"type":"chat/turnCancelled","turnId":"turn-1","duration":5},"serverSeq":7,"origin":{"clientId":"client-1","clientSeq":$clientSeq}}}""",
+            """{"jsonrpc":"2.0","method":"action","params":{"channel":"ahp-chat:/a","action":{"type":"chat/turnCancelled","turnId":"turn-1","duration":5},"serverSeq":7,"origin":{"clientId":"client-1","clientSeq":1}}}""",
         )
         socket.serverSends(
             """{"jsonrpc":"2.0","method":"action","params":{"channel":"ahp-chat:/a","action":{"type":"chat/turnCancelled","turnId":"turn-2","duration":5},"serverSeq":8,"origin":{"clientId":"client-1","clientSeq":2},"rejectionReason":"turn is not active"}}""",
@@ -203,9 +191,23 @@ class AhpConnectionTest {
         val (accepted, rejected) = connection.notifications.take(2).toList().map { assertIs<ServerNotification.Action>(it).envelope }
 
         assertEquals("client-1", accepted.origin!!.clientId)
-        assertEquals(clientSeq, accepted.origin!!.clientSeq)
+        assertEquals(1L, accepted.origin!!.clientSeq)
         assertNull(accepted.rejectionReason)
         assertEquals("turn is not active", rejected.rejectionReason)
+    }
+
+    @Test
+    fun `a rejected action does not move the resume point`() = runTest {
+        val socket = FakeSocket()
+        val connection = connection(socket, serverSeq = 10)
+        socket.serverSends(
+            """{"jsonrpc":"2.0","method":"action","params":{"channel":"ahp-chat:/a","action":{"type":"chat/turnCancelled","turnId":"t","duration":5},"serverSeq":99,"origin":{"clientId":"client-1","clientSeq":1},"rejectionReason":"no"}}""",
+        )
+        socket.serverSends(action(12))
+
+        connection.notifications.take(2).toList()
+
+        assertEquals(12L, connection.lastServerSeq)
     }
 
     @Test
@@ -221,8 +223,8 @@ class AhpConnectionTest {
 
         connection.initialize(clientInfo)
         connection.subscribe("ahp-chat:/a")
-        connection.dispatchAction("ahp-chat:/a", cancelTurn)
-        runCatching { connection.dispatchAction("ahp-session:/a", renameSession) }
+        connection.dispatchAction("ahp-chat:/a", cancelTurn, clientSeq = 1)
+        runCatching { connection.dispatchAction("ahp-session:/a", renameSession, clientSeq = 2) }
         connection.unsubscribe("ahp-chat:/a")
 
         assertEquals(listOf("initialize", "subscribe", "dispatchAction", "unsubscribe"), socket.sentMethods)

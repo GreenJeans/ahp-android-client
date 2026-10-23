@@ -95,7 +95,6 @@ class AhpConnection(
     private val json: Json = Ahp.json,
 ) {
     private val nextId = AtomicLong(1)
-    private val nextClientSeq = AtomicLong(1)
     private val pending = ConcurrentHashMap<Long, CompletableDeferred<JsonElement>>()
     private val inbox = Channel<ServerNotification>(Channel.UNLIMITED)
     private val closedBy = AtomicReference<AhpException.ConnectionClosed?>(null)
@@ -158,22 +157,20 @@ class AhpConnection(
     /**
      * Sends one client action, a notification the host answers by echoing it back on the channel (accepted, with this
      * client's `origin`) or with a rejection reason. Refused with [CapabilityDeniedException], before anything is sent,
-     * unless the tier lists this action type.
+     * unless the tier lists this action type. [clientSeq] is chosen by the caller, who owns the client's identity, so it
+     * can stay increasing across connections.
      *
-     * @return the `clientSeq` the action carries, which the echo's `origin` repeats so the caller can match them.
      * @throws AhpException.ConnectionClosed when the socket is gone, so an action that never left the device is never reported as sent.
      */
-    fun dispatchAction(channel: String, action: StateAction): Long {
+    fun dispatchAction(channel: String, action: StateAction, clientSeq: Long) {
         policy.check(CapabilityPolicy.DISPATCH_ACTION, actionTypeOf(action))
         closedBy.get()?.let { throw it }
-        val clientSeq = nextClientSeq.getAndIncrement()
         val frame = buildJsonObject {
             put("jsonrpc", "2.0")
             put("method", CapabilityPolicy.DISPATCH_ACTION)
             put("params", json.encodeToJsonElement(DispatchActionParams.serializer(), DispatchActionParams(channel = channel, clientSeq = clientSeq, action = action)))
         }
         if (!socket.send(frame.toString())) throw closedBy.get() ?: AhpException.ConnectionClosed(null)
-        return clientSeq
     }
 
     private fun actionTypeOf(action: StateAction): String? =
@@ -282,7 +279,8 @@ class AhpConnection(
         }
         try {
             val envelope = json.decodeFromJsonElement(ActionEnvelope.serializer(), params)
-            if (envelope.serverSeq > lastServerSeq) lastServerSeq = envelope.serverSeq
+            // A rejected action changed nothing, so it must not move the resume point: the host may reuse its number.
+            if (envelope.rejectionReason == null && envelope.serverSeq > lastServerSeq) lastServerSeq = envelope.serverSeq
             inbox.trySend(ServerNotification.Action(envelope))
         } catch (e: SerializationException) {
             inbox.trySend(ServerNotification.Undecodable(method, e))

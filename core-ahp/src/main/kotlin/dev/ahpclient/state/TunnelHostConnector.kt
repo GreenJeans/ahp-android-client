@@ -10,7 +10,8 @@ import kotlinx.coroutines.CoroutineScope
 
 /**
  * Connects to a Remote Tunnel Access host the way `vscode.dev/agents` does: a fresh connect token from the Dev Tunnels
- * service, the gateway handshake, then AHP under the read-only [CapabilityPolicy.READ].
+ * service, the gateway handshake, then AHP under [policy]. The default is the read-only [CapabilityPolicy.READ]; a
+ * higher tier is something the caller passes on purpose, never something this class decides.
  *
  * [accessToken] is called on every attempt so a refreshed sign-in is picked up without rebuilding the session.
  */
@@ -20,10 +21,11 @@ class TunnelHostConnector(
     private val tunnel: TunnelInfo,
     private val accessToken: suspend () -> Secret,
     private val instanceId: String? = null,
+    private val policy: CapabilityPolicy = CapabilityPolicy.READ,
 ) : HostConnector {
     override suspend fun connect(clientId: String, initialServerSeq: Long, scope: CoroutineScope): AhpConnection {
         val target = devTunnels.resolveConnectTarget(accessToken(), tunnel)
         val opened = gateway.open(target, instanceId)
-        return AhpConnection(opened.socket, scope, CapabilityPolicy.READ, clientId, initialServerSeq)
+        return AhpConnection(opened.socket, scope, policy, clientId, initialServerSeq)
     }
 }

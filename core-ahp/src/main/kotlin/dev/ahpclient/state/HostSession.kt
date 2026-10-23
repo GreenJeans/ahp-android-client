@@ -6,6 +6,7 @@ import dev.ahpclient.ahp.ROOT_CHANNEL
 import dev.ahpclient.ahp.ServerNotification
 import dev.ahpclient.tunnel.DevTunnelsException
 import dev.ahpclient.tunnel.UpgradeRejectedException
+import com.microsoft.agenthostprotocol.generated.ActionEnvelope
 import com.microsoft.agenthostprotocol.generated.AhpErrorCodes
 import com.microsoft.agenthostprotocol.generated.Implementation
 import com.microsoft.agenthostprotocol.generated.ReconnectResult
@@ -14,9 +15,13 @@ import com.microsoft.agenthostprotocol.generated.ReconnectResultSnapshot
 import com.microsoft.agenthostprotocol.generated.SessionSummary
 import com.microsoft.agenthostprotocol.generated.Snapshot
 import com.microsoft.agenthostprotocol.generated.SnapshotState
+import com.microsoft.agenthostprotocol.generated.StateAction
 import java.io.IOException
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -30,6 +35,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** Opens a fresh AHP connection to one host. Implementations resolve a new connect token every time. */
 fun interface HostConnector {
@@ -61,8 +67,8 @@ class Backoff(private val baseMs: Long = 1_000, private val maxMs: Long = 30_000
 
 /**
  * One host, kept live: connects, mirrors the root state and the session list, and keeps open sessions and chats subscribed,
- * reconnecting with backoff when the socket drops. Read-only by construction: it only calls what [AhpConnection]
- * allows under its capability policy.
+ * reconnecting with backoff when the socket drops. It only calls what [AhpConnection] allows under the capability policy
+ * the [HostConnector] chose; a READ connection cannot [dispatch] at all.
  *
  * Reconnecting resumes with the AHP `reconnect` command, which replays missed actions. Notifications are not
  * replayed, so the session list is fetched again every time; if the host no longer knows this client, a fresh
@@ -88,6 +94,10 @@ class HostSession(
     private val sessions = LinkedHashMap<String, SessionStore>()
     private val chats = LinkedHashMap<String, ChatStore>()
     private val subscribeLock = Mutex()
+
+    // Owned here, not by a connection, so it keeps increasing when a reconnect reuses this client id.
+    private val nextClientSeq = AtomicLong(1)
+    private val awaiting = ConcurrentHashMap<Long, CompletableDeferred<DispatchOutcome>>()
 
     @Volatile
     private var current: AhpConnection? = null
@@ -161,6 +171,27 @@ class HostSession(
         (current ?: throw IOException("Not connected to the host")).fetchTurns(uri, cursor)
     }
 
+    /**
+     * Sends [action] on [channel] and waits for the host to echo it back as ours. Nothing is applied locally: the chat
+     * changes only when the accepted echo arrives, so what is shown is what the host holds.
+     *
+     * @throws dev.ahpclient.ahp.CapabilityDeniedException when this connection's tier does not allow the action.
+     * @throws IOException when there is no connection. Nothing was sent in either case, so retrying is safe.
+     */
+    suspend fun dispatch(channel: String, action: StateAction, timeoutMs: Long = DISPATCH_TIMEOUT_MS): DispatchOutcome {
+        val ahp = current ?: throw IOException("Not connected to the host")
+        val clientSeq = nextClientSeq.getAndIncrement()
+        val reply = CompletableDeferred<DispatchOutcome>()
+        // Registered before sending: the echo can be read before dispatchAction returns.
+        awaiting[clientSeq] = reply
+        try {
+            ahp.dispatchAction(channel, action, clientSeq)
+            return withTimeoutOrNull(timeoutMs) { reply.await() } ?: DispatchOutcome.NoReply
+        } finally {
+            awaiting.remove(clientSeq)
+        }
+    }
+
     private suspend fun supervise() {
         var attempt = 0
         var resume = false
@@ -193,6 +224,8 @@ class HostSession(
                     lastSeq = maxOf(lastSeq, it.lastServerSeq)
                     it.close()
                 }
+                // Whatever was sent and not yet answered can no longer be answered on this connection.
+                awaiting.values.forEach { it.complete(DispatchOutcome.Interrupted) }
                 connectionScope.cancel()
             }
             attempt++
@@ -303,15 +336,27 @@ class HostSession(
         when (note) {
             is ServerNotification.Action -> {
                 val envelope = note.envelope
-                if (envelope.channel == ROOT_CHANNEL) {
-                    root.applyAction(envelope.action)
-                } else {
-                    storeFor(envelope.channel)?.apply(envelope) ?: chatFor(envelope.channel)?.apply(envelope)
+                // A rejected action changed nothing on the host, so it must change nothing here either.
+                if (envelope.rejectionReason == null) {
+                    if (envelope.channel == ROOT_CHANNEL) {
+                        root.applyAction(envelope.action)
+                    } else {
+                        storeFor(envelope.channel)?.apply(envelope) ?: chatFor(envelope.channel)?.apply(envelope)
+                    }
                 }
+                resolveDispatch(envelope)
             }
             is ServerNotification.Named -> root.applyNotification(note.method, note.params)
             is ServerNotification.Undecodable -> _undecodableFrames.update { it + 1 }
         }
+    }
+
+    /** Matches an echo of our own action to the [dispatch] waiting for it, after the state change it carries has been applied. */
+    private fun resolveDispatch(envelope: ActionEnvelope) {
+        val origin = envelope.origin ?: return
+        if (origin.clientId != clientId) return
+        val rejection = envelope.rejectionReason
+        awaiting.remove(origin.clientSeq)?.complete(if (rejection == null) DispatchOutcome.Accepted else DispatchOutcome.Rejected(rejection))
     }
 
     private fun storeFor(uri: String): SessionStore? = synchronized(sessions) { sessions[uri] }
@@ -322,6 +367,7 @@ class HostSession(
 
     private companion object {
         const val MAX_LIST_PAGES = 50
+        const val DISPATCH_TIMEOUT_MS = 15_000L
         val TERMINAL_UPGRADE_CODES = setOf(401, 403, 404)
     }
 }
