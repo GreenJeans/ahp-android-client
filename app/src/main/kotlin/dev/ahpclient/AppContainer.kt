@@ -59,15 +59,22 @@ class AppContainer(context: Context) {
         )
     }
 
+    private val monitorService by lazy { AndroidMonitorService(appContext) }
+
     /** Decides when the foreground service and the "needs input" notifications run. Off until the user turns it on. */
     val monitor: MonitorCoordinator by lazy {
         MonitorCoordinator(
             state = controller.state,
             settings = PrefsMonitorSettings(prefs),
-            service = AndroidMonitorService(appContext),
+            service = monitorService,
             sink = NotificationInputNeededSink(appContext),
             scope = appScope,
         )
+    }
+
+    /** Starts the service again if monitoring is on, which posts its notification afresh. Safe to repeat. */
+    fun refreshMonitorNotification() {
+        if (monitor.status.value != null) monitorService.start()
     }
 
     fun setMonitoring(on: Boolean) {

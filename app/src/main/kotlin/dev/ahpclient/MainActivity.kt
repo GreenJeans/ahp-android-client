@@ -16,6 +16,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import dev.ahpclient.monitor.EXTRA_SESSION_URI
+import dev.ahpclient.app.MonitorToggle
 import dev.ahpclient.ui.AppRoot
 import dev.ahpclient.ui.copyToClipboard
 import dev.ahpclient.ui.openInBrowser
@@ -24,9 +25,29 @@ class MainActivity : ComponentActivity() {
     private var notificationsAllowed by mutableStateOf(true)
     private val container get() = (application as AhpApp).container
 
+    // Set while the permission dialog is up; called once the user has answered, whichever way.
+    private var permissionAnswered: (() -> Unit)? = null
+
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
         notificationsAllowed = areNotificationsAllowed()
+        permissionAnswered?.invoke()
+        permissionAnswered = null
     }
+
+    // The permission is asked for before monitoring starts: Android drops a foreground-service notification posted
+    // while the permission is missing and does not bring it back once it is granted.
+    private val monitorToggle = MonitorToggle(
+        permissionGranted = ::hasNotificationPermission,
+        askForPermission = { onAnswered ->
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                permissionAnswered = onAnswered
+                notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+            } else {
+                onAnswered()
+            }
+        },
+        apply = { on -> container.setMonitoring(on) },
+    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
@@ -58,15 +79,11 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         notificationsAllowed = areNotificationsAllowed()
+        // The permission may have been granted in system settings while monitoring was already on; bring the notification back.
+        if (notificationsAllowed) container.refreshMonitorNotification()
     }
 
-    private fun setMonitoring(on: Boolean) {
-        container.setMonitoring(on)
-        // Keeping the connection alive works without notifications, so a refusal does not undo the choice.
-        if (on && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNotificationPermission()) {
-            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-        }
-    }
+    private fun setMonitoring(on: Boolean) = monitorToggle.request(on)
 
     private fun hasNotificationPermission(): Boolean =
         Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
