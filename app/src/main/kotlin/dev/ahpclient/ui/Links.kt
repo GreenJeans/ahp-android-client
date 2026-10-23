@@ -5,6 +5,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.widget.Toast
 import androidx.browser.customtabs.CustomTabsIntent
@@ -19,7 +20,21 @@ import dev.ahpclient.app.SafeLinks
  */
 fun openInBrowser(context: Context, url: String): Boolean {
     if (!SafeLinks.isSafeVerificationUri(url)) return false
-    val uri = url.toUri()
+    return launchBrowser(context, url.toUri())
+}
+
+/**
+ * Opens a link from an agent's output in a Custom Tab. Refuses anything [SafeLinks.isSafeWebLink] does not accept, even though
+ * the caller already confirmed it with the user: this is the last line before a launch.
+ *
+ * @return false when nothing could be opened, so the caller can tell the user.
+ */
+fun openWebLink(context: Context, url: String): Boolean {
+    if (!SafeLinks.isSafeWebLink(url)) return false
+    return launchBrowser(context, url.toUri())
+}
+
+private fun launchBrowser(context: Context, uri: Uri): Boolean {
     return try {
         CustomTabsIntent.Builder().build().launchUrl(context, uri)
         true

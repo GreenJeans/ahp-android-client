@@ -11,6 +11,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.junit4.accessibility.enableAccessibilityChecks
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.tryPerformAccessibilityChecks
 import androidx.compose.ui.unit.dp
@@ -20,8 +21,15 @@ import dev.ahpclient.app.AppState
 import dev.ahpclient.app.HostEntry
 import dev.ahpclient.app.HostList
 import dev.ahpclient.app.SignInStep
+import dev.ahpclient.state.ActivityState
+import dev.ahpclient.state.ChatGoneException
 import dev.ahpclient.state.ConnState
+import dev.ahpclient.state.InputRequestView
+import dev.ahpclient.state.ToolState
+import dev.ahpclient.state.Transcript
+import dev.ahpclient.state.TranscriptItem
 import dev.ahpclient.tunnel.TunnelInfo
+import dev.ahpclient.ui.chat.ChatScreen
 import dev.ahpclient.ui.theme.AhpTheme
 import com.microsoft.agenthostprotocol.Ahp
 import com.microsoft.agenthostprotocol.generated.SessionState
@@ -116,6 +124,55 @@ class AccessibilityTest {
             { SessionDetailScreen(null, null, ConnState.Online, now, {}) },
             { SessionDetailScreen(null, IllegalStateException("x"), ConnState.Reconnecting(1, null), now, {}) },
         )
+    }
+
+    private val everyRow = Transcript(
+        title = "Fix the build",
+        state = ActivityState.NEEDS_INPUT,
+        activity = "Waiting on you",
+        hasOlder = true,
+        items = listOf(
+            TranscriptItem.User("u1", "Please fix the failing build."),
+            TranscriptItem.Reasoning("r1", "thinking", live = true),
+            TranscriptItem.Reasoning("r0", "thought", live = false),
+            TranscriptItem.Tool("t1", "Run in Terminal", "List the files", ToolState.WAITING_FOR_APPROVAL),
+            TranscriptItem.Tool("t2", "Read file", "Open the build script", ToolState.RUNNING),
+            TranscriptItem.Tool("t3", "Edit file", null, ToolState.FAILED),
+            TranscriptItem.Tool("t4", "Search", "Find the setting", ToolState.DONE),
+            TranscriptItem.Tool("t5", "Fetch page", null, ToolState.SIGN_IN_REQUIRED),
+            TranscriptItem.Notice("n1", "Context was compacted"),
+            TranscriptItem.Notice("n2", "Ended with an error", isError = true),
+            TranscriptItem.Question("q1", InputRequestView("Question", "Which branch?", emptyList()), answered = false),
+            TranscriptItem.Other("o1", "Content this app cannot show"),
+        ),
+    )
+
+    @Test
+    fun chatScreenInEveryState() {
+        val plain = Transcript("Fix the build", ActivityState.IN_PROGRESS, null, listOf(TranscriptItem.User("u1", "Hello")), hasOlder = false)
+        checkEach(
+            { ChatScreen(everyRow, null, false, null, ConnState.Online, {}, {}, {}) },
+            { ChatScreen(everyRow, null, true, null, ConnState.Online, {}, {}, {}) },
+            { ChatScreen(everyRow, null, false, java.io.IOException("offline"), ConnState.Online, {}, {}, {}) },
+            { ChatScreen(plain, null, false, null, ConnState.Reconnecting(2, null), {}, {}, {}) },
+            { ChatScreen(Transcript("Chat", ActivityState.IDLE, null, emptyList(), false), null, false, null, ConnState.Online, {}, {}, {}) },
+            { ChatScreen(null, null, false, null, ConnState.Online, {}, {}, {}) },
+            { ChatScreen(null, ChatGoneException("ahp-chat:/x"), false, null, ConnState.Online, {}, {}, {}) },
+            { ChatScreen(null, IllegalStateException("x"), false, null, ConnState.Online, {}, {}, {}) },
+        )
+    }
+
+    @Test
+    fun chatScreenOnceMarkdownHasRendered() {
+        val withMarkdown = Transcript(
+            "Fix the build", ActivityState.IN_PROGRESS, null,
+            listOf(TranscriptItem.Markdown("m1", "# Plan\n\nRun the **build** and read [the docs](https://example.com/docs).\n\n- one\n- two\n\n```kotlin\nval x = 1\n```")),
+            hasOlder = false,
+        )
+        rule.setContent { AhpTheme { ChatScreen(withMarkdown, null, false, null, ConnState.Online, {}, {}, {}) } }
+        rule.waitUntil(timeoutMillis = 10_000) { rule.onAllNodesWithText("Plan").fetchSemanticsNodes().isNotEmpty() }
+
+        check()
     }
 
     /** A check that can never fail proves nothing, so this feeds it a screen with a defect and expects it to object. */

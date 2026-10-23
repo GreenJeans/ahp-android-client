@@ -1,5 +1,6 @@
 package dev.ahpclient.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -8,7 +9,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -18,12 +18,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import dev.ahpclient.state.ConnState
-import dev.ahpclient.state.QuestionView
 import dev.ahpclient.state.SessionDetail
 import dev.ahpclient.state.SessionGoneException
 import com.microsoft.agenthostprotocol.generated.SessionState
@@ -41,6 +41,7 @@ fun SessionDetailScreen(
     now: Instant,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    onOpenChat: (String) -> Unit = {},
 ) {
     Column(modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         ScreenColumn {
@@ -48,7 +49,7 @@ fun SessionDetailScreen(
             if (connection != ConnState.Online) ConnectionLine(connection)
             when {
                 error is SessionGoneException -> ErrorText("This session is no longer on the host.", Modifier.testTag("session_gone"))
-                state != null -> DetailBody(remember(state, now) { SessionDetail.from(state, now) })
+                state != null -> DetailBody(remember(state, now) { SessionDetail.from(state, now) }, onOpenChat)
                 error != null -> ErrorText("Could not load this session (${error.javaClass.simpleName}).", Modifier.testTag("detail_error"))
                 else -> Busy("Loading session…", Modifier.testTag("detail_loading"))
             }
@@ -57,7 +58,7 @@ fun SessionDetailScreen(
 }
 
 @Composable
-private fun DetailBody(detail: SessionDetail) {
+private fun DetailBody(detail: SessionDetail, onOpenChat: (String) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text(detail.title, style = MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() }.testTag("detail_title"))
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -72,15 +73,7 @@ private fun DetailBody(detail: SessionDetail) {
                 modifier = Modifier.testTag("input_needed").semantics { liveRegion = LiveRegionMode.Polite },
             ) {
                 Text("Waiting on you", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
-                detail.inputNeeded.forEach { request ->
-                    Card(modifier = Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}.testTag("input_request")) {
-                        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(request.kind, style = MaterialTheme.typography.labelLarge)
-                            Text(request.text, style = MaterialTheme.typography.bodyLarge)
-                            request.questions.forEach { question -> QuestionBlock(question) }
-                        }
-                    }
-                }
+                detail.inputNeeded.forEach { request -> InputRequestCard(request) }
                 Text(SessionDetail.ANSWER_ELSEWHERE, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("answer_hint"))
             }
         }
@@ -91,7 +84,12 @@ private fun DetailBody(detail: SessionDetail) {
             Text("Chats", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
             detail.chats.forEach { chat ->
                 Row(
-                    modifier = Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}.testTag("chat_row"),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClickLabel = "Open chat", role = Role.Button) { onOpenChat(chat.uri) }
+                        .semantics(mergeDescendants = true) {}
+                        .padding(vertical = 8.dp)
+                        .testTag("chat_row"),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -103,17 +101,6 @@ private fun DetailBody(detail: SessionDetail) {
                     StatusChip(chat.state)
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun QuestionBlock(question: QuestionView) {
-    Column(modifier = Modifier.padding(top = 8.dp).testTag("question"), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        question.prompt?.let { Text(it, style = MaterialTheme.typography.bodyLarge) }
-        Text(question.answerKind, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        question.options.forEach { option ->
-            Text("• $option", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(start = 8.dp).testTag("question_option"))
         }
     }
 }

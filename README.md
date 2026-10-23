@@ -11,8 +11,8 @@ Agents panel. The authoritative plan, acceptance criteria and progress log are t
 
 | Module | Type | Status |
 |---|---|---|
-| `core-ahp` | Pure Kotlin/JVM library: GitHub device-flow auth, Dev Tunnels REST, tunnel socket and gateway selection, AHP connection, state stores, session list and detail models, background-monitoring logic, capability allowlist | Phase 1 complete, live-verified except where `docs/verification/phase1-readonly.md` says otherwise |
-| `app` | Android application (Jetpack Compose): sign-in, host list, sessions list, read-only session detail, opt-in background monitoring with a foreground service and needs-input notifications | Phase 1 built; debug APK |
+| `core-ahp` | Pure Kotlin/JVM library: GitHub device-flow auth, Dev Tunnels REST, tunnel socket and gateway selection, AHP connection, state stores (sessions and chats, with older-turn paging), session list and detail models, the transcript model, background-monitoring logic, capability allowlist | Phase 1 complete, live-verified except where `docs/verification/phase1-readonly.md` says otherwise; Phase 2 in progress |
+| `app` | Android application (Jetpack Compose): sign-in, host list, sessions list, read-only session detail, a read-only chat transcript with markdown, opt-in background monitoring with a foreground service and needs-input notifications | Phase 1 built; transcript screen built (collapsible blocks next); debug APK |
 
 ## Build
 
@@ -78,7 +78,8 @@ You need VS Code running with Remote Tunnel Access on, signed in with the same G
 
 Options: `--tunnel <name|id>`, `--instance <id>`, `--watch <seconds>` (print notifications for a while),
 `--session <title-or-uri>` (subscribe to one session and print which clients the host lists as active; this client
-must not be among them), `--capture <file>` (raw frames as JSON lines). Capture files contain session titles and local paths, so they stay
+must not be among them), `--chat <title-or-uri>` (subscribe to a session's chat, decode its snapshot and apply every chat
+action with the library's reducer, reporting counts and type names only), `--capture <file>` (raw frames as JSON lines). Capture files contain session titles and local paths, so they stay
 local: `captures/` is gitignored. The device code lasts 15 minutes; approve it at the URL the probe prints.
 
 ## Pinned versions
@@ -91,6 +92,7 @@ local: `captures/` is gitignored. The device code lasts 15 minutes; approve it a
 | Gradle | 9.8.2 | Wrapper checked in |
 | Android Gradle Plugin | 9.4.1 | Built-in Kotlin; only the Compose compiler plugin is applied |
 | Compose BOM | 2026.09.00 | Needs `compileSdk` 37 |
+| `com.mikepenz:multiplatform-markdown-renderer-m3` | 0.46.0 | Apache-2.0. Renders agent output. Its JetBrains Compose artifacts resolve to metadata-only redirects onto the AndroidX ones, so there is one Compose runtime. No image loader (Coil) is added on purpose |
 
 ## Security
 
@@ -100,3 +102,9 @@ The client never stores or logs a token in clear text, and Phase 1 sends only re
 Debug builds also write one logcat line per outbound frame under the tag `AhpWire`: the method name and nothing else
 (never parameters, URLs or headers), with `NOT-READ` in front of any method outside the read tier. Release builds log
 nothing. To check a run on a device: `adb logcat -d -s AhpWire`, and confirm no line contains `NOT-READ`.
+
+Text in a chat transcript is written by the agent or by whatever it read, so it is treated as untrusted. It is rendered as
+markdown but never as HTML; no image loader is installed, so an image link is never fetched; and tapping a link opens a
+confirmation that names the real host first. Only `https` links to a named ASCII host without embedded credentials are ever
+launched (`SafeLinks.isSafeWebLink`); anything else is explained and refused. Chat fixtures are built by
+`tools/redact-chat.mjs`, which masks all free text and refuses to write if anything from the capture survives.

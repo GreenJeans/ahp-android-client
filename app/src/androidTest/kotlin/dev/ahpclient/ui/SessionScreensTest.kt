@@ -7,6 +7,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
@@ -278,6 +279,16 @@ class SessionScreensTest {
         rule.onNodeWithTag("answer_hint").assertTextEquals("Answer in VS Code.")
         rule.onNodeWithTag("chat_row").assertTextContains("Main chat", substring = true)
         rule.onNodeWithText("repo").assertIsDisplayed()
+    }
+
+    @Test
+    fun tappingAChatRowOpensThatChat() {
+        var opened: String? = null
+        rule.setContent { AhpTheme { SessionDetailScreen(detailState(), null, ConnState.Online, now, {}, onOpenChat = { opened = it }) } }
+
+        rule.onNodeWithTag("chat_row").assertHasClickAction().assertTouchTargetAtLeast(48.dp).performClick()
+
+        assertEquals("ahp-chat://default/x", opened)
     }
 
     @Test
