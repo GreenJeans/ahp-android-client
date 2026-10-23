@@ -34,9 +34,59 @@ class InputNeededDetailTest {
         list: MutableStateFlow<List<SessionSummary>>,
         scope: CoroutineScope,
         readDetail: suspend (String) -> String?,
+    ) = startRead(list, scope) { uri -> readDetail(uri)?.let { RequestRead(it) } }
+
+    private fun startRead(
+        list: MutableStateFlow<List<SessionSummary>>,
+        scope: CoroutineScope,
+        read: suspend (String) -> RequestRead?,
     ) {
-        val notifier = InputNeededNotifier(list, { notified += it }, { resolved += it }, debounceMs = 3_000, readDetail = readDetail, readTimeoutMs = 4_000)
+        val notifier = InputNeededNotifier(list, { notified += it }, { resolved += it }, debounceMs = 3_000, readDetail = read, readTimeoutMs = 4_000)
         scope.launch { notifier.run() }
+    }
+
+    @Test
+    fun `the alert carries the tool call its buttons act on, and the words are still tidied`() = runTest {
+        val target = ApprovalTarget("ahp-chat:/c1", "call-1")
+        val list = MutableStateFlow(listOf(quiet(1)))
+        startRead(list, backgroundScope) { RequestRead("Run   command:\n  Run the tests", target) }
+        runCurrent()
+
+        list.value = listOf(asking(1))
+        runCurrent()
+        advanceTimeBy(3_100)
+
+        assertEquals(listOf(InputNeeded("ahp-session:/q1", "Asking 1", "Run command: Run the tests", target)), notified)
+    }
+
+    @Test
+    fun `an alert with no readable words still carries its tool call`() = runTest {
+        val target = ApprovalTarget("ahp-chat:/c1", "call-1")
+        val list = MutableStateFlow(listOf(quiet(1)))
+        startRead(list, backgroundScope) { RequestRead("   ", target) }
+        runCurrent()
+
+        list.value = listOf(asking(1))
+        runCurrent()
+        advanceTimeBy(3_100)
+
+        assertEquals(listOf(InputNeeded("ahp-session:/q1", "Asking 1", null, target)), notified)
+    }
+
+    @Test
+    fun `a read that fails or is slow never carries a tool call`() = runTest {
+        val list = MutableStateFlow(listOf(quiet(1), quiet(2)))
+        startRead(list, backgroundScope) { uri ->
+            if (uri.endsWith("q1")) throw IllegalStateException("nope") else awaitCancellation()
+        }
+        runCurrent()
+
+        list.value = listOf(asking(1), asking(2))
+        runCurrent()
+        advanceTimeBy(8_000)
+
+        assertEquals(listOf(null, null), notified.map { it.approval })
+        assertEquals(listOf("Asking 1", "Asking 2"), notified.map { it.title }.sorted())
     }
 
     @Test

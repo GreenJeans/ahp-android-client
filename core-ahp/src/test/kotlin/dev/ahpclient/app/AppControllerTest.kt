@@ -11,6 +11,7 @@ import dev.ahpclient.state.Backoff
 import dev.ahpclient.state.CHAT_A
 import dev.ahpclient.state.CHAT_B
 import dev.ahpclient.state.ApprovalGate
+import dev.ahpclient.state.ApprovalTarget
 import dev.ahpclient.state.ChatInteractor
 import dev.ahpclient.state.DispatchOutcome
 import dev.ahpclient.state.InteractResult
@@ -45,6 +46,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.mockwebserver.MockResponse
@@ -1180,6 +1182,151 @@ class AppControllerTest {
 
             assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), interactor.approve("c1"))
             assertEquals(1, dispatches().size)
+        }
+    }
+
+    // ---- deciding a tool call from a notification button ----------------------------------------------------------
+
+    private fun Rig.channelsSent(method: String): List<String> = connectors.single().sockets.flatMap { it.sent }
+        .filter { it["method"]?.jsonPrimitive?.content == method }
+        .map { it["params"]!!.jsonObject["channel"]!!.jsonPrimitive.content }
+
+    /** What each dispatch decided: the action it carried, the call it named, and whether it approved. */
+    private fun Rig.decisions() = dispatches().map { request ->
+        val action = request["params"]!!.jsonObject["action"]!!.jsonObject
+        Triple(action["type"]!!.jsonPrimitive.content, action["toolCallId"]!!.jsonPrimitive.content, action["approved"]!!.jsonPrimitive.boolean)
+    }
+
+    private fun decideScript(missing: Set<String> = emptySet(), clientId: () -> String) = {
+        HostScript(
+            sessionChats = "[${chatSummaryJson(CHAT_A)}]",
+            chatActiveTurn = pendingTool,
+            missingSessions = missing,
+            onDispatch = { echoOf(it, SNAPSHOT_SEQ + 1, clientId = clientId()) },
+        )
+    }
+
+    private val allowed get() = InteractionConsent(FakeInteractionSettings(saved = true))
+
+    @Test
+    fun `an approval from a notification goes through the device check, reaches the host once, and the chat is left again`() = runTest {
+        var clientId = ""
+        withRig(script = decideScript { clientId }, interaction = allowed, approvalGate = ApprovalGate { true }) {
+            val connected = connectToFirstHost()
+            clientId = "client-${connected.host.tunnelId}"
+            connected.session.canInteract.first { it }
+
+            assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), controller.decideToolCall(CHAT_A, "c1", approve = true))
+
+            assertEquals(listOf(Triple("chat/toolCallConfirmed", "c1", true)), decisions(), "one dispatch, and it approves that call")
+            assertEquals(listOf(CHAT_A), channelsSent("subscribe").filter { it == CHAT_A })
+            assertEquals(listOf(CHAT_A), channelsSent("unsubscribe").filter { it == CHAT_A }, "opened for the decision and closed after it")
+        }
+    }
+
+    @Test
+    fun `with no device check an approval from a notification is refused, and a denial still goes through`() = runTest {
+        var clientId = ""
+        withRig(script = decideScript { clientId }, interaction = allowed) {
+            val connected = connectToFirstHost()
+            clientId = "client-${connected.host.tunnelId}"
+            connected.session.canInteract.first { it }
+
+            assertEquals(InteractResult.NotConfirmed, controller.decideToolCall(CHAT_A, "c1", approve = true))
+            assertTrue(dispatches().isEmpty())
+            assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), controller.decideToolCall(CHAT_A, "c1", approve = false))
+            assertEquals(listOf(Triple("chat/toolCallConfirmed", "c1", false)), decisions(), "one dispatch, and it denies that call")
+        }
+    }
+
+    @Test
+    fun `a notification button does nothing while the write tier is off`() = runTest {
+        withRig(script = decideScript { "" }, approvalGate = ApprovalGate { true }) {
+            connectToFirstHost()
+
+            assertEquals(InteractResult.NotAllowed, controller.decideToolCall(CHAT_A, "c1", approve = true))
+            assertEquals(InteractResult.NotAllowed, controller.decideToolCall(CHAT_A, "c1", approve = false))
+            assertTrue(dispatches().isEmpty())
+        }
+    }
+
+    @Test
+    fun `a notification button does nothing when no host is connected`() = runTest {
+        withRig(approvalGate = ApprovalGate { true }) {
+            assertEquals(InteractResult.NotAllowed, controller.decideToolCall(CHAT_A, "c1", approve = true))
+            assertEquals(InteractResult.NotAllowed, controller.decideToolCall(CHAT_A, "c1", approve = false))
+            assertTrue(connectors.isEmpty())
+        }
+    }
+
+    @Test
+    fun `a call that is no longer waiting is not decided, whatever the notification said`() = runTest {
+        var clientId = ""
+        withRig(script = decideScript { clientId }, interaction = allowed, approvalGate = ApprovalGate { true }) {
+            val connected = connectToFirstHost()
+            clientId = "client-${connected.host.tunnelId}"
+            connected.session.canInteract.first { it }
+
+            assertEquals(InteractResult.NoSuchRequest, controller.decideToolCall(CHAT_A, "some-other-call", approve = true))
+            assertEquals(InteractResult.NoSuchRequest, controller.decideToolCall(CHAT_A, "some-other-call", approve = false))
+            assertTrue(dispatches().isEmpty())
+        }
+    }
+
+    @Test
+    fun `an address that is too long is never subscribed to`() = runTest {
+        withRig(script = decideScript { "" }, interaction = allowed, approvalGate = ApprovalGate { true }) {
+            val connected = connectToFirstHost()
+            connected.session.canInteract.first { it }
+            val tooLong = "ahp-chat:/" + "x".repeat(ApprovalTarget.MAX_CHAT_URI)
+
+            assertEquals(InteractResult.NotAllowed, controller.decideToolCall(tooLong, "c1", approve = true))
+            assertTrue(channelsSent("subscribe").none { it == tooLong })
+            assertTrue(dispatches().isEmpty())
+        }
+    }
+
+    @Test
+    fun `a blank address is never subscribed to`() = runTest {
+        withRig(script = decideScript { "" }, interaction = allowed, approvalGate = ApprovalGate { true }) {
+            val connected = connectToFirstHost()
+            connected.session.canInteract.first { it }
+
+            assertEquals(InteractResult.NotAllowed, controller.decideToolCall("", "c1", approve = true))
+            assertTrue(channelsSent("subscribe").none { it.isEmpty() })
+            assertTrue(dispatches().isEmpty())
+        }
+    }
+
+    @Test
+    fun `a chat that never loads gives up with nothing sent, and is left again`() = runTest {
+        val missing = "ahp-chat:/00000000-0000-4000-8000-00000000dead"
+        withRig(script = decideScript(missing = setOf(missing)) { "" }, interaction = allowed, approvalGate = ApprovalGate { true }) {
+            val connected = connectToFirstHost()
+            connected.session.canInteract.first { it }
+
+            assertIs<InteractResult.NotSent>(controller.decideToolCall(missing, "c1", approve = true))
+
+            assertTrue(dispatches().isEmpty())
+            assertEquals(channelsSent("subscribe").count { it == missing }, channelsSent("unsubscribe").count { it == missing })
+        }
+    }
+
+    @Test
+    fun `a chat the screen already has open is shared for the decision and stays open`() = runTest {
+        var clientId = ""
+        withRig(script = decideScript { clientId }, interaction = allowed, approvalGate = ApprovalGate { true }) {
+            val connected = connectToFirstHost()
+            clientId = "client-${connected.host.tunnelId}"
+            openChatInteractor(this)
+            runCurrent()
+
+            assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), controller.decideToolCall(CHAT_A, "c1", approve = true))
+            assertTrue(channelsSent("unsubscribe").none { it == CHAT_A }, "the person's own subscription is not taken away")
+
+            controller.closeChat()
+            runCurrent()
+            assertEquals(listOf(CHAT_A), channelsSent("unsubscribe").filter { it == CHAT_A })
         }
     }
 }

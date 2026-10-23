@@ -9,9 +9,12 @@ import dev.ahpclient.security.VaultCryptoException
 import dev.ahpclient.security.VaultLoad
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.ApprovalGate
+import dev.ahpclient.state.ApprovalTarget
 import dev.ahpclient.state.ChatInteractor
+import dev.ahpclient.state.ChatStore
 import dev.ahpclient.state.ExpansionState
 import dev.ahpclient.state.HostSession
+import dev.ahpclient.state.InteractResult
 import dev.ahpclient.state.SubagentLinks
 import dev.ahpclient.tunnel.DevTunnelsClient
 import dev.ahpclient.tunnel.DevTunnelsException
@@ -24,8 +27,10 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Everything between launching the app and looking at a host: restore the saved sign-in, sign in with GitHub, list the
@@ -182,14 +187,36 @@ class AppController(
 
     private fun newChat(session: HostSession, uri: String, parent: OpenChat?): OpenChat {
         val store = session.openChat(uri)
-        val interactor = ChatInteractor(
-            chatUri = uri,
-            chat = { store.state.value },
-            canInteract = { session.canInteract.value },
-            dispatch = session::dispatch,
-            gate = approvalGate,
-        )
-        return OpenChat(uri, store, expansionFor(uri), interactor, parent)
+        return OpenChat(uri, store, expansionFor(uri), interactorFor(session, uri, store), parent)
+    }
+
+    private fun interactorFor(session: HostSession, uri: String, store: ChatStore) = ChatInteractor(
+        chatUri = uri,
+        chat = { store.state.value },
+        canInteract = { session.canInteract.value },
+        dispatch = session::dispatch,
+        gate = approvalGate,
+    )
+
+    /**
+     * Approves or denies one waiting tool call for a notification button, with no screen showing it. The chat is opened for
+     * as long as it takes to read the call and send the answer, then closed again (a chat already open is only shared, never
+     * closed). The same [ChatInteractor] that the chat screen uses does the deciding, so everything that guards it there guards
+     * this: the write tier must be on, the call must still be waiting in the live chat, an approval goes through the device
+     * check (and is looked up again after it), denying needs none, and nothing counts as done until the host echoes it.
+     */
+    suspend fun decideToolCall(chatUri: String, toolCallId: String, approve: Boolean): InteractResult {
+        val session = (_state.value as? AppState.Connected)?.session ?: return InteractResult.NotAllowed
+        if (chatUri.isBlank() || chatUri.length > ApprovalTarget.MAX_CHAT_URI) return InteractResult.NotAllowed
+        val store = session.openChat(chatUri)
+        try {
+            withTimeoutOrNull(CHAT_LOAD_MS) { store.state.first { it != null } }
+                ?: return InteractResult.NotSent(IOException("The chat did not load in time"))
+            val interactor = interactorFor(session, chatUri, store)
+            return if (approve) interactor.approve(toolCallId) else interactor.deny(toolCallId)
+        } finally {
+            session.closeChat(chatUri)
+        }
     }
 
     /** Leaves the open transcript and returns to where it was opened from: the chat above it for a subagent's, else the session detail. */
@@ -392,5 +419,8 @@ class AppController(
 
         /** How many subagent transcripts may be opened on top of one another. */
         const val MAX_SUBAGENT_DEPTH = 4
+
+        /** How long a notification button waits for the chat's first snapshot before giving up. */
+        const val CHAT_LOAD_MS = 8_000L
     }
 }

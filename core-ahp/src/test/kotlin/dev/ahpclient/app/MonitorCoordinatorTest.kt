@@ -1,12 +1,15 @@
 package dev.ahpclient.app
 
+import dev.ahpclient.state.ApprovalTarget
 import dev.ahpclient.state.Backoff
+import dev.ahpclient.state.CHAT_A
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.HostScript
 import dev.ahpclient.state.HostSession
 import dev.ahpclient.state.InputNeeded
 import dev.ahpclient.state.SESSION_C
 import dev.ahpclient.state.ScriptedConnector
+import dev.ahpclient.state.chatSummaryJson
 import dev.ahpclient.tunnel.TunnelInfo
 import com.microsoft.agenthostprotocol.generated.Implementation
 import com.microsoft.agenthostprotocol.generated.SessionStatus
@@ -233,6 +236,41 @@ class MonitorCoordinatorTest {
         advanceTimeBy(3_500)
 
         assertEquals("Run command: Run the tests", rig.sink.posted.single().detail)
+        assertNull(rig.sink.posted.single().approval, "its chat is not one the session lists, so there are no buttons")
+    }
+
+    private fun approvalIn(chat: String, options: String = "") =
+        """[{"kind":"toolConfirmation","id":"r2","chat":"$chat","turnId":"t","toolCall":{"status":"pending-confirmation",
+            "toolCallId":"tc","toolName":"run_in_terminal","displayName":"Run command","intention":"Run the tests","invocationMessage":"Run npm test"$options}}]"""
+
+    @Test
+    fun `one plain tool call in a listed chat carries the call its notification buttons act on`() = runTest {
+        val rig = rig()
+        val host = connect(rig, HostScript(sessionChats = "[${chatSummaryJson(CHAT_A)}]", inputNeeded = approvalIn(CHAT_A)))
+        advanceTimeBy(10_000)
+
+        waitingOn(host, "Session C")
+        runCurrent()
+        advanceTimeBy(3_500)
+
+        val alert = rig.sink.posted.single()
+        assertEquals(ApprovalTarget(CHAT_A, "tc"), alert.approval)
+        assertEquals("Run command: Run the tests", alert.detail)
+        assertEquals(listOf(SESSION_C), rig.channels("unsubscribe"), "reading it is still one subscribe and one unsubscribe, in the read tier")
+    }
+
+    @Test
+    fun `a tool call with options of the hosts own carries no buttons`() = runTest {
+        val options = ""","options":[{"id":"o1","label":"Allow once","kind":"approve"},{"id":"o2","label":"Not now","kind":"deny"}]"""
+        val rig = rig()
+        val host = connect(rig, HostScript(sessionChats = "[${chatSummaryJson(CHAT_A)}]", inputNeeded = approvalIn(CHAT_A, options)))
+        advanceTimeBy(10_000)
+
+        waitingOn(host, "Session C")
+        runCurrent()
+        advanceTimeBy(3_500)
+
+        assertNull(rig.sink.posted.single().approval)
     }
 
     @Test
