@@ -8,6 +8,11 @@ import kotlin.test.assertTrue
 class CapabilityPolicyTest {
     private val allowed = setOf("initialize", "reconnect", "ping", "subscribe", "unsubscribe", "listSessions", "fetchTurns")
 
+    private val interactActions = setOf(
+        "chat/turnStarted", "chat/pendingMessageSet", "chat/pendingMessageRemoved", "chat/inputAnswerChanged",
+        "chat/inputCompleted", "chat/toolCallConfirmed", "chat/toolCallResultConfirmed", "chat/turnCancelled",
+    )
+
     // Everything the spec's Design Notes name as denied, plus the rest of the protocol surface.
     private val denied = listOf(
         "dispatchAction", "authenticate",
@@ -34,6 +39,47 @@ class CapabilityPolicyTest {
     fun `READ denies dispatchAction whatever the action type`() {
         listOf(null, "chat/turnStarted", "session/isReadChanged", "chat/toolCallConfirmed", "terminal/input").forEach { type ->
             assertFailsWith<CapabilityDeniedException>("$type") { CapabilityPolicy.READ.check("dispatchAction", type) }
+        }
+    }
+
+    @Test
+    fun `READ cannot dispatch and INTERACT can`() {
+        assertEquals(false, CapabilityPolicy.READ.canDispatch)
+        assertEquals(true, CapabilityPolicy.INTERACT.canDispatch)
+    }
+
+    @Test
+    fun `INTERACT allows every READ method`() {
+        allowed.forEach { CapabilityPolicy.INTERACT.check(it) }
+    }
+
+    @Test
+    fun `INTERACT allows exactly the eight interaction action types`() {
+        interactActions.forEach { CapabilityPolicy.INTERACT.check("dispatchAction", it) }
+    }
+
+    @Test
+    fun `INTERACT denies every other action type and a missing one`() {
+        val notAllowed = listOf(
+            null, "", "chat/turnStarted ", "Chat/turnStarted",
+            "terminal/input", "terminal/resized", "terminal/claimed",
+            "session/activeClientSet", "session/titleChanged", "session/isReadChanged", "session/isArchivedChanged",
+            "session/mcpServerStarted", "session/mcpServerStopped", "session/customizationToggled",
+            "chat/titleChanged", "chat/responsePart", "chat/toolCallStart", "chat/turnComplete",
+            "root/activeSessionsChanged",
+        )
+        notAllowed.forEach { type ->
+            val error = assertFailsWith<CapabilityDeniedException>("$type") { CapabilityPolicy.INTERACT.check("dispatchAction", type) }
+            assertEquals("dispatchAction", error.method)
+        }
+    }
+
+    @Test
+    fun `INTERACT denies every method that is neither READ nor dispatchAction`() {
+        denied.filter { it != "dispatchAction" }.forEach { method ->
+            assertFailsWith<CapabilityDeniedException>(method) { CapabilityPolicy.INTERACT.check(method) }
+            // An allowed action type must not smuggle a denied method through.
+            assertFailsWith<CapabilityDeniedException>(method) { CapabilityPolicy.INTERACT.check(method, "chat/turnStarted") }
         }
     }
 

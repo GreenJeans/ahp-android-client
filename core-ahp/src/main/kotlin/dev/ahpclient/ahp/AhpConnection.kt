@@ -5,6 +5,7 @@ import dev.ahpclient.tunnel.TextSocket
 import com.microsoft.agenthostprotocol.Ahp
 import com.microsoft.agenthostprotocol.generated.ActionEnvelope
 import com.microsoft.agenthostprotocol.generated.AhpErrorCodes
+import com.microsoft.agenthostprotocol.generated.DispatchActionParams
 import com.microsoft.agenthostprotocol.generated.FetchTurnsParams
 import com.microsoft.agenthostprotocol.generated.FetchTurnsResult
 import com.microsoft.agenthostprotocol.generated.Implementation
@@ -16,6 +17,7 @@ import com.microsoft.agenthostprotocol.generated.ListSessionsResult
 import com.microsoft.agenthostprotocol.generated.ReconnectParams
 import com.microsoft.agenthostprotocol.generated.ReconnectResult
 import com.microsoft.agenthostprotocol.generated.SUPPORTED_PROTOCOL_VERSIONS
+import com.microsoft.agenthostprotocol.generated.StateAction
 import com.microsoft.agenthostprotocol.generated.SubscribeParams
 import com.microsoft.agenthostprotocol.generated.SubscribeResult
 import com.microsoft.agenthostprotocol.generated.SubscribeView
@@ -93,6 +95,7 @@ class AhpConnection(
     private val json: Json = Ahp.json,
 ) {
     private val nextId = AtomicLong(1)
+    private val nextClientSeq = AtomicLong(1)
     private val pending = ConcurrentHashMap<Long, CompletableDeferred<JsonElement>>()
     private val inbox = Channel<ServerNotification>(Channel.UNLIMITED)
     private val closedBy = AtomicReference<AhpException.ConnectionClosed?>(null)
@@ -151,6 +154,34 @@ class AhpConnection(
         }
         socket.send(frame.toString())
     }
+
+    /**
+     * Sends one client action, a notification the host answers by echoing it back on the channel (accepted, with this
+     * client's `origin`) or with a rejection reason. Refused with [CapabilityDeniedException], before anything is sent,
+     * unless the tier lists this action type.
+     *
+     * @return the `clientSeq` the action carries, which the echo's `origin` repeats so the caller can match them.
+     * @throws AhpException.ConnectionClosed when the socket is gone, so an action that never left the device is never reported as sent.
+     */
+    fun dispatchAction(channel: String, action: StateAction): Long {
+        policy.check(CapabilityPolicy.DISPATCH_ACTION, actionTypeOf(action))
+        closedBy.get()?.let { throw it }
+        val clientSeq = nextClientSeq.getAndIncrement()
+        val frame = buildJsonObject {
+            put("jsonrpc", "2.0")
+            put("method", CapabilityPolicy.DISPATCH_ACTION)
+            put("params", json.encodeToJsonElement(DispatchActionParams.serializer(), DispatchActionParams(channel = channel, clientSeq = clientSeq, action = action)))
+        }
+        if (!socket.send(frame.toString())) throw closedBy.get() ?: AhpException.ConnectionClosed(null)
+        return clientSeq
+    }
+
+    private fun actionTypeOf(action: StateAction): String? =
+        try {
+            (json.encodeToJsonElement(StateAction.serializer(), action).jsonObject["type"] as? JsonPrimitive)?.contentOrNull
+        } catch (_: SerializationException) {
+            null
+        }
 
     fun close() {
         socket.close()

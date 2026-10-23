@@ -1,7 +1,9 @@
 package dev.ahpclient.ahp
 
+import com.microsoft.agenthostprotocol.Ahp
 import com.microsoft.agenthostprotocol.generated.Implementation
 import com.microsoft.agenthostprotocol.generated.SessionStatus
+import com.microsoft.agenthostprotocol.generated.StateAction
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -27,8 +29,18 @@ class AhpConnectionTest {
 
     private val initResult = """{"protocolVersion":"0.9.0","serverSeq":43087,"snapshots":[]}"""
 
-    private fun TestScope.connection(socket: FakeSocket, timeoutMs: Long = 30_000, serverSeq: Long = 0) =
-        AhpConnection(socket, backgroundScope, CapabilityPolicy.READ, clientId = "client-1", initialServerSeq = serverSeq, requestTimeoutMs = timeoutMs)
+    private fun TestScope.connection(
+        socket: FakeSocket,
+        timeoutMs: Long = 30_000,
+        serverSeq: Long = 0,
+        policy: CapabilityPolicy = CapabilityPolicy.READ,
+    ) = AhpConnection(socket, backgroundScope, policy, clientId = "client-1", initialServerSeq = serverSeq, requestTimeoutMs = timeoutMs)
+
+    private fun stateAction(json: String): StateAction = Ahp.json.decodeFromString(StateAction.serializer(), json)
+
+    private val cancelTurn get() = stateAction("""{"type":"chat/turnCancelled","turnId":"turn-1","duration":5}""")
+
+    private val renameSession get() = stateAction("""{"type":"session/titleChanged","title":"renamed"}""")
 
     private fun action(seq: Long, title: String = "t") =
         """{"jsonrpc":"2.0","method":"action","params":{"channel":"ahp-session:/abc","action":{"type":"session/titleChanged","title":"$title"},"serverSeq":$seq}}"""
@@ -107,6 +119,116 @@ class AhpConnectionTest {
         assertEquals("unsubscribe", frame["method"]!!.jsonPrimitive.content)
         assertNull(frame["id"])
         assertEquals("ahp-session:/abc", frame["params"]!!.jsonObject["channel"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `dispatchAction is a notification carrying channel, an increasing clientSeq and the action`() = runTest {
+        val socket = FakeSocket()
+        val connection = connection(socket, policy = CapabilityPolicy.INTERACT)
+
+        val first = connection.dispatchAction("ahp-chat:/a", cancelTurn)
+        val second = connection.dispatchAction("ahp-chat:/b", cancelTurn)
+
+        assertEquals(listOf(1L, 2L), listOf(first, second))
+        val frame = socket.sent[0]
+        assertEquals("2.0", frame["jsonrpc"]!!.jsonPrimitive.content)
+        assertEquals("dispatchAction", frame["method"]!!.jsonPrimitive.content)
+        assertNull(frame["id"], "a notification has no id")
+        val params = frame["params"]!!.jsonObject
+        assertEquals("ahp-chat:/a", params["channel"]!!.jsonPrimitive.content)
+        assertEquals(1L, params["clientSeq"]!!.jsonPrimitive.long)
+        val action = params["action"]!!.jsonObject
+        assertEquals("chat/turnCancelled", action["type"]!!.jsonPrimitive.content)
+        assertEquals("turn-1", action["turnId"]!!.jsonPrimitive.content)
+        assertEquals(5L, action["duration"]!!.jsonPrimitive.long)
+        assertEquals(2L, socket.sent[1]["params"]!!.jsonObject["clientSeq"]!!.jsonPrimitive.long)
+    }
+
+    @Test
+    fun `the READ tier refuses to dispatch and sends nothing`() = runTest {
+        val socket = FakeSocket()
+
+        val error = assertFailsWith<CapabilityDeniedException> { connection(socket).dispatchAction("ahp-chat:/a", cancelTurn) }
+
+        assertEquals("dispatchAction", error.method)
+        assertTrue(socket.sent.isEmpty())
+    }
+
+    @Test
+    fun `the INTERACT tier refuses an action type it does not list and sends nothing`() = runTest {
+        val socket = FakeSocket()
+        val connection = connection(socket, policy = CapabilityPolicy.INTERACT)
+
+        val error = assertFailsWith<CapabilityDeniedException> { connection.dispatchAction("ahp-session:/a", renameSession) }
+
+        assertEquals("session/titleChanged", error.actionType)
+        assertTrue(socket.sent.isEmpty())
+    }
+
+    @Test
+    fun `a refused dispatch does not use up a clientSeq`() = runTest {
+        val socket = FakeSocket()
+        val connection = connection(socket, policy = CapabilityPolicy.INTERACT)
+
+        assertFailsWith<CapabilityDeniedException> { connection.dispatchAction("ahp-session:/a", renameSession) }
+        val sent = connection.dispatchAction("ahp-chat:/a", cancelTurn)
+
+        assertEquals(1L, sent)
+    }
+
+    @Test
+    fun `dispatching on a closed socket fails instead of reporting success`() = runTest {
+        val socket = FakeSocket()
+        val connection = connection(socket, policy = CapabilityPolicy.INTERACT)
+        socket.serverCloses()
+        runCurrent()
+
+        assertFailsWith<AhpException.ConnectionClosed> { connection.dispatchAction("ahp-chat:/a", cancelTurn) }
+
+        assertTrue(socket.sent.isEmpty())
+    }
+
+    @Test
+    fun `an echo of our own action is decoded with its origin and a rejection with its reason`() = runTest {
+        val socket = FakeSocket()
+        val connection = connection(socket, policy = CapabilityPolicy.INTERACT)
+        val clientSeq = connection.dispatchAction("ahp-chat:/a", cancelTurn)
+        socket.serverSends(
+            """{"jsonrpc":"2.0","method":"action","params":{"channel":"ahp-chat:/a","action":{"type":"chat/turnCancelled","turnId":"turn-1","duration":5},"serverSeq":7,"origin":{"clientId":"client-1","clientSeq":$clientSeq}}}""",
+        )
+        socket.serverSends(
+            """{"jsonrpc":"2.0","method":"action","params":{"channel":"ahp-chat:/a","action":{"type":"chat/turnCancelled","turnId":"turn-2","duration":5},"serverSeq":8,"origin":{"clientId":"client-1","clientSeq":2},"rejectionReason":"turn is not active"}}""",
+        )
+
+        val (accepted, rejected) = connection.notifications.take(2).toList().map { assertIs<ServerNotification.Action>(it).envelope }
+
+        assertEquals("client-1", accepted.origin!!.clientId)
+        assertEquals(clientSeq, accepted.origin!!.clientSeq)
+        assertNull(accepted.rejectionReason)
+        assertEquals("turn is not active", rejected.rejectionReason)
+    }
+
+    @Test
+    fun `an INTERACT session sends only read methods and allowlisted actions`() = runTest {
+        val socket = FakeSocket { method, id, _ ->
+            when (method) {
+                "initialize" -> result(id, initResult)
+                "subscribe", "fetchTurns" -> result(id, "{}")
+                else -> null
+            }
+        }
+        val connection = connection(socket, policy = CapabilityPolicy.INTERACT)
+
+        connection.initialize(clientInfo)
+        connection.subscribe("ahp-chat:/a")
+        connection.dispatchAction("ahp-chat:/a", cancelTurn)
+        runCatching { connection.dispatchAction("ahp-session:/a", renameSession) }
+        connection.unsubscribe("ahp-chat:/a")
+
+        assertEquals(listOf("initialize", "subscribe", "dispatchAction", "unsubscribe"), socket.sentMethods)
+        val actionTypes = socket.sent.filter { it["method"]!!.jsonPrimitive.content == "dispatchAction" }
+            .map { it["params"]!!.jsonObject["action"]!!.jsonObject["type"]!!.jsonPrimitive.content }
+        assertEquals(listOf("chat/turnCancelled"), actionTypes)
     }
 
     @Test
