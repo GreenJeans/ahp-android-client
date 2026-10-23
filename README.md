@@ -7,7 +7,7 @@ that backs **Remote Tunnel Access** (the blue **A** in VS Code) and `vscode.dev/
 Phases 1 and 2 are a **read-only monitor** with a read-only chat transcript. Phase 3 adds acting for the user (send a message,
 answer a question, approve or deny a tool call, stop the agent), **off by default** and behind an explicit switch; the
 long-term goal is a near-full replacement for the VS Code Agents panel. The authoritative plan, acceptance criteria and
-progress log are tracked separately.
+progress log live in this repo: [`docs/spec.md`](docs/spec.md).
 
 ## Modules
 

@@ -1,6 +1,7 @@
 # Phase 1 read-only verification
 
-Record of what has been checked, how, and what is still open for the Phase 1 acceptance criteria (AC1.1 to AC1.9 in the Phase 1 spec). Update the status column as items are verified; do not
+Record of what has been checked, how, and what is still open for the Phase 1 acceptance criteria (AC1.1 to AC1.9 in
+`docs/spec.md` in this repo). Update the status column as items are verified; do not
 tick an item that was only reasoned about.
 
 Dates are 2026-10-22. "Phone" is a Pixel 10 on Android 17.

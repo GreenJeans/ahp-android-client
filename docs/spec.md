@@ -1,0 +1,531 @@
+# AHP Android Client — Read-Only Monitor MVP → Agents Panel Replacement
+
+> **Status:** Approved for Phase 1 (2026-10-22). Phases 2–5 stay gated per the Roadmap.
+> **Tracking:** This spec drives implementation: check off steps and acceptance criteria here. The acceptance criteria below are the source of truth, derived from the 2026-10-21/22 spike session.
+> **Date:** 2026-10-22
+
+## Overview
+
+Build a native Android client for VS Code agent sessions, speaking the open Agent Host Protocol (AHP) over the same Dev Tunnel that backs **Remote Tunnel Access** (the blue **A**) and `vscode.dev/agents`.
+
+**Long-term goal:** a nearly full-featured replacement for the VS Code Agents panel on a phone — session list, active chats, streaming agent output with expand/collapse blocks, answering questions, approving tools, starting sessions.
+
+**First deliverable (Phase 1):** a **read-only monitor** — see every session's status, drill into a session, and get a notification when one needs input. It sends nothing that changes host state. Each later phase widens capability behind its own gate.
+
+The connection path is proven: on 2026-10-21 the Node probe reached a live `protocolv6` tunnel through both the SDK relay and a plain `wss://` URL, completed gateway selection, and got AHP `initialize` OK (protocol `0.9.0`) — `relay=PASS web=PASS`.
+
+## Roadmap
+
+| Phase | Theme | Capability tier | Gate to start |
+|---|---|---|---|
+| 0 | Gates | — | — |
+| **1** | **Read-only monitor (MVP)** | `READ` | Step 0.1 repo created |
+| 2 | Read-only transcript — chats, streaming output, expand/collapse | `READ` | Phase 1 shipped internally; Kotlin chat-channel types confirmed (Step 2.1) |
+| 3 | Interactive — send messages, answer questions, approve tools, cancel | `INTERACT` | Security review of remote tool approval; biometric confirm design |
+| 4 | Session management — create/dispose sessions and chats, agent/model picker, read/archive | `MANAGE` | Phase 3 in use; usability review |
+| 5 | Parity extras — changesets/diff review, terminals, multi-host | `MANAGE` (+ terminal input as a separate decision) | Per-feature trigger |
+
+Phases 1–2 are specified step-by-step below. Phases 3–5 are scoped (parity matrix, protocol mapping, gates) and get detailed steps when their gate opens — protocol churn before AHP 1.0 makes detailing them now wasteful.
+
+### Agents Panel parity matrix
+
+| Agents panel feature | AHP surface | Phase |
+|---|---|---|
+| Session list with status | `listSessions` (root) · notifications `root/sessionAdded`, `root/sessionRemoved`, `root/sessionSummaryChanged` · `SessionSummary.status` | 1 |
+| "Needs input" signal | `SessionState.inputNeeded[]` · `session/inputNeededSet` / `session/inputNeededRemoved` · `SessionStatus.InputNeeded` | 1 |
+| Session detail (title, activity, chats) | `subscribe` to `ahp-session:/<id>` · `SessionState.chats: ChatSummary[]`, `activity` | 1 |
+| Chat transcript, markdown output | `subscribe` to `ChatSummary.resource` · `ChatState` turns · `fetchTurns` paging · `chat/delta`, `chat/responsePart` | 2 |
+| Expand/collapse: reasoning, tool calls, subagents, terminal output, file edits | `ResponsePartKind` `reasoning` / `toolCall` · `ToolCallState` variants · `ToolResultContent` (`subagent`, `terminal`, `fileEdit`) | 2 |
+| Send a message / queue messages | `dispatchAction` `chat/turnStarted` · `chat/pendingMessageSet` | 3 |
+| Answer agent questions | `chat/inputAnswerChanged` → `chat/inputCompleted` | 3 |
+| Approve / deny tool calls | `chat/toolCallConfirmed` (`ToolCallPendingConfirmationState`) · `chat/toolCallResultConfirmed` | 3 |
+| Cancel a turn | `chat/turnCancelled` | 3 |
+| New session / new chat, agent & model picker | `createSession`, `createChat`, `disposeSession`, `disposeChat` · `RootState.agents[].models` | 4 |
+| Mark read / archive | `session/isReadChanged`, `session/isArchivedChanged` | 4 |
+| Review changes / diffs | changeset channel · `invokeChangesetOperation` · `changeset/filesReviewChanged` | 5 |
+| Terminals | terminal channel (`terminal/data` read; `terminal/input` is a separate decision) | 5 |
+| Multiple machines | multiple tunnels from `listTunnels`; one connection per host | 5 |
+
+## Acceptance Criteria (source of truth — session-derived)
+
+### Phase 1 — Read-only monitor
+
+- [x] **AC1.1** User signs in with GitHub via device flow (code shown in-app, browser opens `https://github.com/login/device`); no PAT entry. _Verified on the phone 2026-10-22; "Open GitHub" opens the default browser, so the user types the code._
+- [x] **AC1.2** App lists the user's agent-host tunnels (`vscode-server-launcher`, `protocolv5+`) with online state (`hostConnectionCount > 0`), and connects to the selected one. _Verified on the phone 2026-10-22._
+- [x] **AC1.3** Sessions list shows title, activity, and status derived from `SessionStatus` **bit flags** (Idle / In progress / Needs input / Error); "Needs input" sorts first. _Verified on the phone 2026-10-22; the needs-input-first order is covered by a JVM test, not looked at on the phone._
+- [ ] **AC1.4** List updates live from root notifications without manual refresh; reconnect after network loss resumes via `reconnect` (`lastSeenServerSeq`) or re-snapshots.
+- [x] **AC1.5** Session detail shows title, activity, chat list, and pending `inputNeeded` entries (read-only text). _Verified on the phone 2026-10-22 with a real pending question; option labels are tested but not yet seen on a real question._
+- [ ] **AC1.6** With opt-in background monitoring on, a notification fires when any session transitions **into** Needs input; tapping opens that session.
+- [ ] **AC1.7** The client never sends `dispatchAction`, `authenticate`, `resource*` writes, or `create*`/`dispose*` commands — enforced by an allowlist with a unit test, and verified against a live host (no `activeClients` entry for the app).
+- [ ] **AC1.8** GitHub user token is stored only encrypted under an Android Keystore key; tunnel `connect` tokens are memory-only and re-fetched per connection; no token is ever logged.
+- [ ] **AC1.9** Sign-out deletes all stored credentials and links the user to GitHub's authorized-apps page to revoke the grant.
+
+### Phase 2 — Read-only transcript
+
+- [ ] **AC2.1** Opening a chat shows its turns (user message + response parts), newest at the bottom, older turns paged in via `fetchTurns` on scroll-up.
+- [ ] **AC2.2** Markdown parts render as formatted markdown; streaming deltas append live without jank (target ≥ 50 fps on a mid-range device while streaming).
+- [ ] **AC2.3** Reasoning, tool-call, subagent, terminal-output, and file-edit blocks render **collapsed by default** with a one-line summary and expand on tap; expansion state survives rotation and returning to the chat.
+- [ ] **AC2.4** Tool-call blocks show live state (streaming / pending confirmation / running / completed / cancelled) — pending confirmation is visible but **not actionable** in Phase 2.
+- [ ] **AC2.5** AC1.7's allowlist still holds — Phase 2 adds only `subscribe`/`unsubscribe` of chat channels and `fetchTurns`.
+
+### Phases 3–5
+
+Defined at each phase gate. Non-negotiables carried forward: every write capability is added to the allowlist explicitly per tier; tool approval requires a biometric/device-credential confirm; terminal input is its own decision.
+
+## Design Notes
+
+### Architecture
+
+Two Gradle modules in a **new repository** (`ahp-android-client`):
+
+| Module | Type | Responsibility |
+|---|---|---|
+| `core-ahp` | Pure Kotlin/JVM library | GitHub device flow, Dev Tunnels REST, tunnel socket + gateway selection, AHP JSON-RPC connection, state stores, capability allowlist. No Android deps → unit-testable on the JVM and runnable as a CLI probe. |
+| `app` | Android application (Kotlin, Jetpack Compose, Material 3) | Screens, Keystore token vault, foreground monitoring service, notifications. |
+
+Stack: Kotlin 2.4, coroutines/`Flow`, OkHttp 5 (HTTP + WebSocket), `com.microsoft.agenthostprotocol:agent-host-protocol` 1.0.0 (wire types, reducers, `Ahp.json`; offers protocol `1.0.0` and `0.9.0`), Compose. Manual constructor DI via one `AppContainer` (no Hilt — two modules don't justify it). `minSdk 26`, `targetSdk` current.
+
+### Connection flow (mirrors `tunnel-attach.mjs` web path)
+
+1. **Auth** — GitHub device flow against the Dev Tunnels service's GitHub App `Iv1.e7b89e013f801f03` (`prodGitHubAppClientId` in `@microsoft/dev-tunnels-contracts`). PATs are rejected with `401`.
+2. **Discover** — `GET https://global.rel.tunnels.api.visualstudio.com/tunnels?includePorts=true&tokenScopes=connect&labels=vscode-server-launcher&allLabels=true&global=true&api-version=2023-09-27-preview` with `Authorization: github <token>`. Response is `{ value: [ { value: [Tunnel…] } ] }` (per region). Parse tags: `protocolvN`, display name = first label not `_`-prefixed, not `vscode-server-launcher`, not `protocolv*`.
+3. **Connect token** — `Tunnel.accessTokens.connect` (from the list call, or `getTunnel` with `tokenScopes=connect`). Memory-only; re-fetch on every (re)connect.
+4. **Socket** — `wss://` from `endpoints[].portUriFormat` with `{port}` = `31546`; header `X-Tunnel-Authorization: tunnel <connect token>`. No SSH relay, no Dev Tunnels Java SDK.
+5. **Select** — `protocolv6+`: path `/agent-host/select`; read one inventory JSON (`endpoints[]`, `delegatedInstanceId?`); send `{"instanceId": "<id>"}` (prefer `delegatedInstanceId`, else the `editor` endpoint); read ack `{ok, selected}` / `{ok:false, error}`. The same socket then carries AHP. `protocolv5`: path `/?tkn=<base64url(SHA-256(tunnelId)), no padding, prefix "a" if it starts with "-">`. Never send `{"newDedicated": true}` from the phone (it spawns a host process).
+6. **AHP** — JSON-RPC 2.0 text frames: `initialize` (offer `SUPPORTED_PROTOCOL_VERSIONS`, `initialSubscriptions: ["ahp-root://"]`), then `listSessions`, `subscribe`, `ping`, `reconnect`.
+
+### State model
+
+- `RootStore`: `RootState` snapshot + session catalog from `listSessions`, updated by `root/*` actions (via `rootReducer`) and `root/sessionAdded|Removed|SummaryChanged` notifications. Exposed as `StateFlow`.
+- `SessionStore` per subscribed session: `SessionState` via `sessionReducer`; unsubscribe on screen exit (except when monitoring).
+- `ChatStore` (Phase 2): `ChatState` via the chat reducer; turns paged with `fetchTurns(cursor = turnsNextCursor)`.
+- Track `serverSeq` from every `ActionEnvelope`; on reconnect send `reconnect(lastSeenServerSeq)` and apply `replay` or replace with the fresh `snapshot`.
+- `SessionStatus` is a bitset: `Idle=1, Error=2, InProgress=8, InputNeeded=24 (includes InProgress), IsRead=32, IsArchived=64`. Test with masks (`status and 24 == 24`), never equality.
+- Unknown actions (`StateActionUnknown`) are no-ops — required for forward compatibility.
+
+### Capability allowlist (the read-only guarantee)
+
+`CapabilityPolicy` in `core-ahp` is the **only** path to the socket's `send`. Tiers:
+
+| Tier | Allowed methods | Allowed `dispatchAction` types |
+|---|---|---|
+| `READ` (Phases 1–2) | `initialize`, `reconnect`, `ping`, `subscribe`, `unsubscribe`, `listSessions`, `fetchTurns` | none |
+| `INTERACT` (Phase 3) | + `dispatchAction` | `chat/turnStarted`, `chat/pendingMessageSet`, `chat/pendingMessageRemoved`, `chat/inputAnswerChanged`, `chat/inputCompleted`, `chat/toolCallConfirmed`, `chat/toolCallResultConfirmed`, `chat/turnCancelled` |
+| `MANAGE` (Phases 4–5) | + `createSession`, `disposeSession`, `createChat`, `disposeChat`, `invokeChangesetOperation` | + `session/isReadChanged`, `session/isArchivedChanged`, `session/titleChanged`, `changeset/filesReviewChanged` |
+
+Never in any tier without a new decision: `authenticate`, `resourceWrite|Delete|Move|Mkdir|Copy`, `terminal/input`, `session/activeClientSet` (the phone provides no tools and must not appear as an active client), MCP start/stop, customization toggles.
+
+### Security
+
+- The tunnel token grants the same reach as VS Code's Remote Tunnel Access: sessions on that host can run commands. Phase 1 is read-only by construction; every phase widening goes through the allowlist and a review.
+- GitHub user token: AES-256-GCM, key in Android Keystore (`setUserAuthenticationRequired(false)` for background monitoring; Phase 3 adds a separate auth-bound key for approvals). Ciphertext in DataStore. Do **not** use `androidx.security:security-crypto` (deprecated).
+- Revocation: a public client cannot call GitHub's grant-revocation API (needs the app's client secret). Sign-out deletes local credentials and deep-links to `https://github.com/settings/apps/authorizations`.
+- If the device flow returns `refresh_token`/`expires_in` (expiring GitHub App user tokens), refresh silently; otherwise treat the token as long-lived.
+- No tokens in logs, crash reports, or `toString()`; wrap in a `Secret` value class with a redacting `toString`.
+- `android:allowBackup="false"`; certificate validation left to the platform (no custom trust managers).
+
+### Background monitoring
+
+Android kills idle sockets in the background. Monitoring is **opt-in**: a foreground service (type `dataSync`; re-check Play policy for long-running connections at Phase 1 release) with a persistent "Monitoring N sessions" notification holds the socket, pings on an interval, and posts a high-priority notification on each **transition into** `InputNeeded`. Off = live updates only while the app is visible. Push via a relay server is out of scope (it would need our own backend holding tokens).
+
+### Versioning & churn
+
+Pin the AHP Kotlin artifact and record the negotiated protocol version on every connect; surface "host speaks unsupported protocol" as a clear error (`-32005 UnsupportedProtocolVersion`). The `/agent-host/select` gateway contract lives only in VS Code source (`src/vs/platform/agentHost/common/tunnelAgentHost.ts`); keep the Node probe as a canary and rerun it on each VS Code minor release.
+
+### Assumptions
+
+1. Sign-in through Microsoft's GitHub App client ID is acceptable for personal use; wider distribution waits on a terms-of-use answer (Phase 0).
+2. Users enable Remote Tunnel Access with a **GitHub** account. Entra-account tunnels (token resource `46da2f7e-b5ef-422a-88d4-2a7f9de6a0b2`) are a later addition via MSAL.
+3. **Resolved 2026-10-22 (Step 1.1):** the Kotlin AHP artifact is now `1.0.0` (protocol 1.0 shipped 2026-10-02), supports protocol `1.0.0` and `0.9.0`, and `ChatState`, `ResponsePart` and `ToolCallState` all resolve in the smoke test, so the chat channel is covered and no type generation is needed. Resolved at Step 1.6 (live, 2026-10-22): offered both, the host chose `1.0.0`; before that, a 0.9.0-only client got `0.9.0`.
+
+## Implementation Steps
+
+Paths are relative to the new repo root. Hours use the calibrated buckets (0.5, 1, 2, 3, 4, 6, 8).
+
+### Phase 0 — Gates
+
+#### Step 0.1: Repo and terms-of-use question (1h)
+
+**Goal:** Create the repo and open the terms-of-use question.
+
+**Files affected:**
+- New repo `ahp-android-client`
+- Terms-of-use question to the Dev Tunnels / VS Code team (email or issue; no repo file)
+
+**Copilot prompt:**
+> Draft a short question to the Dev Tunnels / VS Code team: may a third-party Android app authenticate users to the Dev Tunnels service through GitHub App `Iv1.e7b89e013f801f03` (published in `@microsoft/dev-tunnels-contracts` as `prodGitHubAppClientId` "for client apps") to connect to VS Code agent hosts exposed by Remote Tunnel Access? State that the app is a personal, non-commercial client, read-only in Phase 1, and that the 2026-10-21 spike already connected this way. Then create the repo with a `README.md`.
+
+**Verification:**
+- [ ] Repo created (done locally, branch `main`, not pushed)
+- [ ] Terms-of-use question sent. Not blocking for personal Phase 1 work; **blocking before any wider distribution**
+
+### Phase 1 — Read-only monitor
+
+#### Step 1.1: Project scaffold and dependency proof (2h)
+
+**Goal:** Two-module Gradle build that compiles against the pinned AHP Kotlin artifact and OkHttp.
+
+**Files affected:**
+- `settings.gradle.kts`, `build.gradle.kts`, `gradle/libs.versions.toml` — version catalog
+- `core-ahp/build.gradle.kts` — `kotlin("jvm")`, deps `com.microsoft.agenthostprotocol:agent-host-protocol`, `com.squareup.okhttp3:okhttp`, `kotlinx-coroutines-core`; test deps `kotlin("test")`, `okhttp3:mockwebserver`
+- `app/build.gradle.kts` — Android application, Compose, `minSdk 26`, depends on `:core-ahp`
+- `.gitignore`, `README.md`
+
+**Copilot prompt:**
+> Create a Gradle Kotlin DSL multi-module project with `core-ahp` (pure `kotlin("jvm")`, JVM toolchain 17) and `app` (Android application, Jetpack Compose + Material 3, minSdk 26, namespace `dev.ahpclient`). Put all versions in `gradle/libs.versions.toml`, pinning `com.microsoft.agenthostprotocol:agent-host-protocol` to the latest Maven Central release and OkHttp 4.x. In `core-ahp/src/test/kotlin/DependencySmokeTest.kt`, decode an `ActionEnvelope` with `com.microsoft.agenthostprotocol.Ahp.json` and assert `SUPPORTED_PROTOCOL_VERSIONS` contains `"0.9.0"`; also assert the generated package contains chat-channel types (`ChatState`, `ResponsePart`, `ToolCallState`). Record the results in `README.md`.
+
+**Verification:**
+- [x] `./gradlew build` green (`:core-ahp` only; `:app` waits for an Android SDK)
+- [x] `DependencySmokeTest` passes, or the README records which assertion failed (triggers Assumption 3 fallback) — 3/3 pass
+
+#### Step 1.2: GitHub device-flow auth (2h)
+
+**Goal:** Obtain a GitHub user token for the Dev Tunnels GitHub App without a client secret.
+
+**Files affected:**
+- `core-ahp/src/main/kotlin/dev/ahpclient/auth/GitHubDeviceAuth.kt`
+- `core-ahp/src/main/kotlin/dev/ahpclient/auth/Secret.kt`
+- `core-ahp/src/test/kotlin/.../auth/GitHubDeviceAuthTest.kt`
+
+**Copilot prompt:**
+> In `GitHubDeviceAuth.kt`, implement GitHub OAuth device flow with OkHttp, porting `githubDeviceLogin()` from `demo/ahp-metrics-overlay/tunnel-attach.mjs`: `start()` POSTs `client_id=Iv1.e7b89e013f801f03` to `https://github.com/login/device/code` (Accept: application/json) and returns `DeviceCode(userCode, verificationUri, expiresIn, interval)`; `poll(deviceCode)` is a `suspend` loop on `https://github.com/login/oauth/access_token` with `grant_type=urn:ietf:params:oauth:grant-type:device_code`, handling `authorization_pending`, `slow_down` (+5 s), `expired_token`, `access_denied` as typed results. Return `GitHubToken(access: Secret, refresh: Secret?, expiresAt: Instant?)`. `Secret` is a `@JvmInline value class` whose `toString()` returns `"***"`. Make the base URL injectable and test every branch with `MockWebServer`.
+
+**Verification:**
+- [x] Unit tests cover pending → success, slow_down, expired, denied (plus start failure, unexpected error, code lifetime, 9 tests)
+- [x] No token value appears in any `toString()` or log output (`Secret` redacts; tested for token, refresh token and device code)
+
+#### Step 1.3: Dev Tunnels REST client (3h)
+
+**Goal:** List agent-host tunnels and obtain connect tokens with plain HTTP.
+
+**Files affected:**
+- `core-ahp/src/main/kotlin/dev/ahpclient/tunnel/DevTunnelsClient.kt`
+- `core-ahp/src/main/kotlin/dev/ahpclient/tunnel/TunnelInfo.kt`
+- `core-ahp/src/test/kotlin/.../tunnel/DevTunnelsClientTest.kt`, `src/test/resources/list-tunnels.json`
+
+**Copilot prompt:**
+> In `DevTunnelsClient.kt`, implement `listAgentHostTunnels(token): List<TunnelInfo>` calling `GET https://global.rel.tunnels.api.visualstudio.com/tunnels?includePorts=true&tokenScopes=connect&labels=vscode-server-launcher&allLabels=true&global=true&api-version=2023-09-27-preview` with header `Authorization: github <token>` and `User-Agent: ahp-android-client/<version>`. Flatten the per-region `{ value: [ { value: [tunnel] } ] }` response. Map each tunnel to `TunnelInfo(tunnelId, clusterId, name, protocolVersion, hostConnectionCount, ports)` using the tag rules from `TunnelTags` in VS Code `src/vs/platform/agentHost/common/tunnelAgentHost.ts` (`protocolvN`; name = first label not starting with `_`, not `vscode-server-launcher`, not `protocolv*`; default protocol 2). `hostConnectionCount` may be a number or `{current}`. Drop tunnels below protocol 5. Add `resolveConnectTarget(token, tunnel)` returning `ConnectTarget(tunnel, portUriFormat, connectToken)`: `GET https://<cluster>.rel.tunnels.api.visualstudio.com/tunnels/<id>?includePorts=true&tokenScopes=connect&api-version=2023-09-27-preview` (the host's `global` label becomes the cluster id), taking the first endpoint's `portUriFormat` and `accessTokens.connect`; this is the call the Node probe makes, and the list is for discovery only. Map 401 to `AuthExpired`. Fixtures are contract-derived with synthetic ids until Step 1.6 captures a real response.
+
+**Verification:**
+- [x] Tag-parsing tests match the TS `TunnelTags` behavior (5 tests, including the live label order)
+- [x] 401 → `AuthExpired`; malformed body → typed error, not a crash (also 403, 404, other statuses; 12 client tests)
+
+#### Step 1.4: Tunnel socket and gateway selection (3h)
+
+**Goal:** Open the agent-host WebSocket through the tunnel's web endpoint and complete selection.
+
+**Files affected:**
+- `core-ahp/src/main/kotlin/dev/ahpclient/tunnel/TunnelGateway.kt`
+- `core-ahp/src/main/kotlin/dev/ahpclient/tunnel/ConnectionToken.kt`
+- `core-ahp/src/test/kotlin/.../tunnel/TunnelGatewayTest.kt`, `ConnectionTokenTest.kt`
+
+**Copilot prompt:**
+> In `TunnelGateway.kt`, implement `suspend fun open(tunnel: TunnelInfo, instanceId: String? = null): TextSocket` using OkHttp WebSocket. URL = `portUriFormat` with `{port}`→`31546`, `http`→`ws`; header `X-Tunnel-Authorization: tunnel <connectToken>`. If `protocolVersion >= 6`: path `/agent-host/select`; await one text frame, parse inventory (`userDataPath`, `endpoints[{type,pid,instanceId,quality?,tunnelName?,endpointKind,endpointLabel}]`, `delegatedInstanceId?`) with the validation rules of `parseTunnelGatewayInventory` in VS Code `tunnelAgentHost.ts`; choose `instanceId ?: delegatedInstanceId ?: first type=="editor" ?: first`; send `{"instanceId":"…"}`; await ack and throw `GatewayRejected(error)` on `ok:false`. Never send `newDedicated`. Else (v5): path `/?tkn=` + `ConnectionToken.derive(tunnelId)` = base64url(SHA-256(tunnelId)) without padding, prefixed `a` if it starts with `-` (port of `deriveConnectionToken`). Each step times out at 30 s. `TextSocket` exposes `incoming: Flow<String>`, `send(String)`, `close()`. Test `ConnectionToken` against values produced by `node -e` with the probe's `deriveConnectionToken`, and gateway flows with `MockWebServer`.
+
+**Verification:**
+- [x] Derived token matches the Node implementation for 3 fixture IDs (plus an id whose digest starts with `-`, exercising the `a` prefix)
+- [x] Inventory → select → ack, rejected ack, socket closed mid-handshake, and timeout are tested (12 tests against a real local WebSocket server, stable over 4 reruns; also v5, refused upgrade, malformed messages, and "never sends newDedicated")
+
+#### Step 1.5: AHP connection and capability allowlist (4h)
+
+**Goal:** JSON-RPC client over `TextSocket` whose only outbound path is `CapabilityPolicy`.
+
+**Files affected:**
+- `core-ahp/src/main/kotlin/dev/ahpclient/ahp/AhpConnection.kt`
+- `core-ahp/src/main/kotlin/dev/ahpclient/ahp/CapabilityPolicy.kt`
+- `core-ahp/src/test/kotlin/.../ahp/AhpConnectionTest.kt`, `CapabilityPolicyTest.kt`
+
+**Copilot prompt:**
+> In `AhpConnection.kt`, build a coroutine JSON-RPC 2.0 client over `TextSocket` using `Ahp.json` and the generated types: monotonically increasing request ids, `suspend fun <R> request(method, params)` correlating responses (error → `AhpError(code, message, data)`, `-32005` → `UnsupportedProtocolVersion`), and `notifications: SharedFlow` split into `ActionEnvelope` (method `action`) and named notifications (`root/sessionAdded`, `root/sessionRemoved`, `root/sessionSummaryChanged`, others raw). Track `lastServerSeq`. Provide `initialize(clientId)`, `listSessions(cursor)`, `subscribe(uri)`, `unsubscribe(uri)`, `ping()`, `reconnect(lastSeenServerSeq)`. Route **every** outbound frame through `CapabilityPolicy.check(method, actionType?)`; tier `READ` allows exactly `initialize, reconnect, ping, subscribe, unsubscribe, listSessions, fetchTurns` and rejects everything else with `CapabilityDenied` before bytes reach the socket. In `CapabilityPolicyTest`, assert READ rejects `dispatchAction`, `authenticate`, every `resource*` write, `createSession`, `disposeSession`, `createChat`, `disposeChat`.
+
+**Verification:**
+- [x] Policy test enumerates the denied list from Design Notes (29 denied names, plus `dispatchAction` with any action type)
+- [x] There is no `send` path that bypasses `CapabilityPolicy` (the socket is private to `AhpConnection`); the one exception is the `-32601` error reply to a host-initiated request, which is tested and changes no state. A full-session test asserts every sent method is in the READ tier
+
+#### Step 1.6: JVM probe — live parity checkpoint (1h)
+
+**Goal:** Prove the Kotlin stack against a real tunnel before any UI work.
+
+**Files affected:**
+- `core-ahp/src/main/kotlin/dev/ahpclient/probe/ProbeMain.kt`
+- `core-ahp/build.gradle.kts` — `application` run task `probe`
+
+**Copilot prompt:**
+> Add `ProbeMain.kt`, a CLI matching `demo/ahp-metrics-overlay/tunnel-attach.mjs --mode web`: device-flow sign-in (print code + URI), list tunnels, choose the first online `protocolv5+` tunnel (or `--tunnel <name|id>`), open via `TunnelGateway`, `initialize`, then `listSessions` and print each session's title and decoded status flags. Print `PASS`/`FAIL` lines in the probe's format. Never print tokens. Wire `./gradlew :core-ahp:probe --args="..."`.
+
+**Verification:**
+- [x] Live run against a Remote Tunnel Access host prints `initialize OK` and the session list (2026-10-22, `protocolv6` tunnel: gateway selected the editor host, host chose protocol 1.0.0, 214 sessions in one response (the host ignored `limit=100` and returned no `nextCursor`; the reply was 275 KB, and the `initialize` reply 100 KB): 211 idle, 3 in progress, one of them the session this spec was written in; 2 `root/sessionSummaryChanged` notifications arrived during a 45 s watch)
+- [ ] Host's VS Code Agents panel shows no new active client while the probe runs. Not checked by eye. The probe subscribed only to the root channel and sent only `initialize` and `listSessions` (verified on the wire), so no `activeClients` entry is possible yet; recheck at Step 1.10, when sessions are subscribed (rechecked 2026-10-22 with the probe's new `--session` option: `activeClients=0`, this client not listed, wire methods `initialize`, `listSessions`, `subscribe`, `unsubscribe`; the Agents panel itself was not looked at)
+
+#### Step 1.7: State stores (3h)
+
+**Goal:** Live `StateFlow`s for root catalog and subscribed sessions with reconnect.
+
+**Files affected:**
+- `core-ahp/src/main/kotlin/dev/ahpclient/state/HostSession.kt`
+- `core-ahp/src/main/kotlin/dev/ahpclient/state/RootStore.kt`, `SessionStore.kt`
+- `core-ahp/src/test/kotlin/.../state/*Test.kt`
+
+**Copilot prompt:**
+> Create `HostSession` that owns `TunnelGateway` + `AhpConnection` and exposes `connection: StateFlow<ConnState>` (Connecting/Online/Reconnecting/Failed). `RootStore` seeds from the `initialize` root snapshot and paginated `listSessions`, applies `root/*` actions with the generated `rootReducer`, and applies `root/sessionAdded|Removed|SummaryChanged` to a `Map<URI, SessionSummary>`; expose `sessions: StateFlow<List<SessionSummary>>` sorted Needs-input first, then by `modifiedAt`. `SessionStore.open(uri)` subscribes and folds actions with `sessionReducer`; `close()` unsubscribes. Status checks use the library's `SessionStatus` bitset (`SessionStatus.INPUT_NEEDED in status`; INPUT_NEEDED = 24 already includes IN_PROGRESS = 8), not a custom flags class. On socket loss: exponential backoff (1→30 s), fetch a fresh connect token via `DevTunnelsClient.resolveConnectTarget`, reopen through `TunnelGateway`, create a new `AhpConnection` with the same `clientId` and `initialServerSeq = lastServerSeq`, call `reconnect(subscriptions)`; apply `replay` actions or replace state from `snapshots` (AHP 1.0.0 replay results also carry `missing`: drop those subscriptions). Unknown actions are no-ops. Unit-test reducers wiring with recorded envelopes from the Step 1.6 probe.
+
+**Verification:**
+- [x] Status checks cover `INPUT_NEEDED` vs `IN_PROGRESS` and combined `IS_READ` (the library's `SessionStatus.contains`; `ActivityState` maps the bitset to the one label a row shows; 4 tests)
+- [x] Replay and snapshot reconnect paths are tested (against a scripted fake host, 16 `HostSession` tests: replay, snapshot covering and skipping a session, fallback to `initialize` when the host rejects the client, `missing` sessions, backoff 1 s then 2 s, terminal failure, stop). Not yet exercised against the real host: how it answers `reconnect` for an unknown or expired client id. Mutation-checked: removing the post-reconnect list refresh fails 10 of the 16
+
+#### Step 1.8: Token vault (2h)
+
+**Goal:** Keystore-backed encrypted token storage with sign-out.
+
+**Files affected:**
+- `core-ahp/src/main/kotlin/dev/ahpclient/security/TokenVault.kt`, `TokenCodec.kt` (pure: the vault rules, testable on the JVM)
+- `app/src/main/kotlin/dev/ahpclient/security/KeystoreSecureBox.kt`, `DataStoreBlobStore.kt` (Android: Keystore AES-GCM, DataStore)
+- `app/src/androidTest/kotlin/.../security/TokenVaultInstrumentedTest.kt`, `core-ahp/src/test/.../security/TokenVaultTest.kt`
+- `app/src/main/AndroidManifest.xml` — `android:allowBackup="false"`
+
+**Copilot prompt:**
+> Implement `TokenVault` storing `GitHubToken` as AES-256-GCM ciphertext (random 12-byte IV per write) in Preferences DataStore, with the key generated in `AndroidKeyStore` (`KeyGenParameterSpec`, purposes encrypt/decrypt, `BLOCK_MODE_GCM`, `ENCRYPTION_PADDING_NONE`, no user-auth requirement). Do not use `androidx.security:security-crypto`. `clear()` deletes the DataStore entry and the Keystore alias. Key invalidation → clear and require sign-in: `KeyPermanentlyInvalidatedException` only occurs for keys that require user authentication, which this key must not (background monitoring reads the token while locked), so the vault treats every way a key can be lost or unusable (missing key, unusable key, damaged or tampered blob, unreadable JSON) as the same "wipe and sign in again" outcome. Instrumented tests: round-trip, clear, lost key, tampered blob, purpose binding.
+
+**Verification:**
+- [x] Instrumented tests pass on an API 26 and a current-API emulator (15 of 15 on Android 8.0 and on Android 16, real Keystore and DataStore; 17 more JVM tests cover the vault rules with fakes)
+- [x] `adb backup` / Auto Backup exclude the token (verified on the installed app: package flags `[ DEBUGGABLE HAS_CODE ALLOW_CLEAR_USER_DATA ]`, no `ALLOW_BACKUP`; the data extraction rules exclude every domain; the key is not exportable and the instrumented test shows `key.encoded == null`. Not tried: a real restore onto a second device)
+
+#### Step 1.9: Sign-in and tunnel picker screens (2h)
+
+**Goal:** Device-code sign-in UX and host selection.
+
+**Files affected:**
+- `app/src/main/kotlin/dev/ahpclient/ui/signin/SignInScreen.kt`, `SignInViewModel.kt`
+- `app/src/main/kotlin/dev/ahpclient/ui/hosts/HostsScreen.kt`, `HostsViewModel.kt`
+- `app/src/main/kotlin/dev/ahpclient/AppContainer.kt`
+
+**Copilot prompt:**
+> Build `SignInScreen` (Compose, Material 3): "Sign in with GitHub" → shows `userCode` large with copy button and opens `verificationUri` via Custom Tabs; `SignInViewModel` drives `GitHubDeviceAuth.poll` and saves to `TokenVault`. Explain on screen that the account must match the one used for Remote Tunnel Access in VS Code. `HostsScreen` lists `DevTunnelsClient.listAgentHostTunnels` results with name, online dot (`hostConnectionCount > 0`), protocol version; tap connects via `HostSession`; remember last host. Empty state explains enabling Remote Tunnel Access (the blue A). `AppContainer` wires `core-ahp` objects by constructor injection. Build every screen on a Material 3 `Scaffold` with `enableEdgeToEdge()` and inset-aware padding (the scaffold's placeholder draws under the status bar on Android 15+). Create the token vault once, in `AppContainer`, with `AndroidTokenVault.create`; DataStore allows only one instance per file.
+
+**Verification:**
+- [x] Sign-in → host list → connect works on a device against a live host (2026-10-22, real Pixel 10, Android 17, device-code sign-in approved in the phone's browser, the host list showed the tunnel, tapping it connected, and the app read "218 sessions on this host", up from the 214 the probe saw 2.5 hours earlier. The screen text was read with `uiautomator dump`, not screenshots, because the phone's other apps are private)
+- [x] `AuthExpired` from any call routes back to sign-in (JVM-tested at both points: the host list and a live connection; 401 wipes the token. Not yet seen against the real service)
+
+#### Step 1.10: Sessions list and session detail (3h)
+
+**Goal:** The monitor's core screens.
+
+**Files affected** (as built; the view models became pure, JVM-tested models in `core-ahp`, and the screens are plain composables over them):
+- `core-ahp/.../state/SessionListModel.kt`, `SessionDetail.kt`, `RelativeTime.kt`: what each screen shows, computed from host state
+- `core-ahp/.../app/AppController.kt`, `AppState.kt`: `openSession` / `closeSession`, `AppState.Connected.open`
+- `app/.../ui/SessionsScreen.kt`, `SessionDetailScreen.kt`, `Components.kt` (`StatusChip`, `ConnectionLine`), `AppRoot.kt` (screen choice and back handling) `RootStore.sessions` in a `LazyColumn`: title, `activity`, relative `modifiedAt`, and `StatusChip` (Needs input / In progress / Error / Idle from `SessionStatus`, colors from `MaterialTheme.colorScheme`, text label always present for accessibility). Show a connection banner from `HostSession.connection`. Archived sessions hidden behind a filter. `SessionDetailScreen` opens `SessionStore` for the session URI and shows title, activity, project/working directories, `chats` (title + status chip), and each `inputNeeded` entry as read-only text with the hint "Answer in VS Code" (Phase 3 makes it actionable). No buttons that write.
+
+**Verification:**
+- [ ] Starting a turn in VS Code flips the chip to In progress within 2 s; a question flips it to Needs input (flips observed live, both directions; the 2 s bound is not proven, see the second 2026-10-22 live row)
+- [ ] TalkBack reads status labels; no color-only status (labels and merged row descriptions confirmed on the real phone through the accessibility tree; TalkBack itself not run)
+
+#### Step 1.11: Opt-in background monitoring and notifications (3h)
+
+**Goal:** Notify on transitions into Needs input while the app is backgrounded.
+
+**Files affected:**
+- `app/src/main/kotlin/dev/ahpclient/monitor/MonitorService.kt`
+- `app/src/main/kotlin/dev/ahpclient/monitor/InputNeededNotifier.kt`
+- `app/src/main/AndroidManifest.xml` — service `foregroundServiceType="dataSync"`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_DATA_SYNC`, `POST_NOTIFICATIONS`
+
+**Copilot prompt:**
+> Add a settings toggle "Monitor in background" (default off). When on, `MonitorService` (foreground, persistent low-priority "Monitoring N sessions on <host>" notification with a Stop action) keeps `HostSession` alive and pings every 30 s. `InputNeededNotifier` diffs consecutive `RootStore.sessions` emissions and posts a high-importance notification only on a session's transition **into** `isInputNeeded` (debounced 3 s; one per session until it leaves the state), deep-linking to `SessionDetailScreen`. Request `POST_NOTIFICATIONS` at toggle time on API 33+. Stop the service on sign-out and when the toggle is turned off.
+
+**Verification:**
+- [ ] With the app backgrounded, a VS Code agent question produces exactly one notification _(built; not run on the phone. Emulator tests cover the notification itself; the on-device pass is in `docs/verification/phase1-readonly.md`)_
+- [ ] Service stops cleanly; no notification storm on reconnect replay _(JVM-tested: no storm on connect or list replacement, stop on switch-off, leaving the host and sign-out; not run on the phone)_
+
+#### Step 1.12: Tests, live read-only verification (3h)
+
+**Goal:** Close coverage gaps and prove AC1.7 against a live host.
+
+**Files affected:**
+- `core-ahp/src/test/kotlin/**` — gap fill
+- `docs/verification/phase1-readonly.md` — manual verification record
+
+**Copilot prompt:**
+> Fill unit-test gaps in `core-ahp` (target ≥ 80% line coverage on `auth`, `tunnel`, `ahp`, `state`). Then run the app against a live host with an OkHttp `Interceptor`/WebSocket listener debug flag that logs outbound JSON-RPC **method names only** (never params); exercise every screen and confirm the log contains only `READ`-tier methods. Confirm the host's `SessionState.activeClients` never lists the app. Record results in `docs/verification/phase1-readonly.md`.
+
+**Verification:**
+- [x] Coverage target met _(auth 100%, tunnel 99.3%, ahp 97.1%, state 97.4%; enforced by the build)_
+- [ ] Outbound method log shows only READ-tier methods _(the debug `AhpWire` log is built and tested; the on-device run is still to do)_
+- [ ] AC1.1–AC1.9 checked _(AC1.1, 1.2, 1.3, 1.5 ticked; 1.4, 1.6 to 1.9 need the on-device pass)_
+
+#### Step 1.13: QA testing (2h) · PR (1h)
+
+**Verification:**
+- [ ] QA pass on two physical devices (one API 26–29, one current)
+- [ ] PR reviewed; spec updated
+
+**Phase 1 total: 34h** (14 tasks; 7 of 14 ≤ 2h — below the 80% target, so split the 3–4h steps 1.3–1.5, 1.7, 1.10–1.12 into sub-steps in this spec before starting them).
+
+### Phase 2 — Read-only transcript with expand/collapse
+
+#### Step 2.1: Chat-channel type coverage (2h)
+
+**Goal:** Confirm or supply Kotlin types/reducer for the chat channel.
+
+**Files affected:**
+- `core-ahp/src/test/kotlin/.../probe/ChatFixturesTest.kt`, `core-ahp/src/test/resources/live/chat-*.json`, `tools/redact-chat.mjs`, `tools/redaction-check.mjs`
+- (fallback) `core-ahp/src/main/kotlin/dev/ahpclient/ahp/generated/**`
+
+**Copilot prompt:**
+> Using recorded `chat/*` envelopes from a live session (capture with the Step 1.6 probe subscribed to a `ChatSummary.resource` URI), assert the pinned AHP Kotlin artifact decodes `ChatState`, `Turn`, every `ResponsePart` kind (`markdown`, `contentRef`, `toolCall`, `reasoning`, `systemNotification`, `inputRequest`, `error`), every `ToolCallState` variant, and `ToolResultContent` (`subagent`, `terminal`, `fileEdit`), and that a chat reducer exists. If not, generate Kotlin types from microsoft/agent-host-protocol at the tag matching the host's negotiated version (`npm run generate:kotlin`) into `ahp/generated/`, and record the gap in the spec Notes.
+
+**Verification:**
+- [x] Every recorded chat envelope decodes and reduces without `StateActionUnknown` (live run 2026-10-22: 1 snapshot and 67 actions; redacted fixtures and `ChatFixturesTest` committed in app repo `6f75dbe`)
+
+#### Step 2.2: Chat store with paging and delta coalescing (3h)
+
+**Goal:** Live `ChatState` with older-turn paging and UI-friendly update rate.
+
+**Files affected:**
+- `core-ahp/src/main/kotlin/dev/ahpclient/state/ChatStore.kt`
+- `core-ahp/src/main/kotlin/dev/ahpclient/ahp/CapabilityPolicy.kt` — confirm `fetchTurns` in READ
+- `core-ahp/src/test/kotlin/.../state/ChatStoreTest.kt`
+
+**Copilot prompt:**
+> `ChatStore.open(chatUri)` subscribes, folds `chat/*` actions with the chat reducer, and exposes `state: StateFlow<ChatState>` sampled at most every 50 ms while `chat/delta` actions stream (coalesce, never drop). `loadOlder()` calls `fetchTurns(channel = chatUri, cursor = state.turnsNextCursor)` and merges via the `chat/turnsLoaded` action (`fetchTurns` itself returns an empty result: the turns arrive as that action on the chat channel); no-op when the cursor is null. Unsubscribe on close.
+
+**Verification:**
+- [x] 1,000 synthetic deltas produce correct final text and ≤ 20 emissions/s (app repo `4878f9f`: 20 updates in the first second, never closer than 50 ms apart, final text exact)
+
+#### Step 2.3: Transcript screen with markdown (3h)
+
+**Goal:** Render turns and markdown output.
+
+**Files affected:**
+- `app/src/main/kotlin/dev/ahpclient/ui/chat/ChatScreen.kt`, `ChatTranscript.kt` (the transcript model is `core-ahp` `state/Transcript.kt`, so there is no `ChatViewModel`)
+- `app/src/main/kotlin/dev/ahpclient/ui/chat/MarkdownPart.kt`
+
+**Copilot prompt:**
+> `ChatScreen` shows `ChatStore.state` turns in a reversed `LazyColumn` keyed by turn id and response-part `id`: user message bubble, then response parts in order. `MarkdownPart` renders markdown with a maintained Compose markdown library (code blocks monospace + horizontal scroll, links open in Custom Tabs, no raw HTML). Scroll-to-top triggers `loadOlder()`. Auto-scroll only when the user is already at the bottom. Navigate here from `SessionDetailScreen` chat rows.
+
+**Verification:**
+- [x] Streaming does not yank the scroll position (emulator tests on API 26 and 36, app repo `b0575dc`)
+- [ ] Long transcript scrolls smoothly (not measured: needs a frame-rate pass on the phone with a real-sized chat, Step 2.5)
+
+#### Step 2.4: Collapsible blocks (4h)
+
+**Goal:** Expand/collapse for reasoning, tool calls, subagents, terminal output, and file edits.
+
+**Files affected:**
+- `app/src/main/kotlin/dev/ahpclient/ui/chat/CollapsibleBlock.kt`
+- `app/src/main/kotlin/dev/ahpclient/ui/chat/ReasoningBlock` and `ToolCallBlock` (both in `TranscriptRows.kt`), `ToolResultViews.kt`
+- `core-ahp/src/main/kotlin/dev/ahpclient/state/ToolDetail.kt` (the bounded detail model and `ExpansionState`, held per chat by `AppController`)
+
+**Copilot prompt:**
+> Create `CollapsibleBlock(summary, icon, expanded, onToggle, content)` with an `AnimatedVisibility` body, chevron with `contentDescription` "Expand"/"Collapse", and `Role.Button` semantics. `ExpansionState` is a `Set<String>` of part ids held in `ChatViewModel` + `SavedStateHandle` so it survives rotation and navigation; default collapsed. `ReasoningBlock`: summary "Thinking…" while streaming, else "Thought for a moment". `ToolCallBlock`: summary = tool display name + state badge from `ToolCallState` (streaming / pending confirmation / running / auth required / completed / cancelled); expanded shows input parameters and `ToolResultContent` via `ToolResultViews` — `terminal` as monospace output with exit code, `fileEdit` as file path + added/removed line counts, `subagent` as a nested collapsible with its own parts, `text` as markdown. Pending-confirmation shows a non-interactive "Waiting for approval in VS Code" label.
+
+**Verification:**
+- [x] Each block type renders collapsed by default and toggles via tap (emulator tests on API 26 and 36); the semantics TalkBack uses are asserted (button role, click label, expanded or collapsed state, 48 dp header), but TalkBack itself has not been run on the phone
+- [x] Expansion state survives rotation and leaving and returning (it lives in the controller per chat, not in composition; tested), forgotten when the host or sign-in ends; not yet seen on a rotating phone
+
+#### Step 2.5: Tests, QA, PR (5h: tests 2h · performance pass 1h · QA 1h · PR 1h)
+
+**Verification:**
+- [x] Compose UI tests for `CollapsibleBlock` and `ToolCallBlock` state badges (18 tests in `CollapsibleBlocksTest`, plus the badge tests in `ChatScreenTest`)
+- [ ] Streaming frame-rate check on a mid-range device (AC2.2): needs the phone
+- [x] READ-tier outbound log re-verified (AC2.5): a JVM test pins the exact methods a full chat lifecycle sends (`initialize`, `listSessions`, `subscribe`, `fetchTurns`, `unsubscribe`); the on-device `AhpWire` pass is still to do
+
+**Phase 2 total: 17h.**
+
+### Phases 3–5 — outline (detailed at each gate)
+
+| Phase | Key steps | Notable design |
+|---|---|---|
+| 3 Interactive | `INTERACT` tier in `CapabilityPolicy`; composer → `chat/turnStarted`; question UI for each `ChatInputQuestion` kind → `chat/inputAnswerChanged` + `chat/inputCompleted`; approve/deny from `ToolCallPendingConfirmationState.options` → `chat/toolCallConfirmed`; cancel → `chat/turnCancelled`; actionable notifications | Biometric/device-credential confirm (auth-bound Keystore key) before any tool approval; show the risk assessment (`ToolCallRiskAssessment`) when present; optimistic apply + reconcile per AHP write-ahead model |
+| 4 Management | `MANAGE` tier; new session (agent + model from `RootState.agents`, working directory picker) → `createSession`; `createChat`; dispose; mark read / archive | Confirm dialogs on dispose; respect `ChatInteractivity` |
+| 5 Parity | Changeset list + diff viewer, mark files reviewed; terminal output viewer; multi-host tabs; Entra sign-in (MSAL) | `terminal/input` and changeset write operations each need a separate decision |
+
+### Phase 3 — as built (2026-10-23)
+
+The gate to start Phase 3 (a security review of remote tool approval and the biometric design) was not formally open; the work was done on the instruction to proceed through all phases, with the write tier **off by default and unreachable until the user turns it on**. It still needs a human security review before it ships.
+
+| Step | What | Where (app repo `ahp-android-client`) |
+|---|---|---|
+| 3.1 | `INTERACT` tier: `READ` plus `dispatchAction` for exactly eight chat action types, each checked against the protocol's own "client-dispatchable" table; a denied action sends zero bytes | `CapabilityPolicy`, `AhpConnection.dispatchAction` |
+| 3.2 | `HostSession.dispatch` waits for the host's echo and answers `Accepted`, `Rejected(reason)`, `NoReply` or `Interrupted`; a rejected echo is never reduced into state and never moves the resume point; `clientSeq` is owned by the session so it keeps increasing across reconnects | `HostSession`, `DispatchOutcome` |
+| 3.3 | Consent: off by default, saved, applied per connection; `restart()` ends a live `INTERACT` connection at once; a connection made before a restart is discarded; signing out turns it off | `InteractionConsent`, `AppController.setInteraction` |
+| 3.4 | The eight actions built as structured JSON through the library's own serializer, pinned to their wire shape | `ChatActions` |
+| 3.5 | `ChatInteractor`: new turn when idle, queued message when working; refuses unless allowed; approval behind an `ApprovalGate`, looked up before and after the prompt | `ChatInteractor` |
+| 3.6 | Question form: what counts as a complete answer per question kind; an unknown kind is not a form | `InputForm`, `InteractMessages` |
+| 3.7 | Composer, Stop, approve/deny buttons (the host's own options when offered), question form; none exist in a read-only chat | `ui/chat/Interaction.kt` |
+| 3.8 | "Let this app act for me" switch with a confirming dialog | `ui/InteractionToggle.kt` |
+| 3.9 | The phone's own device check before every approval | `BiometricApprovalGate` |
+
+**Decided differently from the outline, to confirm:** no optimistic apply (nothing is shown until the host echoes it; a refusal is visible as a refusal); no auth-bound Keystore key (the host has nothing to verify it against, so the check proves presence only); `chat/turnCancelled` sends `duration` 0 because a phone has no clock for a turn the host runs; actionable notifications are not built, and an approval is refused when the app is not on screen; answers are sent once on "Send answer" (no per-question draft sync); steering messages and editing a tool's input before approving are not built.
+
+**Found by running it:** before Android 11 the library reports the screen lock alone as unsupported, so the check asks for a weak biometric or the screen lock there; on the API 26 emulator the prompt opens and is then cancelled, so approvals fail closed on Android 8–10. Biometric 1.1.0 pulls an old Fragment that breaks the activity-result API, which lint caught. On an API 36 emulator with a real PIN: the right PIN approves, Back refuses, a wrong PIN refuses.
+
+## Testing Strategy
+
+| Layer | Approach | Framework |
+|---|---|---|
+| `core-ahp` unit | Device flow, REST parsing, tag rules, token derivation (cross-checked with Node), gateway handshake, JSON-RPC correlation, capability policy, reducers/status flags | JUnit 5 / `kotlin.test`, OkHttp `MockWebServer`, kotlinx-coroutines-test |
+| Fixture corpus | Redacted live captures (tunnel list, inventory/ack, `initialize`, `listSessions`, session and chat envelopes) recorded by the JVM probe | Checked-in JSON under `core-ahp/src/test/resources/` |
+| Android instrumented | `TokenVault` Keystore round-trip and invalidation | AndroidX Test, emulator API 26 + current |
+| Compose UI | Status chips, sessions list ordering, collapsible blocks, accessibility semantics | Compose UI test |
+| Live integration | `:core-ahp:probe` against a real Remote Tunnel Access host; Node `tunnel-attach.mjs` as a canary on each VS Code minor | Manual / scripted, recorded in `docs/verification/` |
+| Security | Outbound-method log review per phase; no tokens in logs; dependency scanning | Manual + repo security scanning |
+
+## Notes
+
+### Open questions
+
+1. Terms of use for Microsoft's GitHub App client ID in a third-party app (Step 0.1). Personal use proceeds meanwhile; wider distribution waits on the answer.
+2. ~~Repo name~~ Decided: `ahp-android-client`.
+3. ~~Does the Kotlin AHP artifact cover the chat channel?~~ Yes — resolved in Step 1.1 (Assumption 3).
+4. Play policy for a long-running `dataSync` foreground service — acceptable for internal distribution; re-check before any store release.
+5. Do GitHub App user tokens for this app expire (refresh flow) or not? Observe on first device-flow run.
+
+### Risks
+
+| Risk | Mitigation |
+|---|---|
+| AHP pre-1.0 churn breaks decoding | Pin artifact; `StateActionUnknown` no-op; protocol version surfaced; probe canary |
+| `/agent-host/select` contract changes (VS Code-internal) | Port is ~80 lines; canary on each VS Code minor; fall back to v5 path when tags say so |
+| Microsoft restricts the GitHub App client ID to first-party | Fallback: dev-box bridge exposing the local agent host via an Entra-authenticated `devtunnel` we own |
+| Phone becomes a remote-execution surface | Read-only by construction through Phase 2; per-tier allowlist; biometric confirm for approvals; separate security review at Phase 3 |
+| Background socket killed by OEM battery managers | Opt-in foreground service; document per-OEM battery settings |
+
+### Follow-ups
+
+- Phase 2 and later start only when their Roadmap gate opens; add each phase's detailed steps here.
+- Retire `demo/ahp-metrics-overlay` mock-feed path once the JVM probe exists, or keep it as the Node canary.
+
+## Progress Log
+
+| Date | Entry |
+|---|---|
+| 2026-10-22 | Phase 1 approved. This spec drives implementation. Terms-of-use question is non-blocking for personal use. |
+| 2026-10-22 | Repo created locally (`main`, not pushed). Step 1.1 done: the Kotlin AHP artifact is 1.0.0 and supports protocol 1.0.0 and 0.9.0, which resolves Assumption 3. Versions differ from the spec's assumptions: OkHttp 5.5.1 (not 4.x), Kotlin 2.4.21, Gradle 9.8.2, no JDK toolchain pinned (JDK 21 builds to 17 bytecode). Step 1.2 done: GitHub device flow, 9 tests. `:app` is deferred because this machine has no Android SDK. AHP 1.0.0 adds `SessionSummary.chats` and per-chat status without subscribing, which Steps 1.7 and 1.10 can use. |
+| 2026-10-22 | Android SDK installed to `%LOCALAPPDATA%\Android\Sdk` (platform 36 and 37.0, build-tools 36.0.0, platform-tools 37.0.1; licences accepted; cmdline-tools SHA-1 verified). `:app` scaffold builds a debug APK; the Compose BOM 2026.09.00 needs `compileSdk` 37 (`targetSdk` stays 36), and the Gradle daemon needs a 3 GB heap. Steps 1.3, 1.4 and 1.5 done in `core-ahp` (65 tests, `./gradlew build` green). Divergences from the spec as written: the connect token comes from `GET /tunnels/<id>` (`resolveConnectTarget`), not the list; the gateway ack names the endpoint kind `type`, not `serverType` (a Node probe display bug, fixed); `unsubscribe` and `dispatchAction` are notifications in AHP 1.0 (no id, no reply); `fetchTurns` returns an empty result (turns arrive as `chat/turnsLoaded`); `SessionStatus` is a library bitset, so no custom flags class; `SessionSummary` requires `createdAt` and `modifiedAt`. Fixtures are contract-derived with synthetic ids; Step 1.6 replaces them with a live capture. |
+| 2026-10-22 | Step 1.6 done: live probe passed against the real `protocolv6` tunnel (all of 1.2–1.5 exercised end to end: device-flow sign-in, tunnel listing and web endpoint, gateway selection, `initialize`, `listSessions` (one unpaged response, see the Step 1.6 checkbox), notification watch). Findings: the host chose protocol `1.0.0` when offered `[1.0.0, 0.9.0]` (resolves the open question in Assumption 3); `serverInfo` is absent from the host's `initialize` reply; the root snapshot has keys `agents, activeSessions, terminals, config, _meta`; 214 sessions, mostly archived or idle (the default list should hide archived, as Step 1.10 plans); the 275 KB listing and 100 KB initialize reply make every full refresh costly on mobile, so reconnect should avoid refetching the list where it can; the real tunnel list and tunnel responses parsed with the contract-derived fixtures' shape, so those fixtures are confirmed in practice (still synthetic ids). Read-only checked on the real traffic: the only methods sent were `initialize` and `listSessions`. The 414 KB raw capture stays local and gitignored (it holds session titles and paths); Step 1.7 needs a redacted fixture derived from it. The probe's first run expired unapproved after 15 min and failed cleanly. |
+| 2026-10-22 | **Correction to the Step 1.6 entry above:** I first reported "214 sessions over 3 pages" from the `limit=100` I had sent. The capture shows one `listSessions` call and one 275 KB reply with no `nextCursor`, so the host ignores `limit`. The entry and checkbox now say so; the paging loop stays for hosts that do page. |
+| 2026-10-22 | Step 1.7 done in `core-ahp` (94 tests, `./gradlew build` green): `RootStore` (session list kept current from `root/sessionAdded`, `sessionRemoved`, `sessionSummaryChanged`), `SessionStore` (snapshot plus ordered actions through the generated `sessionReducer`, early actions held, duplicates dropped by `serverSeq`), `HostSession` (backoff, resume, ref-counted subscriptions) and `TunnelHostConnector`. Protocol facts that shaped it: AHP does **not** replay notifications after `reconnect`, so the list is refetched on every reconnect even though it is a 275 KB call (a cost to revisit if it hurts on mobile data); the host ignores `limit`; real summary-change notifications seen live carried only `_meta`, and omitted fields mean unchanged, so a field cleared by the host cannot be told apart from one left alone. Fixtures are real-shaped and redacted by `tools/redact-capture.mjs` (field whitelist, refuses to write if an original string survives; independently re-checked against all 2185 capture strings); E and F are synthetic. Gaps, stated plainly: `TunnelHostConnector` is glue with no test of its own (its parts are tested), `reconnect` against the real host is unverified, and the probe does not use `HostSession` yet. |
+| 2026-10-22 | Emulators running. `emulator -accel-check` reports WHPX usable with no admin step (the CPU's virtualization flag reads False while `HypervisorPresent` is True; that is normal when Hyper-V owns the hardware). Two virtual devices: `ahp-api36` (Pixel 8, Android 16, 4 GB, the `targetSdk`) and `ahp-api26` (Pixel 2, Android 8.0, the `minSdk`), both x86_64 Google APIs images, GPU on. The SDK folder is now about 9 GB. The scaffold app installs and cold-starts in 4.8 s with no crash. Defect seen on screen: Android 15+ forces edge-to-edge, so the placeholder's title sits under the status bar and the clock is unreadable; Step 1.9 builds its screens on a `Scaffold` with proper insets. |
+| 2026-10-22 | Step 1.8 done. The vault is split: `core-ahp` holds `TokenVault`, `TokenCodec` and the `SecureBox` and `BlobStore` interfaces (the "unreadable means wipe and sign in again" rule, 17 JVM tests with fakes), `app` holds `KeystoreSecureBox` (AES-256-GCM, key in the Keystore, no user authentication, purpose bound through AAD, a fresh IV per seal, blob layout `[format][12-byte IV][ciphertext+tag]`) and `DataStoreBlobStore`. 15 instrumented tests pass on both the API 26 and API 36 emulators against the real Keystore and DataStore: round trip, ciphertext on disk with no token text, a non-extractable 256-bit key, tamper detection, lost key, sign-in after a lost key, clear, key persistence across instances, independent aliases, non-Base64 text, a corrupt DataStore file, reopening the file. Mutation-checked: removing the AAD fails exactly `aBlobCannotBeOpenedForADifferentPurpose`. Backup exclusion verified on the installed app (no `ALLOW_BACKUP`). Deviation from the spec: `KeyPermanentlyInvalidatedException` cannot occur for a key without user authentication, so every key-loss mode maps to one outcome. Gaps: a real restore onto a second device is not tried, StrongBox is not requested, `AndroidTokenVault.create` is untested glue, and DataStore allows one instance per file, so Step 1.9's `AppContainer` must create the vault once. Things learned the hard way: JUnit 4 rejects test methods that return a value (a first version failed with `initializationError`); `connectedDebugAndroidTest` uninstalls the app afterwards; the result file's root element is `testsuites`. |
+| 2026-10-22 | Step 1.9 done and verified live on a real phone. Design: the logic is a JVM-testable `AppController` in `core-ahp` (restore, device-flow sign-in, host list sorted last-used then online then name, connect, disconnect, sign-out) driving one `AppState` value; the Compose screens in `app` render it. 23 JVM tests against a local HTTP server standing in for GitHub and the Dev Tunnels service (134 JVM tests in all); mutation-checked (skipping the token wipe fails 3 tests; a loose `endsWith("github.com")` link check fails the lookalike-URL test). 17 Compose tests pass on Android 8.0 and Android 16, including 48 dp touch targets, which caught two defects: my first check measured the drawn 40 dp button instead of its 48 dp touch target, and the notice card was not merged for TalkBack. Security choices: only an `https` URL on `github.com` with no user-info or port is ever opened or offered as a button; anything else is shown as text. Live: on a Pixel 10 (Android 17), the sign-in code was typed into the phone's browser, the app moved to the host list, connected, and read 218 sessions. Findings: (1) "Open GitHub" can open a browser that is not the one signed in to GitHub, and "Copy code" may not paste into it; typing the code works because device flow needs no browser handoff, and a share-link or choose-a-browser option is a sensible follow-up; (2) a Custom Tab shares the app's task, so killing the app leaves the tab as the task's only activity and a relaunch shows the tab; (3) test installs go to the primary user profile only, because `adb` cannot see the other profile; (4) with a real device attached, `connectedDebugAndroidTest` runs on it too and uninstalls the app, so emulator runs must be targeted by serial. Not yet checked on the real phone: sign-out. |
+| 2026-10-22 | Real-phone follow-up (Pixel 10, Android 17). **Restore after process death works on real hardware:** after the app was force-stopped, a cold start (new process, 508 ms to first frame) reached "Connected, 218 sessions" within about 6 seconds. A fresh process can only reach that state with a valid token, and the only source is the Keystore-backed vault, so this verifies the vault on a real device. I did not see the host list on that path; the app never connects by itself, so the host was most likely tapped (by the user) as it appeared. **Host list and last-used persistence confirmed directly:** after "Back to hosts" the screen showed "re1lw1zrrff4, Online · protocol v6 · last used" and "Signed in until 10/22/26, 5:57 PM" (the token's 8 hour lifetime from sign-in), so the last-used preference also survived the process death. No error-level log lines and no crashes in either run. Observations: the host list took about 5 to 8 seconds to load over the live Dev Tunnels service (a spinner with a word label, but a slow first impression; revisit whether the global listing can be scoped to the user's own cluster); the screen text was read with `uiautomator dump` with a guard that refuses to print anything from another app. Still unchecked on the real phone: sign-out, and an expired token. The emulators shut down on their own; they need restarting before the next instrumented run, and instrumented runs must not target the real phone, because the runner uninstalls the app. |
+| 2026-10-22 | **Sign-out verified on the real phone** (Pixel 10). Tapping Sign out returned to the sign-in screen, the vault file went from 319 to 0 bytes, and after a force-stop and cold start the app stayed signed out (no restore, no host list). The non-secret last-host id survives sign-out on purpose (37-byte preferences file). Still unchecked on real hardware: an expired token and a 401 from the real service. |
+| 2026-10-22 | Step 1.10 built and tested on emulators; the live check came next (the row below). Design: the screens are pure functions of host state, with the logic in `core-ahp` (`SessionListModel`, `SessionDetail`, `RelativeTime`) so it is JVM-tested. Choices worth reviewing: archived sessions are hidden behind a "Show archived (N)" filter chip, **except a session that needs input, which is never hidden**; a row's spoken description joins title, state, activity or project, age, "unread" and "archived" so TalkBack reads one item; status is always a word (`StatusChip`), colour is only a second cue; "yesterday" and day counts are calendar-based, and a phone clock slightly behind the host reads "just now"; every pending request (`chatInput`, `toolConfirmation`, `toolClientExecution`, `toolAuthentication`, and unknown kinds) is shown as text with the hint "Answer in VS Code."; no control on either screen writes. `AppState.Connected.open` holds the open detail; Back goes detail, then list, then host list; `openSession` is ignored while a detail is open so a double tap cannot subscribe twice. Results: 163 JVM tests (+29), 50 instrumented tests passing on both the API 26 and API 36 emulators, `./gradlew build` green, lint unchanged at the 3 baseline warnings. Mutation checks: dropping the archived-but-needs-input exemption, swapping intention and invocation message, and making "yesterday" exclusive each failed exactly the one test written for it; removing the double-open guard and the unsubscribe on Back together failed the two controller tests that cover them. I strengthened the double-open test beforehand because, by reasoning (not by running it), it would not have caught a missing guard: it did not check which channel was unsubscribed. Also added `tools/run-device-tests.ps1` (instrument on one named emulator, refuses a physical phone) because `connectedDebugAndroidTest` runs on every attached device and uninstalls the app; the README now says so. |
+| 2026-10-22 | **Step 1.10 live on the Pixel 10** (fresh device-code sign-in approved by the user, then connect). Confirmed against the real host: the host list; "Connected", a "4 in progress" summary line and "Show archived (180)"; rows read from the accessibility tree as one merged description each, for example "Slice 3, In progress, my-project, 18 min ago", sorted with in-progress first; opening a session shows title, state, agent, project, folder and its chat; the system Back gesture from the detail returned to the list, not the host list. **Two defects found and fixed (commit `d858811`):** (1) relative ages did not advance between host updates (they stepped from "1 min ago" to "2 min ago" only when a host notification re-emitted the list, at 65 s and 88 s into a 100 s watch); a new `rememberNow` ticker refreshes them every 30 s while the screen is visible, with a test that fails if the ticker stops updating (mutation-checked). (2) The detail showed the raw `file:///c%3A/...` URI as the folder; `displayPath` now decodes it (and a duplicate "State" row was dropped). The fixed build is installed on the phone but not re-checked there: the phone locked before I could. Emulator re-run after the fixes: 51 of 51 on API 26 and on API 36, 166 JVM tests, `./gradlew build` green, lint at the 3 baseline warnings. **Still not verified live:** a status flip within 2 s (no status changed during the watch), a session that needs input and its request text on a real host, TalkBack itself, and that subscribing leaves `activeClients` untouched. **Emulator reliability:** the windowed host-GPU emulator crashed on start three times on this machine (exit `0xC0000005`, a stuck crash dialog) and killed one test run midway after earlier instances were stopped with `adb emu kill`; headless with `-gpu swiftshader_indirect` was stable for both API levels, and the README says to start it that way. I did not find the root cause. |
+| 2026-10-22 | **Live status flips on the Pixel 10** (the user drove a new session in VS Code while a logger sampled the app's accessibility tree about every 2 to 3 s). Seen on the list, in order: the new session appeared (Idle), Idle to In progress, back to Idle, In progress again, **In progress to Needs input** (the question prompt), then after the user answered **Needs input to In progress to Idle**, and a further In progress to Idle. So new sessions appear live and status flips in both directions without a refresh. **Not proven:** the 2 s bound. The logger's own sampling interval is 2 to 3 s and I have no host-side timestamp for when each prompt was sent, so all I can say is that each flip showed up by the next sample. Twice (11:59 and 12:02) the app was in the background (system UI in front) and the screen text after returning may reflect catching up rather than the moment of the change, so the Needs-input-to-In-progress time is unreliable. **Not exercised:** a tool-approval request (the third prompt ran without asking, so the session auto-approves), so `toolConfirmation` is still only JVM-tested. The request text on the detail screen for a pending question was not looked at, because the logger only read the list and the question was already answered when I stopped it. Observation: rows reorder live as sessions update (needs-input first, then newest), and the logger saw rows leave and re-enter the viewport when that happened, so a row can move under a finger. |
+| 2026-10-22 | **Pending question read on the real host.** With a question left unanswered in a new session, the phone's list showed "greeting, Needs input, just now" and the detail showed "Waiting on you", the kind "Question", the question text and "Answer in VS Code." The folder showed as a readable path. After the user answered in VS Code, the open detail dropped the "Waiting on you" section and the header went to In progress, with no navigation or refresh on the phone, so the detail updates live; when exactly it updated is not measured (the first sample after the answer already showed it). Findings: (1) the request text is only the question's message, so a question with options does not show them; the user cannot tell from the phone what the choices are. A candidate follow-up is to list option labels for single-select and multi-select questions. (2) One sample showed the header In progress while its only chat row showed Idle; seen once, not investigated, and it may be two updates arriving a moment apart. Still not exercised live: a tool-approval request, TalkBack itself, and the `activeClients` check. |
+| 2026-10-22 | **`activeClients` checked against the real host** (commit `d612304` in the app repo). The JVM probe gained `--session <title-or-uri>`: it subscribes to one session, prints the host's `SessionState.activeClients` and fails if its own client id is among them, then unsubscribes. Live run, signed in with a fresh device code: subscribed to the "greeting" session (idle), **`activeClients=0`, this client not listed**, and the wire carried only `initialize`, `listSessions`, `subscribe`, `unsubscribe` (all READ tier). The report logic has 9 JVM tests (175 in all) and the self-detection test fails when I break it. **Limits:** the probe uses the production `AhpConnection` and `CapabilityPolicy.READ` but not the Android app's `HostSession`; the session was idle with no other clients, so this shows the app's client does not appear, not what a busy session lists; one session only. AC1.7 stays open until Step 1.12 logs the app's own outbound method names on the phone. |
+| 2026-10-22 | **Question options shown on the detail** (commit `5295a77`): a pending chat question now lists its options (with description and the recommended one marked) and its answer kind (pick one, pick any, yes or no, free text, number); an unknown question kind is still listed. **User report: the connection is lost when the device locks** (the screen going off freezes the app when nothing keeps it in the foreground), which is what Step 1.11 is for; built now. **Step 1.11 built, not yet run on the phone** (the phone had been unplugged by the time it was ready; commit `55ab218`). Core, JVM-tested: `InputNeededDetector` (the first list only records who already waits, so connecting to a host with open questions does not buzz for all of them; a session is reported once per time it enters the state), `InputNeededNotifier` (3 s debounce so a question withdrawn straight away never notifies; clears the notification when the session stops waiting), `MonitorStatus` (the persistent notification's words, no error text), `MonitorCoordinator` (monitoring runs exactly while the switch is on and the user is connected to a host; leaving the host, signing out or switching off stops it), `AppController.focusSession` (opens a notified session only if the host lists it, so a foreign intent cannot open an arbitrary one). App: `PrefsMonitorSettings` (**default off**), `MonitorService` (foreground, type `dataSync`, persistent low-importance notification "Monitoring <host>" with a Stop action, not sticky), `NotificationInputNeededSink` (high-importance channel; **a locked screen shows only "A session needs your input", never the session title**; tap deep-links to the session), a "Monitor in background" switch on the sessions screen (whole row is the control; hint says what it does and warns when notifications are blocked), `POST_NOTIFICATIONS` asked for when the switch is turned on (turning it on works without it, only the alerts are lost). Results: 205 JVM tests (+30), 56 instrumented tests on API 36, build green, lint at the 3 baseline warnings; mutation checks (no debounce, no baseline seeding, no cancel on withdrawal, no restart guard, no stop) each fail the test written for them. **New finding:** Android 15 limits a `dataSync` foreground service to about six hours per day, resetting when the app is opened; `MonitorService.onTimeout` stops it, turns the switch off and posts "Background monitoring paused" so it never fails silently. A `specialUse` type would avoid the limit but needs a Play justification; left as `dataSync` per this spec. **Not verified (needs the phone):** that the socket survives the screen turning off and stays up for minutes, that a question while locked produces exactly one notification, that tapping it opens the session, that Stop and sign-out stop the service, and whether a partial wake lock is needed (decide only if the socket still drops with the service running). |
+| 2026-10-22 | **Step 1.12 prepared without the phone** (user away; app repo commits `ab90441` and earlier). **Coverage target met and enforced:** JaCoCo in `core-ahp`; line coverage auth 100%, tunnel 99.3%, ahp 97.1%, state 97.4% (security 100%, app 94%); `jacocoTestCoverageVerification` fails the build under 80% on those four packages and runs in `./gradlew build` (mutation-checked: a 99.9% bar fails). Gap-fill tests: `TunnelHostConnector` (it had none: fresh connect token per attempt, gateway headers, AuthExpired and TunnelNotFound before any socket), malformed frames, sign-in failure branches (a token that cannot be stored securely is never kept), a failing last-host store or token delete never blocks the user, tool-request descriptions. One line stays uncovered on purpose: the second throw in `CapabilityPolicy.check` is unreachable while `READ` is the only tier. **Wire-method log:** `MethodLoggingSocketOpener` logs the JSON-RPC method name of every outbound frame and nothing else (never params, URL or headers), marks anything outside READ as `NOT-READ`; wired in **debug builds only** under logcat tag `AhpWire`; 5 JVM tests including that no param, URL or header text can appear. This is the on-device proof for AC1.7; it has not been run on the phone. **Emulator tests (API 26 and 36, 68 each, headless `swiftshader_indirect` start):** notifications (title shown, lock-screen version without the title, replace by tag, clear), channel importance, service type and permissions in the manifest, starting the service with nothing to monitor does not crash or leave a notification, and Compose accessibility checks over every screen state. **Finding: `tryPerformAccessibilityChecks` does nothing unless checks are enabled, and the checker is silently a no-op below API 34.** My first four accessibility tests passed vacuously; a canary test (a defective screen the checker must reject) exposed that. Fixed: checks enabled through the `ui-test-junit4-accessibility` test dependency (new, test-only), tests skipped below API 34, canary kept. The screens pass the checks on API 36 (touch targets, contrast, labels). **Spec gap found and fixed (AC1.9):** the app did not link to GitHub's authorized-apps page after sign-out. After a deliberate sign-out the sign-in screen now shows "Review access on GitHub" (https://github.com/settings/applications); not shown after an expired token. Emulator-tested only. `docs/verification/phase1-readonly.md` (app repo) records the status of AC1.1 to AC1.9 and the exact on-device runbook. **Still needs the phone:** AC1.4 reconnect, AC1.6 notifications, AC1.7 on-device wire log, AC1.8 token-in-logs search, AC1.9 link, TalkBack. One flaky test (WebSocket close in a JVM test) was fixed and run five times clean; the first instrumented run after an emulator cold boot sometimes reports "Process crashed" with no log and passes on a rerun (documented). |
+| 2026-10-22 | **Step 2.1 groundwork, no live capture needed for this part.** The pinned AHP 1.0.0 Kotlin artifact already contains what Phase 2 needs, by class survey: `ChatState`, `Turn`, `ChatReducer`; every `ResponsePart` variant (markdown, resource/content ref, tool call, reasoning, system notification, input request, error); every `ToolCallState` variant (streaming, pending-confirmation, running, auth-required, pending-result-confirmation, completed, cancelled); every `ToolResult*Content` (text, embedded resource, resource, file edit, terminal, subagent); and the chat actions including `ChatTurnsLoadedAction` and the delta, response-part and tool-call actions. So the Step 2.1 fallback (generating types from the protocol repo) is not expected to be needed. **Not yet shown:** that real `chat/*` envelopes from the host decode and reduce without unknown-action fallbacks; that needs the probe subscribed to a real chat (one device-code approval). Phase 2 is deliberately not started: it adds `fetchTurns` and chat-channel subscriptions to the wire, and the Phase 1 on-device pass should come first. Also noted for the on-device pass: Doze can suspend the network of an idle phone even with a foreground service running; the runbook now has a 45 to 60 minute idle test for it. |
+| 2026-10-22 | **Existing third-party client found: "AgentHost Client"** (Play id `com.agenthostclient.app`; publisher BrByte Software / softov.dev; listing updated 2026-10-13; Play shows "1+ downloads"; iOS and Android; free in early access with paid plans possible later; the app's source is not public). Everything here comes from its listing, site and privacy policy, not from running it. It connects by host address plus a connection token (LAN, mesh VPN or the user's own TLS tunnel), with no account or sign-in; tokens in Keystore/Keychain; no telemetry except an update check that logs IP and a random install ID for six months. It claims read and write features: chat and sending prompts, approvals, terminals, code review, commits and pull requests, files, automations, usage. It names two hosts: the vendor's open-source `ahpd` (MIT, repo created 2026-09-06, 3 stars) and VS Code's agent host started with `code agent host` (not verified by us). **Its docs never mention GitHub or Dev Tunnels sign-in or tunnel discovery, so it does not appear to attach to the Remote Tunnel Access host (the blue A), which is what this project does.** Side finding: `@ahpd/tunnel-devtunnel` publishes an ahpd host through a Dev Tunnel labelled the way VS Code expects, and its README says a client derives the connection token from the tunnel id. That may let this app reach an ahpd host, and could give a safe test host that raises tool-approval requests (not yet seen live); both are untested. Decision input for Phases 3 to 5 (the write phases, where the overlap is); not a decision. |
+| 2026-10-22 | **On-device pass started on the Pixel 10 (user present, phone on USB power).** Debug build with the `AhpWire` log installed over the existing one. **Seen:** (AC1.9) after Sign out the screen showed "You are signed out of this phone..." and "Review access on GitHub", and the vault file was 0 bytes; the link itself was not tapped. (AC1.7, partial) after a fresh sign-in, connect, and opening and leaving two sessions, the on-device wire log held exactly `gateway.select`, `initialize`, `listSessions`, 2 x `subscribe`, 2 x `unsubscribe`, and no `NOT-READ`; this covers that short session only, not the whole pass. With "Monitor in background" on, the service is a foreground service of type dataSync (`isForeground=true`, `types=0x1`). **Lock test 1 (screen off 4 min 22 s, 18:08 to 18:12, phone charging):** no new `initialize` or `reconnect` on the wire and the service stayed foreground, so the connection survived a screen lock. **Limit:** a charging phone does not enter deep Doze, so this is not the idle test. **Bug found, fixed, fix not yet run on the phone:** after the first toggle the persistent "Monitoring" notification never appeared (not in the shade, including the Silent section, and absent from `dumpsys notification`) although the service ran. Cause, from the system log: the service started and posted its notification at 18:03:11.977 while the notification-permission dialog was still open; the user tapped Allow at 18:03:16. Android drops a foreground-service notification posted without the permission, and it does not appear until the app posts it again. It affects the first toggle only, so a test that starts with the permission already granted (all the emulator tests) cannot see it. **Update 18:26:** the notification did appear, "Monitoring re1lw1zrrff4 / 34 active sessions" with a Stop action, about 23 minutes after the toggle, after the user woke the phone and opened the app; the installed build still lacks the fix, and its service re-posts only when the status text changes, so the likely trigger is a status change (not proven). So the failure is "missing until the next update", not "lost for good". Fix (app repo `45b77f5`): `MonitorToggle` asks first and starts monitoring only after the answer (a refusal still turns it on, with the existing warning); `onResume` re-posts the notification when monitoring is on and the permission is in place. 8 JVM tests; putting the ordering bug back fails 5, removing the one-dialog guard fails 1. The cause is inferred from timing and from the later appearance, not from a controlled run; the fix has not yet been run on the phone. **Not yet verified:** the needs-input notification for a question while locked (in progress), its lock-screen text, tap to open, Stop and sign-out ending the service, the 45 to 60 minute unplugged idle test, the token log search, TalkBack, and the fixed build on the phone. |
+| 2026-10-22 | **Lock test 2 (screen off 18:31:08 to the end of the watch at 18:46:58, about 16 min, phone charging):** the wire log did not change (no `initialize`, `reconnect` or any other method) and the service stayed foreground, so the socket survived about 16 minutes of screen-off while charging (the 30 s socket ping would normally surface a dead connection as a reconnect within a minute or two). The persistent notification's `when` shows it was rebuilt at 18:26:26, 22 s after the app came to the foreground, which fits "re-posted on the next update"; the trigger is not proven. The persistent text stayed "34 active sessions", which shows nothing either way (nothing may have changed). **No needs-input notification was posted in the whole run** (the log shows only the channel being created), but it is not known whether a question was raised during the locked period, so this neither shows the alert works nor that it fails. **Still to do on the phone:** the needs-input alert with a question raised while locked, its lock-screen text, tap to open, Stop, sign-out ending the service, the unplugged 45 to 60 minute idle test, the token log search, TalkBack, and the fixed build. |
+| 2026-10-22 | **Needs-input alert seen on the phone (AC1.6, first real result), with one defect found and fixed.** Monitoring on, screen off from 18:50:12 (charging): a question raised in a new session produced one alert at 18:56:43. The session's status flipped at 18:56:40 and the alert posted 3.005 s later, which is the debounce. The persistent notification went to "35 active sessions · 1 needs input" in the same window, so live updates reached the service while the phone was locked. The alert is on the high-importance channel with title "Needs your input". **Lock screen:** the alert carries a redacted version ("A session needs your input"), but this phone has `lock_screen_allow_private_notifications = 1`, so the lock screen showed the full text; that is the user's phone setting overriding the app, and the redacted form has not been seen on a real lock screen (it is asserted on emulators). **Defect:** the body was the session title ("color preference using tool", which VS Code derives from the first prompt), not the question (about seasons), so it did not match what had been asked. **Fix (app repo `f86c48a`, not yet on the phone):** the session list does not carry the question, so after the debounce the notifier opens the session read-only, takes the first pending request from its snapshot, and puts it in the body with the session title as sub text. That is one `subscribe` and one `unsubscribe` per alert, both read tier, so the on-device wire log will now show that pair for each alert. It gets 4 s; if it is slow, fails or finds nothing the alert still goes out with the title alone. Text is one line, at most 240 characters. 255 JVM tests (+13) and 69 instrumented tests on API 36; mutations checked: tracking the job during the read, reading before the debounce, letting a failing read propagate, and ignoring the detail in the notification each fail the test written for them. **Cosmetic:** notifications show Android's default icon because the app has no launcher icon. **Still to do on the phone:** tap to open the session, the alert clearing when answered, Stop, sign-out ending the service, the unplugged 45 to 60 minute idle test, the token log search, TalkBack, and both fixed builds (permission ordering, alert detail). |
+| 2026-10-22 | **Decision: proceed to Phase 2 with Phase 1 live checks still open ("good enough for now").** Phase 1 results since the last row: tapping the needs-input alert opened the session detail showing "Needs input" and a real pick-one question with its options (Red to Black), the first time options were seen on real data, which closes that gap in AC1.5; the alert removed itself on tap; after the question was answered in VS Code the detail went to In progress and the persistent text went from "1 needs input" to "31 active sessions". The alert's own clear-when-answered path was not exercised because the tap had already removed it. **Deferred, not done:** the full on-device read-only pass (AC1.7) re-run on the fixed builds, the token log search (AC1.8), Stop and sign-out ending the service, the unplugged idle test, TalkBack, and installing the two fixes (permission order, alert detail) on the phone. **Step 2.1 started** (app repo `de9eb8e`): the probe has a `--chat` mode that subscribes to a session's chat, decodes the snapshot, asks for older turns when offered, and applies every chat action with the library's `chatReducer`, reporting counts and action type names only and failing on any `StateActionUnknown` or a reducer that throws. `ChatTrace` is tested against the pinned library's real types (streamed text assembles through the reducer; unknown actions are named; the report holds no content); 261 JVM tests, lint at 3. **The first live run did not happen:** the device code was not approved within 14 minutes, so no chat traffic was captured and nothing is yet known about real chat envelopes. Step 2.1's verification stays open until a live run shows every real chat action decoding and reducing. |
+| 2026-10-22 | **Step 2.1 live run passed: the pinned library decodes and reduces real chat traffic.** Probe `--chat` against a live 44-turn session (this one, over the tunnel). **Snapshot:** decoded cleanly: 44 turns, 302 markdown, 531 reasoning, 27 system-notification and 1,357 tool-call parts, every tool call completed; tool-result content seen: text 1,364, terminal 522, file edit 333, embedded resource 7, subagent 1. **Live:** 67 chat actions applied in a 180 s window, all decoded and reduced with no `StateActionUnknown` and no reducer failure: `chat/reasoning` 21, `chat/toolCallDelta` 13, `chat/toolCallReady` 6, `chat/toolCallStart` 6, `chat/toolCallComplete` 5, `chat/toolCallContentChanged` 4, `chat/responsePart` 2, `chat/usage` 10 (the session channel also carried 10 `session/metaChanged`). **Wire:** only `initialize`, `listSessions`, `subscribe`, `unsubscribe` were sent (read tier). **Not seen, so not yet covered by real data:** `chat/delta`, `chat/turnStarted`/`turnComplete`, `chat/turnsLoaded`, the pending-confirmation, streaming and auth-required tool states, input-request and error response parts, image or other resource content. `olderTurnsAvailable` was false, so `fetchTurns` paging was not exercised; the whole history arrived in the snapshot. **New risk for Steps 2.2 to 2.4:** that snapshot was one 10.6 MB frame (the whole capture is 12 MB; the next largest frame is 284 KB), so on this host the initial subscribe is not bounded by turn paging. Decode time and memory on the phone for a payload this size are unmeasured and the Step 2.4 performance pass must measure them; the transcript screen should not assume that opening a long chat is cheap. The capture is local and gitignored (`captures/chat-session.jsonl`, private content); committed fixtures still need a chat-aware redactor and must be small. |
+| 2026-10-22 | **Step 2.1 done: chat fixtures and decode/replay test committed (app repo `6f75dbe`).** `tools/redact-chat.mjs` builds `chat-subscribe-result.json` (40 KB: 7 of the 44 turns, picked greedily to cover 34 structural variants such as every part kind, content type, tool outcome and terminal flag, plus the active turn) and `chat-actions.json` (30 KB: the 67 actions, all on the active turn, sequence numbers after the snapshot's). Every object is rebuilt by field name; an unknown part kind, content type or action type stops the run; `_meta` is dropped entirely (it held paths in JSON keys, branch names and quota data). Free text is masked, not copied: each run of letters becomes a placeholder word while line breaks, punctuation, short numbers, markdown and code fences stay. `tools/redaction-check.mjs` compares the output with the whole capture and aborts the write on a string equal to an original, a 16-character run shared with one, a word outside the placeholder vocabulary, the OS user name, a drive or home path, a real-looking uuid or a token; it has 12 tests. **The checker earned its place:** its first runs blocked the write three times (kind and type values not registered as passed-through labels, kept tool-input keys missing from the allowed vocabulary, and 16-character windows that cut a word in half), and a checker bug on camelCase labels turned up in its own tests. An independent scan of the final output found no denylisted names or hosts and only structural words outside the placeholder set. **The decode test found a real gap:** the whitelist had dropped `title`, which the library requires on subagent content, so all 8 tests failed on decode until it was restored; the redactor now reports fields it has never seen. `ChatFixturesTest` (8 tests): the snapshot decodes as chat state with the real part kinds; every tool-result content type decodes and round-trips; all 67 actions decode and reduce with none unknown and none failing; they build onto the active turn (6 new tool calls, 5 completed, 2 reasoning parts with streamed text); and a canary shows that dropping the tool-call starts changes the outcome, so the replay is not vacuous. **Totals:** 269 JVM tests, lint at the 3 baseline warnings, coverage gate passing; 12 Node tests (`node --test "tools/*.test.mjs"`: a bare directory fails on Node 22). **Not covered by real data** (the unit tests build these from library types): `chat/delta`, `chat/turnStarted`, `chat/turnComplete`, `chat/turnsLoaded` and so `fetchTurns` paging, streaming, awaiting-confirmation and awaiting-authorization tool calls, input-request and error parts, images beyond one embedded PNG. **Open for Step 2.4:** the 10.6 MB snapshot; these fixtures say nothing about decode time or memory for it. Next: Step 2.2, the chat store. |
+| 2026-10-22 | **Step 2.2 done: `ChatStore` and `HostSession` chat support (app repo `4878f9f`).** `ChatStore` folds chat actions with the library's `chatReducer` in server order (held until the snapshot lands, duplicates at or below the last applied sequence dropped, as `SessionStore` does). Every action is reduced at once, so none is lost, but `state` is published at most once per 50 ms: the first change shows at once, later ones coalesce, and the last is always flushed when the interval ends; a new snapshot shows at once and resets the sequence. It is driven by `delay` only, so the tests run in virtual time. `loadOlder()` does nothing without a cursor, runs one request at a time, calls `fetchTurns(chat, turnsNextCursor)`, and waits for the `chat/turnsLoaded` action the host sends back (the reply is empty) with a 15 s timeout, exposing `loadingOlder` and `olderError`; an action that beats the reply still ends the wait. `HostSession.openChat/closeChat` mirror the session pair: chats are listed in `initialize` and `reconnect`, subscribed after connecting, get snapshots and actions routed to them, and are marked gone on `SESSION_NOT_FOUND` or `NOT_FOUND`, or when a reconnect lists them as missing. Offline, `loadOlder` reports an `IOException` and keeps what is loaded. **Verification:** 22 new tests (12 `ChatStoreTest`, 10 `HostSessionChatTest`); 291 JVM tests in total; lint at the 3 baseline warnings; `state` coverage 94.2% against the 80% gate. **Mutations checked, each caught by the tests written for it:** publishing on every action (3 tests, including the 20-a-second one), no trailing flush (6), no duplicate guard (1), the turns action not ending the wait (2), chat actions not routed (4), chats left out of the reconnect channel list (3), chats not subscribed after connecting (2). A cooldown race was fixed by reasoning, not by a test: a cooldown coroutine that has already woken and waits for the lock cannot be cancelled, so each now checks it is still the current one. **Not verified against a real host:** the `chat/turnsLoaded` and `fetchTurns` wire behavior (never seen live: the capture's host sent the whole history in the snapshot, so `turnsNextCursor` was null), and decode, reduce and publish time on the 10.6 MB snapshot (Step 2.4's performance pass). Nothing in the app uses chats yet: `openChat` is called first by the Step 2.3 screen. Next: Step 2.3, the transcript screen. |
+| 2026-10-22 | **Step 2.3 built and committed in two parts (app repo `7781a2d`, `b0575dc`); not yet seen on the phone.** **Model (`core-ahp`):** `Transcript.from(ChatState)` yields the header facts and rows in reading order: the user's message, then each part, with a badge for every tool-call state (preparing, waiting for approval in VS Code, running, sign-in required, done, failed, cancelled), a notice for a stopped or failed turn, a row for a question (answered or not), and an "other" row for any part kind it does not know, so nothing is dropped. **Row keys are unique whatever the host sends**, because a keyed list crashes on a repeated key and the host is untrusted; a test feeds it reused ids. Run against the real fixture it yields one row per part (11 markdown, 7 reasoning, 12 tool, no "other"), and its keys and order hold as the 67 live actions stream in. **Navigation:** `AppController.openChat/closeChat`; a chat opens only if the open session lists it, is released with its session, and back goes chat, then session, then host. **Screen:** a reversed `LazyColumn` (newest at the bottom, so a long chat opens at its latest message cheaply, and older turns arriving at the far end never move what is on screen); a "Jump to latest" button; older turns load when the user reaches the top and by a button for anyone who cannot scroll; one-line rows for reasoning, tool calls and notices (the collapsible versions are Step 2.4). **The library:** `multiplatform-markdown-renderer-m3` 0.46.0, chosen after checking it: Apache-2.0, 1.1k stars, released 2026-10-13, not archived, parses off the composition. Its JetBrains Compose artifacts are metadata-only redirects onto the AndroidX ones (jar sizes checked), so there is one Compose runtime, and the debug APK grows 466 KB. No Coil is added, so an image link in agent text is never fetched; HTML is not rendered. **Agent text is untrusted, so links are gated:** a tap opens a dialog naming the real host; only https links to a named ASCII host without credentials are ever launched (`SafeLinks.isSafeWebLink`: look-alike Unicode hosts, `javascript:`, `intent:`, `file:`, `content:`, `data:`, credentials and 2 KB-plus links are all refused, with a test per kind). **Bugs found by the tests and by looking at screenshots, all fixed:** (1) the "user scrolled away" flag was driven by `isScrollInProgress`, which never changes for an instant scroll such as a TalkBack scroll action, so a row arriving would have pulled such a user back to the bottom; the scrolled-up test failed and exposed it, and the rule is now "the position moved while the row count did not", which tells a row arriving from the user scrolling. (2) The library maps `#` to the display text sizes (57 sp), which fills a phone screen; headings now use the title styles, with a test on the laid-out size, and links use the primary colour. (3) A dark-mode screenshot looked unreadable, but that was my preview rendering without the `Surface` that `AppRoot`'s `Scaffold` provides; re-shot properly, both themes read well. **Verification:** 312 JVM tests (21 new: 13 transcript, 5 navigation, 3 link rules); 31 new instrumented tests for the screen plus accessibility checks over every state (all rows, loading, gone, error, empty, reconnecting, and once markdown has rendered); 103 instrumented tests pass on API 26 and on API 36; lint at the 3 baseline warnings. **Mutations checked, each caught by the tests written for it:** keys not made unique, success flag inverted, live flag ignoring the running turn, chat not released with its session, no "session lists this chat" check, http accepted, credentials not refused, the stay-at-bottom effect removed (this one proves the effect is necessary: the list does not stay at the bottom by itself), always-following, an older-turns trigger that fires unprompted, a dialog that treats every link as safe, link taps that bypass the dialog, and display-size headings. Code blocks do scroll sideways (a test finds a horizontal scroll range). **Not verified, so do not read this as done:** anything on the phone or against the real host; the 10.6 MB snapshot (decode, build and render time are unmeasured, and `rememberTranscript` rebuilds on rotation, so a very long chat will flash "Loading chat…"); frame rate while streaming (AC2.2); TalkBack; text is not selectable. **Known limitation:** a user reading the middle of the single row that is actively streaming is not anchored, so its growth moves what they are reading; every other row below or above the reading position is held by key. **Open product call:** reasoning text and tool input and output are hidden until Step 2.4's collapsible blocks, which is thin for someone trying to follow what an agent did. Next: Step 2.4, collapsible blocks. |
+| 2026-10-23 | **Step 2.4 done and Step 2.5's runnable parts done (app repo `01b708b`, `7beb0a0`); nothing yet on the phone.** **Blocks:** `CollapsibleBlock` is one button (click label "Expand" or "Collapse", state description "Expanded" or "Collapsed", button role, 48 dp tall) over a body that is not composed while closed. Reasoning opens to its markdown (a blank reasoning part stays a plain line, not a button onto nothing). A tool call opens to its input fields and each result: text and terminal output in monospace that scrolls sideways, an exit badge ("exit 0", red for non-zero, "running" while unfinished), file edits as path plus "+12 −3" (spoken as "12 lines added, 3 removed"), a subagent's title, agent and description, and a label for attachments. A call waiting on the user shows its confirmation title and "Approve or deny in VS Code." **Bounded by design:** `ToolDetail.from(call)` runs only when a block is opened, never per row, because a chat can hold thousands of calls: text is cut at 8,000 characters and says how much was left out, input is at most 12 fields of 400 characters, and attachment data is never copied (one real result was 669 KB of image). Real data shapes checked first (structure only): 514 terminal results, 26 with a non-zero exit, 3 with empty output; tool results are `text`, `terminal`, `fileEdit`, `subagent`, `embeddedResource`, `resource` and unknown. **Expansion state** is `ExpansionState` held by `AppController` per chat (capped at 20), so rotating or leaving and returning keeps it; it is forgotten when the host or sign-in ends. **A real bug found by a test:** signing out never forgot it (my edit for that never landed); the new sign-out test failed and exposed it. **Other things the tests and screenshots caught:** section containers were not merged semantics nodes (terminal and subagent blocks are now one node each for a screen reader); a chevron library was not on the classpath, so the chevron is drawn (no new dependency); a new `ModifierParameter` lint warning from parameter order, fixed to keep lint at the 3 baseline warnings. **Verification:** 334 JVM tests (22 new: 19 `ToolDetailTest` incl. a concurrency test and the real fixture, 3 controller); 123 instrumented tests pass on API 26 and on API 36 (20 new: 18 for the blocks, 2 accessibility states over every open block and every closed one). Screenshots of the real-shaped chat, light and dark, open and closed, read well. **Mutations checked, each caught by the tests written for it:** state not reused, not forgotten on disconnect, not forgotten on sign-out (the bug), clipping off, surrogate-pair guard off, non-atomic toggle, attachment data copied, body always built, inverted state description, wrong toggle key, blank reasoning shown as a button. **Step 2.5, the runnable parts:** AC2.5 is pinned by a JVM test of the exact methods a chat lifecycle sends. **Performance measured offline on the real, private 10.4 MB snapshot (laptop JVM, so a floor for the phone):** decode about 400 ms cold and 90 ms warm, 41 MB of heap held by the decoded chat, `Transcript.from` for all 2,264 rows 2.5 ms warm (7.8 ms worst; the budget is 50 ms), `ChatStore.seed` 1.8 ms, and `ToolDetail.from` for all 1,357 calls at once 126 ms (a case that cannot happen: only open blocks are built). **Deviations from the spec text, to confirm:** tool text results render as plain monospace, not markdown (tool output is data and markdown would mangle it); the header uses a click label and state description on one merged node instead of a labelled chevron (one announcement instead of two); the summary says "Thought", not "Thought for a moment" (no duration exists per part); subagent blocks show name and description but not nested parts, because the real result carries a chat URI the session does not list and showing it needs a new kind of subscription. **Not done, needs you or the phone:** frame rate while streaming (AC2.2), TalkBack, rotation and QA on the real phone, the on-device `AhpWire` pass, and the PR (the push is on hold). Next: Phase 3, with the write tier off by default. |
+| 2026-10-23 | **Phase 3 built and tested on emulators (app repo `cd298b3` through `d84532a`, 14 commits); nothing live-tested, nothing on the phone.** The write tier is off by default and unreachable until the user turns on "Let this app act for me" and confirms a dialog. See "Phase 3 — as built" above for the steps, the decisions that differ from the outline, and what was not built. **Verification:** 419 JVM tests; 151 instrumented tests pass on API 26 and API 36 (28 new); lint at its 3 baseline warnings; coverage gate passes. **Mutations checked, each caught by the test written for it:** the eight-action allowlist (an extra action, a dropped one, the action-type check removed), a refused dispatch burning a sequence number, a closed socket reported as sent, a rejected echo being applied or moving the resume point, an echo from another client answering ours, the interrupt sweep, the epoch check and the no-backoff restart, consent granted before it was saved, consent not cleared at sign-out, the saved choice not read at start, the default gate answering yes, the interactor ignoring the connection's tier, the device check skipped or asked on deny, no re-check after the prompt, option kinds mixed up, queue versus new turn inverted, every form validation rule, a refused message cleared from the box, approve and deny swapped, Stop always shown, and the confirm dialog skipped. **What testing found that I would not have seen otherwise:** the test helper was overriding the controller's default gate, so the safe default was never tested; a read-only test passed because the chat had not loaded yet, not because of the tier; lint failed the build because biometric 1.1.0 pulls an old Fragment; and the first real run of the device check showed that before Android 11 the library does not support the screen lock alone. **Verified on emulators with a real PIN (API 36):** the right PIN approves, Back refuses, a wrong PIN refuses. On the API 26 emulator the prompt opens and is cancelled, so approvals fail closed on Android 8–10. **Needs you or the phone:** a human security review of the write tier (the spec's gate); a live write test on a throwaway session (does the host accept the actions, echo them with our origin, and tolerate `duration` 0 on cancel); the device check on your Pixel (fingerprint or face, rotation, TalkBack on the composer and forms); and the answers in the open-questions report. Phases 4 and 5 are not started: their gates (Phase 3 in use plus a usability review; a per-feature trigger, with `terminal/input` and changeset writes each a separate decision) are not open. |
+| 2026-10-23 | **Phase 3 live-tested on the Pixel (build `d84532a`), over a real tunnel to a real host: all six steps worked.** You signed in, connected, opened a throwaway chat, turned on "Let this app act for me", sent a message that appeared in VS Code, approved a tool call through the phone's device check (which named the tool), pressed Back on that prompt (nothing was approved), and used Stop. That settles two open questions: the host accepts `chat/turnCancelled` with `duration` 0, and the device check works on the Pixel's modern path. **`AhpWire` log from that run, read over wireless adb:** one `initialize` at 08:36:30 and, 12 seconds later, a `reconnect` (the restart under the `INTERACT` tier when consent was turned on); `subscribe` and `unsubscribe` for the chat; four `dispatchAction` lines marked `NOT-READ`, all after the restart and none before; no other method outside the read tier. `gateway.select` is the tunnel handshake, not an AHP call. The log names the method only, so it cannot say which four actions were sent. **Not yet seen live:** a host refusing an action, a dispatch that gets no echo, and the app dropping its connection mid-action. |
