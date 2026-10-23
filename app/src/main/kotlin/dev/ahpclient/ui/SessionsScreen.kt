@@ -59,6 +59,8 @@ fun SessionsScreen(
     monitorEnabled: Boolean = false,
     notificationsAllowed: Boolean = true,
     onMonitorChange: (Boolean) -> Unit = {},
+    interactionAllowed: Boolean = false,
+    onInteractionChange: (Boolean) -> Unit = {},
 ) {
     val model = remember(sessions, showArchived, now) { SessionListModel.from(SessionCatalog.sorted(sessions), showArchived, now) }
     Column(modifier = modifier.fillMaxSize()) {
@@ -80,6 +82,7 @@ fun SessionsScreen(
                 }
             }
             MonitorToggle(monitorEnabled, notificationsAllowed, onMonitorChange)
+            InteractionToggle(interactionAllowed, onInteractionChange)
         }
         if (model.rows.isEmpty()) {
             EmptyList(model, connection)

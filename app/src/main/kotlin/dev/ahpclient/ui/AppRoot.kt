@@ -11,6 +11,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -26,6 +27,7 @@ import dev.ahpclient.ui.chat.ChatActionsUi
 import dev.ahpclient.ui.chat.ChatScreen
 import dev.ahpclient.ui.chat.rememberTranscript
 import dev.ahpclient.ui.theme.AhpTheme
+import kotlinx.coroutines.launch
 
 /** Picks the screen for the current [AppState]. Holds no state of its own beyond what the controller exposes. */
 @Composable
@@ -38,6 +40,9 @@ fun AppRoot(
     onMonitorChange: (Boolean) -> Unit = {},
 ) {
     val state by controller.state.collectAsStateWithLifecycle()
+    val interactionAllowed by controller.interactionAllowed.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     var showArchived by rememberSaveable { mutableStateOf(false) }
     // Kept here, above the screen switch, so the list keeps its scroll position across a trip into a session and back.
     val listState = rememberLazyListState()
@@ -73,6 +78,10 @@ fun AppRoot(
                             monitorEnabled = monitorEnabled,
                             notificationsAllowed = notificationsAllowed,
                             onMonitorChange = onMonitorChange,
+                            interactionAllowed = interactionAllowed,
+                            onInteractionChange = { on ->
+                                scope.launch { if (!controller.setInteraction(on)) Toast.makeText(context, "Could not save the setting", Toast.LENGTH_SHORT).show() }
+                            },
                             onOpen = controller::openSession,
                             onDisconnect = controller::disconnect,
                             modifier = content,
@@ -110,7 +119,6 @@ fun AppRoot(
                             } else {
                                 null
                             }
-                            val context = LocalContext.current
                             ChatScreen(
                                 transcript = transcript,
                                 error = error,
