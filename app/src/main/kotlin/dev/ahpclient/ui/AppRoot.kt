@@ -83,6 +83,7 @@ fun AppRoot(
                             SessionDetailScreen(sessionState, error, connection, now, controller::closeSession, content, onOpenChat = controller::openChat)
                         } else {
                             val transcript by rememberTranscript(chat.store)
+                            val expanded by chat.expansion.expanded.collectAsStateWithLifecycle()
                             val error by chat.store.error.collectAsStateWithLifecycle()
                             val loadingOlder by chat.store.loadingOlder.collectAsStateWithLifecycle()
                             val olderError by chat.store.olderError.collectAsStateWithLifecycle()
@@ -96,6 +97,8 @@ fun AppRoot(
                                 onBack = controller::closeChat,
                                 onLoadOlder = chat.store::loadOlder,
                                 onOpenLink = { link -> if (!openWebLink(context, link)) Toast.makeText(context, "No app could open this link", Toast.LENGTH_SHORT).show() },
+                                expanded = expanded,
+                                onToggle = chat.expansion::toggle,
                                 modifier = content,
                             )
                         }

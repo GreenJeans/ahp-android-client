@@ -2,6 +2,7 @@ package dev.ahpclient.app
 
 import dev.ahpclient.auth.Secret
 import dev.ahpclient.state.ChatStore
+import dev.ahpclient.state.ExpansionState
 import dev.ahpclient.state.HostSession
 import dev.ahpclient.state.SessionStore
 import dev.ahpclient.tunnel.TunnelInfo
@@ -59,8 +60,8 @@ sealed interface AppState {
 
 data class OpenSession(val uri: String, val store: SessionStore, val chat: OpenChat? = null)
 
-/** The chat whose transcript is on screen; its [store] stays subscribed until the user goes back. */
-data class OpenChat(val uri: String, val store: ChatStore)
+/** The chat whose transcript is on screen; its [store] stays subscribed until the user goes back. [expansion] outlives the screen. */
+data class OpenChat(val uri: String, val store: ChatStore, val expansion: ExpansionState)
 
 /** Where a GitHub user removes an authorized app. Signing out here only forgets the token; this removes the grant itself. */
 const val GITHUB_AUTHORIZED_APPS_URL = "https://github.com/settings/applications"

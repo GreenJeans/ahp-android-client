@@ -44,7 +44,8 @@ sealed interface TranscriptItem {
     /** [live] is set while the agent is still thinking: this is the last part of the turn that is running. */
     data class Reasoning(override val key: String, val text: String, val live: Boolean) : TranscriptItem
 
-    data class Tool(override val key: String, val name: String, val summary: String?, val state: ToolState) : TranscriptItem
+    /** [source] is the host's own record of the call; the detail is built from it only when a block is opened. Null for a row made without one. */
+    data class Tool(override val key: String, val name: String, val summary: String?, val state: ToolState, val source: ToolCallState? = null) : TranscriptItem
 
     data class Notice(override val key: String, val text: String, val isError: Boolean = false) : TranscriptItem
 
@@ -100,7 +101,7 @@ data class Transcript(
             return when (part) {
                 is ResponsePartMarkdown -> TranscriptItem.Markdown(key(part.value.id), part.value.content)
                 is ResponsePartReasoning -> TranscriptItem.Reasoning(key(part.value.id), part.value.content, isLastLive)
-                is ResponsePartToolCall -> tool(part.value.toolCall).let { facts -> TranscriptItem.Tool(key(facts.id), facts.name, facts.summary, facts.state) }
+                is ResponsePartToolCall -> tool(part.value.toolCall).let { facts -> TranscriptItem.Tool(key(facts.id), facts.name, facts.summary, facts.state, part.value.toolCall) }
                 is ResponsePartSystemNotification -> TranscriptItem.Notice(key(null), plain(part.value.content).orEmpty())
                 is ResponsePartError -> TranscriptItem.Notice(key(null), part.value.error.message.ifBlank { "The agent reported an error." }, isError = true)
                 is ResponsePartInputRequest ->

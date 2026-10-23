@@ -28,6 +28,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotSame
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
@@ -641,6 +642,90 @@ class AppControllerTest {
 
             assertIs<HostList.Loaded>(list)
             assertEquals(ConnState.Stopped, created.single().connection.value)
+        }
+    }
+
+    @Test
+    fun `the blocks a user opened in a chat are still open when they leave it and come back, and each chat keeps its own`() = runTest {
+        withRig(script = { HostScript(sessionChats = "[${chatSummaryJson(CHAT_A)}, ${chatSummaryJson(CHAT_B, "Second")}]") }) {
+            connectToFirstHost()
+            controller.openSession(SESSION_C)
+            assertIs<AppState.Connected>(state).open!!.store.state.first { it != null }
+            runCurrent()
+
+            controller.openChat(CHAT_A)
+            val first = assertIs<AppState.Connected>(state).open!!.chat!!.expansion
+            assertEquals(emptySet(), first.expanded.value)
+            first.toggle("t1/tool-1")
+            controller.closeChat()
+
+            controller.openChat(CHAT_B)
+            val second = assertIs<AppState.Connected>(state).open!!.chat!!.expansion
+            assertEquals(emptySet(), second.expanded.value, "a different chat starts folded")
+            controller.closeChat()
+
+            controller.openChat(CHAT_A)
+            val again = assertIs<AppState.Connected>(state).open!!.chat!!.expansion
+            assertSame(first, again)
+            assertEquals(setOf("t1/tool-1"), again.expanded.value)
+        }
+    }
+
+    @Test
+    fun `leaving the host forgets what was open`() = runTest {
+        withRig(script = { HostScript(sessionChats = "[${chatSummaryJson(CHAT_A)}]") }) {
+            server.json(fixture("list-tunnels.json"))
+            connectToFirstHost()
+            controller.openSession(SESSION_C)
+            assertIs<AppState.Connected>(state).open!!.store.state.first { it != null }
+            runCurrent()
+            controller.openChat(CHAT_A)
+            val before = assertIs<AppState.Connected>(state).open!!.chat!!.expansion
+            before.toggle("t1/tool-1")
+
+            controller.disconnect()
+            awaitHosts()
+            controller.connect(loaded().first().tunnel)
+            val connected = assertIs<AppState.Connected>(state)
+            connected.session.connection.first { it == ConnState.Online }
+            controller.openSession(SESSION_C)
+            assertIs<AppState.Connected>(state).open!!.store.state.first { it != null }
+            runCurrent()
+            controller.openChat(CHAT_A)
+
+            val after = assertIs<AppState.Connected>(state).open!!.chat!!.expansion
+            assertNotSame(before, after)
+            assertEquals(emptySet(), after.expanded.value)
+        }
+    }
+
+    @Test
+    fun `signing out forgets what was open too`() = runTest {
+        withRig(script = { HostScript(sessionChats = "[${chatSummaryJson(CHAT_A)}]") }) {
+            connectToFirstHost()
+            controller.openSession(SESSION_C)
+            assertIs<AppState.Connected>(state).open!!.store.state.first { it != null }
+            runCurrent()
+            controller.openChat(CHAT_A)
+            val before = assertIs<AppState.Connected>(state).open!!.chat!!.expansion
+            before.toggle("t1/tool-1")
+
+            controller.signOut()
+            await { it is AppState.SignedOut }
+            vault.save(savedToken)
+            server.json(fixture("list-tunnels.json"))
+            controller.start()
+            awaitHosts()
+            controller.connect(loaded().first().tunnel)
+            assertIs<AppState.Connected>(state).session.connection.first { it == ConnState.Online }
+            controller.openSession(SESSION_C)
+            assertIs<AppState.Connected>(state).open!!.store.state.first { it != null }
+            runCurrent()
+            controller.openChat(CHAT_A)
+
+            val after = assertIs<AppState.Connected>(state).open!!.chat!!.expansion
+            assertNotSame(before, after)
+            assertEquals(emptySet(), after.expanded.value)
         }
     }
 

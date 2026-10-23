@@ -62,6 +62,8 @@ fun ChatScreen(
     onLoadOlder: () -> Unit,
     onOpenLink: (String) -> Unit,
     modifier: Modifier = Modifier,
+    expanded: Set<String> = emptySet(),
+    onToggle: (String) -> Unit = {},
 ) {
     var pendingLink by rememberSaveable { mutableStateOf<String?>(null) }
     Column(modifier = modifier.fillMaxSize()) {
@@ -78,7 +80,7 @@ fun ChatScreen(
         }
         when {
             error is ChatGoneException -> ErrorText("This chat is no longer on the host.", Modifier.padding(horizontal = 24.dp).testTag("chat_gone"))
-            transcript != null -> TranscriptList(transcript, loadingOlder, olderError, onLoadOlder, { pendingLink = it }, Modifier.weight(1f))
+            transcript != null -> TranscriptList(transcript, loadingOlder, olderError, onLoadOlder, { pendingLink = it }, expanded, onToggle, Modifier.weight(1f))
             error != null -> ErrorText("Could not load this chat (${error.javaClass.simpleName}).", Modifier.padding(horizontal = 24.dp).testTag("chat_error"))
             else -> Busy("Loading chat…", Modifier.padding(horizontal = 24.dp).testTag("chat_loading"))
         }
@@ -100,6 +102,8 @@ private fun TranscriptList(
     olderError: Throwable?,
     onLoadOlder: () -> Unit,
     onOpenLink: (String) -> Unit,
+    expanded: Set<String>,
+    onToggle: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
@@ -143,7 +147,9 @@ private fun TranscriptList(
             contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Bottom),
         ) {
-            items(newestFirst, key = { it.key }, contentType = { it::class }) { row -> TranscriptRow(row, onOpenLink) }
+            items(newestFirst, key = { it.key }, contentType = { it::class }) { row ->
+                TranscriptRow(row, onOpenLink, expanded = row.key in expanded, onToggle = { onToggle(row.key) })
+            }
             if (loadingOlder || olderError != null || transcript.hasOlder) {
                 item(key = OLDER_KEY, contentType = OLDER_KEY) { OlderRow(loadingOlder, olderError, onLoadOlder) }
             }

@@ -8,6 +8,7 @@ import dev.ahpclient.security.TokenVault
 import dev.ahpclient.security.VaultCryptoException
 import dev.ahpclient.security.VaultLoad
 import dev.ahpclient.state.ConnState
+import dev.ahpclient.state.ExpansionState
 import dev.ahpclient.state.HostSession
 import dev.ahpclient.tunnel.DevTunnelsClient
 import dev.ahpclient.tunnel.DevTunnelsException
@@ -50,6 +51,9 @@ class AppController(
     private var signInJob: Job? = null
     private var hostsJob: Job? = null
     private var watchJob: Job? = null
+
+    /** Which blocks the user opened in each chat, kept while connected so leaving a chat and coming back finds them as they were. */
+    private val expansions = LinkedHashMap<String, ExpansionState>()
 
     fun start() {
         scope.launch { restore() }
@@ -126,7 +130,7 @@ class AppController(
         val listed = open.store.state.value?.chats?.any { it.resource == uri } == true
         if (!listed) return
         val store = current.session.openChat(uri)
-        if (!_state.compareAndSet(current, current.copy(open = open.copy(chat = OpenChat(uri, store))))) current.session.closeChat(uri)
+        if (!_state.compareAndSet(current, current.copy(open = open.copy(chat = OpenChat(uri, store, expansionFor(uri)))))) current.session.closeChat(uri)
     }
 
     /** Leaves the open transcript and returns to the session detail. */
@@ -142,6 +146,7 @@ class AppController(
     fun disconnect() {
         val connected = _state.value as? AppState.Connected ?: return
         cancelWatchJob()
+        forgetExpansions()
         connected.session.stop()
         showHosts()
     }
@@ -275,6 +280,7 @@ class AppController(
         cancelSignInJob()
         cancelHostsJob()
         cancelWatchJob()
+        forgetExpansions()
         (_state.value as? AppState.Connected)?.session?.stop()
         token = null
         safeClear()
@@ -306,5 +312,22 @@ class AppController(
     private fun cancelWatchJob() {
         watchJob?.cancel()
         watchJob = null
+    }
+
+    @Synchronized
+    private fun expansionFor(chatUri: String): ExpansionState {
+        expansions[chatUri]?.let { return it }
+        // A phone user opens a handful of chats; the cap only stops a long session from growing this without bound.
+        if (expansions.size >= MAX_REMEMBERED_CHATS) expansions.remove(expansions.keys.first())
+        return ExpansionState().also { expansions[chatUri] = it }
+    }
+
+    @Synchronized
+    private fun forgetExpansions() {
+        expansions.clear()
+    }
+
+    private companion object {
+        const val MAX_REMEMBERED_CHATS = 20
     }
 }

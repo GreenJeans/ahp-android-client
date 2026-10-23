@@ -34,7 +34,9 @@ import dev.ahpclient.ui.theme.AhpTheme
 import com.microsoft.agenthostprotocol.Ahp
 import com.microsoft.agenthostprotocol.generated.SessionState
 import com.microsoft.agenthostprotocol.generated.SessionSummary
+import com.microsoft.agenthostprotocol.generated.ToolCallState
 import java.time.Instant
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Before
@@ -171,6 +173,58 @@ class AccessibilityTest {
         )
         rule.setContent { AhpTheme { ChatScreen(withMarkdown, null, false, null, ConnState.Online, {}, {}, {}) } }
         rule.waitUntil(timeoutMillis = 10_000) { rule.onAllNodesWithText("Plan").fetchSemanticsNodes().isNotEmpty() }
+
+        check()
+    }
+
+    @Test
+    fun chatScreenWithEveryBlockOpen() {
+        val common = """"toolCallId":"c1","toolName":"run_in_terminal","displayName":"Run in Terminal""""
+        val content = listOf(
+            """{"type":"text","text":"file one\nfile two"}""",
+            """{"type":"terminal","resource":"ahp-terminal:/a","title":"Build","isPty":false,"result":{"exitCode":2,"preview":"error: no such file","truncated":true}}""",
+            """{"type":"terminal","resource":"ahp-terminal:/b","title":"Server","isPty":true}""",
+            """{"type":"fileEdit","before":{"uri":"file:///work/repo/a.txt","content":{"uri":"ahp-content:/1"}},"after":{"uri":"file:///work/repo/a.txt","content":{"uri":"ahp-content:/2"}},"diff":{"added":12,"removed":3}}""",
+            """{"type":"subagent","resource":"ahp-chat:/s","title":"Explore","agentName":"explore","description":"Look around the repo"}""",
+            """{"type":"embeddedResource","contentType":"image/png","data":"AAAA"}""",
+            """{"type":"hologram","x":1}""",
+        ).joinToString(",")
+        val done = Ahp.json.decodeFromString(
+            ToolCallState.serializer(),
+            """{"status":"completed",$common,"invocationMessage":"Run it","toolInput":${JsonPrimitive("""{"command":"ls -la","timeout":30}""")},"confirmed":"not-needed","success":false,"pastTenseMessage":"Ran it","content":[$content],"error":{"message":"the build failed"}}""",
+        )
+        val waiting = Ahp.json.decodeFromString(
+            ToolCallState.serializer(),
+            """{"status":"pending-confirmation",$common,"invocationMessage":"Run it","toolInput":"{}","confirmationTitle":"Run this command?","options":[]}""",
+        )
+        val open = Transcript(
+            "Fix the build", ActivityState.NEEDS_INPUT, null, hasOlder = false,
+            items = listOf(
+                TranscriptItem.Reasoning("r1", "I compared the two build scripts.", live = false),
+                TranscriptItem.Tool("t1", "Run in Terminal", "List the files", ToolState.FAILED, done),
+                TranscriptItem.Tool("t2", "Run in Terminal", "Apply the fix", ToolState.WAITING_FOR_APPROVAL, waiting),
+            ),
+        )
+        rule.setContent { AhpTheme { ChatScreen(open, null, false, null, ConnState.Online, {}, {}, {}, expanded = setOf("r1", "t1", "t2"), onToggle = {}) } }
+        rule.waitUntil(timeoutMillis = 10_000) { rule.onAllNodesWithText("compared the two build scripts", substring = true).fetchSemanticsNodes().isNotEmpty() }
+
+        check()
+    }
+
+    @Test
+    fun chatScreenWithEveryBlockClosed() {
+        val closed = Transcript(
+            "Fix the build", ActivityState.IN_PROGRESS, null, hasOlder = false,
+            items = listOf(
+                TranscriptItem.Reasoning("r1", "I compared the two build scripts.", live = true),
+                TranscriptItem.Tool("t1", "Run in Terminal", "List the files", ToolState.DONE, Ahp.json.decodeFromString(
+                    ToolCallState.serializer(),
+                    """{"status":"completed","toolCallId":"c1","toolName":"x","displayName":"Run in Terminal","invocationMessage":"Run it","toolInput":"{}","confirmed":"not-needed","success":true,"pastTenseMessage":"Ran it"}""",
+                )),
+            ),
+        )
+        rule.setContent { AhpTheme { ChatScreen(closed, null, false, null, ConnState.Online, {}, {}, {}) } }
+        rule.waitForIdle()
 
         check()
     }

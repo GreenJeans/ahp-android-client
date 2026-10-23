@@ -12,7 +12,7 @@ Agents panel. The authoritative plan, acceptance criteria and progress log are t
 | Module | Type | Status |
 |---|---|---|
 | `core-ahp` | Pure Kotlin/JVM library: GitHub device-flow auth, Dev Tunnels REST, tunnel socket and gateway selection, AHP connection, state stores (sessions and chats, with older-turn paging), session list and detail models, the transcript model, background-monitoring logic, capability allowlist | Phase 1 complete, live-verified except where `docs/verification/phase1-readonly.md` says otherwise; Phase 2 in progress |
-| `app` | Android application (Jetpack Compose): sign-in, host list, sessions list, read-only session detail, a read-only chat transcript with markdown, opt-in background monitoring with a foreground service and needs-input notifications | Phase 1 built; transcript screen built (collapsible blocks next); debug APK |
+| `app` | Android application (Jetpack Compose): sign-in, host list, sessions list, read-only session detail, a read-only chat transcript with markdown and collapsible reasoning, tool-call and result blocks, opt-in background monitoring with a foreground service and needs-input notifications | Phase 1 built; Phase 2 transcript built; debug APK |
 
 ## Build
 
