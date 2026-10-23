@@ -85,10 +85,58 @@ class ToolDetailTest {
     }
 
     @Test
-    fun `a subagent result names the agent and what it was asked`() {
+    fun `a subagent result names the agent and what it was asked, and its own chat when that is an AHP chat address`() {
         val sub = """{"type":"subagent","resource":"ahp-chat:/s","title":"Explore","agentName":"explore","description":"Look around the repo"}"""
 
-        assertEquals(ToolResultView.Subagent("Explore", "explore", "Look around the repo"), detail(sub).results.single())
+        assertEquals(ToolResultView.Subagent("Explore", "explore", "Look around the repo", "ahp-chat:/s"), detail(sub).results.single())
+    }
+
+    @Test
+    fun `a subagent address that is not an AHP chat address is never offered`() {
+        fun uriFor(resource: String): String? {
+            val sub = """{"type":"subagent","resource":${JsonPrimitive(resource)},"title":"T","agentName":"a","description":"d"}"""
+            return assertIs<ToolResultView.Subagent>(detail(sub).results.single()).chatUri
+        }
+
+        assertEquals("ahp-chat:/ok", uriFor("ahp-chat:/ok"))
+        listOf("", "ahp-chat:/", "ahp-terminal:/t", "ahp-session:/s", "https://evil.example/x", "file:///c:/x", "AHP-CHAT:/x", " ahp-chat:/x", "ahp-chat:/" + "x".repeat(600))
+            .forEach { assertEquals(null, uriFor(it), it.take(40)) }
+    }
+
+    @Test
+    fun `Show all keeps far more than the default and still has a limit`() {
+        val text = """{"type":"text","text":"${"y".repeat(150_000)}"}"""
+        val call = completed(text, input = """{"long":"${"z".repeat(5_000)}"}""")
+
+        val short = ToolDetail.from(call)
+        val all = ToolDetail.from(call, ToolDetail.Limits.ALL)
+
+        assertTrue(short.hasMore)
+        assertEquals(8_000, assertIs<ToolResultView.Text>(short.results.single()).body.text.length)
+        assertEquals(400, short.input.single().value.text.length)
+        assertEquals(100_000, assertIs<ToolResultView.Text>(all.results.single()).body.text.length, "still bounded")
+        assertEquals(5_000, all.input.single().value.text.length, "a long input value is now whole")
+        assertTrue(all.hasMore, "the freak 150,000 is still cut, and says so")
+    }
+
+    @Test
+    fun `hasMore is false when nothing was left out, and true for each way something can be`() {
+        assertFalse(detail("""{"type":"text","text":"short"}""", input = """{"a":"b"}""").hasMore)
+        assertTrue(detail("""{"type":"text","text":"${"y".repeat(9_000)}"}""").hasMore)
+        assertTrue(detail(input = """{"long":"${"z".repeat(500)}"}""").hasMore)
+        assertTrue(detail(input = "{" + (1..20).joinToString(",") { "\"f$it\":\"v\"" } + "}").hasMore)
+        val terminal = """{"type":"terminal","resource":"ahp-terminal:/t","title":"T","result":{"exitCode":0,"preview":"${"o".repeat(9_000)}"}}"""
+        assertTrue(detail(terminal).hasMore)
+    }
+
+    @Test
+    fun `Show all shows every field when there are many`() {
+        val many = (1..40).joinToString(",") { "\"f$it\":\"v\"" }
+
+        val all = ToolDetail.from(completed(input = "{$many}"), ToolDetail.Limits.ALL)
+
+        assertEquals(40, all.input.size)
+        assertEquals(0, all.moreInput)
     }
 
     @Test

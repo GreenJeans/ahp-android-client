@@ -12,8 +12,8 @@ internal const val CHAT_B = "ahp-chat:/00000000-0000-4000-8000-000000000c02"
 internal fun chatSummaryJson(uri: String, title: String = "Main chat") =
     """{"resource":"$uri","title":"$title","status":8,"modifiedAt":"2026-10-22T10:00:00.000Z"}"""
 
-internal fun turnJson(id: String, text: String = "question $id") =
-    """{"id":"$id","message":{"text":"$text","origin":{"kind":"user"}},"responseParts":[],"startedAt":"2026-10-22T10:00:00.000Z","state":"complete"}"""
+internal fun turnJson(id: String, text: String = "question $id", parts: String = "") =
+    """{"id":"$id","message":{"text":"$text","origin":{"kind":"user"}},"responseParts":[$parts],"startedAt":"2026-10-22T10:00:00.000Z","state":"complete"}"""
 
 internal fun chatStateJson(uri: String, turns: List<String> = emptyList(), cursor: String? = null, activeTurn: String? = null) =
     """{"resource":"$uri","title":"Chat","status":1,"modifiedAt":"2026-10-22T10:00:00.000Z","turns":[${turns.joinToString(",")}]${cursor?.let { ""","turnsNextCursor":"$it"""" }.orEmpty()}${activeTurn?.let { ""","activeTurn":$it""" }.orEmpty()}}"""

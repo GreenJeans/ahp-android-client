@@ -1,5 +1,12 @@
 package dev.ahpclient.state
 
+import com.microsoft.agenthostprotocol.generated.ChatInputAnswerDraft
+import com.microsoft.agenthostprotocol.generated.ChatInputAnswerValue
+import com.microsoft.agenthostprotocol.generated.ChatInputAnswerValueBoolean
+import com.microsoft.agenthostprotocol.generated.ChatInputAnswerValueNumber
+import com.microsoft.agenthostprotocol.generated.ChatInputAnswerValueSelected
+import com.microsoft.agenthostprotocol.generated.ChatInputAnswerValueSelectedMany
+import com.microsoft.agenthostprotocol.generated.ChatInputAnswerValueText
 import com.microsoft.agenthostprotocol.generated.ChatInputOption
 import com.microsoft.agenthostprotocol.generated.ChatInputQuestionBoolean
 import com.microsoft.agenthostprotocol.generated.ChatInputQuestionMultiSelect
@@ -51,13 +58,43 @@ sealed interface FormCheck {
  * app can ask: a request with a question of an unknown kind is left to be answered where it can be, rather than sent half
  * filled in.
  */
-data class InputForm(val requestId: String, val message: String?, val questions: List<FormQuestion>) {
-    /** The value a question starts with: the host's own default if it gave one. */
-    fun initial(question: FormQuestion): FormValue = when (question.kind) {
+data class InputForm(
+    val requestId: String,
+    val message: String?,
+    val questions: List<FormQuestion>,
+    /** What the host already holds as in-progress answers (typed in VS Code, say). They are only the starting values: a form being filled in is never overwritten. */
+    val drafts: Map<String, FormValue> = emptyMap(),
+) {
+    /** The value a question starts with: the host's draft if there is one, else its own default. */
+    fun initial(question: FormQuestion): FormValue = drafts[question.id] ?: when (question.kind) {
         QuestionKind.TEXT, QuestionKind.NUMBER -> FormValue.Text(question.defaultText.orEmpty())
         QuestionKind.BOOLEAN -> FormValue.Bool(question.defaultBool ?: false)
         QuestionKind.SINGLE -> FormValue.Choice(null)
         QuestionKind.MULTI -> FormValue.Choices(emptySet())
+    }
+
+    /**
+     * The in-progress answer to send for one question, or null to clear it. Looser than [check]: a draft is a work in
+     * progress, so bounds and required-ness are not enforced; only a value that means something is sent.
+     */
+    fun draftFor(question: FormQuestion, value: FormValue): AnswerValue? = when (question.kind) {
+        QuestionKind.TEXT -> (value as? FormValue.Text)?.text?.takeIf { it.isNotBlank() }?.let { AnswerValue.Text(it) }
+        QuestionKind.NUMBER -> (value as? FormValue.Text)?.text?.trim()?.toDoubleOrNull()?.takeIf { it.isFinite() }?.let { AnswerValue.Number(it) }
+        QuestionKind.BOOLEAN -> (value as? FormValue.Bool)?.let { AnswerValue.Bool(it.value) }
+        QuestionKind.SINGLE -> (value as? FormValue.Choice)?.let { choice ->
+            val picked = choice.optionId?.takeIf { id -> question.options.any { it.id == id } }
+            val typed = choice.freeform.takeIf { question.allowFreeform && it.isNotBlank() }
+            when {
+                picked != null -> AnswerValue.Selected(picked, listOfNotNull(typed))
+                typed != null -> AnswerValue.Selected(typed)
+                else -> null
+            }
+        }
+        QuestionKind.MULTI -> (value as? FormValue.Choices)?.let { choices ->
+            val picked = question.options.map { it.id }.filter { it in choices.optionIds }
+            val typed = choices.freeform.takeIf { question.allowFreeform && it.isNotBlank() }
+            if (picked.isEmpty() && typed == null) null else AnswerValue.SelectedMany(picked, listOfNotNull(typed))
+        }
     }
 
     /** Turns what was entered into the answers to send, or says in words what is wrong with each question that is not ready. */
@@ -133,7 +170,31 @@ data class InputForm(val requestId: String, val message: String?, val questions:
         /** Null when there are no questions, or any is of a kind this app does not know. */
         fun from(request: ChatInputRequest): InputForm? {
             val questions = request.questions.orEmpty().ifEmpty { return null }.map { question(it) ?: return null }
-            return InputForm(request.id, request.message?.takeIf { it.isNotBlank() }, questions)
+            return InputForm(request.id, request.message?.takeIf { it.isNotBlank() }, questions, draftsOf(request, questions))
+        }
+
+        /** What the host holds as in-progress answers, kept only where it fits the question it belongs to. */
+        private fun draftsOf(request: ChatInputRequest, questions: List<FormQuestion>): Map<String, FormValue> {
+            val held = request.answers ?: return emptyMap()
+            val drafts = LinkedHashMap<String, FormValue>()
+            for (question in questions) {
+                val value = (held[question.id] as? ChatInputAnswerDraft)?.value?.value ?: continue
+                formValueOf(question, value)?.let { drafts[question.id] = it }
+            }
+            return drafts
+        }
+
+        private fun formValueOf(question: FormQuestion, value: ChatInputAnswerValue): FormValue? = when (question.kind) {
+            QuestionKind.TEXT -> (value as? ChatInputAnswerValueText)?.value?.value?.let { FormValue.Text(it) }
+            QuestionKind.NUMBER -> (value as? ChatInputAnswerValueNumber)?.value?.value?.let { FormValue.Text(formatNumber(it)) }
+            QuestionKind.BOOLEAN -> (value as? ChatInputAnswerValueBoolean)?.value?.value?.let { FormValue.Bool(it) }
+            QuestionKind.SINGLE -> (value as? ChatInputAnswerValueSelected)?.value?.let { selected ->
+                val known = question.options.any { it.id == selected.value }
+                FormValue.Choice(selected.value.takeIf { known }, if (known) selected.freeformValues.orEmpty().firstOrNull().orEmpty() else selected.value)
+            }
+            QuestionKind.MULTI -> (value as? ChatInputAnswerValueSelectedMany)?.value?.let { many ->
+                FormValue.Choices(many.value.filter { id -> question.options.any { it.id == id } }.toSet(), many.freeformValues.orEmpty().firstOrNull().orEmpty())
+            }
         }
 
         private fun question(q: com.microsoft.agenthostprotocol.generated.ChatInputQuestion): FormQuestion? = when (q) {

@@ -138,10 +138,100 @@ class ChatInteractorTest {
             assertEquals(InteractResult.NotAllowed, rig.interactor.dismissInput("r"))
             assertEquals(InteractResult.NotAllowed, rig.interactor.approve("c1"))
             assertEquals(InteractResult.NotAllowed, rig.interactor.deny("c1"))
+            assertEquals(InteractResult.NotAllowed, rig.interactor.steer("x"))
+            assertEquals(InteractResult.NotAllowed, rig.interactor.saveDraft("r", "q", AnswerValue.Text("x")))
+            assertEquals(InteractResult.NotAllowed, rig.interactor.approveResult("c1"))
+            assertEquals(InteractResult.NotAllowed, rig.interactor.denyResult("c1"))
             assertTrue(rig.sent.isEmpty())
             assertTrue(rig.prompts.isEmpty(), "no device check for something that cannot be sent")
         }
     }
+
+    private fun resultCall(id: String = "c1") =
+        """{"kind":"toolCall","toolCall":{"status":"pending-result-confirmation","toolCallId":"$id","toolName":"run_in_terminal","displayName":"Run in Terminal",
+            "invocationMessage":"Run it","toolInput":"{}","pastTenseMessage":"Ran it","confirmed":"not-needed","success":true,"intention":"Run the tests"}}"""
+
+    private fun question(id: String = "req-1", response: String? = null) =
+        """{"kind":"inputRequest","request":{"id":"$id","message":"Which?","questions":[{"kind":"text","id":"a","title":"A","message":"A"}]}${response?.let { ""","response":"$it"""" }.orEmpty()}}"""
+
+    @Test
+    fun `a steering message needs a running turn and is sent as steering`() = runTest {
+        val working = rig(chat(active = activeTurn()))
+        val idle = rig()
+
+        assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), working.interactor.steer("go left"))
+        assertEquals(InteractResult.NoActiveTurn, idle.interactor.steer("go left"))
+        assertEquals(InteractResult.Blank, working.interactor.steer("  "))
+
+        assertEquals(listOf("chat/pendingMessageSet"), working.types())
+        assertEquals("steering", working.wire()["kind"]!!.jsonPrimitive.content)
+        assertTrue(idle.sent.isEmpty())
+    }
+
+    @Test
+    fun `a draft is sent for a question that is waiting, with no device check, and not for one that is not`() = runTest {
+        val rig = rig(chat(active = activeTurn(question("req-1") + "," + question("req-2", response = "accept"))))
+
+        assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), rig.interactor.saveDraft("req-1", "a", AnswerValue.Text("hel")))
+        assertEquals(InteractResult.NoSuchRequest, rig.interactor.saveDraft("req-2", "a", AnswerValue.Text("x")), "already answered")
+        assertEquals(InteractResult.NoSuchRequest, rig.interactor.saveDraft("nope", "a", AnswerValue.Text("x")))
+        assertEquals(InteractResult.NoSuchRequest, rig(chat()).interactor.saveDraft("req-1", "a", null), "no running turn")
+
+        assertEquals(listOf("chat/inputAnswerChanged"), rig.types())
+        assertEquals("req-1", rig.wire()["requestId"]!!.jsonPrimitive.content)
+        assertTrue(rig.prompts.isEmpty())
+    }
+
+    @Test
+    fun `approving a result asks the device first, says it is about a result, and sends the verdict`() = runTest {
+        val rig = rig(chat(active = activeTurn(resultCall())))
+
+        val result = rig.interactor.approveResult("c1")
+
+        assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), result)
+        assertEquals(listOf("gate", "dispatch"), rig.order)
+        assertEquals(ApprovalRequest("Run in Terminal", "Run the tests", forResult = true), rig.prompts.single())
+        assertEquals(listOf("chat/toolCallResultConfirmed"), rig.types())
+        assertEquals("true", rig.wire()["approved"]!!.jsonPrimitive.content)
+        assertEquals("t2", rig.wire()["turnId"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `a result approval that the device refuses, or for a call not waiting on its result, sends nothing`() = runTest {
+        val refused = rig(chat(active = activeTurn(resultCall()))).apply { gateAnswer = false }
+        val notResult = rig(chat(active = activeTurn(pendingCall())))
+
+        assertEquals(InteractResult.NotConfirmed, refused.interactor.approveResult("c1"))
+        assertEquals(InteractResult.NoSuchRequest, notResult.interactor.approveResult("c1"), "a call waiting for approval is not a result")
+        assertEquals(InteractResult.NoSuchRequest, notResult.interactor.denyResult("c1"))
+
+        assertTrue(refused.sent.isEmpty())
+        assertTrue(notResult.sent.isEmpty())
+        assertTrue(notResult.prompts.isEmpty())
+    }
+
+    @Test
+    fun `denying a result needs no device check`() = runTest {
+        val rig = rig(chat(active = activeTurn(resultCall()))).apply { gateAnswer = false }
+
+        assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), rig.interactor.denyResult("c1"))
+
+        assertTrue(rig.prompts.isEmpty())
+        assertEquals("false", rig.wire()["approved"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `a call waiting on its result is offered plain approve and deny, marked as a result`() {
+        val waiting = PendingApproval.waitingFor(
+            (activeResult().activeTurn!!.responseParts.single() as com.microsoft.agenthostprotocol.generated.ResponsePartToolCall).value.toolCall,
+        )!!
+
+        assertTrue(waiting.forResult)
+        assertEquals("c1", waiting.toolCallId)
+        assertEquals(listOf("Approve", "Deny"), waiting.choices.map { it.label })
+    }
+
+    private fun activeResult(): ChatState = chat(active = activeTurn(resultCall()))
 
     @Test
     fun `a chat that does not say how interactive it is counts as full`() = runTest {

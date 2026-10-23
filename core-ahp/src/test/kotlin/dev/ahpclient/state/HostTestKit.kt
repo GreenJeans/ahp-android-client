@@ -69,6 +69,8 @@ internal class HostScript(
     val onDispatch: (params: JsonObject) -> String? = { null },
     /** The running turn a subscribed chat reports, as JSON; null for an idle chat. */
     val chatActiveTurn: String? = null,
+    /** The finished turns a subscribed chat reports, as JSON objects. */
+    val chatTurns: List<String> = emptyList(),
 ) {
     fun reply(method: String, id: Long?, params: JsonObject): String? = when (method) {
         "initialize" -> initializeReply(id, params)
@@ -92,7 +94,7 @@ internal class HostScript(
 
     private fun subscribeReply(id: Long?, channel: String): String = when {
         channel.startsWith("ahp-chat:/") ->
-            if (channel in missingSessions) error(id, -32008, "no such chat") else result(id, """{"snapshot":${chatSnapshotJson(channel, SNAPSHOT_SEQ, cursor = chatCursor, activeTurn = chatActiveTurn)}}""")
+            if (channel in missingSessions) error(id, -32008, "no such chat") else result(id, """{"snapshot":${chatSnapshotJson(channel, SNAPSHOT_SEQ, turns = chatTurns, cursor = chatCursor, activeTurn = chatActiveTurn)}}""")
         channel in missingSessions -> error(id, -32001, "no such session")
         else -> result(id, """{"snapshot":${sessionSnapshot(channel, SNAPSHOT_SEQ, inputNeeded = inputNeeded, chats = sessionChats)}}""")
     }

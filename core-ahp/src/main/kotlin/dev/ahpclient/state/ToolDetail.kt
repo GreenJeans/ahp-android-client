@@ -48,8 +48,8 @@ sealed interface ToolResultView {
 
     data class FileEdit(val path: String, val added: Long?, val removed: Long?) : ToolResultView
 
-    /** A subagent's own parts are not part of this result: they live in a chat of their own, which this app does not open yet. */
-    data class Subagent(val title: String, val agentName: String, val description: String) : ToolResultView
+    /** The id of the subagent's own chat, set only when it is an AHP chat address: the transcript of what the subagent did lives there. */
+    data class Subagent(val title: String, val agentName: String, val description: String, val chatUri: String? = null) : ToolResultView
 
     /** An embedded or referenced resource. Its data is never decoded or copied: one real result was 669 KB of image. */
     data class Attachment(val label: String) : ToolResultView
@@ -73,30 +73,53 @@ data class ToolDetail(
 ) {
     val isEmpty: Boolean get() = waitingFor == null && input.isEmpty() && results.isEmpty() && error == null
 
+    /** True when something was left out for length, so the block can offer to show more. */
+    val hasMore: Boolean
+        get() = moreInput > 0 || input.any { it.value.isClipped } || results.any {
+            when (it) {
+                is ToolResultView.Text -> it.body.isClipped
+                is ToolResultView.Terminal -> it.output?.isClipped == true
+                else -> false
+            }
+        }
+
+    /** How much of a long text, a long value and a long list of fields is kept. [ALL] is the "Show all" setting and is still bounded. */
+    data class Limits(val text: Int, val inputFields: Int, val inputValue: Int) {
+        companion object {
+            val DEFAULT = Limits(text = 8_000, inputFields = 12, inputValue = 400)
+
+            /** Every real result seen was far under this; it only stops a freak one (a 669 KB image's data is never decoded at all) from freezing the screen. */
+            val ALL = Limits(text = 100_000, inputFields = 200, inputValue = 100_000)
+        }
+    }
+
     companion object {
         const val APPROVE_ELSEWHERE = "Approve or deny in VS Code."
         const val MAX_TEXT = 8_000
         const val MAX_INPUT_FIELDS = 12
         const val MAX_INPUT_VALUE = 400
         private const val MAX_NAME = 60
+        private const val CHAT_SCHEME = "ahp-chat:/"
+        private const val MAX_CHAT_URI = 512
 
-        fun from(call: ToolCallState): ToolDetail = when (call) {
+        fun from(call: ToolCallState, limits: Limits = Limits.DEFAULT): ToolDetail = when (call) {
             is ToolCallStateStreaming -> call.value.partialInput?.takeIf { it.isNotBlank() }
-                ?.let { build(input = rawInput(it)) } ?: build()
-            is ToolCallStatePendingConfirmation -> call.value.let { build(waitingFor = plain(it.confirmationTitle) ?: "Waiting for approval.", toolInput = it.toolInput) }
+                ?.let { build(limits, input = rawInput(it, limits)) } ?: build(limits)
+            is ToolCallStatePendingConfirmation -> call.value.let { build(limits, waitingFor = plain(it.confirmationTitle) ?: "Waiting for approval.", toolInput = it.toolInput) }
             is ToolCallStatePendingResultConfirmation -> call.value.let {
-                build(waitingFor = "Waiting for approval of the result.", toolInput = it.toolInput, content = it.content, error = it.error)
+                build(limits, waitingFor = "Waiting for approval of the result.", toolInput = it.toolInput, content = it.content, error = it.error)
             }
-            is ToolCallStateRunning -> call.value.let { build(toolInput = it.toolInput, content = it.content) }
-            is ToolCallStateAuthRequired -> call.value.let { build(waitingFor = "Sign-in required in VS Code.", toolInput = it.toolInput, content = it.content) }
-            is ToolCallStateCompleted -> call.value.let { build(toolInput = it.toolInput, content = it.content, error = it.error) }
+            is ToolCallStateRunning -> call.value.let { build(limits, toolInput = it.toolInput, content = it.content) }
+            is ToolCallStateAuthRequired -> call.value.let { build(limits, waitingFor = "Sign-in required in VS Code.", toolInput = it.toolInput, content = it.content) }
+            is ToolCallStateCompleted -> call.value.let { build(limits, toolInput = it.toolInput, content = it.content, error = it.error) }
             is ToolCallStateCancelled -> call.value.let {
-                build(toolInput = it.toolInput, cancelled = plain(it.reasonMessage) ?: reasonText(it.reason))
+                build(limits, toolInput = it.toolInput, cancelled = plain(it.reasonMessage) ?: reasonText(it.reason))
             }
-            else -> build()
+            else -> build(limits)
         }
 
         private fun build(
+            limits: Limits,
             waitingFor: String? = null,
             toolInput: ToolInput? = null,
             input: Pair<List<InputLine>, Int>? = null,
@@ -104,39 +127,39 @@ data class ToolDetail(
             error: JsonElement? = null,
             cancelled: String? = null,
         ): ToolDetail {
-            val (lines, more) = input ?: toolInput?.let(::inputOf) ?: (emptyList<InputLine>() to 0)
-            return ToolDetail(waitingFor, lines, more, content.orEmpty().map(::resultOf), cancelled ?: errorText(error))
+            val (lines, more) = input ?: toolInput?.let { inputOf(it, limits) } ?: (emptyList<InputLine>() to 0)
+            return ToolDetail(waitingFor, lines, more, content.orEmpty().map { resultOf(it, limits) }, cancelled ?: errorText(error, limits))
         }
 
-        private fun inputOf(input: ToolInput): Pair<List<InputLine>, Int> = when (input) {
-            is ToolInput.Inline -> rawInput(input.value)
+        private fun inputOf(input: ToolInput, limits: Limits): Pair<List<InputLine>, Int> = when (input) {
+            is ToolInput.Inline -> rawInput(input.value, limits)
             is ToolInput.ContentReference -> listOf(InputLine("input", Clipped("Stored separately on the host.", 29))) to 0
             else -> emptyList<InputLine>() to 0
         }
 
         /** A JSON object becomes one line per field; anything else is shown as it came. */
-        private fun rawInput(text: String): Pair<List<InputLine>, Int> {
+        private fun rawInput(text: String, limits: Limits): Pair<List<InputLine>, Int> {
             if (text.isBlank()) return emptyList<InputLine>() to 0
             val parsed = try {
                 Json.parseToJsonElement(text)
             } catch (_: Exception) {
                 null
             }
-            val fields = (parsed as? JsonObject) ?: return listOf(InputLine("input", Clipped.of(text, MAX_INPUT_VALUE))) to 0
-            val lines = fields.entries.take(MAX_INPUT_FIELDS).map { (name, value) ->
-                InputLine(Clipped.of(name, MAX_NAME).text, Clipped.of(shown(value), MAX_INPUT_VALUE))
+            val fields = (parsed as? JsonObject) ?: return listOf(InputLine("input", Clipped.of(text, limits.inputValue))) to 0
+            val lines = fields.entries.take(limits.inputFields).map { (name, value) ->
+                InputLine(Clipped.of(name, MAX_NAME).text, Clipped.of(shown(value), limits.inputValue))
             }
             return lines to (fields.size - lines.size).coerceAtLeast(0)
         }
 
         private fun shown(value: JsonElement): String = (value as? JsonPrimitive)?.let { it.contentOrNull ?: "null" } ?: value.toString()
 
-        private fun resultOf(content: ToolResultContent): ToolResultView = when (content) {
-            is ToolResultContent.Text -> ToolResultView.Text(Clipped.of(content.value.text, MAX_TEXT))
+        private fun resultOf(content: ToolResultContent, limits: Limits): ToolResultView = when (content) {
+            is ToolResultContent.Text -> ToolResultView.Text(Clipped.of(content.value.text, limits.text))
             is ToolResultContent.Terminal -> content.value.let { terminal ->
                 ToolResultView.Terminal(
                     title = terminal.title.ifBlank { "Terminal" },
-                    output = terminal.result?.preview?.takeIf { it.isNotEmpty() }?.let { Clipped.of(it, MAX_TEXT) },
+                    output = terminal.result?.preview?.takeIf { it.isNotEmpty() }?.let { Clipped.of(it, limits.text) },
                     exitCode = terminal.result?.exitCode,
                     clippedByHost = terminal.result?.truncated == true,
                 )
@@ -148,17 +171,22 @@ data class ToolDetail(
                     removed = edit.diff?.removed,
                 )
             }
-            is ToolResultContent.Subagent -> content.value.let { ToolResultView.Subagent(it.title.orEmpty().ifBlank { "Subagent" }, it.agentName.orEmpty(), it.description.orEmpty()) }
+            is ToolResultContent.Subagent -> content.value.let {
+                ToolResultView.Subagent(it.title.orEmpty().ifBlank { "Subagent" }, it.agentName.orEmpty(), it.description.orEmpty(), chatUriOf(it.resource))
+            }
             is ToolResultContent.EmbeddedResource -> ToolResultView.Attachment("Attachment: ${content.value.contentType}")
             is ToolResultContent.Resource -> ToolResultView.Attachment("Attachment: ${content.value.contentType ?: "unknown type"}")
             else -> ToolResultView.Unknown
         }
 
+        /** Only an AHP chat address is ever opened from a result: anything else the host puts there is not a transcript. */
+        private fun chatUriOf(resource: String?): String? = resource?.takeIf { it.length <= MAX_CHAT_URI && it.startsWith(CHAT_SCHEME) && it.length > CHAT_SCHEME.length }
+
         /** The host's error is an object with a message; whatever it is, only a bounded piece of it is shown. */
-        private fun errorText(error: JsonElement?): String? {
+        private fun errorText(error: JsonElement?, limits: Limits): String? {
             if (error == null || error is kotlinx.serialization.json.JsonNull) return null
             val message = (error as? JsonObject)?.get("message")?.let { (it as? JsonPrimitive)?.contentOrNull }
-            return Clipped.of(message ?: shown(error), MAX_INPUT_VALUE).text
+            return Clipped.of(message ?: shown(error), limits.inputValue).text
         }
 
         private fun reasonText(reason: ToolCallCancellationReason): String = when (reason) {

@@ -5,6 +5,7 @@ import dev.ahpclient.ahp.CapabilityPolicy
 import dev.ahpclient.ahp.FakeSocket
 import com.microsoft.agenthostprotocol.Ahp
 import com.microsoft.agenthostprotocol.generated.StateAction
+import com.microsoft.agenthostprotocol.generated.StateActionChatInputAnswerChanged
 import com.microsoft.agenthostprotocol.generated.StateActionChatInputCompleted
 import com.microsoft.agenthostprotocol.generated.StateActionChatPendingMessageRemoved
 import com.microsoft.agenthostprotocol.generated.StateActionChatPendingMessageSet
@@ -170,6 +171,41 @@ class ChatActionsTest {
     }
 
     @Test
+    fun `a steering message is a pending message of the steering kind`() {
+        val action = ChatActions.steerTurn("s-1", "go left")
+
+        assertIs<StateActionChatPendingMessageSet>(action)
+        val json = wire(action)
+        assertEquals("steering", json.str("kind"))
+        assertEquals("s-1", json.str("id"))
+        assertEquals("go left", json.getValue("message").jsonObject.str("text"))
+        assertEquals("user", json.getValue("message").jsonObject.getValue("origin").jsonObject.str("kind"))
+    }
+
+    @Test
+    fun `a draft answer is marked as a draft, in the shape of its kind, and no answer clears it`() {
+        val text = wire(ChatActions.draftAnswer("r", "q", AnswerValue.Text("hel")))
+        val picks = wire(ChatActions.draftAnswer("r", "q", AnswerValue.SelectedMany(listOf("a"), listOf("x"))))
+        val cleared = wire(ChatActions.draftAnswer("r", "q", null))
+
+        assertEquals("chat/inputAnswerChanged", text.str("type"))
+        assertEquals("r", text.str("requestId"))
+        assertEquals("q", text.str("questionId"))
+        assertEquals("draft", text.getValue("answer").jsonObject.str("state"))
+        assertEquals("hel", text.getValue("answer").jsonObject.getValue("value").jsonObject.str("value"))
+        assertEquals("selected-many", picks.getValue("answer").jsonObject.getValue("value").jsonObject.str("kind"))
+        assertNull(cleared["answer"])
+        assertIs<StateActionChatInputAnswerChanged>(ChatActions.draftAnswer("r", "q", null))
+    }
+
+    @Test
+    fun `a draft sent as a submitted answer is not what the builder makes`() {
+        val answers = wire(ChatActions.completeInput("r", InputResponse.ACCEPT, mapOf("q" to AnswerValue.Text("x")))).getValue("answers").jsonObject
+
+        assertEquals("submitted", answers.getValue("q").jsonObject.str("state"))
+    }
+
+    @Test
     fun `user text is carried as one string whatever it contains`() {
         val nasty = "\"}],\"type\":\"session/titleChanged\" \\ \n\t \uD83D\uDE00 {\"origin\":{\"kind\":\"agent\"}}"
 
@@ -191,6 +227,8 @@ class ChatActionsTest {
             ChatActions.approveTool("t", "c"),
             ChatActions.denyTool("t", "c"),
             ChatActions.confirmToolResult("t", "c", true),
+            ChatActions.steerTurn("s", "x"),
+            ChatActions.draftAnswer("r", "q", AnswerValue.Text("x")),
         )
         val interact = AhpConnection(FakeSocket(), backgroundScope, CapabilityPolicy.INTERACT, clientId = "c")
         val readOnly = AhpConnection(FakeSocket(), backgroundScope, CapabilityPolicy.READ, clientId = "c")

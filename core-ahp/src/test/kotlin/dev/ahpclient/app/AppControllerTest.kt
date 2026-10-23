@@ -23,6 +23,7 @@ import dev.ahpclient.state.HostSession
 import dev.ahpclient.state.ScriptedConnector
 import dev.ahpclient.state.SESSION_C
 import dev.ahpclient.state.chatSummaryJson
+import dev.ahpclient.state.turnJson
 import dev.ahpclient.state.fixture
 import dev.ahpclient.tunnel.DevTunnelsClient
 import dev.ahpclient.tunnel.DevTunnelsException
@@ -982,6 +983,93 @@ class AppControllerTest {
             assertEquals(1, connectors.single().sockets.size, "nothing reconnected")
         }
     }
+
+    @Test
+    fun `a subagent's transcript opens on top of its parent, and back returns to the parent first`() = runTest {
+        withRig(script = { subagentScript() }) {
+            connectToFirstHost()
+            controller.openSession(SESSION_C)
+            assertIs<AppState.Connected>(state).open!!.store.state.first { it != null }
+            runCurrent()
+            controller.openChat(CHAT_A)
+            assertIs<AppState.Connected>(state).open!!.chat!!.store.state.first { it != null }
+
+            controller.openSubagentChat(CHAT_B)
+            runCurrent()
+
+            val child = assertIs<AppState.Connected>(state).open!!.chat!!
+            assertEquals(CHAT_B, child.uri)
+            assertEquals(CHAT_A, child.parent!!.uri)
+            controller.closeChat()
+            runCurrent()
+            assertEquals(CHAT_A, assertIs<AppState.Connected>(state).open!!.chat!!.uri, "back goes to the chat it was opened from")
+            assertEquals(listOf(CHAT_B), unsubscribed(), "only the subagent's chat was dropped")
+            controller.closeChat()
+            runCurrent()
+            assertNull(assertIs<AppState.Connected>(state).open!!.chat)
+            assertEquals(listOf(CHAT_B, CHAT_A), unsubscribed())
+        }
+    }
+
+    @Test
+    fun `an address no subagent result names, a chat already open above, and a non chat address are never opened`() = runTest {
+        withRig(script = { subagentScript() }) {
+            connectToFirstHost()
+            controller.openSession(SESSION_C)
+            assertIs<AppState.Connected>(state).open!!.store.state.first { it != null }
+            runCurrent()
+            controller.openChat(CHAT_A)
+            assertIs<AppState.Connected>(state).open!!.chat!!.store.state.first { it != null }
+
+            listOf("ahp-chat:/00000000-0000-4000-8000-0000000000ff", "ahp-terminal:/t", "https://evil.example/x", "", CHAT_A).forEach {
+                controller.openSubagentChat(it)
+                assertEquals(CHAT_A, assertIs<AppState.Connected>(state).open!!.chat!!.uri, it)
+            }
+
+            controller.openSubagentChat(CHAT_B)
+            runCurrent()
+            assertEquals(CHAT_B, assertIs<AppState.Connected>(state).open!!.chat!!.uri)
+            controller.openSubagentChat(CHAT_B)
+            assertEquals(CHAT_B, assertIs<AppState.Connected>(state).open!!.chat!!.uri)
+            assertEquals(CHAT_A, assertIs<AppState.Connected>(state).open!!.chat!!.parent!!.uri, "no loop")
+        }
+    }
+
+    @Test
+    fun `without an open chat there is nothing to open a subagent from, and leaving the session drops the whole stack`() = runTest {
+        withRig(script = { subagentScript() }) {
+            connectToFirstHost()
+            controller.openSubagentChat(CHAT_B)
+            assertNull(assertIs<AppState.Connected>(state).open)
+
+            controller.openSession(SESSION_C)
+            assertIs<AppState.Connected>(state).open!!.store.state.first { it != null }
+            runCurrent()
+            controller.openSubagentChat(CHAT_B)
+            assertNull(assertIs<AppState.Connected>(state).open!!.chat, "no chat is open yet")
+
+            controller.openChat(CHAT_A)
+            assertIs<AppState.Connected>(state).open!!.chat!!.store.state.first { it != null }
+            controller.openSubagentChat(CHAT_B)
+            runCurrent()
+            controller.closeSession()
+            runCurrent()
+
+            assertEquals(setOf(CHAT_A, CHAT_B, SESSION_C), unsubscribed().toSet(), "every subscription of the stack is dropped")
+        }
+    }
+
+    private fun subagentScript() = HostScript(
+        sessionChats = "[${chatSummaryJson(CHAT_A)}]",
+        chatTurns = listOf(
+            turnJson(
+                "t1",
+                parts = """{"kind":"toolCall","toolCall":{"status":"completed","toolCallId":"c1","toolName":"runSubagent","displayName":"Subagent",
+                    "invocationMessage":"Go","toolInput":"{}","confirmed":"not-needed","success":true,"pastTenseMessage":"Done",
+                    "content":[{"type":"subagent","resource":"$CHAT_B","title":"Explore","agentName":"explore","description":"Look"}]}}""",
+            ),
+        ),
+    )
 
     @Test
     fun `a saved yes is read before the first connection, which is then made under the interact tier`() = runTest {

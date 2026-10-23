@@ -12,6 +12,7 @@ import dev.ahpclient.state.ApprovalGate
 import dev.ahpclient.state.ChatInteractor
 import dev.ahpclient.state.ExpansionState
 import dev.ahpclient.state.HostSession
+import dev.ahpclient.state.SubagentLinks
 import dev.ahpclient.tunnel.DevTunnelsClient
 import dev.ahpclient.tunnel.DevTunnelsException
 import dev.ahpclient.tunnel.TunnelInfo
@@ -144,7 +145,8 @@ class AppController(
         val current = _state.value as? AppState.Connected ?: return
         val open = current.open ?: return
         if (_state.compareAndSet(current, current.copy(open = null))) {
-            open.chat?.let { current.session.closeChat(it.uri) }
+            // Every chat of the chain (a subagent's transcript and the ones it was opened from) holds a subscription.
+            generateSequence(open.chat) { it.parent }.forEach { current.session.closeChat(it.uri) }
             current.session.closeSession(open.uri)
         }
     }
@@ -157,8 +159,29 @@ class AppController(
         if (open.chat != null) return
         val listed = open.store.state.value?.chats?.any { it.resource == uri } == true
         if (!listed) return
-        val store = current.session.openChat(uri)
-        val session = current.session
+        val next = newChat(current.session, uri, parent = null)
+        if (!_state.compareAndSet(current, current.copy(open = open.copy(chat = next)))) current.session.closeChat(uri)
+    }
+
+    /**
+     * Opens the transcript of a subagent the open chat started, on top of it. Only an address that a subagent result in the
+     * open chat names is accepted, never one that came from anywhere else, and never one that is already open above it.
+     */
+    @Synchronized
+    fun openSubagentChat(uri: String) {
+        val current = _state.value as? AppState.Connected ?: return
+        val open = current.open ?: return
+        val parent = open.chat ?: return
+        if (generateSequence(parent) { it.parent }.count() > MAX_SUBAGENT_DEPTH) return
+        if (generateSequence(parent) { it.parent }.any { it.uri == uri }) return
+        val shown = parent.store.state.value ?: return
+        if (uri !in SubagentLinks.referencedBy(shown)) return
+        val next = newChat(current.session, uri, parent)
+        if (!_state.compareAndSet(current, current.copy(open = open.copy(chat = next)))) current.session.closeChat(uri)
+    }
+
+    private fun newChat(session: HostSession, uri: String, parent: OpenChat?): OpenChat {
+        val store = session.openChat(uri)
         val interactor = ChatInteractor(
             chatUri = uri,
             chat = { store.state.value },
@@ -166,16 +189,16 @@ class AppController(
             dispatch = session::dispatch,
             gate = approvalGate,
         )
-        if (!_state.compareAndSet(current, current.copy(open = open.copy(chat = OpenChat(uri, store, expansionFor(uri), interactor))))) current.session.closeChat(uri)
+        return OpenChat(uri, store, expansionFor(uri), interactor, parent)
     }
 
-    /** Leaves the open transcript and returns to the session detail. */
+    /** Leaves the open transcript and returns to where it was opened from: the chat above it for a subagent's, else the session detail. */
     @Synchronized
     fun closeChat() {
         val current = _state.value as? AppState.Connected ?: return
         val open = current.open ?: return
         val chat = open.chat ?: return
-        if (_state.compareAndSet(current, current.copy(open = open.copy(chat = null)))) current.session.closeChat(chat.uri)
+        if (_state.compareAndSet(current, current.copy(open = open.copy(chat = chat.parent)))) current.session.closeChat(chat.uri)
     }
 
     /** Leaves the live host and returns to the host list. */
@@ -366,5 +389,8 @@ class AppController(
 
     private companion object {
         const val MAX_REMEMBERED_CHATS = 20
+
+        /** How many subagent transcripts may be opened on top of one another. */
+        const val MAX_SUBAGENT_DEPTH = 4
     }
 }

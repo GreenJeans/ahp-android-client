@@ -3,17 +3,19 @@ package dev.ahpclient.state
 import com.microsoft.agenthostprotocol.generated.ChatInteractivity
 import com.microsoft.agenthostprotocol.generated.ChatState
 import com.microsoft.agenthostprotocol.generated.ConfirmationOptionKind
+import com.microsoft.agenthostprotocol.generated.ResponsePartInputRequest
 import com.microsoft.agenthostprotocol.generated.ResponsePartToolCall
 import com.microsoft.agenthostprotocol.generated.StateAction
 import com.microsoft.agenthostprotocol.generated.ToolCallPendingConfirmationState
 import com.microsoft.agenthostprotocol.generated.ToolCallState
 import com.microsoft.agenthostprotocol.generated.ToolCallStatePendingConfirmation
+import com.microsoft.agenthostprotocol.generated.ToolCallStatePendingResultConfirmation
 import java.time.Instant
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 
-/** What the person is about to allow. Shown by the device check; it is display text and never sent anywhere. */
-data class ApprovalRequest(val toolName: String, val summary: String?)
+/** What the person is about to allow. Shown by the device check; it is display text and never sent anywhere. [forResult] is set when it is the agent seeing a tool's output rather than running the tool. */
+data class ApprovalRequest(val toolName: String, val summary: String?, val forResult: Boolean = false)
 
 /**
  * The device check that stands in front of every tool approval: a fingerprint, face or screen-lock prompt on the phone.
@@ -27,21 +29,27 @@ fun interface ApprovalGate {
 /** One button on a tool call that is waiting for the person. [optionId] is the host's own id for it, or null for a plain approve or deny. */
 data class ApprovalChoice(val optionId: String?, val label: String, val approves: Boolean)
 
-/** A tool call waiting for the person, as a screen needs it: which call, and the buttons to offer. */
-data class WaitingCall(val toolCallId: String, val choices: List<ApprovalChoice>)
+/** A tool call waiting for the person, as a screen needs it: which call, and the buttons to offer. [forResult] means it is the tool's output that is waiting to be approved, not the call. */
+data class WaitingCall(val toolCallId: String, val choices: List<ApprovalChoice>, val forResult: Boolean = false)
 
-/** A tool call the host is holding until the person decides. */
+/** A tool call (or, with [forResult], its output) the host is holding until the person decides. */
 data class PendingApproval(
     val turnId: String,
     val toolCallId: String,
     val toolName: String,
     val summary: String?,
     val choices: List<ApprovalChoice>,
+    val forResult: Boolean = false,
 ) {
     companion object {
-        /** The id and the buttons for a call that is waiting to be decided, or null for a call in any other state. */
-        fun waitingFor(call: ToolCallState?): WaitingCall? =
-            (call as? ToolCallStatePendingConfirmation)?.let { WaitingCall(it.value.toolCallId, from("", it.value).choices) }
+        private val PLAIN_CHOICES = listOf(ApprovalChoice(null, "Approve", approves = true), ApprovalChoice(null, "Deny", approves = false))
+
+        /** The id and the buttons for a call (or its result) that is waiting to be decided, or null for a call in any other state. */
+        fun waitingFor(call: ToolCallState?): WaitingCall? = when (call) {
+            is ToolCallStatePendingConfirmation -> WaitingCall(call.value.toolCallId, from("", call.value).choices)
+            is ToolCallStatePendingResultConfirmation -> WaitingCall(call.value.toolCallId, PLAIN_CHOICES, forResult = true)
+            else -> null
+        }
 
         /** Finds the call in the running turn: only the running turn can hold one, and a stale id finds nothing. */
         fun find(chat: ChatState, toolCallId: String): PendingApproval? {
@@ -55,9 +63,28 @@ data class PendingApproval(
             return from(turn.id, call)
         }
 
+        /** Finds a call whose output is waiting to be approved, in the running turn. */
+        fun findResult(chat: ChatState, toolCallId: String): PendingApproval? {
+            val turn = chat.activeTurn ?: return null
+            val call = turn.responseParts
+                .filterIsInstance<ResponsePartToolCall>()
+                .map { it.value.toolCall }
+                .filterIsInstance<ToolCallStatePendingResultConfirmation>()
+                .map { it.value }
+                .firstOrNull { it.toolCallId == toolCallId } ?: return null
+            return PendingApproval(
+                turnId = turn.id,
+                toolCallId = call.toolCallId,
+                toolName = call.displayName.ifBlank { call.toolName },
+                summary = call.intention?.takeIf { it.isNotBlank() } ?: SessionDetail.plain(call.invocationMessage)?.takeIf { it.isNotBlank() },
+                choices = PLAIN_CHOICES,
+                forResult = true,
+            )
+        }
+
         fun from(turnId: String, call: ToolCallPendingConfirmationState): PendingApproval {
             val offered = call.options.orEmpty().map { ApprovalChoice(it.id, it.label, approves = it.kind == ConfirmationOptionKind.APPROVE) }
-            val choices = offered.ifEmpty { listOf(ApprovalChoice(null, "Approve", approves = true), ApprovalChoice(null, "Deny", approves = false)) }
+            val choices = offered.ifEmpty { PLAIN_CHOICES }
             return PendingApproval(
                 turnId = turnId,
                 toolCallId = call.toolCallId,
@@ -133,6 +160,38 @@ class ChatInteractor(
     suspend fun dismissInput(requestId: String): InteractResult =
         usable()?.let { deliver(ChatActions.completeInput(requestId, InputResponse.CANCEL)) } ?: InteractResult.NotAllowed
 
+    /** A message that steers the turn running now. Needs a running turn: with none, a new message is [send], not a steer. */
+    suspend fun steer(text: String): InteractResult {
+        val state = usable() ?: return InteractResult.NotAllowed
+        if (text.isBlank()) return InteractResult.Blank
+        if (state.activeTurn == null) return InteractResult.NoActiveTurn
+        return deliver(ChatActions.steerTurn(newId(), text))
+    }
+
+    /**
+     * Tells the host (and so any other screen showing the same question) what has been entered so far for one question.
+     * A null [answer] clears it. Nothing is sent for a question that is not waiting any more.
+     */
+    suspend fun saveDraft(requestId: String, questionId: String, answer: AnswerValue?): InteractResult {
+        val state = usable() ?: return InteractResult.NotAllowed
+        if (!InputRequests.isWaiting(state, requestId)) return InteractResult.NoSuchRequest
+        return deliver(ChatActions.draftAnswer(requestId, questionId, answer))
+    }
+
+    /** Lets the agent see the output of a tool call that asked to be reviewed first, after the device check. */
+    suspend fun approveResult(toolCallId: String): InteractResult {
+        val pending = lookupResult(toolCallId) ?: return refusal()
+        if (!confirmed(ApprovalRequest(pending.toolName, pending.summary, forResult = true))) return InteractResult.NotConfirmed
+        val current = lookupResult(toolCallId) ?: return refusal()
+        return deliver(ChatActions.confirmToolResult(current.turnId, toolCallId, approved = true))
+    }
+
+    /** Keeps the output of a tool call from the agent. No device check: saying no is always safe. */
+    suspend fun denyResult(toolCallId: String): InteractResult {
+        val pending = lookupResult(toolCallId) ?: return refusal()
+        return deliver(ChatActions.confirmToolResult(pending.turnId, toolCallId, approved = false))
+    }
+
     /** Allows a waiting tool call, after the device check. [optionId] is one of the host's own options, if it offered any. */
     suspend fun approve(toolCallId: String, optionId: String? = null): InteractResult {
         val pending = lookup(toolCallId, optionId, approves = true) ?: return refusal()
@@ -156,6 +215,8 @@ class ChatInteractor(
         // An option the host did not offer, or one that means the opposite, is never sent.
         return pending.takeIf { p -> p.choices.any { it.optionId == optionId && it.approves == approves } }
     }
+
+    private fun lookupResult(toolCallId: String): PendingApproval? = usable()?.let { PendingApproval.findResult(it, toolCallId) }
 
     private fun refusal(): InteractResult = if (usable() == null) InteractResult.NotAllowed else InteractResult.NoSuchRequest
 
@@ -182,4 +243,11 @@ class ChatInteractor(
         fun available(chat: ChatState?, canInteract: Boolean): Boolean =
             canInteract && chat != null && (chat.interactivity ?: ChatInteractivity.FULL) == ChatInteractivity.FULL
     }
+}
+
+/** Questions the agent has asked in the running turn. */
+internal object InputRequests {
+    /** True when [requestId] is a question still waiting for an answer. */
+    fun isWaiting(chat: ChatState, requestId: String): Boolean =
+        chat.activeTurn?.responseParts.orEmpty().any { it is ResponsePartInputRequest && it.value.request.id == requestId && it.value.response == null }
 }

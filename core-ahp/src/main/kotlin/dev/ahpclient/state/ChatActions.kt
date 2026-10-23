@@ -57,11 +57,27 @@ object ChatActions {
             put("message", userMessage(text))
         }
 
+    /** A user message that steers the turn running now, instead of waiting for it to end. Only meaningful while a turn runs. */
+    fun steerTurn(messageId: String, text: String): StateAction =
+        action("chat/pendingMessageSet") {
+            put("kind", "steering")
+            put("id", messageId)
+            put("message", userMessage(text))
+        }
+
     /** Takes back a queued message that has not been consumed yet. */
     fun removeQueuedMessage(messageId: String): StateAction =
         action("chat/pendingMessageRemoved") {
             put("kind", "queued")
             put("id", messageId)
+        }
+
+    /** One in-progress answer, so another client showing the same question can follow along. A null [answer] clears that question's draft. */
+    fun draftAnswer(requestId: String, questionId: String, answer: AnswerValue?): StateAction =
+        action("chat/inputAnswerChanged") {
+            put("requestId", requestId)
+            put("questionId", questionId)
+            if (answer != null) put("answer", answerOf("draft", answer))
         }
 
     /**
@@ -80,7 +96,7 @@ object ChatActions {
             put("requestId", requestId)
             put("response", response.wire)
             if (response == InputResponse.ACCEPT && answers.isNotEmpty()) {
-                put("answers", JsonObject(answers.mapValues { (_, value) -> submitted(value) }))
+                put("answers", JsonObject(answers.mapValues { (_, value) -> answerOf("submitted", value) }))
             }
         }
 
@@ -117,8 +133,8 @@ object ChatActions {
         put("origin", buildJsonObject { put("kind", "user") })
     }
 
-    private fun submitted(value: AnswerValue): JsonElement = buildJsonObject {
-        put("state", "submitted")
+    private fun answerOf(state: String, value: AnswerValue): JsonElement = buildJsonObject {
+        put("state", state)
         put("value", answerValue(value))
     }
 

@@ -64,9 +64,10 @@ data class OpenSession(val uri: String, val store: SessionStore, val chat: OpenC
 /**
  * The chat whose transcript is on screen; its [store] stays subscribed until the user goes back. [expansion] outlives the
  * screen. [interactor] is what the person can do in it; it checks the connection's tier on every call, so a screen may
- * keep one while consent changes underneath it.
+ * keep one while consent changes underneath it. [parent] is the chat this one was opened from when it is a subagent's
+ * transcript: going back returns there, and the parent stays subscribed meanwhile.
  */
-data class OpenChat(val uri: String, val store: ChatStore, val expansion: ExpansionState, val interactor: ChatInteractor)
+data class OpenChat(val uri: String, val store: ChatStore, val expansion: ExpansionState, val interactor: ChatInteractor, val parent: OpenChat? = null)
 
 /** Where a GitHub user removes an authorized app. Signing out here only forgets the token; this removes the grant itself. */
 const val GITHUB_AUTHORIZED_APPS_URL = "https://github.com/settings/applications"

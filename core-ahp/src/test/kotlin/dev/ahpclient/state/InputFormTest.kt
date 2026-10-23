@@ -134,6 +134,52 @@ class InputFormTest {
     }
 
     @Test
+    fun `a draft is whatever means something so far, looser than a finished answer`() {
+        val text = FormQuestion("t", "T", QuestionKind.TEXT, true, min = 5.0)
+        val number = FormQuestion("n", "N", QuestionKind.NUMBER, true, max = 3.0)
+        val single = FormQuestion("s", "S", QuestionKind.SINGLE, true, listOf(FormOption("a", "A")), allowFreeform = true)
+        val many = FormQuestion("m", "M", QuestionKind.MULTI, true, listOf(FormOption("x", "X"), FormOption("y", "Y")), min = 2.0)
+        val f = form(text, number, single, many)
+
+        assertNull(f.draftFor(text, FormValue.Text("  ")), "blank clears the draft")
+        assertEquals(AnswerValue.Text("ab"), f.draftFor(text, FormValue.Text("ab")), "below the minimum is still a draft")
+        assertNull(f.draftFor(number, FormValue.Text("abc")))
+        listOf("NaN", "Infinity", "-Infinity", "1e999").forEach { assertNull(f.draftFor(number, FormValue.Text(it)), "$it is not a number to send") }
+        assertEquals(AnswerValue.Number(9.0), f.draftFor(number, FormValue.Text("9")), "above the maximum is still a draft")
+        assertNull(f.draftFor(single, FormValue.Choice(null)))
+        assertNull(f.draftFor(single, FormValue.Choice("made-up")), "an option the host did not offer is nothing")
+        assertEquals(AnswerValue.Selected("a"), f.draftFor(single, FormValue.Choice("a")))
+        assertEquals(AnswerValue.Selected("typed"), f.draftFor(single, FormValue.Choice(null, "typed")))
+        assertNull(f.draftFor(many, FormValue.Choices(emptySet())))
+        assertEquals(AnswerValue.SelectedMany(listOf("x", "y")), f.draftFor(many, FormValue.Choices(setOf("y", "x"))), "host order, and one pick is a draft though two are needed")
+    }
+
+    @Test
+    fun `the host's own drafts are the starting values, where they fit the question they belong to`() {
+        val built = InputForm.from(
+            Ahp.json.decodeFromString(
+                ChatInputRequest.serializer(),
+                """{"id":"req-1","questions":[
+                    ${q("text", "a")},
+                    ${q("single-select", "s", ""","options":[{"id":"sp","label":"Spring"},{"id":"au","label":"Autumn"}]""")},
+                    ${q("number", "n")}
+                  ],
+                  "answers":{
+                    "a":{"state":"draft","value":{"kind":"text","value":"typed in VS Code"}},
+                    "s":{"state":"draft","value":{"kind":"selected","value":"au"}},
+                    "n":{"state":"draft","value":{"kind":"text","value":"wrong kind for a number question"}},
+                    "zz":{"state":"draft","value":{"kind":"text","value":"no such question"}}
+                  }}""",
+            ),
+        )!!
+
+        assertEquals(setOf("a", "s"), built.drafts.keys)
+        assertEquals(FormValue.Text("typed in VS Code"), built.initial(built.questions[0]))
+        assertEquals(FormValue.Choice("au"), built.initial(built.questions[1]))
+        assertEquals(FormValue.Text(""), built.initial(built.questions[2]), "no usable draft, so the default")
+    }
+
+    @Test
     fun `the starting value is the host's default`() {
         val f = form(
             FormQuestion("t", "T", QuestionKind.TEXT, true, defaultText = "hello"),
