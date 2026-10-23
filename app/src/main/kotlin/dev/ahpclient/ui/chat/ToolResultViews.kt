@@ -25,13 +25,13 @@ import dev.ahpclient.state.ToolDetail
 import dev.ahpclient.state.ToolResultView
 import java.text.NumberFormat
 
-/** What a tool call was asked and what it produced, as the body of its expanded block. */
+/** What a tool call was asked and what it produced, as the body of its expanded block. [approveHere] is set when the buttons to decide it are on screen, so the block does not send the person elsewhere. */
 @Composable
-internal fun ToolDetailBody(detail: ToolDetail) {
+internal fun ToolDetailBody(detail: ToolDetail, approveHere: Boolean = false) {
     detail.waitingFor?.let { waiting ->
         Column(modifier = Modifier.semantics(mergeDescendants = true) {}.testTag("tool_waiting"), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(waiting, style = MaterialTheme.typography.titleSmall)
-            Text(ToolDetail.APPROVE_ELSEWHERE, style = MaterialTheme.typography.bodyMedium)
+            if (!approveHere) Text(ToolDetail.APPROVE_ELSEWHERE, style = MaterialTheme.typography.bodyMedium)
         }
     }
     if (detail.input.isNotEmpty()) {

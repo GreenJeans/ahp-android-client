@@ -10,6 +10,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -20,6 +21,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.ahpclient.app.AppController
 import dev.ahpclient.app.AppState
 import dev.ahpclient.app.SignInStep
+import dev.ahpclient.state.ChatInteractor
+import dev.ahpclient.ui.chat.ChatActionsUi
 import dev.ahpclient.ui.chat.ChatScreen
 import dev.ahpclient.ui.chat.rememberTranscript
 import dev.ahpclient.ui.theme.AhpTheme
@@ -87,6 +90,26 @@ fun AppRoot(
                             val error by chat.store.error.collectAsStateWithLifecycle()
                             val loadingOlder by chat.store.loadingOlder.collectAsStateWithLifecycle()
                             val olderError by chat.store.olderError.collectAsStateWithLifecycle()
+                            val chatState by chat.store.state.collectAsStateWithLifecycle()
+                            val canInteract by current.session.canInteract.collectAsStateWithLifecycle()
+                            val running = chatState?.activeTurn != null
+                            // Nothing to act with unless the connection allows it and the host shows this chat as interactive.
+                            val actions = if (ChatInteractor.available(chatState, canInteract)) {
+                                remember(chat.interactor, running) {
+                                    ChatActionsUi(
+                                        running = running,
+                                        send = chat.interactor::send,
+                                        cancel = chat.interactor::cancel,
+                                        approve = chat.interactor::approve,
+                                        deny = chat.interactor::deny,
+                                        answer = chat.interactor::answer,
+                                        decline = chat.interactor::declineInput,
+                                        dismiss = chat.interactor::dismissInput,
+                                    )
+                                }
+                            } else {
+                                null
+                            }
                             val context = LocalContext.current
                             ChatScreen(
                                 transcript = transcript,
@@ -99,6 +122,7 @@ fun AppRoot(
                                 onOpenLink = { link -> if (!openWebLink(context, link)) Toast.makeText(context, "No app could open this link", Toast.LENGTH_SHORT).show() },
                                 expanded = expanded,
                                 onToggle = chat.expansion::toggle,
+                                actions = actions,
                                 modifier = content,
                             )
                         }

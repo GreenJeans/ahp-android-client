@@ -263,9 +263,10 @@ class ChatInteractorTest {
             """{"status":"running","toolCallId":"c1","toolName":"t","displayName":"T","invocationMessage":"Go","toolInput":"{}","confirmed":"user-action"}""",
         )
 
-        assertEquals(listOf("Approve", "Deny"), PendingApproval.choicesFor(waiting)!!.map { it.label })
-        assertNull(PendingApproval.choicesFor(running))
-        assertNull(PendingApproval.choicesFor(null))
+        assertEquals(listOf("Approve", "Deny"), PendingApproval.waitingFor(waiting)!!.choices.map { it.label })
+        assertEquals("c1", PendingApproval.waitingFor(waiting)!!.toolCallId)
+        assertNull(PendingApproval.waitingFor(running))
+        assertNull(PendingApproval.waitingFor(null))
     }
 
     @Test

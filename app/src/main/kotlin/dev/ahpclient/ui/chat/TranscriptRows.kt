@@ -18,6 +18,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.ahpclient.state.PendingApproval
 import dev.ahpclient.state.SessionDetail
 import dev.ahpclient.state.ToolDetail
 import dev.ahpclient.state.ToolState
@@ -35,12 +36,13 @@ internal fun TranscriptRow(
     modifier: Modifier = Modifier,
     expanded: Boolean = false,
     onToggle: () -> Unit = {},
+    actions: ChatActionsUi? = null,
 ) {
     when (item) {
         is TranscriptItem.User -> UserRow(item, modifier)
         is TranscriptItem.Markdown -> MarkdownPart(item.text, onOpenLink, modifier.fillMaxWidth().testTag("row_markdown"))
         is TranscriptItem.Reasoning -> ReasoningBlock(item, expanded, onToggle, onOpenLink, modifier)
-        is TranscriptItem.Tool -> ToolCallBlock(item, expanded, onToggle, modifier)
+        is TranscriptItem.Tool -> ToolCallBlock(item, expanded, onToggle, actions, modifier)
         is TranscriptItem.Notice -> Text(
             item.text,
             style = MaterialTheme.typography.labelLarge,
@@ -49,11 +51,16 @@ internal fun TranscriptRow(
         )
         is TranscriptItem.Question -> Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
             InputRequestCard(item.request)
-            Text(
-                if (item.answered) "Answered." else SessionDetail.ANSWER_ELSEWHERE,
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.testTag("row_question_note"),
-            )
+            val form = item.form
+            if (actions != null && form != null && !item.answered) {
+                QuestionForm(form, actions)
+            } else {
+                Text(
+                    if (item.answered) "Answered." else SessionDetail.ANSWER_ELSEWHERE,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.testTag("row_question_note"),
+                )
+            }
         }
         is TranscriptItem.Other -> Text(
             item.label,
@@ -101,7 +108,7 @@ private fun ReasoningBlock(item: TranscriptItem.Reasoning, expanded: Boolean, on
 
 /** A tool call opens to its input and its results. One made without the host's record has nothing to open and stays a plain row. */
 @Composable
-private fun ToolCallBlock(item: TranscriptItem.Tool, expanded: Boolean, onToggle: () -> Unit, modifier: Modifier) {
+private fun ToolCallBlock(item: TranscriptItem.Tool, expanded: Boolean, onToggle: () -> Unit, actions: ChatActionsUi?, modifier: Modifier) {
     val source = item.source
     if (source == null) {
         Row(
@@ -111,32 +118,37 @@ private fun ToolCallBlock(item: TranscriptItem.Tool, expanded: Boolean, onToggle
         ) { ToolHeader(item, Modifier.weight(1f)) }
         return
     }
-    CollapsibleBlock(
-        expanded = expanded,
-        onToggle = onToggle,
-        modifier = modifier.testTag("row_tool"),
-        header = { ToolHeader(item, Modifier.weight(1f)) },
-    ) {
-        // Built here, so only a block the user opens pays for parsing its input and clipping its results.
-        val detail = remember(source) { ToolDetail.from(source) }
-        ToolDetailBody(detail)
+    // Buttons only for a call that is waiting, and only where the person may act; otherwise the block's own text says where to answer.
+    val waiting = if (actions != null) PendingApproval.waitingFor(source) else null
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        CollapsibleBlock(
+            expanded = expanded,
+            onToggle = onToggle,
+            modifier = Modifier.testTag("row_tool"),
+            header = { ToolHeader(item, Modifier.weight(1f), approveHere = waiting != null) },
+        ) {
+            // Built here, so only a block the user opens pays for parsing its input and clipping its results.
+            val detail = remember(source) { ToolDetail.from(source) }
+            ToolDetailBody(detail, approveHere = waiting != null)
+        }
+        if (actions != null && waiting != null) ApprovalButtons(waiting.choices, waiting.toolCallId, actions)
     }
 }
 
 @Composable
-private fun RowScope.ToolHeader(item: TranscriptItem.Tool, modifier: Modifier) {
+private fun RowScope.ToolHeader(item: TranscriptItem.Tool, modifier: Modifier, approveHere: Boolean = false) {
     Column(modifier = modifier) {
         Text(item.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
         item.summary?.let {
             Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
     }
-    ToolBadge(item.state)
+    ToolBadge(item.state, approveHere)
 }
 
 /** The state in words, tinted by role. The label carries the meaning, so colour is never the only cue. */
 @Composable
-private fun ToolBadge(state: ToolState) {
+private fun ToolBadge(state: ToolState, approveHere: Boolean) {
     val colors = MaterialTheme.colorScheme
     val (container, content) = when (state) {
         ToolState.WAITING_FOR_APPROVAL, ToolState.SIGN_IN_REQUIRED -> colors.tertiaryContainer to colors.onTertiaryContainer
@@ -144,7 +156,8 @@ private fun ToolBadge(state: ToolState) {
         ToolState.FAILED -> colors.errorContainer to colors.onErrorContainer
         ToolState.DONE, ToolState.CANCELLED, ToolState.UNKNOWN -> colors.surfaceVariant to colors.onSurfaceVariant
     }
+    val label = if (approveHere && state == ToolState.WAITING_FOR_APPROVAL) "Waiting for your approval" else state.label
     Surface(color = container, contentColor = content, shape = MaterialTheme.shapes.small, modifier = Modifier.testTag("tool_badge")) {
-        Text(state.label, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp))
+        Text(label, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp))
     }
 }

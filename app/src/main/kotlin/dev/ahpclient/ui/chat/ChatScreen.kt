@@ -64,6 +64,7 @@ fun ChatScreen(
     modifier: Modifier = Modifier,
     expanded: Set<String> = emptySet(),
     onToggle: (String) -> Unit = {},
+    actions: ChatActionsUi? = null,
 ) {
     var pendingLink by rememberSaveable { mutableStateOf<String?>(null) }
     Column(modifier = modifier.fillMaxSize()) {
@@ -80,10 +81,11 @@ fun ChatScreen(
         }
         when {
             error is ChatGoneException -> ErrorText("This chat is no longer on the host.", Modifier.padding(horizontal = 24.dp).testTag("chat_gone"))
-            transcript != null -> TranscriptList(transcript, loadingOlder, olderError, onLoadOlder, { pendingLink = it }, expanded, onToggle, Modifier.weight(1f))
+            transcript != null -> TranscriptList(transcript, loadingOlder, olderError, onLoadOlder, { pendingLink = it }, expanded, onToggle, actions, Modifier.weight(1f))
             error != null -> ErrorText("Could not load this chat (${error.javaClass.simpleName}).", Modifier.padding(horizontal = 24.dp).testTag("chat_error"))
             else -> Busy("Loading chat…", Modifier.padding(horizontal = 24.dp).testTag("chat_loading"))
         }
+        if (actions != null && transcript != null) Composer(actions)
     }
     pendingLink?.let { link ->
         LinkConfirmDialog(url = link, onOpen = { pendingLink = null; onOpenLink(link) }, onDismiss = { pendingLink = null })
@@ -104,6 +106,7 @@ private fun TranscriptList(
     onOpenLink: (String) -> Unit,
     expanded: Set<String>,
     onToggle: (String) -> Unit,
+    actions: ChatActionsUi?,
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
@@ -148,7 +151,7 @@ private fun TranscriptList(
             verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Bottom),
         ) {
             items(newestFirst, key = { it.key }, contentType = { it::class }) { row ->
-                TranscriptRow(row, onOpenLink, expanded = row.key in expanded, onToggle = { onToggle(row.key) })
+                TranscriptRow(row, onOpenLink, expanded = row.key in expanded, onToggle = { onToggle(row.key) }, actions = actions)
             }
             if (loadingOlder || olderError != null || transcript.hasOlder) {
                 item(key = OLDER_KEY, contentType = OLDER_KEY) { OlderRow(loadingOlder, olderError, onLoadOlder) }

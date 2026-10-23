@@ -27,6 +27,9 @@ fun interface ApprovalGate {
 /** One button on a tool call that is waiting for the person. [optionId] is the host's own id for it, or null for a plain approve or deny. */
 data class ApprovalChoice(val optionId: String?, val label: String, val approves: Boolean)
 
+/** A tool call waiting for the person, as a screen needs it: which call, and the buttons to offer. */
+data class WaitingCall(val toolCallId: String, val choices: List<ApprovalChoice>)
+
 /** A tool call the host is holding until the person decides. */
 data class PendingApproval(
     val turnId: String,
@@ -36,9 +39,9 @@ data class PendingApproval(
     val choices: List<ApprovalChoice>,
 ) {
     companion object {
-        /** The buttons for a call that is waiting to be decided, or null for a call in any other state. */
-        fun choicesFor(call: ToolCallState?): List<ApprovalChoice>? =
-            (call as? ToolCallStatePendingConfirmation)?.let { from("", it.value).choices }
+        /** The id and the buttons for a call that is waiting to be decided, or null for a call in any other state. */
+        fun waitingFor(call: ToolCallState?): WaitingCall? =
+            (call as? ToolCallStatePendingConfirmation)?.let { WaitingCall(it.value.toolCallId, from("", it.value).choices) }
 
         /** Finds the call in the running turn: only the running turn can hold one, and a stale id finds nothing. */
         fun find(chat: ChatState, toolCallId: String): PendingApproval? {
