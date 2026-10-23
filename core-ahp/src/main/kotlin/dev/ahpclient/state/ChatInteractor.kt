@@ -36,6 +36,10 @@ data class PendingApproval(
     val choices: List<ApprovalChoice>,
 ) {
     companion object {
+        /** The buttons for a call that is waiting to be decided, or null for a call in any other state. */
+        fun choicesFor(call: ToolCallState?): List<ApprovalChoice>? =
+            (call as? ToolCallStatePendingConfirmation)?.let { from("", it.value).choices }
+
         /** Finds the call in the running turn: only the running turn can hold one, and a stale id finds nothing. */
         fun find(chat: ChatState, toolCallId: String): PendingApproval? {
             val turn = chat.activeTurn ?: return null

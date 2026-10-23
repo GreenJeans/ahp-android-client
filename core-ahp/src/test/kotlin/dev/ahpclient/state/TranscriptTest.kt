@@ -149,6 +149,22 @@ class TranscriptTest {
     }
 
     @Test
+    fun `a question still waiting carries a form, an answered one and one this app cannot ask do not`() {
+        val text = """{"kind":"text","id":"a","title":"A","message":"Say it"}"""
+        val waiting = """{"kind":"inputRequest","request":{"id":"q1","message":"Which one?","questions":[$text]}}"""
+        val answered = """{"kind":"inputRequest","request":{"id":"q2","message":"Done","questions":[$text]},"response":"accept"}"""
+        val unknown = """{"kind":"inputRequest","request":{"id":"q3","message":"Odd","questions":[{"kind":"hologram","id":"h","title":"H","message":"H"}]}}"""
+
+        val items = Transcript.from(chat("$waiting,$answered,$unknown")).items.filterIsInstance<TranscriptItem.Question>()
+
+        assertEquals("q1", items[0].form?.requestId)
+        assertEquals(listOf("a"), items[0].form?.questions?.map { it.id })
+        assertTrue(items[1].answered)
+        assertNull(items[1].form)
+        assertNull(items[2].form, "a request with a question this app does not know is left to be answered elsewhere")
+    }
+
+    @Test
     fun `a part kind this app has never heard of is shown as something it cannot show, not dropped`() {
         val items = Transcript.from(chat("""{"kind":"hologram","x":1},${markdown("m1", "after")}""")).items.drop(1)
 

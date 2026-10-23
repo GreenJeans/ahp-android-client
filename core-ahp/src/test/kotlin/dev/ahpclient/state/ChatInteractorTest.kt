@@ -256,6 +256,19 @@ class ChatInteractorTest {
     }
 
     @Test
+    fun `only a call that is waiting has buttons`() {
+        val waiting = (activeTurn(pendingCall()).let { chat(active = it) }.activeTurn!!.responseParts.single() as com.microsoft.agenthostprotocol.generated.ResponsePartToolCall).value.toolCall
+        val running = Ahp.json.decodeFromString(
+            com.microsoft.agenthostprotocol.generated.ToolCallState.serializer(),
+            """{"status":"running","toolCallId":"c1","toolName":"t","displayName":"T","invocationMessage":"Go","toolInput":"{}","confirmed":"user-action"}""",
+        )
+
+        assertEquals(listOf("Approve", "Deny"), PendingApproval.choicesFor(waiting)!!.map { it.label })
+        assertNull(PendingApproval.choicesFor(running))
+        assertNull(PendingApproval.choicesFor(null))
+    }
+
+    @Test
     fun `the choices are the host's own options, or a plain approve and deny`() {
         val plain = PendingApproval.find(chat(active = activeTurn(pendingCall())), "c1")!!
         val offered = PendingApproval.find(chat(active = activeTurn(pendingCall(options = twoOptions))), "c1")!!
