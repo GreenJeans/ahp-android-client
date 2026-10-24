@@ -4,6 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -73,46 +74,52 @@ fun SessionsScreen(
     settingsExpanded: Boolean = false,
 ) {
     val model = remember(sessions, showArchived, now) { SessionListModel.from(SessionCatalog.sorted(sessions), showArchived, now) }
-    Column(modifier = modifier.fillMaxSize()) {
-        Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(host.name, style = MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() })
-            ConnectionLine(connection)
-            if (model.summary.isNotEmpty()) {
-                Text(model.summary, style = MaterialTheme.typography.titleMedium, modifier = Modifier.testTag("summary"))
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                OutlinedButton(onClick = onDisconnect, modifier = Modifier.testTag("disconnect")) { Text("Back to hosts") }
-                if (model.hiddenArchived > 0 || showArchived) {
-                    FilterChip(
-                        selected = showArchived,
-                        onClick = onToggleArchived,
-                        label = { Text(if (model.hiddenArchived > 0) "Show archived (${model.hiddenArchived})" else "Show archived") },
-                        modifier = Modifier.testTag("archived_toggle"),
-                    )
+    // The header is the first item of the list, not a block above it: an open Settings section or a wrapped row of buttons
+    // then scrolls away with the rest, and can never squeeze the sessions or push a button off the screen.
+    LazyColumn(state = listState, modifier = modifier.fillMaxSize().testTag("session_list")) {
+        item(key = "header") {
+            Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(host.name, style = MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() })
+                ConnectionLine(connection)
+                if (model.summary.isNotEmpty()) {
+                    Text(model.summary, style = MaterialTheme.typography.titleMedium, modifier = Modifier.testTag("summary"))
                 }
-                if (manage != null) NewSessionButton(manage, onCreated = onOpen)
-            }
-            SettingsSection(
-                summary = listOf(
-                    if (monitorEnabled) "Monitoring on" else "Monitoring off",
-                    if (interactionAllowed) "Acting on" else "Acting off",
-                    if (managementAllowed) "Managing on" else "Managing off",
-                ).joinToString(" · "),
-                initiallyExpanded = settingsExpanded,
-            ) {
-                MonitorToggle(monitorEnabled, notificationsAllowed, onMonitorChange)
-                InteractionToggle(interactionAllowed, onInteractionChange, supported = interactionSupported)
-                ManagementToggle(managementAllowed, available = interactionAllowed && interactionSupported, onChange = onManagementChange)
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    itemVerticalAlignment = Alignment.CenterVertically,
+                ) {
+                    OutlinedButton(onClick = onDisconnect, modifier = Modifier.testTag("disconnect")) { Text("Back to hosts") }
+                    if (model.hiddenArchived > 0 || showArchived) {
+                        FilterChip(
+                            selected = showArchived,
+                            onClick = onToggleArchived,
+                            label = { Text(if (model.hiddenArchived > 0) "Show archived (${model.hiddenArchived})" else "Show archived") },
+                            modifier = Modifier.testTag("archived_toggle"),
+                        )
+                    }
+                    if (manage != null) NewSessionButton(manage, onCreated = onOpen)
+                }
+                SettingsSection(
+                    summary = listOf(
+                        if (monitorEnabled) "Monitoring on" else "Monitoring off",
+                        if (interactionAllowed) "Acting on" else "Acting off",
+                        if (managementAllowed) "Managing on" else "Managing off",
+                    ).joinToString(" · "),
+                    initiallyExpanded = settingsExpanded,
+                ) {
+                    MonitorToggle(monitorEnabled, notificationsAllowed, onMonitorChange)
+                    InteractionToggle(interactionAllowed, onInteractionChange, supported = interactionSupported)
+                    ManagementToggle(managementAllowed, available = interactionAllowed && interactionSupported, onChange = onManagementChange)
+                }
             }
         }
         if (model.rows.isEmpty()) {
-            EmptyList(model, connection)
+            item(key = "empty") { EmptyList(model, connection) }
         } else {
-            LazyColumn(state = listState, modifier = Modifier.weight(1f).fillMaxWidth().testTag("session_list")) {
-                items(model.rows, key = { it.resource }) { row ->
-                    SessionRowItem(row, onOpen)
-                    HorizontalDivider()
-                }
+            items(model.rows, key = { it.resource }) { row ->
+                SessionRowItem(row, onOpen)
+                HorizontalDivider()
             }
         }
     }

@@ -1,5 +1,6 @@
 package dev.ahpclient.ui
 
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -14,11 +15,14 @@ import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.compose.ui.unit.dp
 import dev.ahpclient.state.ConfigField
@@ -34,6 +38,7 @@ import dev.ahpclient.tunnel.TunnelInfo
 import dev.ahpclient.ui.theme.AhpTheme
 import com.microsoft.agenthostprotocol.Ahp
 import com.microsoft.agenthostprotocol.generated.SessionState
+import com.microsoft.agenthostprotocol.generated.SessionSummary
 import java.time.Instant
 import kotlinx.coroutines.CompletableDeferred
 import org.junit.Assert.assertEquals
@@ -844,4 +849,41 @@ class ManageUiTest {
 
     private fun androidx.compose.ui.test.junit4.ComposeContentTestRule.onAllNodesCount(tag: String) =
         onAllNodes(androidx.compose.ui.test.hasTestTag(tag)).fetchSemanticsNodes().size
+
+    private fun listSummary(n: Int, title: String, status: Int): SessionSummary = Ahp.json.decodeFromString(
+        SessionSummary.serializer(),
+        """{"resource":"ahp-session:/$n","provider":"copilotcli","title":"$title","status":$status,"createdAt":"2026-10-20T10:00:00.000Z","modifiedAt":"2026-10-26T10:00:00.000Z"}""",
+    )
+
+    // A narrow phone with the long "Show archived (199)" chip and Settings open: what hid the New session button on a real device.
+    private fun showCrowdedList(width: androidx.compose.ui.unit.Dp, height: androidx.compose.ui.unit.Dp) {
+        val host = TunnelInfo("t-online", "usw2", "dev-box", 6, 1, listOf(31546))
+        val sessions = listOf(listSummary(0, "Visible one", 1), listSummary(1, "Visible two", 1)) + (2..200).map { listSummary(it, "Old $it", 97) }
+        rule.setContent {
+            AhpTheme {
+                androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.size(width, height)) {
+                    SessionsScreen(host, ConnState.Online, sessions, now, false, rememberLazyListState(), {}, {}, {}, manage = actions(Calls()), settingsExpanded = true)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun aLongRowOfHeaderButtonsWrapsInsteadOfPushingNewSessionOffTheScreen() {
+        showCrowdedList(width = 360.dp, height = 800.dp)
+
+        rule.onNodeWithTag("archived_toggle").assertIsDisplayed()
+        rule.onNodeWithTag("new_session").assertIsDisplayed()
+        val right = rule.onNodeWithTag("new_session").getUnclippedBoundsInRoot().right
+        assertTrue("the New session button ends at $right, past the 360 dp screen", right <= 360.dp)
+    }
+
+    @Test
+    fun anOpenSettingsSectionNeverSqueezesTheSessionsOutOfTheScreen() {
+        showCrowdedList(width = 360.dp, height = 480.dp)
+
+        rule.onNodeWithTag("session_list").performScrollToNode(androidx.compose.ui.test.hasText("Visible one"))
+        rule.onNodeWithText("Visible one").assertIsDisplayed()
+        rule.onNodeWithText("Visible two").assertIsDisplayed()
+    }
 }
