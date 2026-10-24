@@ -260,6 +260,23 @@ class MonitorCoordinatorTest {
     }
 
     @Test
+    fun `a session waiting on several tool calls says how many and has no buttons`() = runTest {
+        val two = """[{"kind":"toolConfirmation","id":"r1","chat":"$CHAT_A","turnId":"t","toolCall":{"status":"pending-confirmation","toolCallId":"a","toolName":"p","displayName":"Run command","intention":"Run the first","invocationMessage":"x"}},
+            {"kind":"toolConfirmation","id":"r2","chat":"$CHAT_A","turnId":"t","toolCall":{"status":"pending-confirmation","toolCallId":"b","toolName":"p","displayName":"Run command","intention":"Run the second","invocationMessage":"y"}}]"""
+        val rig = rig()
+        val host = connect(rig, HostScript(sessionChats = "[${chatSummaryJson(CHAT_A)}]", inputNeeded = two))
+        advanceTimeBy(10_000)
+
+        waitingOn(host, "Session C")
+        runCurrent()
+        advanceTimeBy(3_500)
+
+        val alert = rig.sink.posted.single()
+        assertEquals("2 approvals waiting. First: Run command: Run the first. Open the app to decide.", alert.detail)
+        assertNull(alert.approval, "which call a button would decide is not clear, so there are none")
+    }
+
+    @Test
     fun `a tool call with options of the hosts own carries them as buttons`() = runTest {
         val options = ""","options":[{"id":"o1","label":"Allow once","kind":"approve"},{"id":"o2","label":"Not now","kind":"deny"}]"""
         val rig = rig()

@@ -7,7 +7,7 @@ import dev.ahpclient.state.InputNeeded
 import dev.ahpclient.state.InputNeededNotifier
 import dev.ahpclient.state.MonitorStatus
 import dev.ahpclient.state.RequestRead
-import dev.ahpclient.state.SessionDetail
+import dev.ahpclient.state.WaitingText
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -113,7 +113,7 @@ class MonitorCoordinator(
             val state = combine(store.state, store.error) { loaded, error -> loaded to error }
                 .first { (loaded, error) -> loaded != null || error != null }
                 .first ?: return null
-            val text = state.inputNeeded.orEmpty().map { SessionDetail.describe(it) }.firstOrNull()?.text
+            val text = WaitingText.of(state.inputNeeded.orEmpty())
             return RequestRead(text, ApprovalTarget.from(state))
         } finally {
             session.closeSession(resource)

@@ -163,7 +163,7 @@ to decide; the live chat is what says whether it can still be decided, through t
 Deny needs no check and works from the lock screen. Approve starts a screenless activity so the device check has somewhere to
 appear (after unlocking, on a locked phone), and the prompt names the tool before anything is sent. The activity and the Deny
 receiver are not exported and their intents are immutable, so only this app's own notification can reach them. A question,
-a session waiting on more than one thing, and a tool's output are decided in the app. An option is only sent if the host offers it now and means what the button says, and the device check names it ("Your choice: Allow in this session").
+a session waiting on more than one thing (its notification says how many, and names the first, with no buttons), and a tool's output are decided in the app. An option is only sent if the host offers it now and means what the button says, and the device check names it ("Your choice: Allow in this session").
 
 When the outcome of an action is unknown (no echo in time, or the connection dropped first) the message stays in the box
 with a warning not to send it twice, because resending would duplicate it.

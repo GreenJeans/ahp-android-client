@@ -1,6 +1,7 @@
 package dev.ahpclient.state
 
 import com.microsoft.agenthostprotocol.generated.ConfirmationOptionKind
+import com.microsoft.agenthostprotocol.generated.SessionInputRequest
 import com.microsoft.agenthostprotocol.generated.SessionInputRequestToolConfirmation
 import com.microsoft.agenthostprotocol.generated.SessionState
 import com.microsoft.agenthostprotocol.generated.SessionSummary
@@ -79,6 +80,18 @@ data class ApprovalTarget(val chat: String, val toolCallId: String, val options:
  * waiting for is one plain tool call that the notification may offer to decide.
  */
 data class InputNeeded(val resource: String, val title: String, val detail: String? = null, val approval: ApprovalTarget? = null)
+
+/** What a notification says a session is waiting for: the one thing, or, with several, how many and what the first is. */
+object WaitingText {
+    fun of(requests: List<SessionInputRequest>): String? {
+        val views = requests.map { SessionDetail.describe(it) }
+        val first = views.firstOrNull()?.text ?: return null
+        if (views.size == 1) return first
+        // More than one is decided in the app, where each can be seen: the words say so, since there are no buttons to act on.
+        val what = if (views.all { it.kind == "Approval" }) "approvals" else "requests"
+        return "${views.size} $what waiting. First: $first. Open the app to decide."
+    }
+}
 
 /** What reading a waiting session gave: its words, and the tool call to offer buttons for, if there is exactly one. */
 data class RequestRead(val text: String?, val approval: ApprovalTarget? = null)
