@@ -17,6 +17,7 @@ import dev.ahpclient.state.DiffResult
 import dev.ahpclient.state.changesetFileJson
 import dev.ahpclient.state.changesetStateJson
 import dev.ahpclient.state.CHAT_B
+import dev.ahpclient.state.CHAT_C
 import dev.ahpclient.state.ApprovalGate
 import dev.ahpclient.state.ApprovalRequest
 import dev.ahpclient.state.ApprovalTarget
@@ -661,6 +662,123 @@ class AppControllerTest {
     }
 
     @Test
+    fun `selecting a chat opens it when none is open, swaps it for the one that is, and releases exactly the one it left`() = runTest {
+        withRig(script = { HostScript(sessionChats = "[${chatSummaryJson(CHAT_A)}, ${chatSummaryJson(CHAT_B, "Second")}]") }) {
+            connectToFirstHost()
+            controller.openSession(SESSION_C)
+            assertIs<AppState.Connected>(state).open!!.store.state.first { it != null }
+            runCurrent()
+
+            controller.selectChat(CHAT_A)
+            assertEquals(CHAT_A, assertIs<AppState.Connected>(state).open!!.chat!!.uri)
+            runCurrent()
+            assertEquals(emptyList(), unsubscribed())
+
+            controller.selectChat(CHAT_B)
+            runCurrent()
+
+            val open = assertIs<AppState.Connected>(state).open!!
+            assertEquals(CHAT_B, open.chat!!.uri)
+            assertNull(open.chat!!.parent)
+            assertEquals(SESSION_C, open.uri)
+            assertEquals(listOf(CHAT_A), unsubscribed())
+        }
+    }
+
+    @Test
+    fun `selecting the chat already shown, or one the session does not list, changes nothing`() = runTest {
+        withRig(script = { HostScript(sessionChats = "[${chatSummaryJson(CHAT_A)}]") }) {
+            connectToFirstHost()
+            controller.openSession(SESSION_C)
+            assertIs<AppState.Connected>(state).open!!.store.state.first { it != null }
+            runCurrent()
+            controller.selectChat(CHAT_A)
+            val first = assertIs<AppState.Connected>(state).open!!.chat!!
+
+            controller.selectChat(CHAT_A)
+            controller.selectChat("ahp-chat:/not-in-this-session")
+            runCurrent()
+
+            assertSame(first, assertIs<AppState.Connected>(state).open!!.chat)
+            assertEquals(emptyList(), unsubscribed())
+        }
+    }
+
+    @Test
+    fun `selecting a chat before the session has loaded opens nothing, and with no open session does nothing`() = runTest {
+        withRig(script = { HostScript(sessionChats = "[${chatSummaryJson(CHAT_A)}]") }) {
+            connectToFirstHost()
+            controller.selectChat(CHAT_A)
+            assertNull(assertIs<AppState.Connected>(state).open)
+
+            controller.openSession(SESSION_C)
+            controller.selectChat(CHAT_A)
+
+            assertNull(assertIs<AppState.Connected>(state).open!!.chat, "the session snapshot had not arrived, so the chat could not be checked against it")
+        }
+    }
+
+    @Test
+    fun `a chat is never swapped away from under a subagent transcript`() = runTest {
+        withRig(script = { subagentScript(listOf(CHAT_A, CHAT_C)) }) {
+            connectToFirstHost()
+            controller.openSession(SESSION_C)
+            assertIs<AppState.Connected>(state).open!!.store.state.first { it != null }
+            runCurrent()
+            controller.selectChat(CHAT_A)
+            assertIs<AppState.Connected>(state).open!!.chat!!.store.state.first { it != null }
+            controller.openSubagentChat(CHAT_B)
+            runCurrent()
+
+            controller.selectChat(CHAT_C)
+            runCurrent()
+
+            val open = assertIs<AppState.Connected>(state).open!!
+            assertEquals(CHAT_B, open.chat!!.uri)
+            assertEquals(CHAT_A, open.chat!!.parent!!.uri)
+            assertEquals(emptyList(), unsubscribed())
+        }
+    }
+
+    @Test
+    fun `a chat is never swapped away from under a terminal`() = runTest {
+        withRig(script = { terminalScript(listOf(CHAT_A, CHAT_C)) }) {
+            connectToFirstHost()
+            openTerminalChat(this)
+            controller.openTerminal(TERMINAL_REAL)
+            runCurrent()
+
+            controller.selectChat(CHAT_C)
+            runCurrent()
+
+            val open = assertIs<AppState.Connected>(state).open!!
+            assertEquals(CHAT_A, open.chat!!.uri)
+            assertEquals(TERMINAL_REAL, open.terminal!!.uri)
+            assertEquals(emptyList(), unsubscribed())
+        }
+    }
+
+    @Test
+    fun `leaving the session after swapping chats releases the chat on screen and the session, and nothing twice`() = runTest {
+        withRig(script = { HostScript(sessionChats = "[${chatSummaryJson(CHAT_A)}, ${chatSummaryJson(CHAT_B, "Second")}]") }) {
+            connectToFirstHost()
+            controller.openSession(SESSION_C)
+            assertIs<AppState.Connected>(state).open!!.store.state.first { it != null }
+            runCurrent()
+            controller.selectChat(CHAT_A)
+            runCurrent()
+            controller.selectChat(CHAT_B)
+            runCurrent()
+
+            controller.closeSession()
+            runCurrent()
+
+            assertNull(assertIs<AppState.Connected>(state).open)
+            assertEquals(listOf(CHAT_A, CHAT_B, SESSION_C).sorted(), unsubscribed().sorted())
+        }
+    }
+
+    @Test
     fun `leaving the host with a chat open returns to the host list`() = runTest {
         withRig(script = { HostScript(sessionChats = "[${chatSummaryJson(CHAT_A)}]") }) {
             server.json(fixture("list-tunnels.json"))
@@ -1081,8 +1199,10 @@ class AppControllerTest {
         }
     }
 
-    private fun subagentScript() = HostScript(
-        sessionChats = "[${chatSummaryJson(CHAT_A)}]",
+    private fun chatsJson(uris: List<String>) = uris.joinToString(prefix = "[", postfix = "]") { chatSummaryJson(it) }
+
+    private fun subagentScript(chats: List<String> = listOf(CHAT_A)) = HostScript(
+        sessionChats = chatsJson(chats),
         chatTurns = listOf(
             turnJson(
                 "t1",
@@ -1093,8 +1213,8 @@ class AppControllerTest {
         ),
     )
 
-    private fun terminalScript(running: Boolean = true) = HostScript(
-        sessionChats = "[${chatSummaryJson(CHAT_A)}]",
+    private fun terminalScript(chats: List<String> = listOf(CHAT_A), running: Boolean = true) = HostScript(
+        sessionChats = chatsJson(chats),
         chatTurns = listOf(
             turnJson(
                 "t1",
@@ -1699,7 +1819,7 @@ class AppControllerTest {
     }
 
     @Test
-    fun `nothing opens without an open session, or over an open chat, or twice`() = runTest {
+    fun `a changeset opens over the session's own chat, but not without a session, and not twice`() = runTest {
         withRig(script = changesetScript()) {
             connectToFirstHost()
 
@@ -1710,12 +1830,12 @@ class AppControllerTest {
             controller.openChat(CHAT_A)
             assertIs<AppState.Connected>(state).open!!.chat!!.store.state.first { it != null }
             controller.openChangeset(CHANGESET_A)
-            assertNull(assertIs<AppState.Connected>(state).open!!.changeset, "a chat is open")
-
-            controller.closeChat()
-            controller.openChangeset(CHANGESET_A)
             controller.openChangeset(CHANGESET_A)
             runCurrent()
+
+            val open = assertIs<AppState.Connected>(state).open!!
+            assertEquals(CHANGESET_A, open.changeset!!.uri)
+            assertEquals(CHAT_A, open.chat!!.uri, "the chat is still there underneath")
             assertEquals(1, connectors.single().sockets.flatMap { it.sent }.count { it["method"]?.jsonPrimitive?.content == "subscribe" && it["params"]!!.jsonObject["channel"]!!.jsonPrimitive.content == CHANGESET_A })
         }
     }

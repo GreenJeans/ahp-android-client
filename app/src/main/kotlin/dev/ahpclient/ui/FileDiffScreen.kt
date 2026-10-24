@@ -52,30 +52,33 @@ private fun rowsOf(diff: FileDiff): List<DiffRow> =
  */
 @Composable
 fun FileDiffScreen(path: String, load: DiffLoad, connection: ConnState, onBack: () -> Unit, modifier: Modifier = Modifier) {
-    Column(modifier = modifier.fillMaxSize()) {
-        Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onBack, modifier = Modifier.testTag("back")) { Text("Back to files") }
-            if (connection != ConnState.Online) ConnectionLine(connection)
-            Text(
-                path,
-                style = MaterialTheme.typography.titleMedium,
-                fontFamily = FontFamily.Monospace,
-                modifier = Modifier.semantics { heading() }.testTag("diff_title"),
-            )
-        }
-        val sideMargin = Modifier.padding(horizontal = 24.dp)
-        when (load) {
-            DiffLoad.Loading -> Busy("Loading the file…", sideMargin.testTag("diff_loading"))
-            is DiffLoad.Loaded -> when (val result = load.result) {
-                is DiffResult.Ready -> DiffBody(result.diff)
-                DiffResult.NoSuchFile -> Text("That file is no longer in this changeset.", sideMargin.testTag("diff_gone"))
-                DiffResult.TooLarge -> Text("This file, or what changed in it, is too big to compare on the phone.", sideMargin.testTag("diff_too_large"))
-                DiffResult.Binary -> Text("This does not look like a text file, so its contents are not shown.", sideMargin.testTag("diff_binary"))
-                DiffResult.NoEarlierVersion -> Text(
-                    "The host did not keep the earlier version of this file, so only the line counts can be shown.",
-                    sideMargin.testTag("diff_no_earlier"),
+    // The bar names the file; the whole path is in the body, because on a long path the bar would cut off the end, which is the file name.
+    ScreenScaffold(title = path.substringAfterLast('/').ifEmpty { path }, onBack = onBack, backLabel = "Back to files", large = false, modifier = modifier) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (connection != ConnState.Online) ConnectionLine(connection)
+                Text(
+                    path,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.semantics { heading() }.testTag("diff_title"),
                 )
-                is DiffResult.Failed -> ErrorText("Could not load the file. ${result.reason}", sideMargin.testTag("diff_failed"))
+            }
+            val sideMargin = Modifier.padding(horizontal = 24.dp)
+            when (load) {
+                DiffLoad.Loading -> Busy("Loading the file…", sideMargin.testTag("diff_loading"))
+                is DiffLoad.Loaded -> when (val result = load.result) {
+                    is DiffResult.Ready -> DiffBody(result.diff)
+                    DiffResult.NoSuchFile -> Text("That file is no longer in this changeset.", sideMargin.testTag("diff_gone"))
+                    DiffResult.TooLarge -> Text("This file, or what changed in it, is too big to compare on the phone.", sideMargin.testTag("diff_too_large"))
+                    DiffResult.Binary -> Text("This does not look like a text file, so its contents are not shown.", sideMargin.testTag("diff_binary"))
+                    DiffResult.NoEarlierVersion -> Text(
+                        "The host did not keep the earlier version of this file, so only the line counts can be shown.",
+                        sideMargin.testTag("diff_no_earlier"),
+                    )
+                    is DiffResult.Failed -> ErrorText("Could not load the file. ${result.reason}", sideMargin.testTag("diff_failed"))
+                }
             }
         }
     }

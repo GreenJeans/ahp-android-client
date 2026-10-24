@@ -43,27 +43,28 @@ fun SignInScreen(
     onCopyCode: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        ScreenColumn {
-            Text("AHP Client", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() })
-            Text(
-                "Watch your VS Code agent sessions from your phone. This app only reads; it cannot send anything to your sessions.",
-                style = MaterialTheme.typography.bodyLarge,
-            )
-            state.notice?.let { Notice(it, Modifier.testTag("notice")) }
-            when (val step = state.step) {
-                SignInStep.Idle -> {
-                    StartSignIn(onSignIn, label = "Sign in with GitHub")
-                    if (state.offerRevoke) RevokeAccess(onOpenGitHub)
-                }
-                SignInStep.RequestingCode -> {
-                    Busy("Requesting a code from GitHub…")
-                    TextButton(onClick = onCancel) { Text("Cancel") }
-                }
-                is SignInStep.AwaitingApproval -> Approval(step, onCancel, onOpenGitHub, onCopyCode)
-                is SignInStep.Failed -> {
-                    ErrorText(step.message, Modifier.testTag("sign_in_error"))
-                    StartSignIn(onSignIn, label = "Try again")
+    ScreenScaffold(title = "AHP Client", modifier = modifier) {
+        Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+            ScreenColumn {
+                Text(
+                    "Follow your VS Code agent sessions from your phone. Out of the box this app only watches; you can let it send messages and look after sessions later, in Settings.",
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+                state.notice?.let { Notice(it, Modifier.testTag("notice")) }
+                when (val step = state.step) {
+                    SignInStep.Idle -> {
+                        StartSignIn(onSignIn, label = "Sign in with GitHub")
+                        if (state.offerRevoke) RevokeAccess(onOpenGitHub)
+                    }
+                    SignInStep.RequestingCode -> {
+                        Busy("Requesting a code from GitHub…")
+                        TextButton(onClick = onCancel) { Text("Cancel") }
+                    }
+                    is SignInStep.AwaitingApproval -> Approval(step, onCancel, onOpenGitHub, onCopyCode)
+                    is SignInStep.Failed -> {
+                        ErrorText(step.message, Modifier.testTag("sign_in_error"))
+                        StartSignIn(onSignIn, label = "Try again")
+                    }
                 }
             }
         }

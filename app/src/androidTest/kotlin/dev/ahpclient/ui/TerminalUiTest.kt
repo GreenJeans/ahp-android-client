@@ -6,6 +6,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
@@ -106,7 +107,7 @@ class TerminalUiTest {
         var back = 0
         show(state("x\n"), onBack = { back++ })
 
-        rule.onNodeWithTag("back").assertTextEquals("Back to chat").performClick()
+        rule.onNodeWithTag("back").assertContentDescriptionEquals("Back to chat").performClick()
 
         assertEquals(1, back)
         val bounds = rule.onNodeWithTag("back").fetchSemanticsNode().touchBoundsInRoot

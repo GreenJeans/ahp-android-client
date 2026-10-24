@@ -198,8 +198,8 @@ class ScreensTest {
 
         rule.onNodeWithTag("hosts_empty").assertIsDisplayed()
         rule.onNodeWithText("blue A", substring = true).assertIsDisplayed()
-        rule.onAllNodesWithText("Refresh").assertCountEquals(2) // the toolbar button and the one in the explanation
-        rule.onNodeWithTag("refresh_hosts").performClick()
+        rule.onAllNodesWithText("Refresh").assertCountEquals(1) // the one in the explanation; the bar's is an icon with a description
+        rule.onNodeWithTag("refresh_hosts").assertContentDescriptionEquals("Refresh").performClick()
 
         assertEquals(1, refreshed)
     }
@@ -224,13 +224,21 @@ class ScreensTest {
     }
 
     @Test
-    fun signOutIsAlwaysAvailable() {
+    fun signOutIsAlwaysAvailableInTheMenu() {
         var signedOut = 0
         showHosts(HostList.Loading, onSignOut = { signedOut++ })
 
+        rule.onNodeWithTag("hosts_menu").assertContentDescriptionEquals("More options").assertTouchTargetAtLeast(48.dp).performClick()
         rule.onNodeWithTag("sign_out").assertTouchTargetAtLeast(48.dp).performClick()
 
         assertEquals(1, signedOut)
+    }
+
+    @Test
+    fun signOutIsNotOneTapFromTheListSoItIsNotPressedByAccident() {
+        showHosts(HostList.Loading)
+
+        rule.onNodeWithTag("sign_out").assertDoesNotExist()
     }
 
     // ---- connected --------------------------------------------------------------------------------------------

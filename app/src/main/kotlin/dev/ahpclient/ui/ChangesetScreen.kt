@@ -64,17 +64,15 @@ fun ChangesetScreen(
     onSetReviewed: (suspend (fileId: String, reviewed: Boolean) -> ManageResult)? = null,
     onOpenFile: ((fileId: String) -> Unit)? = null,
 ) {
-    Column(modifier = modifier.fillMaxSize()) {
-        Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onBack, modifier = Modifier.testTag("back")) { Text("Back to session") }
-            if (connection != ConnState.Online) ConnectionLine(connection)
-            Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() }.testTag("changeset_title"))
-        }
-        when {
-            error is ChannelGoneException -> ErrorText("These changes are no longer on the host.", Modifier.padding(horizontal = 24.dp).testTag("changeset_gone"))
-            state != null -> ChangesetBody(remember(state) { ChangesetView.from(state) }, onSetReviewed, onOpenFile)
-            error != null -> ErrorText("Could not load these changes (${error.javaClass.simpleName}).", Modifier.padding(horizontal = 24.dp).testTag("changeset_error"))
-            else -> Busy("Loading changes…", Modifier.padding(horizontal = 24.dp).testTag("changeset_loading"))
+    ScreenScaffold(title = title, titleTag = "changeset_title", onBack = onBack, backLabel = "Back to session", large = false, modifier = modifier) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            if (connection != ConnState.Online) ConnectionLine(connection, Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
+            when {
+                error is ChannelGoneException -> ErrorText("These changes are no longer on the host.", Modifier.padding(horizontal = 24.dp).testTag("changeset_gone"))
+                state != null -> ChangesetBody(remember(state) { ChangesetView.from(state) }, onSetReviewed, onOpenFile)
+                error != null -> ErrorText("Could not load these changes (${error.javaClass.simpleName}).", Modifier.padding(horizontal = 24.dp).testTag("changeset_error"))
+                else -> Busy("Loading changes…", Modifier.padding(horizontal = 24.dp).testTag("changeset_loading"))
+            }
         }
     }
 }

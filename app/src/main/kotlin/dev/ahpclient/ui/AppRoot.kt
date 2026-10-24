@@ -9,7 +9,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material3.Scaffold
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -25,9 +26,13 @@ import androidx.compose.ui.platform.testTag
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.ahpclient.app.AppController
 import dev.ahpclient.app.AppState
+import dev.ahpclient.app.OpenChat
 import dev.ahpclient.app.SignInStep
 import dev.ahpclient.state.ChatInteractor
+import dev.ahpclient.state.ConnState
+import dev.ahpclient.state.HostSession
 import dev.ahpclient.ui.chat.ChatActionsUi
+import dev.ahpclient.ui.chat.ChatPane
 import dev.ahpclient.ui.chat.ChatScreen
 import dev.ahpclient.ui.chat.rememberTranscript
 import dev.ahpclient.ui.theme.AhpTheme
@@ -56,13 +61,14 @@ fun AppRoot(
     // Kept here, above the screen switch, so the list keeps its scroll position across a trip into a session and back.
     val listState = rememberLazyListState()
     val detailOpen = (state as? AppState.Connected)?.open != null
-    val chatOpen = (state as? AppState.Connected)?.open?.chat != null
+    // A session's own chat is part of the session screen, left by leaving the session. Only a subagent's transcript is a screen over it.
+    val subagentOpen = (state as? AppState.Connected)?.open?.chat?.parent != null
     val changesetOpen = (state as? AppState.Connected)?.open?.changeset != null
     val diffOpen = (state as? AppState.Connected)?.open?.changeset?.diff != null
     val terminalOpen = (state as? AppState.Connected)?.open?.terminal != null
     BackHandler(enabled = state is AppState.Connected && !detailOpen) { controller.disconnect() }
-    BackHandler(enabled = detailOpen && !chatOpen && !changesetOpen) { controller.closeSession() }
-    BackHandler(enabled = chatOpen && !terminalOpen) { controller.closeChat() }
+    BackHandler(enabled = detailOpen && !subagentOpen && !changesetOpen && !terminalOpen) { controller.closeSession() }
+    BackHandler(enabled = subagentOpen && !terminalOpen && !changesetOpen) { controller.closeChat() }
     BackHandler(enabled = terminalOpen) { controller.closeTerminal() }
     BackHandler(enabled = changesetOpen && !diffOpen) { controller.closeChangeset() }
     BackHandler(enabled = diffOpen) { controller.closeDiff() }
@@ -73,15 +79,12 @@ fun AppRoot(
     LaunchedEffect(connected, detailOpen) { if (!connected || detailOpen) settingsOpen = false }
 
     AhpTheme {
-        // The screens in the new style bring their own bars and apply the system-bar insets themselves. The ones not yet moved
-        // over get the insets from `legacy`, so nothing draws under the status or navigation bar.
-        val legacy = Modifier.windowInsetsPadding(WindowInsets.systemBars)
-        Scaffold(modifier = Modifier.fillMaxSize(), contentWindowInsets = WindowInsets(0, 0, 0, 0)) { padding ->
-            val content = Modifier.padding(padding).then(legacy)
+        // Every screen but the loading one brings its own bar and applies the system-bar insets itself.
+        Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             when (val current = state) {
-                AppState.Restoring -> Box(content.fillMaxSize().testTag("restoring"), contentAlignment = Alignment.Center) { Busy("Loading…") }
-                is AppState.SignedOut -> SignInScreen(current, controller::signIn, controller::cancelSignIn, onOpenGitHub, onCopyCode, content)
-                is AppState.Hosts -> HostsScreen(current, controller::refreshHosts, controller::connect, controller::signOut, content)
+                AppState.Restoring -> Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars).testTag("restoring"), contentAlignment = Alignment.Center) { Busy("Loading…") }
+                is AppState.SignedOut -> SignInScreen(current, controller::signIn, controller::cancelSignIn, onOpenGitHub, onCopyCode)
+                is AppState.Hosts -> HostsScreen(current, controller::refreshHosts, controller::connect, controller::signOut)
                 is AppState.Connected -> {
                     val connection by current.session.connection.collectAsStateWithLifecycle()
                     val canManage by current.session.canManage.collectAsStateWithLifecycle()
@@ -149,14 +152,14 @@ fun AppRoot(
                         if (terminal != null) {
                             val terminalState by terminal.store.state.collectAsStateWithLifecycle()
                             val terminalError by terminal.store.error.collectAsStateWithLifecycle()
-                            TerminalScreen(terminalState, terminalError, connection, controller::closeTerminal, content)
+                            TerminalScreen(terminalState, terminalError, connection, controller::closeTerminal)
                         } else if (changeset != null) {
                             val changesetState by changeset.store.state.collectAsStateWithLifecycle()
                             val changesetError by changeset.store.error.collectAsStateWithLifecycle()
                             val diff = changeset.diff
                             if (diff != null) {
                                 val diffLoad by diff.load.collectAsStateWithLifecycle()
-                                FileDiffScreen(path = diff.path, load = diffLoad, connection = connection, onBack = controller::closeDiff, modifier = content)
+                                FileDiffScreen(path = diff.path, load = diffLoad, connection = connection, onBack = controller::closeDiff)
                             } else ChangesetScreen(
                                 title = changesetTitle ?: "Changes",
                                 state = changesetState,
@@ -165,72 +168,113 @@ fun AppRoot(
                                 onBack = controller::closeChangeset,
                                 onSetReviewed = if (canManage && changeset.reviewable) controller::setFileReviewed else null,
                                 onOpenFile = controller::openDiff,
-                                modifier = content,
                             )
-                        } else if (chat == null) {
+                        } else if (chat != null && chat.parent != null) {
+                            // A subagent's transcript is a screen of its own over the session.
+                            OpenChatView(chat, current.session, connection, rootState, controller, screen = true, modifier = Modifier)
+                        } else {
                             val sessionState by open.store.state.collectAsStateWithLifecycle()
                             val error by open.store.error.collectAsStateWithLifecycle()
                             val now by rememberNow()
-                            SessionDetailScreen(
-                                sessionState, error, connection, now, controller::closeSession, content,
-                                onOpenChat = controller::openChat,
+                            SessionScreen(
+                                state = sessionState,
+                                error = error,
+                                connection = connection,
+                                now = now,
+                                onBack = controller::closeSession,
+                                shownChat = chat?.uri,
+                                onSelectChat = controller::selectChat,
                                 manage = manageActions,
                                 sessionUri = open.uri,
                                 onRemoved = controller::closeSession,
                                 onOpenChangeset = { uri, label -> changesetTitle = label; controller.openChangeset(uri) },
-                            )
-                        } else {
-                            val transcript by rememberTranscript(chat.store)
-                            val expanded by chat.expansion.expanded.collectAsStateWithLifecycle()
-                            val error by chat.store.error.collectAsStateWithLifecycle()
-                            val loadingOlder by chat.store.loadingOlder.collectAsStateWithLifecycle()
-                            val olderError by chat.store.olderError.collectAsStateWithLifecycle()
-                            val chatState by chat.store.state.collectAsStateWithLifecycle()
-                            val canInteract by current.session.canInteract.collectAsStateWithLifecycle()
-                            val running = chatState?.activeTurn != null
-                            // Nothing to act with unless the connection allows it and the host shows this chat as interactive.
-                            val actions = if (ChatInteractor.available(chatState, canInteract)) {
-                                remember(chat.interactor, running, rootState) {
-                                    ChatActionsUi(
-                                        running = running,
-                                        send = chat.interactor::send,
-                                        steer = chat.interactor::steer,
-                                        cancel = chat.interactor::cancel,
-                                        approve = chat.interactor::approve,
-                                        deny = chat.interactor::deny,
-                                        approveResult = chat.interactor::approveResult,
-                                        denyResult = chat.interactor::denyResult,
-                                        answer = chat.interactor::answer,
-                                        saveDraft = chat.interactor::saveDraft,
-                                        decline = chat.interactor::declineInput,
-                                        dismiss = chat.interactor::dismissInput,
-                                        models = chat.interactor.modelOptions(),
-                                    )
-                                }
-                            } else {
-                                null
+                            ) {
+                                if (chat != null) OpenChatView(chat, current.session, connection, rootState, controller, screen = false, modifier = Modifier)
                             }
-                            ChatScreen(
-                                transcript = transcript,
-                                error = error,
-                                loadingOlder = loadingOlder,
-                                olderError = olderError,
-                                connection = connection,
-                                onBack = controller::closeChat,
-                                onLoadOlder = chat.store::loadOlder,
-                                onOpenLink = { link -> if (!openWebLink(context, link)) Toast.makeText(context, "No app could open this link", Toast.LENGTH_SHORT).show() },
-                                expanded = expanded,
-                                onToggle = chat.expansion::toggle,
-                                actions = actions,
-                                onOpenSubagent = controller::openSubagentChat,
-                                onOpenTerminal = controller::openTerminal,
-                                backLabel = if (chat.parent != null) "Back to chat" else "Back to session",
-                                modifier = content,
-                            )
                         }
                     }
                 }
             }
         }
+    }
+}
+
+/** The chat the user has open, wired to what the host says about it and to what this app may do there. */
+@Composable
+private fun OpenChatView(
+    chat: OpenChat,
+    session: HostSession,
+    connection: ConnState,
+    rootState: Any?,
+    controller: AppController,
+    screen: Boolean,
+    modifier: Modifier,
+) {
+    val context = LocalContext.current
+    val transcript by rememberTranscript(chat.store)
+    val expanded by chat.expansion.expanded.collectAsStateWithLifecycle()
+    val error by chat.store.error.collectAsStateWithLifecycle()
+    val loadingOlder by chat.store.loadingOlder.collectAsStateWithLifecycle()
+    val olderError by chat.store.olderError.collectAsStateWithLifecycle()
+    val chatState by chat.store.state.collectAsStateWithLifecycle()
+    val canInteract by session.canInteract.collectAsStateWithLifecycle()
+    val running = chatState?.activeTurn != null
+    // Nothing to act with unless the connection allows it and the host shows this chat as interactive.
+    val actions = if (ChatInteractor.available(chatState, canInteract)) {
+        remember(chat.interactor, running, rootState) {
+            ChatActionsUi(
+                running = running,
+                send = chat.interactor::send,
+                steer = chat.interactor::steer,
+                cancel = chat.interactor::cancel,
+                approve = chat.interactor::approve,
+                deny = chat.interactor::deny,
+                approveResult = chat.interactor::approveResult,
+                denyResult = chat.interactor::denyResult,
+                answer = chat.interactor::answer,
+                saveDraft = chat.interactor::saveDraft,
+                decline = chat.interactor::declineInput,
+                dismiss = chat.interactor::dismissInput,
+                models = chat.interactor.modelOptions(),
+            )
+        }
+    } else {
+        null
+    }
+    val onOpenLink = { link: String -> if (!openWebLink(context, link)) Toast.makeText(context, "No app could open this link", Toast.LENGTH_SHORT).show() }
+    if (screen) {
+        ChatScreen(
+            transcript = transcript,
+            error = error,
+            loadingOlder = loadingOlder,
+            olderError = olderError,
+            connection = connection,
+            onBack = controller::closeChat,
+            onLoadOlder = chat.store::loadOlder,
+            onOpenLink = onOpenLink,
+            expanded = expanded,
+            onToggle = chat.expansion::toggle,
+            actions = actions,
+            onOpenSubagent = controller::openSubagentChat,
+            onOpenTerminal = controller::openTerminal,
+            backLabel = "Back to chat",
+            modifier = modifier,
+        )
+    } else {
+        ChatPane(
+            transcript = transcript,
+            error = error,
+            loadingOlder = loadingOlder,
+            olderError = olderError,
+            connection = connection,
+            onLoadOlder = chat.store::loadOlder,
+            onOpenLink = onOpenLink,
+            expanded = expanded,
+            onToggle = chat.expansion::toggle,
+            actions = actions,
+            onOpenSubagent = controller::openSubagentChat,
+            onOpenTerminal = controller::openTerminal,
+            modifier = modifier,
+        )
     }
 }

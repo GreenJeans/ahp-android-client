@@ -140,9 +140,9 @@ class AccessibilityTest {
     @Test
     fun sessionDetailWithAQuestionAndWithout() {
         checkEach(
-            { SessionDetailScreen(detail(), null, ConnState.Online, now, {}) },
-            { SessionDetailScreen(null, null, ConnState.Online, now, {}) },
-            { SessionDetailScreen(null, IllegalStateException("x"), ConnState.Reconnecting(1, null), now, {}) },
+            { SessionScreen(detail(), null, ConnState.Online, now, {}) },
+            { SessionScreen(null, null, ConnState.Online, now, {}) },
+            { SessionScreen(null, IllegalStateException("x"), ConnState.Reconnecting(1, null), now, {}) },
         )
     }
 

@@ -26,6 +26,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -51,6 +52,7 @@ fun ScreenScaffold(
     backLabel: String = "Back",
     backTag: String = "back",
     titleTag: String? = null,
+    subtitle: String? = null,
     large: Boolean = true,
     actions: @Composable RowScope.() -> Unit = {},
     floatingActionButton: @Composable () -> Unit = {},
@@ -59,12 +61,36 @@ fun ScreenScaffold(
 ) {
     val scrollBehavior = if (large) TopAppBarDefaults.exitUntilCollapsedScrollBehavior() else TopAppBarDefaults.pinnedScrollBehavior()
     val titleText: @Composable () -> Unit = {
-        Text(
-            title,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = if (titleTag != null) Modifier.testTag(titleTag) else Modifier,
-        )
+        val name: @Composable () -> Unit = {
+            Text(
+                title,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = if (titleTag != null) Modifier.testTag(titleTag) else Modifier,
+            )
+        }
+        // A second line (the state, say) only on the small bar: the large one collapses into it and has no room for two.
+        if (subtitle != null && !large) {
+            Column {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = if (titleTag != null) Modifier.testTag(titleTag) else Modifier,
+                )
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.testTag("subtitle"),
+                )
+            }
+        } else {
+            name()
+        }
     }
     val back: @Composable () -> Unit = {
         if (onBack != null) {
@@ -131,10 +157,11 @@ fun TileCard(
     shape: Shape = RoundedCornerShape(Design.OuterRadius),
     onClick: (() -> Unit)? = null,
     onClickLabel: String? = null,
+    color: Color = MaterialTheme.colorScheme.surfaceContainerLow,
     content: @Composable () -> Unit,
 ) {
     Surface(
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        color = color,
         contentColor = MaterialTheme.colorScheme.onSurface,
         shape = shape,
         modifier = Modifier.fillMaxWidth(),

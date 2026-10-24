@@ -294,19 +294,25 @@ class ChangesetUiTest {
             """[{"label":"Uncommitted","uriTemplate":"ahp-changeset:/c1","changeKind":"uncommitted"},{"label":"Per turn","uriTemplate":"ahp-changeset:/t/{turnId}","changeKind":"turn"}]""",
         )
         rule.setContent {
-            AhpTheme { SessionDetailScreen(state, null, ConnState.Online, Instant.parse("2026-10-26T10:30:00Z"), {}, onOpenChangeset = { u, l -> opened += u to l }) }
+            AhpTheme { SessionScreen(state, null, ConnState.Online, Instant.parse("2026-10-26T10:30:00Z"), {}, onOpenChangeset = { u, l -> opened += u to l }) }
         }
+        rule.onNodeWithTag("session_menu").performClick()
+        rule.onNodeWithTag("menu_details").performClick()
+        rule.waitForIdle()
 
-        rule.onNodeWithTag("open_changeset").performScrollTo().performClick()
         rule.onNodeWithTag("changeset_unsupported").performScrollTo().assertTextContains("Per turn", substring = true)
+        assertEquals(1, rule.onAllNodes(hasTestTag("open_changeset")).fetchSemanticsNodes().size)
+        rule.onNodeWithTag("open_changeset").performScrollTo().performClick()
 
         assertEquals(listOf("ahp-changeset:/c1" to "Uncommitted"), opened)
-        assertEquals(1, rule.onAllNodes(hasTestTag("open_changeset")).fetchSemanticsNodes().size)
     }
 
     @Test
     fun aSessionWithNoChangesetsHasNoChangesSection() {
-        rule.setContent { AhpTheme { SessionDetailScreen(session("[]"), null, ConnState.Online, Instant.parse("2026-10-26T10:30:00Z"), {}) } }
+        rule.setContent { AhpTheme { SessionScreen(session("[]"), null, ConnState.Online, Instant.parse("2026-10-26T10:30:00Z"), {}) } }
+        rule.onNodeWithTag("session_menu").performClick()
+        rule.onNodeWithTag("menu_details").performClick()
+        rule.waitForIdle()
 
         rule.onNodeWithTag("changesets").assertDoesNotExist()
     }

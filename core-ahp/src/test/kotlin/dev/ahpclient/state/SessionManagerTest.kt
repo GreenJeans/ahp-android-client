@@ -559,6 +559,23 @@ class SessionManagerTest {
     }
 
     @Test
+    fun `the main chat is the host's default, else the first listed, and the tabs put it first`() {
+        val now = java.time.Instant.parse("2026-10-26T10:30:00Z")
+
+        val sideListedFirst = SessionDetail.from(state("ready", c2 to "Side", c1 to "Main", defaultChat = c1), now)
+        val noDefault = SessionDetail.from(state("ready", c2 to "Side", c1 to "Main"), now)
+        val none = SessionDetail.from(state("ready"), now)
+
+        assertEquals(c1, sideListedFirst.mainChat!!.uri)
+        assertEquals(listOf(c1, c2), sideListedFirst.tabs.map { it.uri }, "the main chat leads, the rest keep the host's order")
+        assertEquals(listOf(false, true), sideListedFirst.chats.map { it.isMain })
+        assertEquals(c2, noDefault.mainChat!!.uri, "no default named: the first the host lists")
+        assertEquals(listOf(c2, c1), noDefault.tabs.map { it.uri })
+        assertNull(none.mainChat)
+        assertEquals(emptyList(), none.tabs)
+    }
+
+    @Test
     fun `removing a chat that fails the device check or went away meanwhile sends nothing`() = runTest {
         val refused = Rig().apply { answer = false }
         assertEquals(ManageResult.NotConfirmed, refused.manager.disposeChat(s1, c1))

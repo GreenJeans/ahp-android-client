@@ -99,16 +99,44 @@ class SessionScreensTest {
         AhpTheme { SettingsScreen(onBack, monitorEnabled = monitorEnabled, notificationsAllowed = notificationsAllowed, onMonitorChange = onMonitorChange) }
     }
 
-    private fun detailState(inputNeeded: String? = null): SessionState = Ahp.json.decodeFromString(
-        SessionState.serializer(),
-        """{"provider":"copilotcli","title":"Fix the build","status":56,"lifecycle":"ready","activeClients":[],"activity":"Waiting on you",
-            "project":{"uri":"file:///work/repo","displayName":"repo"},"workingDirectories":["file:///work/repo"],
-            "chats":[{"resource":"ahp-chat://default/x","title":"Main chat","status":56,"modifiedAt":"2026-10-26T10:29:00.000Z"}]
-            ${if (inputNeeded != null) ""","inputNeeded":$inputNeeded""" else ""}}""",
-    )
+    private val mainChatUri = "ahp-chat://default/x"
+    private val sideChatUri = "ahp-chat://default/y"
 
-    private fun showDetail(state: SessionState?, error: Throwable? = null, connection: ConnState = ConnState.Online, onBack: () -> Unit = {}) =
-        rule.setContent { AhpTheme { SessionDetailScreen(state, error, connection, now, onBack) } }
+    private fun detailState(inputNeeded: String? = null, chats: String = """[{"resource":"$mainChatUri","title":"Main chat","status":56,"modifiedAt":"2026-10-26T10:29:00.000Z"}]""", defaultChat: String? = null): SessionState =
+        Ahp.json.decodeFromString(
+            SessionState.serializer(),
+            """{"provider":"copilotcli","title":"Fix the build","status":56,"lifecycle":"ready","activeClients":[],"activity":"Waiting on you",
+                "project":{"uri":"file:///work/repo","displayName":"repo"},"workingDirectories":["file:///work/repo"],
+                "chats":$chats
+                ${if (defaultChat != null) ""","defaultChat":"$defaultChat"""" else ""}
+                ${if (inputNeeded != null) ""","inputNeeded":$inputNeeded""" else ""}}""",
+        )
+
+    private val twoChats = """[{"resource":"$sideChatUri","title":"Side chat","status":56,"modifiedAt":"2026-10-26T10:28:00.000Z"},
+        {"resource":"$mainChatUri","title":"Main chat","status":1,"modifiedAt":"2026-10-26T10:29:00.000Z"}]"""
+
+    /** The session screen, with a stand-in for the chat and the selection the controller would keep: the screen asks, this holds the answer. */
+    private fun showDetail(
+        state: SessionState?,
+        error: Throwable? = null,
+        connection: ConnState = ConnState.Online,
+        onBack: () -> Unit = {},
+        shown: String? = mainChatUri,
+        onSelectChat: (String) -> Unit = {},
+    ) = rule.setContent {
+        var shownChat by androidx.compose.runtime.remember { mutableStateOf(shown) }
+        AhpTheme {
+            SessionScreen(state, error, connection, now, onBack, shownChat = shownChat, onSelectChat = { shownChat = it; onSelectChat(it) }) {
+                androidx.compose.material3.Text("chat body: $shownChat", Modifier.testTag("chat_body"))
+            }
+        }
+    }
+
+    private fun openDetails() {
+        rule.onNodeWithTag("session_menu").performClick()
+        rule.onNodeWithTag("menu_details").performClick()
+        rule.waitForIdle()
+    }
 
     // ---- list -------------------------------------------------------------------------------------------------
 
@@ -342,26 +370,101 @@ class SessionScreensTest {
     }
 
     @Test
-    fun detailShowsTheSessionAndWhatItWaitsOn() {
+    fun theTopBarNamesTheSessionAndItsMenuHoldsDetails() {
+        showDetail(detailState())
+
+        rule.onNodeWithTag("detail_title").assertTextEquals("Fix the build")
+        rule.onNodeWithTag("session_menu").assertContentDescriptionEquals("More options").assertTouchTargetAtLeast(48.dp).performClick()
+        rule.onNodeWithTag("menu_details").assertIsDisplayed()
+        rule.onAllNodesWithTag("toggle_read").assertCountEquals(0)
+    }
+
+    @Test
+    fun detailsShowTheSessionAndWhatItWaitsOn() {
         val request = """[{"kind":"chatInput","id":"r1","chat":"c","request":{"id":"q","message":"Which branch should I use?"}}]"""
         showDetail(detailState(request))
 
-        rule.onNodeWithTag("detail_title").assertTextEquals("Fix the build")
+        openDetails()
+
         rule.onNodeWithTag("detail_activity").assertTextEquals("Waiting on you")
         rule.onNodeWithTag("input_request").assertTextContains("Which branch should I use?", substring = true)
         rule.onNodeWithTag("answer_hint").assertTextEquals("Answer in VS Code.")
-        rule.onNodeWithTag("chat_row").assertTextContains("Main chat", substring = true)
         rule.onNodeWithText("repo").assertIsDisplayed()
     }
 
     @Test
-    fun tappingAChatRowOpensThatChat() {
-        var opened: String? = null
-        rule.setContent { AhpTheme { SessionDetailScreen(detailState(), null, ConnState.Online, now, {}, onOpenChat = { opened = it }) } }
+    fun theChatFillsTheScreenUnderTheBar() {
+        showDetail(detailState())
 
-        rule.onNodeWithTag("chat_row").assertHasClickAction().assertTouchTargetAtLeast(48.dp).performClick()
+        rule.onNodeWithTag("chat_body").assertTextEquals("chat body: $mainChatUri")
+        rule.onAllNodesWithTag("chat_tabs").assertCountEquals(0)
+    }
 
-        assertEquals("ahp-chat://default/x", opened)
+    @Test
+    fun aSessionWithSeveralChatsHasATabForEachWithTheMainChatFirst() {
+        showDetail(detailState(chats = twoChats, defaultChat = mainChatUri))
+
+        val tabs = rule.onAllNodesWithTag("chat_tab")
+        tabs.assertCountEquals(2)
+        tabs[0].assertContentDescriptionEquals("Main chat").assertTouchTargetAtLeast(48.dp)
+        tabs[1].assertContentDescriptionEquals("Side chat, Needs input").assertTouchTargetAtLeast(48.dp)
+        rule.onAllNodesWithTag("chat_tab_dot", useUnmergedTree = true).assertCountEquals(1)
+    }
+
+    @Test
+    fun tappingATabAsksForThatChatAndTheChatBeneathFollows() {
+        val asked = mutableListOf<String>()
+        showDetail(detailState(chats = twoChats, defaultChat = mainChatUri), onSelectChat = { asked += it })
+
+        rule.onAllNodesWithTag("chat_tab")[1].performClick()
+        rule.waitForIdle()
+
+        assertEquals(listOf(sideChatUri), asked)
+        rule.onNodeWithTag("chat_body").assertTextEquals("chat body: $sideChatUri")
+    }
+
+    @Test
+    fun withNoChatShownTheMainChatIsAskedForAtOnce() {
+        val asked = mutableListOf<String>()
+        showDetail(detailState(chats = twoChats, defaultChat = mainChatUri), shown = null, onSelectChat = { asked += it })
+        rule.waitForIdle()
+
+        assertEquals(listOf(mainChatUri), asked)
+        rule.onNodeWithTag("chat_body").assertTextEquals("chat body: $mainChatUri")
+    }
+
+    @Test
+    fun aShownChatThatLeftTheSessionIsReplacedByTheMainChat() {
+        val asked = mutableListOf<String>()
+        showDetail(detailState(chats = twoChats, defaultChat = mainChatUri), shown = "ahp-chat://default/gone", onSelectChat = { asked += it })
+        rule.waitForIdle()
+
+        assertEquals(listOf(mainChatUri), asked)
+    }
+
+    @Test
+    fun noChatIsAskedForWhileTheSessionIsLoading() {
+        val asked = mutableListOf<String>()
+        showDetail(null, shown = null, onSelectChat = { asked += it })
+        rule.waitForIdle()
+
+        assertEquals(emptyList<String>(), asked)
+        rule.onAllNodesWithTag("chat_body").assertCountEquals(0)
+    }
+
+    @Test
+    fun noChatIsAskedForWhileTheSessionHasFailedToStart() {
+        val asked = mutableListOf<String>()
+        val failed = Ahp.json.decodeFromString(
+            SessionState.serializer(),
+            """{"provider":"copilotcli","title":"T","status":1,"lifecycle":"failed","activeClients":[],"chats":[],"creationError":{"errorType":"E","message":"no licence"}}""",
+        )
+        rule.setContent { AhpTheme { SessionScreen(failed, null, ConnState.Online, now, {}, shownChat = null, onSelectChat = { asked += it }) } }
+        rule.waitForIdle()
+
+        assertEquals(emptyList<String>(), asked)
+        rule.onNodeWithTag("session_failed").assertTextContains("no licence", substring = true)
+        rule.onAllNodesWithTag("chat_body").assertCountEquals(0)
     }
 
     @Test
@@ -370,6 +473,7 @@ class SessionScreensTest {
             {"kind":"single-select","id":"a","message":"Which branch?","options":[
                 {"id":"m","label":"main","recommended":true},{"id":"d","label":"develop"}]}]}}]"""
         showDetail(detailState(request))
+        openDetails()
 
         val options = rule.onAllNodesWithTag("question_option", useUnmergedTree = true)
         options.assertCountEquals(2)
@@ -380,8 +484,9 @@ class SessionScreensTest {
     }
 
     @Test
-    fun detailOffersNoWaitingSectionWhenNothingIsPending() {
+    fun detailsOfferNoWaitingSectionWhenNothingIsPending() {
         showDetail(detailState())
+        openDetails()
 
         rule.onAllNodesWithTag("input_needed").assertCountEquals(0)
         rule.onAllNodesWithTag("answer_hint").assertCountEquals(0)

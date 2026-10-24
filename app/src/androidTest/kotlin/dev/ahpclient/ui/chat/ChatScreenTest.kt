@@ -3,6 +3,7 @@ package dev.ahpclient.ui.chat
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
@@ -78,7 +79,7 @@ class ChatScreenTest {
         show(transcript(rows(1..2), activity = "Running tests"))
 
         rule.onNodeWithTag("chat_title").assertTextEquals("Fix the build")
-        rule.onNodeWithTag("status_chip", useUnmergedTree = true).assertIsDisplayed()
+        rule.onNodeWithTag("subtitle").assertIsDisplayed()
         rule.onNodeWithTag("chat_activity").assertTextEquals("Running tests")
     }
 
@@ -241,7 +242,7 @@ class ChatScreenTest {
     @Test
     fun theBackButtonNamesWhereItGoes() {
         show(transcript(rows(1..2)))
-        rule.onNodeWithTag("back").assertTextEquals("Back to session")
+        rule.onNodeWithTag("back").assertContentDescriptionEquals("Back to session")
     }
 
     @Test
@@ -249,7 +250,7 @@ class ChatScreenTest {
         var back = 0
         rule.setContent { AhpTheme { ChatScreen(transcript(rows(1..2)), null, false, null, ConnState.Online, { back++ }, {}, {}, backLabel = "Back to chat") } }
 
-        rule.onNodeWithTag("back").assertTextEquals("Back to chat").performClick()
+        rule.onNodeWithTag("back").assertContentDescriptionEquals("Back to chat").performClick()
 
         assertEquals(1, back)
     }

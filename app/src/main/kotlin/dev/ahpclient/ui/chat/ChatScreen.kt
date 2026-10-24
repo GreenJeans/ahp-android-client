@@ -4,7 +4,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -29,16 +28,15 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.heading
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import dev.ahpclient.state.ChatGoneException
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.Transcript
+import dev.ahpclient.state.label
 import dev.ahpclient.ui.Busy
 import dev.ahpclient.ui.ConnectionLine
 import dev.ahpclient.ui.ErrorText
-import dev.ahpclient.ui.StatusChip
+import dev.ahpclient.ui.ScreenScaffold
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
@@ -47,9 +45,9 @@ import kotlinx.coroutines.launch
 private const val LOAD_OLDER_MARGIN = 2
 
 /**
- * One chat, read-only: the conversation with the newest row at the bottom. [transcript] is null until the host's snapshot
- * arrives; [error] says why it may never come. A link in the agent's text is only opened after the user confirms it: [onOpenLink]
- * is called with a link the user has already said yes to.
+ * One chat as a screen of its own, read-only: a top bar with the way back, the chat's title and its state, and the
+ * conversation under it. This is how a subagent's transcript is shown; a session's own chats are the [ChatPane] inside the
+ * session screen. [transcript] is null until the host's snapshot arrives; [error] says why it may never come.
  */
 @Composable
 fun ChatScreen(
@@ -69,17 +67,46 @@ fun ChatScreen(
     onOpenTerminal: ((String) -> Unit)? = null,
     backLabel: String = "Back to session",
 ) {
+    ScreenScaffold(
+        title = transcript?.title ?: "Chat",
+        subtitle = transcript?.state?.label,
+        onBack = onBack,
+        backLabel = backLabel,
+        titleTag = "chat_title",
+        large = false,
+        modifier = modifier,
+    ) {
+        ChatPane(transcript, error, loadingOlder, olderError, connection, onLoadOlder, onOpenLink, Modifier, expanded, onToggle, actions, onOpenSubagent, onOpenTerminal)
+    }
+}
+
+/**
+ * The conversation itself, with no bar of its own, for a screen that supplies one: the newest row at the bottom, the agent's
+ * current activity above it, and the composer when the app may act. A link in the agent's text is only opened after the user
+ * confirms it: [onOpenLink] is called with a link the user has already said yes to.
+ */
+@Composable
+fun ChatPane(
+    transcript: Transcript?,
+    error: Throwable?,
+    loadingOlder: Boolean,
+    olderError: Throwable?,
+    connection: ConnState,
+    onLoadOlder: () -> Unit,
+    onOpenLink: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    expanded: Set<String> = emptySet(),
+    onToggle: (String) -> Unit = {},
+    actions: ChatActionsUi? = null,
+    onOpenSubagent: ((String) -> Unit)? = null,
+    onOpenTerminal: ((String) -> Unit)? = null,
+) {
     var pendingLink by rememberSaveable { mutableStateOf<String?>(null) }
     Column(modifier = modifier.fillMaxSize()) {
-        Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onBack, modifier = Modifier.testTag("back")) { Text(backLabel) }
-            if (connection != ConnState.Online) ConnectionLine(connection)
-            if (transcript != null) {
-                Text(transcript.title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() }.testTag("chat_title"))
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    StatusChip(transcript.state)
-                    transcript.activity?.let { Text(it, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("chat_activity")) }
-                }
+        if (connection != ConnState.Online || transcript?.activity != null) {
+            Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (connection != ConnState.Online) ConnectionLine(connection)
+                transcript?.activity?.let { Text(it, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("chat_activity")) }
             }
         }
         when {

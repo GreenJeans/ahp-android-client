@@ -7,6 +7,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
@@ -25,6 +27,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.compose.ui.unit.dp
+import dev.ahpclient.state.ChatRow
 import dev.ahpclient.state.ConfigField
 import dev.ahpclient.state.ConfigOffer
 import dev.ahpclient.state.ConfigOption
@@ -627,15 +630,30 @@ class ManageUiTest {
 
     // ---- one session ------------------------------------------------------------------------------------------
 
-    private fun showBar(calls: Calls, detail: SessionDetail = detail(), onRemoved: () -> Unit = {}) {
-        rule.setContent { AhpTheme { SessionManageBar(detail, uri, actions(calls), onRemoved) } }
+    private fun showBar(calls: Calls, detail: SessionDetail = detail(), onRemoved: () -> Unit = {}, shownChat: ChatRow? = null) {
+        rule.setContent {
+            var notice by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
+            AhpTheme {
+                androidx.compose.foundation.layout.Column {
+                    SessionMenu(detail, uri, actions(calls), shownChat, onShowDetails = {}, onNotice = { notice = it }, onChatCreated = {}, onRemoved = onRemoved)
+                    ManageNotice(notice, "manage_notice")
+                }
+            }
+        }
+    }
+
+    private fun openMenu() {
+        rule.onNodeWithTag("session_menu").performClick()
+        rule.waitForIdle()
     }
 
     @Test
     fun markReadAndArchiveSayWhatTheyWillDoAndSendTheOppositeOfTheCurrentState() {
         val unread = Calls()
         showBar(unread, detail(read = false, archived = false))
+        openMenu()
         rule.onNodeWithTag("toggle_read").assertTextEquals("Mark read").performClick()
+        openMenu()
         rule.onNodeWithTag("toggle_archive").assertTextEquals("Archive").performClick()
         rule.onNodeWithTag("archive_confirm").performClick()
         rule.waitUntil(5_000) { unread.read.isNotEmpty() && unread.archived.isNotEmpty() }
@@ -648,6 +666,7 @@ class ManageUiTest {
         val calls = Calls()
         showBar(calls)
 
+        openMenu()
         rule.onNodeWithTag("toggle_archive").performClick()
         rule.onNodeWithTag("archive_dialog_text")
             .assertTextContains("Fix the build", substring = true)
@@ -659,6 +678,7 @@ class ManageUiTest {
         rule.onNodeWithTag("archive_dialog_text").assertDoesNotExist()
         assertTrue(calls.archived.isEmpty())
 
+        openMenu()
         rule.onNodeWithTag("toggle_archive").performClick()
         rule.onNodeWithTag("archive_confirm").performClick()
         rule.waitUntil(5_000) { calls.archived.isNotEmpty() }
@@ -670,6 +690,7 @@ class ManageUiTest {
         val calls = Calls()
         showBar(calls, detail(archived = true))
 
+        openMenu()
         rule.onNodeWithTag("toggle_archive").performClick()
 
         rule.waitUntil(5_000) { calls.archived.isNotEmpty() }
@@ -682,7 +703,9 @@ class ManageUiTest {
         val calls = Calls()
         showBar(calls, detail(read = true, archived = true))
 
+        openMenu()
         rule.onNodeWithTag("toggle_read").assertTextEquals("Mark unread").performClick()
+        openMenu()
         rule.onNodeWithTag("toggle_archive").assertTextEquals("Restore").performClick()
 
         rule.waitUntil(5_000) { calls.read.isNotEmpty() && calls.archived.isNotEmpty() }
@@ -694,6 +717,7 @@ class ManageUiTest {
     fun aNewChatIsOnlyOfferedOnceTheSessionIsReady() {
         val starting = Calls()
         showBar(starting, detail(phase = SessionPhase.CREATING))
+        openMenu()
         rule.onNodeWithTag("new_chat").assertIsNotEnabled()
     }
 
@@ -702,6 +726,7 @@ class ManageUiTest {
         val calls = Calls()
         showBar(calls)
 
+        openMenu()
         rule.onNodeWithTag("new_chat").assertIsEnabled().performClick()
 
         rule.waitUntil(5_000) { calls.chats.isNotEmpty() }
@@ -713,6 +738,7 @@ class ManageUiTest {
         val calls = Calls().apply { result = ManageResult.Refused(-32009, "not yours") }
         showBar(calls)
 
+        openMenu()
         rule.onNodeWithTag("toggle_read").performClick()
 
         rule.waitUntil(5_000) { rule.onAllNodesCount("manage_notice") == 1 }
@@ -725,6 +751,7 @@ class ManageUiTest {
         val removed = mutableListOf<Boolean>()
         showBar(calls, onRemoved = { removed += true })
 
+        openMenu()
         rule.onNodeWithTag("remove_session").performClick()
         rule.onNodeWithTag("remove_dialog_text").assertTextContains("cannot be undone", substring = true).assertTextContains("Fix the build", substring = true)
         assertTrue(calls.disposedSessions.isEmpty())
@@ -733,6 +760,7 @@ class ManageUiTest {
         rule.onNodeWithTag("remove_dialog_text").assertDoesNotExist()
         assertTrue(calls.disposedSessions.isEmpty() && removed.isEmpty())
 
+        openMenu()
         rule.onNodeWithTag("remove_session").performClick()
         rule.onNodeWithTag("remove_confirm").performClick()
         rule.waitUntil(5_000) { calls.disposedSessions.isNotEmpty() }
@@ -746,6 +774,7 @@ class ManageUiTest {
         val removed = mutableListOf<Boolean>()
         showBar(calls, onRemoved = { removed += true })
 
+        openMenu()
         rule.onNodeWithTag("remove_session").performClick()
         rule.onNodeWithTag("remove_confirm").performClick()
 
@@ -757,19 +786,48 @@ class ManageUiTest {
     @Test
     fun removingAChatAsksFirstAndSendsNothingUntilConfirmed() {
         val calls = Calls()
-        rule.setContent { AhpTheme { RemoveChatButton("Side chat", uri, "ahp-chat:/c2", actions(calls)) } }
+        val side = ChatRow(uri = "ahp-chat:/c2", title = "Side chat", state = dev.ahpclient.state.ActivityState.IDLE, activity = null, whenText = "", removable = true)
+        showBar(calls, detail().copy(chats = listOf(side)), shownChat = side)
 
+        openMenu()
         rule.onNodeWithTag("remove_chat").performClick()
         rule.onNodeWithTag("remove_dialog_text").assertTextContains("Side chat", substring = true)
         assertTrue(calls.disposedChats.isEmpty())
         rule.onNodeWithTag("remove_cancel").performClick()
         assertTrue(calls.disposedChats.isEmpty())
 
+        openMenu()
         rule.onNodeWithTag("remove_chat").performClick()
         rule.onNodeWithTag("remove_confirm").performClick()
 
         rule.waitUntil(5_000) { calls.disposedChats.isNotEmpty() }
         assertEquals(listOf(uri to "ahp-chat:/c2"), calls.disposedChats)
+    }
+
+    @Test
+    fun theMenuOffersToRemoveTheChatOnScreenOnlyWhenTheHostWouldAllowIt() {
+        val main = ChatRow(uri = "ahp-chat:/c1", title = "Main", state = dev.ahpclient.state.ActivityState.IDLE, activity = null, whenText = "", removable = false, isMain = true)
+        showBar(Calls(), detail().copy(chats = listOf(main)), shownChat = main)
+
+        openMenu()
+
+        rule.onNodeWithTag("remove_session").assertIsDisplayed()
+        rule.onAllNodesWithTag("remove_chat").assertCountEquals(0)
+    }
+
+    @Test
+    fun aNewChatThatWasStartedIsHandedBackSoTheScreenCanShowIt() {
+        val calls = Calls().apply { result = ManageResult.Done("ahp-chat:/new") }
+        val handed = mutableListOf<String>()
+        rule.setContent {
+            AhpTheme { SessionMenu(detail(), uri, actions(calls), null, onShowDetails = {}, onNotice = {}, onChatCreated = { handed += it }, onRemoved = {}) }
+        }
+
+        openMenu()
+        rule.onNodeWithTag("new_chat").performClick()
+
+        rule.waitUntil(5_000) { handed.isNotEmpty() }
+        assertEquals(listOf("ahp-chat:/new"), handed)
     }
 
     // ---- the screens ------------------------------------------------------------------------------------------
@@ -781,28 +839,46 @@ class ManageUiTest {
                      {"resource":"ahp-chat://default/y","title":"Side chat","status":1,"modifiedAt":"2026-10-26T10:29:00.000Z"}]$extra}""",
     )
 
-    private fun showDetail(state: SessionState, manage: ManageActionsUi?) =
-        rule.setContent { AhpTheme { SessionDetailScreen(state, null, ConnState.Online, now, {}, manage = manage, sessionUri = uri) } }
+    private fun showDetail(state: SessionState, manage: ManageActionsUi?, shown: String = "ahp-chat://default/x") =
+        rule.setContent { AhpTheme { SessionScreen(state, null, ConnState.Online, now, {}, shownChat = shown, manage = manage, sessionUri = uri) {} } }
 
     @Test
-    fun aReadOnlyDetailHasNoManageControls() {
+    fun aReadOnlySessionHasNoManageItemsInItsMenu() {
         showDetail(state("ready"), manage = null)
 
-        rule.onNodeWithTag("manage_bar").assertDoesNotExist()
+        openMenu()
+
+        rule.onNodeWithTag("menu_details").assertIsDisplayed()
+        rule.onNodeWithTag("toggle_read").assertDoesNotExist()
+        rule.onNodeWithTag("toggle_archive").assertDoesNotExist()
+        rule.onNodeWithTag("new_chat").assertDoesNotExist()
         rule.onNodeWithTag("remove_chat").assertDoesNotExist()
+        rule.onNodeWithTag("remove_session").assertDoesNotExist()
     }
 
     @Test
-    fun aDetailThatMayBeManagedShowsTheBarAndARemoveButtonForEveryChatButTheMainOne() {
-        showDetail(state("ready"), manage = actions(Calls()))
+    fun aSessionThatMayBeManagedHasTheItemsAndARemoveItemOnlyWhenASideChatIsOnScreen() {
+        showDetail(state("ready"), manage = actions(Calls()), shown = "ahp-chat://default/y")
 
-        rule.onNodeWithTag("manage_bar").performScrollTo().assertIsDisplayed()
-        rule.onNodeWithTag("remove_chat").performScrollTo().assertIsDisplayed()
-        assertEquals("the main chat has none: the host would refuse it", 1, rule.onAllNodesCount("remove_chat"))
+        openMenu()
+
+        rule.onNodeWithTag("toggle_read").assertIsDisplayed()
+        rule.onNodeWithTag("remove_session").assertIsDisplayed()
+        rule.onNodeWithTag("remove_chat").assertIsDisplayed()
     }
 
     @Test
-    fun aSessionsOnlyChatHasNoRemoveButton() {
+    fun theMainChatOnScreenHasNoRemoveItemBecauseTheHostWouldRefuseIt() {
+        showDetail(state("ready"), manage = actions(Calls()), shown = "ahp-chat://default/x")
+
+        openMenu()
+
+        rule.onNodeWithTag("remove_session").assertIsDisplayed()
+        assertEquals(0, rule.onAllNodesCount("remove_chat"))
+    }
+
+    @Test
+    fun aSessionsOnlyChatHasNoRemoveItem() {
         val only: SessionState = Ahp.json.decodeFromString(
             SessionState.serializer(),
             """{"provider":"copilotcli","title":"Fix the build","status":1,"lifecycle":"ready","activeClients":[],
@@ -810,7 +886,9 @@ class ManageUiTest {
         )
         showDetail(only, manage = actions(Calls()))
 
-        rule.onNodeWithTag("manage_bar").performScrollTo().assertIsDisplayed()
+        openMenu()
+
+        rule.onNodeWithTag("remove_session").assertIsDisplayed()
         rule.onNodeWithTag("remove_chat").assertDoesNotExist()
     }
 
@@ -819,7 +897,8 @@ class ManageUiTest {
         showDetail(state("creating"), manage = actions(Calls()))
 
         rule.onNodeWithTag("session_starting").assertTextContains("may wait for your first message", substring = true)
-        rule.onNodeWithTag("new_chat").performScrollTo().assertIsNotEnabled()
+        openMenu()
+        rule.onNodeWithTag("new_chat").assertIsNotEnabled()
     }
 
     @Test

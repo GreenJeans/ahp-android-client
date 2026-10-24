@@ -64,6 +64,8 @@ data class ChatRow(
     val whenText: String,
     /** False for the session's main chat (and for a session's only chat): the host never removes those on its own. */
     val removable: Boolean = true,
+    /** The session's main chat, the one it was started with. */
+    val isMain: Boolean = false,
 )
 
 /** A working directory as a person reads it: a `file:` URI becomes its decoded path, anything else is shown unchanged. */
@@ -97,6 +99,12 @@ data class SessionDetail(
     /** The changesets the session advertises. One whose [ChangesetEntry.uri] is null needs values filled in and is not opened here. */
     val changesets: List<ChangesetEntry> = emptyList(),
 ) {
+    /** The chat to show first: the session's main chat, or else the first the host lists. Null while the host lists none. */
+    val mainChat: ChatRow? get() = chats.firstOrNull { it.isMain } ?: chats.firstOrNull()
+
+    /** The chats in the order of the tabs: the main chat first, then the others as the host lists them. */
+    val tabs: List<ChatRow> get() = mainChat?.let { main -> listOf(main) + chats.filter { it.uri != main.uri } }.orEmpty()
+
     companion object {
         /** The hint every pending request carries: answering happens in VS Code, never here. */
         const val ANSWER_ELSEWHERE = "Answer in VS Code."
@@ -122,6 +130,7 @@ data class SessionDetail(
                     activity = chat.activity?.takeIf { it.isNotBlank() },
                     whenText = RelativeTime.format(chat.modifiedAt, now),
                     removable = canRemoveChat(state, chat.resource),
+                    isMain = chat.resource == state.defaultChat,
                 )
             },
             inputNeeded = state.inputNeeded.orEmpty().map(::describe),

@@ -1,0 +1,286 @@
+package dev.ahpclient.ui
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.PrimaryScrollableTabRow
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
+import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import dev.ahpclient.state.ActivityState
+import dev.ahpclient.state.ChatRow
+import dev.ahpclient.state.ConnState
+import dev.ahpclient.state.SessionDetail
+import dev.ahpclient.state.SessionGoneException
+import dev.ahpclient.state.SessionPhase
+import dev.ahpclient.state.label
+import com.microsoft.agenthostprotocol.generated.SessionState
+import java.time.Instant
+
+/**
+ * One session: its chats as tabs under a top bar, and the chat that is selected filling the rest of the screen. What used to
+ * be a page of buttons is behind the bar's menu (looking after the session) and its Details item (the facts, what waits on
+ * the user, and the changes). [state] is null until the host's snapshot arrives; [error] says why it may never come.
+ *
+ * The chat itself is [chat], supplied by the caller, which owns what is open; [shownChat] says which one that is. This
+ * screen asks for the session's main chat, through [onSelectChat], whenever none is shown or the one shown has left the
+ * session, and for a tab the user taps or a chat they have just started.
+ */
+@Composable
+fun SessionScreen(
+    state: SessionState?,
+    error: Throwable?,
+    connection: ConnState,
+    now: Instant,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+    shownChat: String? = null,
+    onSelectChat: (String) -> Unit = {},
+    manage: ManageActionsUi? = null,
+    sessionUri: String = "",
+    onRemoved: () -> Unit = {},
+    onOpenChangeset: (uri: String, label: String) -> Unit = { _, _ -> },
+    chat: @Composable () -> Unit = {},
+) {
+    val detail = remember(state, now) { state?.let { SessionDetail.from(it, now) } }
+    var showDetails by rememberSaveable { mutableStateOf(false) }
+    var notice by remember { mutableStateOf<String?>(null) }
+    // A chat the user has just started is not in the host's list until the host echoes it, so the tab is brought forward then.
+    var pendingChat by remember { mutableStateOf<String?>(null) }
+
+    val tabUris = detail?.tabs?.map { it.uri }.orEmpty()
+    val canShowChat = detail != null && detail.phase != SessionPhase.FAILED
+    LaunchedEffect(tabUris, shownChat, canShowChat) {
+        if (canShowChat && (shownChat == null || shownChat !in tabUris)) detail.mainChat?.let { onSelectChat(it.uri) }
+    }
+    LaunchedEffect(tabUris, pendingChat) {
+        val wanted = pendingChat ?: return@LaunchedEffect
+        if (wanted in tabUris) {
+            onSelectChat(wanted)
+            pendingChat = null
+        }
+    }
+
+    ScreenScaffold(
+        title = detail?.title ?: "Session",
+        subtitle = detail?.let { listOfNotNull(it.state.label, it.project).joinToString(" · ") },
+        onBack = onBack,
+        backLabel = "Back to sessions",
+        titleTag = "detail_title",
+        large = false,
+        modifier = modifier,
+        actions = {
+            if (detail != null) {
+                SessionMenu(
+                    detail = detail,
+                    sessionUri = sessionUri,
+                    manage = manage,
+                    shownChat = detail.chats.firstOrNull { it.uri == shownChat },
+                    onShowDetails = { showDetails = true },
+                    onNotice = { notice = it },
+                    onChatCreated = { pendingChat = it },
+                    onRemoved = onRemoved,
+                )
+            }
+        },
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            if (connection != ConnState.Online) ConnectionLine(connection, Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
+            when {
+                error is SessionGoneException -> ErrorText("This session is no longer on the host.", Modifier.padding(24.dp).testTag("session_gone"))
+                detail != null -> {
+                    SessionBanners(detail, notice)
+                    ChatTabs(detail.tabs, shownChat, onSelectChat)
+                    Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                        when {
+                            detail.phase == SessionPhase.FAILED -> Unit
+                            shownChat != null && shownChat in tabUris -> chat()
+                            detail.tabs.isEmpty() -> EmptyState(AppIcons.Info, "No chats in this session yet")
+                            else -> Busy("Loading chat…", Modifier.padding(24.dp).testTag("chat_pending"))
+                        }
+                    }
+                }
+                error != null -> ErrorText("Could not load this session (${error.javaClass.simpleName}).", Modifier.padding(24.dp).testTag("detail_error"))
+                else -> Busy("Loading session…", Modifier.padding(24.dp).testTag("detail_loading"))
+            }
+        }
+    }
+    if (showDetails && detail != null) {
+        DetailsSheet(detail, onDismiss = { showDetails = false }, onOpenChangeset = { uri, label -> showDetails = false; onOpenChangeset(uri, label) })
+    }
+}
+
+/** What the person needs to know before the chat: the session is archived, is still starting, failed to start, or an action went wrong. */
+@Composable
+private fun SessionBanners(detail: SessionDetail, notice: String?) {
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (detail.isArchived) Text("Archived", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp).testTag("detail_archived"))
+        when (detail.phase) {
+            // A new session's chat is held back by the host until the first message is sent, so this can stay for as long as it takes to write one.
+            SessionPhase.CREATING -> Text(
+                "Starting on the host. A new session may wait for your first message: send one in the chat below.",
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.padding(vertical = 8.dp).testTag("session_starting").semantics { liveRegion = LiveRegionMode.Polite },
+            )
+            SessionPhase.FAILED -> ErrorText(
+                "The host could not start this session." + (detail.creationError?.let { " $it" }.orEmpty()),
+                Modifier.padding(vertical = 8.dp).testTag("session_failed"),
+            )
+            SessionPhase.READY, SessionPhase.OTHER -> Unit
+        }
+        ManageNotice(notice, "manage_notice")
+    }
+}
+
+/**
+ * One tab per chat, the main chat first. A single chat needs no tabs, so none are drawn. A chat that is waiting on the user
+ * carries a dot, and its tab's spoken description says so, so colour is never the only cue.
+ */
+@Composable
+private fun ChatTabs(chats: List<ChatRow>, shownChat: String?, onSelect: (String) -> Unit) {
+    if (chats.size < 2) return
+    val selected = chats.indexOfFirst { it.uri == shownChat }.coerceAtLeast(0)
+    PrimaryScrollableTabRow(selectedTabIndex = selected, edgePadding = 8.dp, modifier = Modifier.testTag("chat_tabs")) {
+        chats.forEachIndexed { index, chat ->
+            Tab(
+                selected = index == selected,
+                onClick = { onSelect(chat.uri) },
+                modifier = Modifier
+                    .heightIn(min = 48.dp)
+                    .semantics { contentDescription = if (chat.state == ActivityState.NEEDS_INPUT) "${chat.title}, ${chat.state.label}" else chat.title }
+                    .testTag("chat_tab"),
+                text = {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (chat.state == ActivityState.NEEDS_INPUT) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.tertiary,
+                                shape = CircleShape,
+                                modifier = Modifier.size(8.dp).testTag("chat_tab_dot").clearAndSetSemantics {},
+                            ) {}
+                        }
+                        Text(chat.title, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 180.dp))
+                    }
+                },
+            )
+        }
+    }
+}
+
+/**
+ * The facts of the session in a sheet from the bottom: what it is doing, anything the agent is waiting on (in words; answering
+ * is in the chat), where it runs, and the changes it advertises, each a way into the files it changed.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DetailsSheet(detail: SessionDetail, onDismiss: () -> Unit, onOpenChangeset: (uri: String, label: String) -> Unit) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+        modifier = Modifier.testTag("details_sheet"),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Text("Details", style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                StatusChip(detail.state)
+                if (detail.isArchived) Text("Archived", style = MaterialTheme.typography.labelLarge)
+            }
+            detail.activity?.let { Text(it, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.testTag("detail_activity")) }
+
+            if (detail.inputNeeded.isNotEmpty()) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.testTag("input_needed").semantics { liveRegion = LiveRegionMode.Polite },
+                ) {
+                    Text("Waiting on you", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
+                    detail.inputNeeded.forEach { request -> InputRequestCard(request) }
+                    Text(SessionDetail.ANSWER_ELSEWHERE, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("answer_hint"))
+                }
+            }
+
+            Facts(detail)
+
+            if (detail.changesets.isNotEmpty()) {
+                Column(modifier = Modifier.testTag("changesets")) {
+                    SectionHeader("Changes", Modifier.padding(horizontal = 0.dp))
+                    detail.changesets.forEachIndexed { index, entry ->
+                        val uri = entry.uri
+                        val shape = connectedShape(index, detail.changesets.size)
+                        if (index > 0) Spacer(Modifier.height(Design.Gap))
+                        if (uri != null) {
+                            TileCard(
+                                shape = shape,
+                                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                onClick = { onOpenChangeset(uri, entry.label) },
+                                onClickLabel = "Open changes",
+                                modifier = Modifier.semantics(mergeDescendants = true) {}.testTag("open_changeset"),
+                            ) { TileRow(entry.label, subtitle = "See the files it changed") }
+                        } else {
+                            TileCard(shape = shape, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+                                TileRow(entry.label, subtitle = "Not shown here yet", modifier = Modifier.semantics(mergeDescendants = true) {}.testTag("changeset_unsupported"))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun Facts(detail: SessionDetail) {
+    val facts = buildList {
+        add("Agent" to detail.provider)
+        detail.project?.let { add("Project" to it) }
+        detail.workingDirectories.forEach { add("Folder" to it) }
+    }
+    Column {
+        facts.forEachIndexed { index, (label, value) ->
+            if (index > 0) Spacer(Modifier.height(Design.Gap))
+            TileCard(shape = connectedShape(index, facts.size), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(value, style = MaterialTheme.typography.bodyLarge)
+                }
+            }
+        }
+    }
+}

@@ -242,13 +242,14 @@ class AppController(
 
     /**
      * Opens a changeset the open session advertises, to look at the files it changed. Read only. Only a changeset that the
-     * session itself lists, whose address needs nothing filled in, is opened, and not over an open chat.
+     * session itself lists, whose address needs nothing filled in, is opened, and not a second one, nor over a terminal or a
+     * subagent's transcript. It may open over the session's own chat: that chat is the session's main view.
      */
     @Synchronized
     fun openChangeset(uri: String) {
         val current = _state.value as? AppState.Connected ?: return
         val open = current.open ?: return
-        if (open.chat != null || open.changeset != null) return
+        if (open.changeset != null || open.terminal != null || open.chat?.parent != null) return
         val entry = open.store.state.value?.changesets.orEmpty().map(ChangesetEntry::from).firstOrNull { it.uri == uri }
         if (entry == null || uri.length > MAX_CHANNEL_URI) return
         val store = current.session.openChangeset(uri)
@@ -306,6 +307,28 @@ class AppController(
         if (!listed) return
         val next = newChat(current.session, uri, parent = null)
         if (!_state.compareAndSet(current, current.copy(open = open.copy(chat = next)))) current.session.closeChat(uri)
+    }
+
+    /**
+     * Makes [uri], one of the open session's chats, the one on screen: opens it when none is, or swaps it for the one that
+     * is (which is released, while what the person had expanded in each chat is kept). The session screen is the chat plus the
+     * tabs that call this, so it is the way between chats. Ignored for a chat the session does not list, the chat already
+     * shown, and while a subagent's transcript, a terminal or a changeset is over the chat: those are left first.
+     */
+    @Synchronized
+    fun selectChat(uri: String) {
+        val current = _state.value as? AppState.Connected ?: return
+        val open = current.open ?: return
+        val shown = open.chat
+        if (shown == null) return openChat(uri)
+        if (shown.parent != null || shown.uri == uri || open.terminal != null || open.changeset != null) return
+        if (open.store.state.value?.chats?.any { it.resource == uri } != true) return
+        val next = newChat(current.session, uri, parent = null)
+        if (!_state.compareAndSet(current, current.copy(open = open.copy(chat = next)))) {
+            current.session.closeChat(uri)
+            return
+        }
+        current.session.closeChat(shown.uri)
     }
 
     /**

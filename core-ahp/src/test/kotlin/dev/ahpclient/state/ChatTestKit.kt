@@ -8,6 +8,7 @@ import com.microsoft.agenthostprotocol.generated.Snapshot
 
 internal const val CHAT_A = "ahp-chat:/00000000-0000-4000-8000-000000000c01"
 internal const val CHAT_B = "ahp-chat:/00000000-0000-4000-8000-000000000c02"
+internal const val CHAT_C = "ahp-chat:/00000000-0000-4000-8000-000000000c03"
 
 internal fun chatSummaryJson(uri: String, title: String = "Main chat") =
     """{"resource":"$uri","title":"$title","status":8,"modifiedAt":"2026-10-22T10:00:00.000Z"}"""

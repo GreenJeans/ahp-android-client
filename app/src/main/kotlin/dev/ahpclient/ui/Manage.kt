@@ -1,6 +1,7 @@
 package dev.ahpclient.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -12,8 +13,12 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
@@ -44,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import dev.ahpclient.state.ConfigField
 import dev.ahpclient.state.ConfigOffer
 import dev.ahpclient.state.ConfigPick
+import dev.ahpclient.state.ChatRow
 import dev.ahpclient.state.ManageMessages
 import dev.ahpclient.state.ManageResult
 import dev.ahpclient.state.RecentFolders
@@ -346,51 +352,84 @@ private fun ChoiceRow(label: String, selected: Boolean, tag: String, onSelect: (
 }
 
 /**
- * The buttons that look after one open session: mark it read or unread, archive or restore it, start a chat (once it is
- * ready) and remove it. Archiving and removing ask first (archiving may take the host's working copy of the project with it),
- * and removing then asks for the device check. The words are what happened, in plain terms.
+ * The session's menu. Its first item shows the session's details. When the app has been allowed to look after sessions it
+ * also marks the session read or unread, archives or restores it, starts a chat (once it is ready) and removes the chat on
+ * screen or the whole session. Archiving and removing ask first (archiving may take the host's working copy of the project
+ * with it), and removing then asks for the device check. What happened is passed to [onNotice] in plain terms, for the
+ * screen to show; a chat that was started is passed to [onChatCreated] so the screen can bring it forward.
  */
 @Composable
-fun SessionManageBar(detail: SessionDetail, sessionUri: String, manage: ManageActionsUi, onRemoved: () -> Unit, modifier: Modifier = Modifier) {
+fun SessionMenu(
+    detail: SessionDetail,
+    sessionUri: String,
+    manage: ManageActionsUi?,
+    shownChat: ChatRow?,
+    onShowDetails: () -> Unit,
+    onNotice: (String?) -> Unit,
+    onChatCreated: (String) -> Unit,
+    onRemoved: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var open by rememberSaveable { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
-    var notice by remember { mutableStateOf<String?>(null) }
     var confirmRemove by rememberSaveable { mutableStateOf(false) }
     var confirmArchive by rememberSaveable { mutableStateOf(false) }
+    var removingChat by rememberSaveable { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     fun run(call: suspend () -> ManageResult, then: (ManageResult) -> Unit = {}) {
         scope.launch {
             busy = true
             val result = call()
-            notice = ManageMessages.describe(result)
+            onNotice(ManageMessages.describe(result))
             busy = false
             then(result)
         }
     }
-    Column(modifier = modifier.fillMaxWidth().testTag("manage_bar"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Manage", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = { run({ manage.setRead(sessionUri, !detail.isRead) }) }, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp).testTag("toggle_read")) {
-                Text(if (detail.isRead) "Mark unread" else "Mark read")
-            }
-            OutlinedButton(
-                onClick = { if (detail.isArchived) run({ manage.setArchived(sessionUri, false) }) else confirmArchive = true },
-                enabled = !busy,
-                modifier = Modifier.heightIn(min = 48.dp).testTag("toggle_archive"),
-            ) {
-                Text(if (detail.isArchived) "Restore" else "Archive")
+    val manageable = manage != null && sessionUri.isNotEmpty()
+    Box(modifier = modifier) {
+        IconButton(onClick = { open = true }, modifier = Modifier.testTag("session_menu")) {
+            Icon(AppIcons.MoreVert, contentDescription = "More options")
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }, modifier = Modifier.testTag("session_menu_items")) {
+            DropdownMenuItem(text = { Text("Details") }, onClick = { open = false; onShowDetails() }, modifier = Modifier.testTag("menu_details"))
+            if (manage != null && manageable) {
+                HorizontalDivider()
+                DropdownMenuItem(
+                    text = { Text(if (detail.isRead) "Mark unread" else "Mark read") },
+                    enabled = !busy,
+                    onClick = { open = false; run({ manage.setRead(sessionUri, !detail.isRead) }) },
+                    modifier = Modifier.testTag("toggle_read"),
+                )
+                DropdownMenuItem(
+                    text = { Text(if (detail.isArchived) "Restore" else "Archive") },
+                    enabled = !busy,
+                    onClick = { open = false; if (detail.isArchived) run({ manage.setArchived(sessionUri, false) }) else confirmArchive = true },
+                    modifier = Modifier.testTag("toggle_archive"),
+                )
+                DropdownMenuItem(
+                    text = { Text("New chat") },
+                    enabled = !busy && detail.phase == SessionPhase.READY,
+                    onClick = { open = false; run({ manage.newChat(sessionUri) }) { result -> (result as? ManageResult.Done)?.created?.let(onChatCreated) } },
+                    modifier = Modifier.testTag("new_chat"),
+                )
+                if (shownChat != null && shownChat.removable) {
+                    DropdownMenuItem(
+                        text = { Text("Remove this chat…") },
+                        enabled = !busy,
+                        onClick = { open = false; removingChat = shownChat.uri },
+                        modifier = Modifier.testTag("remove_chat"),
+                    )
+                }
+                DropdownMenuItem(
+                    text = { Text("Remove session…") },
+                    enabled = !busy,
+                    onClick = { open = false; confirmRemove = true },
+                    modifier = Modifier.testTag("remove_session"),
+                )
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(
-                onClick = { run({ manage.newChat(sessionUri) }) },
-                enabled = !busy && detail.phase == SessionPhase.READY,
-                modifier = Modifier.heightIn(min = 48.dp).testTag("new_chat"),
-            ) { Text("New chat") }
-            OutlinedButton(onClick = { confirmRemove = true }, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp).testTag("remove_session")) { Text("Remove session…") }
-        }
-        ManageNotice(notice, "manage_notice")
     }
-    if (confirmArchive) {
+    if (confirmArchive && manage != null) {
         AlertDialog(
             onDismissRequest = { confirmArchive = false },
             title = { Text("Archive this session?") },
@@ -408,7 +447,7 @@ fun SessionManageBar(detail: SessionDetail, sessionUri: String, manage: ManageAc
             dismissButton = { TextButton(onClick = { confirmArchive = false }, modifier = Modifier.testTag("archive_cancel")) { Text("Keep it") } },
         )
     }
-    if (confirmRemove) {
+    if (confirmRemove && manage != null) {
         ConfirmRemoveDialog(
             title = "Remove this session?",
             text = "\"${detail.title.take(MAX_SHOWN)}\" and all its chats will be removed from the host. This cannot be undone. Archive it instead if you may want it back. You will be asked for your fingerprint, face or screen lock.",
@@ -419,32 +458,16 @@ fun SessionManageBar(detail: SessionDetail, sessionUri: String, manage: ManageAc
             onDismiss = { confirmRemove = false },
         )
     }
-}
-
-/** The Remove button beside a chat in the list, with the same ask-first-then-check path as removing a session. */
-@Composable
-fun RemoveChatButton(chatTitle: String, sessionUri: String, chatUri: String, manage: ManageActionsUi, modifier: Modifier = Modifier) {
-    var confirm by rememberSaveable { mutableStateOf(false) }
-    var busy by remember { mutableStateOf(false) }
-    var notice by remember { mutableStateOf<String?>(null) }
-    val scope = rememberCoroutineScope()
-    Column(modifier = modifier) {
-        TextButton(onClick = { confirm = true }, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp).testTag("remove_chat")) { Text("Remove chat…") }
-        ManageNotice(notice, "remove_chat_notice")
-    }
-    if (confirm) {
+    val chatToRemove = removingChat?.let { uri -> detail.chats.firstOrNull { it.uri == uri } }
+    if (chatToRemove != null && manage != null) {
         ConfirmRemoveDialog(
             title = "Remove this chat?",
-            text = "\"${chatTitle.take(MAX_SHOWN)}\" will be removed from the session. This cannot be undone. You will be asked for your fingerprint, face or screen lock.",
+            text = "\"${chatToRemove.title.take(MAX_SHOWN)}\" will be removed from the session. This cannot be undone. You will be asked for your fingerprint, face or screen lock.",
             onConfirm = {
-                confirm = false
-                scope.launch {
-                    busy = true
-                    notice = ManageMessages.describe(manage.disposeChat(sessionUri, chatUri))
-                    busy = false
-                }
+                removingChat = null
+                run({ manage.disposeChat(sessionUri, chatToRemove.uri) })
             },
-            onDismiss = { confirm = false },
+            onDismiss = { removingChat = null },
         )
     }
 }

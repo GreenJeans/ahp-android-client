@@ -47,28 +47,28 @@ import kotlinx.coroutines.launch
 @Composable
 fun TerminalScreen(state: TerminalState?, error: Throwable?, connection: ConnState, onBack: () -> Unit, modifier: Modifier = Modifier) {
     val view = remember(state) { state?.let(TerminalView::from) }
-    Column(modifier = modifier.fillMaxSize()) {
-        Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            OutlinedButton(onClick = onBack, modifier = Modifier.heightIn(min = 48.dp).testTag("back")) { Text("Back to chat") }
-            if (connection != ConnState.Online) ConnectionLine(connection)
-            Text(view?.title ?: "Terminal", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() }.testTag("terminal_title"))
-            view?.let {
-                // Said, not only coloured, and announced when it changes: a command that finishes while the screen is open.
-                Text(it.status, style = MaterialTheme.typography.labelLarge, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }.testTag("terminal_status"))
-                it.cwd?.let { cwd ->
-                    Text(cwd, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("terminal_cwd"))
+    ScreenScaffold(title = view?.title ?: "Terminal", titleTag = "terminal_title", onBack = onBack, backLabel = "Back to chat", large = false, modifier = modifier) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (connection != ConnState.Online) ConnectionLine(connection)
+                view?.let {
+                    // Said, not only coloured, and announced when it changes: a command that finishes while the screen is open.
+                    Text(it.status, style = MaterialTheme.typography.labelLarge, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }.testTag("terminal_status"))
+                    it.cwd?.let { cwd ->
+                        Text(cwd, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("terminal_cwd"))
+                    }
                 }
             }
-        }
-        val sideMargin = Modifier.padding(horizontal = 24.dp)
-        when {
-            view != null -> TerminalBody(view)
-            error is ChannelGoneException -> Text(
-                "This terminal is no longer on the host. What it printed is in the tool's result.",
-                sideMargin.testTag("terminal_gone"),
-            )
-            error != null -> ErrorText("The host's answer for this terminal could not be read.", sideMargin.testTag("terminal_failed"))
-            else -> Busy("Loading the terminal…", sideMargin.testTag("terminal_loading"))
+            val sideMargin = Modifier.padding(horizontal = 24.dp)
+            when {
+                view != null -> TerminalBody(view)
+                error is ChannelGoneException -> Text(
+                    "This terminal is no longer on the host. What it printed is in the tool's result.",
+                    sideMargin.testTag("terminal_gone"),
+                )
+                error != null -> ErrorText("The host's answer for this terminal could not be read.", sideMargin.testTag("terminal_failed"))
+                else -> Busy("Loading the terminal…", sideMargin.testTag("terminal_loading"))
+            }
         }
     }
 }
