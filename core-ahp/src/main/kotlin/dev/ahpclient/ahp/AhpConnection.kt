@@ -21,6 +21,8 @@ import com.microsoft.agenthostprotocol.generated.ListSessionsParams
 import com.microsoft.agenthostprotocol.generated.ListSessionsResult
 import com.microsoft.agenthostprotocol.generated.ReconnectParams
 import com.microsoft.agenthostprotocol.generated.ReconnectResult
+import com.microsoft.agenthostprotocol.generated.ResolveSessionConfigParams
+import com.microsoft.agenthostprotocol.generated.ResolveSessionConfigResult
 import com.microsoft.agenthostprotocol.generated.ResourceReadParams
 import com.microsoft.agenthostprotocol.generated.ResourceReadResult
 import com.microsoft.agenthostprotocol.generated.SUPPORTED_PROTOCOL_VERSIONS
@@ -171,12 +173,26 @@ class AhpConnection(
     /**
      * Creates the session at [uri], which the client picks. The host answers once it has accepted the request; the session
      * then reaches `ready` (or fails) on its own channel, which the caller watches. Refused with [CapabilityDeniedException],
-     * before anything is sent, unless the tier lists the command.
+     * before anything is sent, unless the tier lists the command. [config] is what the host itself resolved for this agent and
+     * folder (see [resolveSessionConfig]), with the person's choices in it; null leaves every setting to the host.
      */
-    suspend fun createSession(uri: String, provider: String?, workingDirectories: List<String>?) {
-        val params = CreateSessionParams(channel = uri, provider = provider, workingDirectories = workingDirectories)
+    suspend fun createSession(uri: String, provider: String?, workingDirectories: List<String>?, config: Map<String, JsonElement>? = null) {
+        val params = CreateSessionParams(channel = uri, provider = provider, workingDirectories = workingDirectories, config = config)
         requestRaw("createSession", json.encodeToJsonElement(CreateSessionParams.serializer(), params).jsonObject)
     }
+
+    /**
+     * Asks the host which settings it would offer for a new session of [provider] in [workingDirectory], given the values
+     * already chosen in [config]. The answer can change as values are chosen, so the caller asks again after each choice.
+     * Changes nothing on the host.
+     */
+    suspend fun resolveSessionConfig(provider: String, workingDirectory: String, config: Map<String, JsonElement>?): ResolveSessionConfigResult =
+        request(
+            "resolveSessionConfig",
+            ResolveSessionConfigParams.serializer(),
+            ResolveSessionConfigParams(channel = ROOT_CHANNEL, provider = provider, workingDirectory = workingDirectory, config = config),
+            ResolveSessionConfigResult.serializer(),
+        )
 
     /** Creates the chat at [chatUri], which the client picks, in the session at [sessionUri]. */
     suspend fun createChat(sessionUri: String, chatUri: String) {

@@ -13,6 +13,7 @@ import com.microsoft.agenthostprotocol.generated.Implementation
 import com.microsoft.agenthostprotocol.generated.ReconnectResult
 import com.microsoft.agenthostprotocol.generated.ReconnectResultReplay
 import com.microsoft.agenthostprotocol.generated.ReconnectResultSnapshot
+import com.microsoft.agenthostprotocol.generated.ResolveSessionConfigResult
 import com.microsoft.agenthostprotocol.generated.ResourceReadResult
 import com.microsoft.agenthostprotocol.generated.SessionSummary
 import com.microsoft.agenthostprotocol.generated.Snapshot
@@ -39,6 +40,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.JsonElement
 
 /** Opens a fresh AHP connection to one host. Implementations resolve a new connect token every time. */
 fun interface HostConnector {
@@ -266,7 +268,11 @@ class HostSession(
      * @throws dev.ahpclient.ahp.CapabilityDeniedException when this connection's tier does not allow it.
      * @throws IOException when there is no connection. Nothing was sent in either case.
      */
-    override suspend fun createSession(uri: String, provider: String?, workingDirectories: List<String>?) = live().createSession(uri, provider, workingDirectories)
+    override suspend fun createSession(uri: String, provider: String?, workingDirectories: List<String>?, config: Map<String, JsonElement>?) =
+        live().createSession(uri, provider, workingDirectories, config)
+
+    override suspend fun resolveSessionConfig(provider: String, workingDirectory: String, config: Map<String, JsonElement>?): ResolveSessionConfigResult =
+        live().resolveSessionConfig(provider, workingDirectory, config)
 
     override suspend fun createChat(sessionUri: String, chatUri: String) = live().createChat(sessionUri, chatUri)
 

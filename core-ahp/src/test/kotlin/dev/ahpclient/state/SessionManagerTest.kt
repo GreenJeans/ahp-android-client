@@ -4,17 +4,21 @@ import dev.ahpclient.ahp.AhpException
 import dev.ahpclient.ahp.CapabilityDeniedException
 import com.microsoft.agenthostprotocol.Ahp
 import com.microsoft.agenthostprotocol.generated.AgentInfo
+import com.microsoft.agenthostprotocol.generated.ResolveSessionConfigResult
 import com.microsoft.agenthostprotocol.generated.SessionState
 import com.microsoft.agenthostprotocol.generated.SessionSummary
 import com.microsoft.agenthostprotocol.generated.StateAction
 import java.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -42,20 +46,37 @@ class SessionManagerTest {
 
     private class Commands : ManagementCommands {
         val calls = mutableListOf<String>()
+        val configs = mutableListOf<Map<String, JsonElement>?>()
+        val resolves = mutableListOf<Triple<String, String, Map<String, JsonElement>?>>()
         var failure: Throwable? = null
+        var resolveFailure: Throwable? = null
+        var resolution: (provider: String, directory: String, config: Map<String, JsonElement>?) -> ResolveSessionConfigResult = { _, _, _ -> empty }
 
         private fun record(call: String) {
             calls += call
             failure?.let { throw it }
         }
 
-        override suspend fun createSession(uri: String, provider: String?, workingDirectories: List<String>?) = record("createSession $uri $provider $workingDirectories")
+        override suspend fun createSession(uri: String, provider: String?, workingDirectories: List<String>?, config: Map<String, JsonElement>?) {
+            configs += config
+            record("createSession $uri $provider $workingDirectories")
+        }
+
+        override suspend fun resolveSessionConfig(provider: String, workingDirectory: String, config: Map<String, JsonElement>?): ResolveSessionConfigResult {
+            resolves += Triple(provider, workingDirectory, config)
+            resolveFailure?.let { throw it }
+            return resolution(provider, workingDirectory, config)
+        }
 
         override suspend fun createChat(sessionUri: String, chatUri: String) = record("createChat $sessionUri $chatUri")
 
         override suspend fun disposeSession(uri: String) = record("disposeSession $uri")
 
         override suspend fun disposeChat(uri: String) = record("disposeChat $uri")
+
+        companion object {
+            val empty: ResolveSessionConfigResult = Ahp.json.decodeFromString(ResolveSessionConfigResult.serializer(), """{"schema":{"type":"object","properties":{}},"values":{}}""")
+        }
     }
 
     private inner class Rig {
@@ -260,6 +281,183 @@ class SessionManagerTest {
         rig.manager.newSession("claude", "file:///work/a")
 
         assertEquals("claude", rig.asked.single().toolName)
+    }
+
+    // ---- new session settings -----------------------------------------------------------------------------------------
+
+    private val thinking = """"thinking":{"type":"string","title":"Thinking","enum":["low","high"],"enumLabels":["Quick","Thorough"]}"""
+    private val approve = """"autoApprove":{"type":"boolean","title":"Approve tools automatically"}"""
+
+    private fun result(properties: String, values: String = "{}", required: List<String> = emptyList()): ResolveSessionConfigResult {
+        val requiredPart = if (required.isEmpty()) "" else ",\"required\":[" + required.joinToString(",") { "\"$it\"" } + "]"
+        return Ahp.json.decodeFromString(
+            ResolveSessionConfigResult.serializer(),
+            "{\"schema\":{\"type\":\"object\",\"properties\":{$properties}$requiredPart},\"values\":$values}",
+        )
+    }
+
+    /** A host that holds [defaults] and, as the protocol says, echoes back whatever the client already chose. */
+    private fun Rig.hostOffers(properties: String, defaults: Map<String, JsonElement> = emptyMap(), required: List<String> = emptyList()) {
+        commands.resolution = { _, _, config ->
+            val values = JsonObject(defaults + config.orEmpty()).toString()
+            result(properties, values, required)
+        }
+    }
+
+    private val thoroughly = mapOf("thinking" to ConfigPick.Text("high"))
+
+    @Test
+    fun `the host is asked about the agent and folder, with no choices yet, and its settings come back as a form`() = runTest {
+        val rig = Rig().apply { hostOffers("$thinking,$approve", mapOf("thinking" to JsonPrimitive("low"), "autoApprove" to JsonPrimitive(false))) }
+
+        val offer = assertIs<ConfigOffer.Form>(rig.manager.sessionSettings("claude", "file:///work/b"))
+
+        assertEquals(listOf(Triple<String, String, Map<String, JsonElement>?>("claude", "file:///work/b", null)), rig.commands.resolves)
+        assertEquals(listOf("thinking", "autoApprove"), offer.form.fields.map { it.id })
+        assertEquals(ConfigPick.Text("low"), offer.form.fields[0].value)
+        assertEquals(ConfigPick.Flag(false), offer.form.fields[1].value)
+        assertTrue(rig.asked.isEmpty(), "only asking")
+        assertTrue(rig.commands.calls.isEmpty())
+    }
+
+    @Test
+    fun `choices so far go to the host as typed values, text as text and on-off as a boolean`() = runTest {
+        val rig = Rig().apply { hostOffers("$thinking,$approve") }
+
+        rig.manager.sessionSettings("claude", "file:///work/b", mapOf("thinking" to ConfigPick.Text("high"), "autoApprove" to ConfigPick.Flag(true)))
+
+        val sent = rig.commands.resolves.single().third!!
+        assertEquals(JsonPrimitive("high"), sent["thinking"])
+        assertEquals(JsonPrimitive(true), sent["autoApprove"])
+    }
+
+    @Test
+    fun `a host that offers nothing, or only what this app cannot show, is told apart`() = runTest {
+        val none = Rig()
+        assertEquals(ConfigOffer.NoSettings, none.manager.sessionSettings("claude", "file:///work/b"))
+
+        val onlyReadOnly = Rig().apply { hostOffers(""""fixed":{"type":"string","title":"Fixed","enum":["x"],"readOnly":true}""") }
+        val form = assertIs<ConfigOffer.Form>(onlyReadOnly.manager.sessionSettings("claude", "file:///work/b")).form
+        assertEquals(emptyList(), form.fields)
+        assertEquals(1, form.omitted)
+    }
+
+    @Test
+    fun `nothing is asked of the host for an agent or folder it did not offer, or when the connection cannot manage`() = runTest {
+        val rig = Rig()
+
+        assertIs<ConfigOffer.Unavailable>(rig.manager.sessionSettings("rogue", "file:///work/a"))
+        assertIs<ConfigOffer.Unavailable>(rig.manager.sessionSettings("claude", "file:///etc"))
+        rig.allowed = false
+        assertIs<ConfigOffer.Unavailable>(rig.manager.sessionSettings("claude", "file:///work/a"))
+
+        assertTrue(rig.commands.resolves.isEmpty())
+    }
+
+    @Test
+    fun `a host that refuses or cannot be reached is said in words, and its own words are bounded`() = runTest {
+        val rig = Rig()
+        rig.commands.resolveFailure = AhpException.Rpc(-32601, "x".repeat(500), null)
+        val refused = assertIs<ConfigOffer.Unavailable>(rig.manager.sessionSettings("claude", "file:///work/b")).reason
+        assertTrue(refused.startsWith("The host refused it: "))
+        assertTrue(refused.length <= "The host refused it: ".length + 200)
+
+        rig.commands.resolveFailure = AhpException.ConnectionClosed(null)
+        assertIs<ConfigOffer.Unavailable>(rig.manager.sessionSettings("claude", "file:///work/b"))
+        rig.commands.resolveFailure = IOException("offline")
+        assertIs<ConfigOffer.Unavailable>(rig.manager.sessionSettings("claude", "file:///work/b"))
+        rig.commands.resolveFailure = CapabilityDeniedException("resolveSessionConfig", null)
+        assertIs<ConfigOffer.Unavailable>(rig.manager.sessionSettings("claude", "file:///work/b"))
+    }
+
+    @Test
+    fun `a session with no choices made starts with the host's own settings and does not ask it again`() = runTest {
+        val rig = Rig().apply { hostOffers(thinking) }
+
+        assertEquals(ManageResult.Done("ahp-session:/id1"), rig.manager.newSession("claude", "file:///work/b"))
+
+        assertTrue(rig.commands.resolves.isEmpty())
+        assertEquals(listOf<Map<String, JsonElement>?>(null), rig.commands.configs)
+    }
+
+    @Test
+    fun `a session with choices asks the host again, names the settings to the device check, and sends what the host resolved`() = runTest {
+        val rig = Rig().apply { hostOffers("$thinking,$approve", mapOf("autoApprove" to JsonPrimitive(false))) }
+
+        val result = rig.manager.newSession("claude", "file:///work/b", thoroughly)
+
+        assertEquals(ManageResult.Done("ahp-session:/id1"), result)
+        assertEquals(JsonPrimitive("high"), rig.commands.resolves.single().third!!["thinking"])
+        assertEquals(listOf(ApprovalRequest("Claude", "Thinking: Thorough\nfile:///work/b", title = "Start a new session?")), rig.asked)
+        assertEquals(listOf<Map<String, JsonElement>?>(mapOf("autoApprove" to JsonPrimitive(false), "thinking" to JsonPrimitive("high"))), rig.commands.configs)
+    }
+
+    @Test
+    fun `a choice the host does not offer, or does not take, or for a setting it does not list, is never sent and never asks the device check`() = runTest {
+        val rig = Rig().apply { hostOffers(thinking) }
+        val bad = listOf(
+            mapOf("thinking" to ConfigPick.Text("extreme")),
+            mapOf("other" to ConfigPick.Text("high")),
+            mapOf("thinking" to ConfigPick.Flag(true)),
+        )
+        for (picks in bad) assertEquals(ManageResult.InvalidChoice, rig.manager.newSession("claude", "file:///work/b", picks), "$picks")
+
+        // A host that answers with a value other than the one chosen has not taken it.
+        rig.commands.resolution = { _, _, _ -> result(thinking, """{"thinking":"low"}""") }
+        assertEquals(ManageResult.InvalidChoice, rig.manager.newSession("claude", "file:///work/b", thoroughly))
+
+        assertTrue(rig.asked.isEmpty())
+        assertTrue(rig.commands.calls.isEmpty())
+    }
+
+    @Test
+    fun `a required setting with no value and no choice is not started`() = runTest {
+        val rig = Rig().apply { hostOffers("$thinking,$approve", required = listOf("autoApprove")) }
+
+        assertEquals(ManageResult.InvalidChoice, rig.manager.newSession("claude", "file:///work/b", thoroughly))
+        assertEquals(
+            ManageResult.Done("ahp-session:/id1"),
+            rig.manager.newSession("claude", "file:///work/b", thoroughly + ("autoApprove" to ConfigPick.Flag(false))),
+        )
+    }
+
+    @Test
+    fun `when the host cannot be asked to check the choices nothing is sent and the device check is not asked`() = runTest {
+        val rig = Rig().apply { hostOffers(thinking) }
+        rig.commands.resolveFailure = AhpException.Rpc(-32601, "no such method", null)
+        assertIs<ManageResult.Refused>(rig.manager.newSession("claude", "file:///work/b", thoroughly))
+
+        rig.commands.resolveFailure = IOException("offline")
+        assertIs<ManageResult.NotSent>(rig.manager.newSession("claude", "file:///work/b", thoroughly))
+
+        assertTrue(rig.asked.isEmpty())
+        assertTrue(rig.commands.calls.isEmpty())
+    }
+
+    @Test
+    fun `a session with choices that fails the device check, or loses its tier meanwhile, sends nothing`() = runTest {
+        val declined = Rig().apply { hostOffers(thinking); answer = false }
+        assertEquals(ManageResult.NotConfirmed, declined.manager.newSession("claude", "file:///work/b", thoroughly))
+        assertTrue(declined.commands.calls.isEmpty())
+
+        val during = Rig().apply { hostOffers(thinking) }
+        during.whileAsking = { during.allowed = false }
+        assertEquals(ManageResult.NotAllowed, during.manager.newSession("claude", "file:///work/b", thoroughly))
+        assertTrue(during.commands.calls.isEmpty())
+    }
+
+    @Test
+    fun `the device check line lists settings first and counts any that do not fit`() {
+        assertEquals("file:///work/b", SettingsSummary.of("file:///work/b", emptyList()))
+        assertEquals("Thinking: Thorough\nMode: Plan\nfile:///work/b", SettingsSummary.of("file:///work/b", listOf("Thinking: Thorough", "Mode: Plan")))
+
+        val many = (1..9).map { "Setting number $it: a fairly long value that is cut" }
+        val line = SettingsSummary.of("file:///work/b", many)
+        val settingsPart = line.substringBeforeLast("\nfile:///work/b")
+        assertTrue(settingsPart.length <= SettingsSummary.MAX_CHARS, "settings fit before the folder: ${settingsPart.length}")
+        assertTrue(line.lines().any { it.matches(Regex("""\+\d+ more settings""")) })
+        assertTrue(line.lines().filter { it.startsWith("Setting") }.all { it.length <= 38 })
+        assertTrue(line.endsWith("file:///work/b"))
     }
 
     // ---- remove -----------------------------------------------------------------------------------------------------

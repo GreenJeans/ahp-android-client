@@ -4,20 +4,30 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.compose.ui.unit.dp
+import dev.ahpclient.state.ConfigField
+import dev.ahpclient.state.ConfigOffer
+import dev.ahpclient.state.ConfigOption
+import dev.ahpclient.state.ConfigPick
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.ManageResult
+import dev.ahpclient.state.SessionConfigForm
 import dev.ahpclient.state.SessionDetail
 import dev.ahpclient.state.SessionPhase
 import dev.ahpclient.tunnel.TunnelInfo
@@ -25,6 +35,7 @@ import dev.ahpclient.ui.theme.AhpTheme
 import com.microsoft.agenthostprotocol.Ahp
 import com.microsoft.agenthostprotocol.generated.SessionState
 import java.time.Instant
+import kotlinx.coroutines.CompletableDeferred
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -45,6 +56,9 @@ class ManageUiTest {
         val archived = mutableListOf<Pair<String, Boolean>>()
         val chats = mutableListOf<String>()
         val sessions = mutableListOf<Pair<String, String>>()
+        val sessionPicks = mutableListOf<Map<String, ConfigPick>>()
+        val asked = mutableListOf<Triple<String, String, Map<String, ConfigPick>>>()
+        var offer: suspend (provider: String, folder: String, picks: Map<String, ConfigPick>) -> ConfigOffer = { _, _, _ -> ConfigOffer.NoSettings }
         val disposedSessions = mutableListOf<String>()
         val disposedChats = mutableListOf<Pair<String, String>>()
         var result: ManageResult = ManageResult.Done()
@@ -61,9 +75,14 @@ class ManageUiTest {
         setRead = { u, r -> calls.read += u to r; calls.result },
         setArchived = { u, a -> calls.archived += u to a; calls.result },
         newChat = { calls.chats += it; calls.result },
-        newSession = { p, f -> calls.sessions += p to f; if (calls.result is ManageResult.Done) ManageResult.Done(calls.created) else calls.result },
+        newSession = { p, f, picks ->
+            calls.sessions += p to f
+            calls.sessionPicks += picks
+            if (calls.result is ManageResult.Done) ManageResult.Done(calls.created) else calls.result
+        },
         disposeSession = { calls.disposedSessions += it; calls.result },
         disposeChat = { s, c -> calls.disposedChats += s to c; calls.result },
+        sessionSettings = { p, f, picks -> calls.asked += Triple(p, f, picks); calls.offer(p, f, picks) },
     )
 
     private fun detail(read: Boolean = false, archived: Boolean = false, phase: SessionPhase = SessionPhase.READY) = SessionDetail(
@@ -149,6 +168,7 @@ class ManageUiTest {
 
         rule.waitUntil(5_000) { calls.sessions.isNotEmpty() }
         assertEquals(listOf("claude" to "file:///work/b"), calls.sessions)
+        assertEquals(listOf<Map<String, ConfigPick>>(emptyMap()), calls.sessionPicks)
         rule.waitUntil(5_000) { opened.isNotEmpty() }
         assertEquals(listOf("ahp-session:/new"), opened)
         rule.onNodeWithTag("new_session_start").assertDoesNotExist()
@@ -199,6 +219,354 @@ class ManageUiTest {
 
         rule.waitUntil(5_000) { rule.onAllNodesCount("new_session_notice") == 1 }
         rule.onNodeWithTag("new_session_notice").assertTextContains("device check", substring = true)
+    }
+
+    // ---- a new session's settings -------------------------------------------------------------------------------------
+
+    private val quick = ConfigOption(ConfigPick.Text("low"), "Quick")
+    private val thorough = ConfigOption(ConfigPick.Text("high"), "Thorough")
+
+    /** What a host that holds Quick and Off by default would answer, with the choices so far already in it. */
+    private fun formFor(
+        picks: Map<String, ConfigPick>,
+        required: Boolean = false,
+        omitted: Int = 0,
+        title: String = "Thinking",
+        description: String? = "How hard to think",
+        labelOn: String = "On",
+    ): ConfigOffer = ConfigOffer.Form(
+        SessionConfigForm(
+            listOf(
+                ConfigField("thinking", title, description, listOf(quick, thorough), required, picks["thinking"] ?: if (required) null else ConfigPick.Text("low")),
+                ConfigField(
+                    "autoApprove",
+                    "Approve tools automatically",
+                    null,
+                    listOf(ConfigOption(ConfigPick.Flag(true), labelOn), ConfigOption(ConfigPick.Flag(false), "Off")),
+                    false,
+                    picks["autoApprove"] ?: ConfigPick.Flag(false),
+                ),
+            ),
+            omitted,
+            emptyMap(),
+        ),
+    )
+
+    private fun Calls.hostOffers(required: Boolean = false, omitted: Int = 0) {
+        offer = { _, _, picks -> formFor(picks, required, omitted) }
+    }
+
+    private fun chooseClaudeInB() {
+        rule.onNodeWithTag("agent_claude").performClick()
+        rule.onNodeWithTag("folder_file:///work/b").performClick()
+    }
+
+    @Test
+    fun aHostWithNoSettingsShowsNoSettingsAndStartsAsBefore() {
+        val calls = Calls()
+        showNewSession(calls)
+
+        chooseClaudeInB()
+        rule.waitForIdle()
+
+        rule.onNodeWithTag("setting_title_thinking").assertDoesNotExist()
+        rule.onNodeWithTag("new_session_start").assertIsEnabled().performClick()
+        rule.waitUntil(5_000) { calls.sessions.isNotEmpty() }
+        assertEquals(listOf<Map<String, ConfigPick>>(emptyMap()), calls.sessionPicks)
+    }
+
+    @Test
+    fun theHostIsAskedForSettingsOnlyOnceAnAgentAndFolderAreChosen() {
+        val calls = Calls().apply { hostOffers() }
+        showNewSession(calls)
+        rule.waitForIdle()
+        assertEquals(emptyList<Any>(), calls.asked)
+
+        rule.onNodeWithTag("agent_claude").performClick()
+        rule.waitForIdle()
+        assertEquals(emptyList<Any>(), calls.asked)
+
+        rule.onNodeWithTag("folder_file:///work/b").performClick()
+        rule.waitUntil(5_000) { calls.asked.isNotEmpty() }
+        assertEquals(Triple("claude", "file:///work/b", emptyMap<String, ConfigPick>()), calls.asked.first())
+    }
+
+    @Test
+    fun eachSettingShowsItsTitleItsDescriptionAndItsChoicesWithTheHostsOwnValueSelected() {
+        val calls = Calls().apply { hostOffers() }
+        showNewSession(calls)
+
+        chooseClaudeInB()
+        rule.waitUntil(5_000) { rule.onAllNodesCount("setting_title_thinking") == 1 }
+
+        rule.onNodeWithTag("setting_title_thinking").assertTextEquals("Thinking")
+        rule.onNodeWithTag("setting_description_thinking").assertTextEquals("How hard to think")
+        rule.onNodeWithTag("setting_thinking_0").assertIsSelected()
+        rule.onNodeWithTag("setting_thinking_1").assertIsNotSelected()
+        rule.onNodeWithTag("setting_autoApprove_0").assertIsNotSelected()
+        rule.onNodeWithTag("setting_autoApprove_1").assertIsSelected()
+    }
+
+    @Test
+    fun aChoiceAsksTheHostAgainAndStartSendsExactlyTheChoicesMade() {
+        val calls = Calls().apply { hostOffers() }
+        showNewSession(calls)
+        chooseClaudeInB()
+        rule.waitUntil(5_000) { rule.onAllNodesCount("setting_title_thinking") == 1 }
+
+        rule.onNodeWithTag("setting_thinking_1").performClick()
+        rule.waitUntil(5_000) { calls.asked.size >= 2 }
+        rule.waitForIdle()
+
+        assertEquals(mapOf("thinking" to ConfigPick.Text("high")), calls.asked.last().third)
+        rule.onNodeWithTag("setting_thinking_1").assertIsSelected()
+        rule.onNodeWithTag("setting_thinking_0").assertIsNotSelected()
+        rule.onNodeWithTag("new_session_start").assertIsEnabled().performClick()
+        rule.waitUntil(5_000) { calls.sessions.isNotEmpty() }
+        assertEquals(listOf(mapOf<String, ConfigPick>("thinking" to ConfigPick.Text("high"))), calls.sessionPicks)
+    }
+
+    @Test
+    fun anOnOffSettingIsSentAsABooleanAndSeveralChoicesAreSentTogether() {
+        val calls = Calls().apply { hostOffers() }
+        showNewSession(calls)
+        chooseClaudeInB()
+        rule.waitUntil(5_000) { rule.onAllNodesCount("setting_title_thinking") == 1 }
+
+        rule.onNodeWithTag("setting_autoApprove_0").performClick()
+        rule.waitUntil(5_000) { calls.asked.size >= 2 }
+        rule.waitForIdle()
+        rule.onNodeWithTag("setting_thinking_1").performClick()
+        rule.waitUntil(5_000) { calls.asked.size >= 3 }
+        rule.waitForIdle()
+        rule.onNodeWithTag("new_session_start").performClick()
+        rule.waitUntil(5_000) { calls.sessions.isNotEmpty() }
+
+        assertEquals(mapOf("autoApprove" to ConfigPick.Flag(true), "thinking" to ConfigPick.Text("high")), calls.sessionPicks.single())
+    }
+
+    @Test
+    fun changingTheFolderDropsTheChoicesAndAsksAgain() {
+        val calls = Calls().apply { hostOffers() }
+        showNewSession(calls)
+        chooseClaudeInB()
+        rule.waitUntil(5_000) { rule.onAllNodesCount("setting_title_thinking") == 1 }
+        rule.onNodeWithTag("setting_thinking_1").performClick()
+        rule.waitUntil(5_000) { calls.asked.size >= 2 }
+
+        rule.onNodeWithTag("folder_file:///work/a").performClick()
+        rule.waitUntil(5_000) { calls.asked.last().second == "file:///work/a" }
+        rule.waitForIdle()
+
+        assertEquals(emptyMap<String, ConfigPick>(), calls.asked.last().third)
+        rule.onNodeWithTag("setting_thinking_0").assertIsSelected()
+        rule.onNodeWithTag("new_session_start").performClick()
+        rule.waitUntil(5_000) { calls.sessions.isNotEmpty() }
+        assertEquals(emptyMap<String, ConfigPick>(), calls.sessionPicks.single())
+    }
+
+    @Test
+    fun aChoiceShowsAtOnceEvenWhileTheHostIsStillBeingAsked() {
+        val calls = Calls()
+        var hold: CompletableDeferred<Unit>? = null
+        calls.offer = { _, _, picks ->
+            hold?.await()
+            formFor(picks)
+        }
+        showNewSession(calls)
+        chooseClaudeInB()
+        rule.waitUntil(5_000) { rule.onAllNodesCount("setting_title_thinking") == 1 }
+
+        hold = CompletableDeferred()
+        rule.onNodeWithTag("setting_thinking_1").performClick()
+        rule.waitUntil(5_000) { rule.onAllNodesCount("settings_loading") == 1 }
+
+        rule.onNodeWithTag("setting_thinking_1").assertIsSelected()
+        rule.onNodeWithTag("setting_thinking_0").assertIsNotSelected()
+        rule.onNodeWithTag("new_session_start").assertIsNotEnabled()
+        hold.complete(Unit)
+    }
+
+    @Test
+    fun aRequiredSettingWithNoValueBlocksStartUntilChosenAndIsNamed() {
+        val calls = Calls().apply { hostOffers(required = true) }
+        showNewSession(calls)
+
+        chooseClaudeInB()
+        rule.waitUntil(5_000) { rule.onAllNodesCount("setting_title_thinking") == 1 }
+
+        rule.onNodeWithTag("setting_title_thinking").assertTextEquals("Thinking (required)")
+        rule.onNodeWithTag("settings_missing").assertTextContains("Thinking", substring = true)
+        rule.onNodeWithTag("new_session_start").assertIsNotEnabled()
+
+        rule.onNodeWithTag("setting_thinking_0").performClick()
+        rule.waitUntil(5_000) { rule.onAllNodesCount("settings_missing") == 0 }
+        rule.onNodeWithTag("new_session_start").assertIsEnabled()
+    }
+
+    @Test
+    fun startWaitsWhileTheHostIsBeingAsked() {
+        val calls = Calls()
+        val answer = CompletableDeferred<ConfigOffer>()
+        calls.offer = { _, _, _ -> answer.await() }
+        showNewSession(calls)
+
+        chooseClaudeInB()
+
+        rule.waitUntil(5_000) { rule.onAllNodesCount("settings_loading") == 1 }
+        rule.onNodeWithTag("new_session_start").assertIsNotEnabled()
+
+        answer.complete(ConfigOffer.NoSettings)
+        rule.waitUntil(5_000) { rule.onAllNodesCount("settings_loading") == 0 }
+        rule.onNodeWithTag("new_session_start").assertIsEnabled()
+    }
+
+    @Test
+    fun aHostThatCannotBeAskedSaysSoAndStillStartsWithItsOwnSettingsWhenNothingWasChosen() {
+        val calls = Calls().apply { offer = { _, _, _ -> ConfigOffer.Unavailable("The host refused it: no such method") } }
+        showNewSession(calls)
+
+        chooseClaudeInB()
+        rule.waitUntil(5_000) { rule.onAllNodesCount("settings_note") == 1 }
+
+        rule.onNodeWithTag("settings_note").assertTextContains("no such method", substring = true).assertTextContains("host will use its own", substring = true)
+        rule.onNodeWithTag("new_session_start").assertIsEnabled().performClick()
+        rule.waitUntil(5_000) { calls.sessions.isNotEmpty() }
+        assertEquals(emptyMap<String, ConfigPick>(), calls.sessionPicks.single())
+    }
+
+    @Test
+    fun ifTheHostCannotBeAskedAfterAChoiceStartIsOffUntilItCan() {
+        val calls = Calls().apply { offer = { _, _, picks -> if (picks.isEmpty()) formFor(picks) else ConfigOffer.Unavailable("offline") } }
+        showNewSession(calls)
+        chooseClaudeInB()
+        rule.waitUntil(5_000) { rule.onAllNodesCount("setting_title_thinking") == 1 }
+
+        rule.onNodeWithTag("setting_thinking_1").performClick()
+        rule.waitUntil(5_000) { rule.onAllNodesCount("settings_note") == 1 }
+
+        rule.onNodeWithTag("settings_note").assertTextContains("offline", substring = true)
+        rule.onNodeWithTag("new_session_start").assertIsNotEnabled()
+    }
+
+    @Test
+    fun aChoiceTheHostNoLongerOffersIsDropped() {
+        val calls = Calls().apply { offer = { _, _, picks -> if (picks.isEmpty()) formFor(picks) else ConfigOffer.NoSettings } }
+        showNewSession(calls)
+        chooseClaudeInB()
+        rule.waitUntil(5_000) { rule.onAllNodesCount("setting_title_thinking") == 1 }
+
+        rule.onNodeWithTag("setting_thinking_1").performClick()
+        rule.waitUntil(5_000) { calls.asked.size >= 3 }
+        rule.waitForIdle()
+
+        rule.onNodeWithTag("setting_thinking_0").assertIsSelected()
+        rule.onNodeWithTag("new_session_start").performClick()
+        rule.waitUntil(5_000) { calls.sessions.isNotEmpty() }
+        assertEquals(emptyMap<String, ConfigPick>(), calls.sessionPicks.single())
+    }
+
+    @Test
+    fun settingsThisAppCannotShowAreCounted() {
+        val calls = Calls().apply { hostOffers(omitted = 2) }
+        showNewSession(calls)
+
+        chooseClaudeInB()
+        rule.waitUntil(5_000) { rule.onAllNodesCount("settings_omitted") == 1 }
+
+        rule.onNodeWithTag("settings_omitted").assertTextContains("2 more settings this app cannot show", substring = true)
+    }
+
+    @Test
+    fun oneSettingLeftOutIsSaidInTheSingular() {
+        val calls = Calls().apply { hostOffers(omitted = 1) }
+        showNewSession(calls)
+
+        chooseClaudeInB()
+        rule.waitUntil(5_000) { rule.onAllNodesCount("settings_omitted") == 1 }
+
+        rule.onNodeWithTag("settings_omitted").assertTextContains("1 more setting this app cannot show", substring = true)
+    }
+
+    @Test
+    fun theHostsWordsAreShownAsTextAndTheRowsAreBigEnoughToTap() {
+        val hostile = "<b>bold</b> [link](https://evil.example)"
+        val calls = Calls().apply { offer = { _, _, picks -> formFor(picks, title = hostile, description = hostile, labelOn = hostile) } }
+        showNewSession(calls)
+
+        chooseClaudeInB()
+        rule.waitUntil(5_000) { rule.onAllNodesCount("setting_title_thinking") == 1 }
+
+        rule.onNodeWithTag("setting_title_thinking").assertTextEquals(hostile)
+        rule.onNodeWithTag("setting_description_thinking").assertTextEquals(hostile)
+        rule.onNodeWithTag("setting_autoApprove_0").assertTextContains(hostile, substring = true).assertHeightIsAtLeast(48.dp)
+    }
+
+    @Test
+    fun changingTheAgentDropsTheChoicesAndAsksAgain() {
+        val calls = Calls().apply { hostOffers() }
+        showNewSession(calls)
+        chooseClaudeInB()
+        rule.waitUntil(5_000) { rule.onAllNodesCount("setting_title_thinking") == 1 }
+        rule.onNodeWithTag("setting_thinking_1").performClick()
+        rule.waitUntil(5_000) { calls.asked.size >= 2 }
+
+        rule.onNodeWithTag("agent_copilotcli").performClick()
+        rule.waitUntil(5_000) { calls.asked.last().first == "copilotcli" }
+        rule.waitForIdle()
+
+        assertEquals(emptyMap<String, ConfigPick>(), calls.asked.last().third)
+        rule.onNodeWithTag("setting_thinking_0").assertIsSelected()
+        rule.onNodeWithTag("new_session_start").performClick()
+        rule.waitUntil(5_000) { calls.sessions.isNotEmpty() }
+        assertEquals(emptyMap<String, ConfigPick>(), calls.sessionPicks.single())
+    }
+
+    @Test
+    fun aChoiceForASettingTheHostStoppedListingIsDropped() {
+        val calls = Calls().apply {
+            offer = { _, _, picks ->
+                val full = formFor(picks) as ConfigOffer.Form
+                if (picks.isEmpty()) full else ConfigOffer.Form(SessionConfigForm(full.form.fields.filter { it.id != "thinking" }, 0, emptyMap()))
+            }
+        }
+        showNewSession(calls)
+        chooseClaudeInB()
+        rule.waitUntil(5_000) { rule.onAllNodesCount("setting_title_thinking") == 1 }
+
+        rule.onNodeWithTag("setting_thinking_1").performClick()
+        rule.waitUntil(5_000) { calls.asked.size >= 3 }
+        rule.waitForIdle()
+
+        rule.onNodeWithTag("new_session_start").performClick()
+        rule.waitUntil(5_000) { calls.sessions.isNotEmpty() }
+        assertEquals(emptyMap<String, ConfigPick>(), calls.sessionPicks.single())
+    }
+
+    @Test
+    fun theChoicesSurviveRotation() {
+        val calls = Calls().apply { hostOffers() }
+        val restoration = StateRestorationTester(rule)
+        restoration.setContent { AhpTheme { NewSessionButton(actions(calls), {}) } }
+        rule.onNodeWithTag("new_session").performClick()
+        chooseClaudeInB()
+        rule.waitUntil(5_000) { rule.onAllNodesCount("setting_title_thinking") == 1 }
+        rule.onNodeWithTag("setting_thinking_1").performClick()
+        rule.waitUntil(5_000) { calls.asked.size >= 2 }
+        rule.waitForIdle()
+        rule.onNodeWithTag("setting_autoApprove_0").performClick()
+        rule.waitUntil(5_000) { calls.asked.size >= 3 }
+        rule.waitForIdle()
+
+        restoration.emulateSavedInstanceStateRestore()
+        rule.waitUntil(5_000) { rule.onAllNodesCount("setting_title_thinking") == 1 }
+        rule.waitForIdle()
+
+        rule.onNodeWithTag("setting_thinking_1").assertIsSelected()
+        rule.onNodeWithTag("setting_autoApprove_0").assertIsSelected()
+        rule.onNodeWithTag("new_session_start").performClick()
+        rule.waitUntil(5_000) { calls.sessions.isNotEmpty() }
+        assertEquals(mapOf("thinking" to ConfigPick.Text("high"), "autoApprove" to ConfigPick.Flag(true)), calls.sessionPicks.single())
     }
 
     @Test

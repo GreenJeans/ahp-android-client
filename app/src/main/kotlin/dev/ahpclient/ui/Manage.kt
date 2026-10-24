@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
@@ -19,11 +20,14 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -35,8 +39,12 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import dev.ahpclient.state.ConfigField
+import dev.ahpclient.state.ConfigOffer
+import dev.ahpclient.state.ConfigPick
 import dev.ahpclient.state.ManageMessages
 import dev.ahpclient.state.ManageResult
+import dev.ahpclient.state.SessionConfigForm
 import dev.ahpclient.state.SessionDetail
 import dev.ahpclient.state.SessionPhase
 import dev.ahpclient.state.displayPath
@@ -58,9 +66,11 @@ class ManageActionsUi(
     val setRead: suspend (sessionUri: String, read: Boolean) -> ManageResult,
     val setArchived: suspend (sessionUri: String, archived: Boolean) -> ManageResult,
     val newChat: suspend (sessionUri: String) -> ManageResult,
-    val newSession: suspend (provider: String, folder: String) -> ManageResult,
+    val newSession: suspend (provider: String, folder: String, picks: Map<String, ConfigPick>) -> ManageResult,
     val disposeSession: suspend (sessionUri: String) -> ManageResult,
     val disposeChat: suspend (sessionUri: String, chatUri: String) -> ManageResult,
+    /** Asks the host which settings it offers for a new session of this agent in this folder, given the choices so far. */
+    val sessionSettings: suspend (provider: String, folder: String, picks: Map<String, ConfigPick>) -> ConfigOffer = { _, _, _ -> ConfigOffer.NoSettings },
 )
 
 @Composable
@@ -136,17 +146,72 @@ fun NewSessionButton(manage: ManageActionsUi, onCreated: (String) -> Unit, modif
     if (open) NewSessionDialog(manage, onDismiss = { open = false }, onCreated = { open = false; onCreated(it) })
 }
 
+/** Keeps the settings chosen for a new session across rotation: each setting's id, then its value as `t:text` or `f:true`/`f:false`. */
+private val PicksSaver: Saver<Map<String, ConfigPick>, Any> = listSaver<Map<String, ConfigPick>, String>(
+    save = { picks ->
+        picks.flatMap { (id, pick) -> listOf(id, if (pick is ConfigPick.Flag) "f:${pick.value}" else "t:${(pick as ConfigPick.Text).value}") }
+    },
+    restore = { saved ->
+        saved.chunked(2).filter { it.size == 2 }.mapNotNull { (id, raw) ->
+            when {
+                raw.startsWith("t:") -> id to ConfigPick.Text(raw.drop(2))
+                raw == "f:true" -> id to ConfigPick.Flag(true)
+                raw == "f:false" -> id to ConfigPick.Flag(false)
+                else -> null
+            }
+        }.toMap()
+    },
+)
+
 /**
- * Pick an agent the host offers and a folder it already uses, then start. Nothing the host did not offer can be picked, and
- * nothing is sent until Start is tapped (which asks for the device check first). The host's words are plain text.
+ * Pick an agent the host offers and a folder it already uses, then the settings the host offers for that pair, then start.
+ * Nothing the host did not offer can be picked, and nothing is sent until Start is tapped (which asks for the device check
+ * first, naming the settings chosen). The host is asked again after each choice, because its answer can change. The host's
+ * words are plain text.
  */
 @Composable
 private fun NewSessionDialog(manage: ManageActionsUi, onDismiss: () -> Unit, onCreated: (String) -> Unit) {
     var provider by rememberSaveable { mutableStateOf(manage.agents.singleOrNull()?.provider) }
     var folder by rememberSaveable { mutableStateOf(manage.folders.singleOrNull()) }
+    var picks by rememberSaveable(stateSaver = PicksSaver) { mutableStateOf<Map<String, ConfigPick>>(emptyMap()) }
+    var form by remember { mutableStateOf<SessionConfigForm?>(null) }
+    var settingsNote by remember { mutableStateOf<String?>(null) }
+    var loading by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+
+    // Asked again whenever the agent, folder or a choice changes: the host's list of settings can depend on all three.
+    LaunchedEffect(provider, folder, picks) {
+        val chosenAgent = provider
+        val chosenFolder = folder
+        if (chosenAgent == null || chosenFolder == null) {
+            form = null
+            settingsNote = null
+            return@LaunchedEffect
+        }
+        loading = true
+        when (val offer = manage.sessionSettings(chosenAgent, chosenFolder, picks)) {
+            is ConfigOffer.Form -> {
+                form = offer.form
+                settingsNote = null
+                // A setting the host stopped offering after a choice is dropped, never sent.
+                val kept = picks.filterKeys { id -> offer.form.fields.any { it.id == id } }
+                if (kept != picks) picks = kept
+            }
+            ConfigOffer.NoSettings -> {
+                form = null
+                settingsNote = null
+                if (picks.isNotEmpty()) picks = emptyMap()
+            }
+            is ConfigOffer.Unavailable -> settingsNote = offer.reason
+        }
+        loading = false
+    }
+
+    val missing = form?.missingRequired(picks).orEmpty()
+    // With the host's list unknown and nothing chosen, starting with the host's own settings is still fine.
+    val canStart = provider != null && folder != null && !busy && !loading && missing.isEmpty() && (settingsNote == null || picks.isEmpty())
     AlertDialog(
         onDismissRequest = { if (!busy) onDismiss() },
         title = { Text("Start a new session") },
@@ -155,14 +220,38 @@ private fun NewSessionDialog(manage: ManageActionsUi, onDismiss: () -> Unit, onC
                 Text("Agent", style = MaterialTheme.typography.titleSmall, modifier = Modifier.semantics { heading() })
                 if (manage.agents.isEmpty()) Text("The host offers no agents.", modifier = Modifier.testTag("no_agents"))
                 manage.agents.forEach { agent ->
-                    ChoiceRow(agent.name.ifBlank { agent.provider }.take(MAX_SHOWN), provider == agent.provider, "agent_${agent.provider}") { provider = agent.provider }
+                    ChoiceRow(agent.name.ifBlank { agent.provider }.take(MAX_SHOWN), provider == agent.provider, "agent_${agent.provider}") {
+                        if (provider != agent.provider) {
+                            provider = agent.provider
+                            picks = emptyMap()
+                            form = null
+                            settingsNote = null
+                        }
+                    }
                 }
                 Text("Folder", style = MaterialTheme.typography.titleSmall, modifier = Modifier.semantics { heading() })
                 if (manage.folders.isEmpty()) {
                     Text("No folders yet. Start a session in VS Code first; this app only offers folders your sessions already use.", modifier = Modifier.testTag("no_folders"))
                 }
                 manage.folders.forEach { path ->
-                    ChoiceRow(displayPath(path).take(MAX_SHOWN), folder == path, "folder_$path") { folder = path }
+                    ChoiceRow(displayPath(path).take(MAX_SHOWN), folder == path, "folder_$path") {
+                        if (folder != path) {
+                            folder = path
+                            picks = emptyMap()
+                            form = null
+                            settingsNote = null
+                        }
+                    }
+                }
+                form?.let { current -> SettingsSection(current, picks, missing) { id, pick -> picks = picks + (id to pick) } }
+                if (loading) Text("Asking the host for its settings…", style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("settings_loading"))
+                settingsNote?.let { note ->
+                    Text(
+                        "Could not get this agent's settings. $note" + if (picks.isEmpty()) " You can still start; the host will use its own." else "",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.testTag("settings_note").semantics { liveRegion = LiveRegionMode.Polite },
+                    )
                 }
                 ManageNotice(notice, "new_session_notice")
             }
@@ -175,19 +264,54 @@ private fun NewSessionDialog(manage: ManageActionsUi, onDismiss: () -> Unit, onC
                     if (chosenAgent != null && chosenFolder != null) {
                         scope.launch {
                             busy = true
-                            val result = manage.newSession(chosenAgent, chosenFolder)
+                            val result = manage.newSession(chosenAgent, chosenFolder, picks)
                             notice = ManageMessages.describe(result)
                             busy = false
                             if (result is ManageResult.Done) result.created?.let(onCreated)
                         }
                     }
                 },
-                enabled = provider != null && folder != null && !busy,
+                enabled = canStart,
                 modifier = Modifier.testTag("new_session_start"),
             ) { Text("Start") }
         },
         dismissButton = { TextButton(onClick = onDismiss, enabled = !busy, modifier = Modifier.testTag("new_session_cancel")) { Text("Cancel") } },
     )
+}
+
+/**
+ * The settings the host offers for this agent and folder, each as a short list to pick from. What is selected is what the host
+ * holds now (its own default until a choice is made). A setting this app cannot show is counted, and the host keeps its own value.
+ */
+@Composable
+private fun SettingsSection(form: SessionConfigForm, picks: Map<String, ConfigPick>, missing: List<ConfigField>, onPick: (String, ConfigPick) -> Unit) {
+    if (form.fields.isEmpty() && form.omitted == 0) return
+    Text("Settings", style = MaterialTheme.typography.titleSmall, modifier = Modifier.semantics { heading() })
+    form.fields.forEach { field ->
+        Text(
+            field.title + if (field.required) " (required)" else "",
+            style = MaterialTheme.typography.titleSmall,
+            modifier = Modifier.padding(top = 4.dp).semantics { heading() }.testTag("setting_title_${field.id}"),
+        )
+        field.description?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("setting_description_${field.id}"))
+        }
+        val selected = picks[field.id] ?: field.value
+        field.options.forEachIndexed { index, option ->
+            ChoiceRow(option.label, selected == option.pick, "setting_${field.id}_$index") { onPick(field.id, option.pick) }
+        }
+    }
+    if (missing.isNotEmpty()) {
+        Text("Choose a value for: " + missing.joinToString { it.title }, style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("settings_missing"))
+    }
+    if (form.omitted > 0) {
+        Text(
+            "${form.omitted} more setting${if (form.omitted == 1) "" else "s"} this app cannot show; the host keeps its own.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.testTag("settings_omitted"),
+        )
+    }
 }
 
 @Composable

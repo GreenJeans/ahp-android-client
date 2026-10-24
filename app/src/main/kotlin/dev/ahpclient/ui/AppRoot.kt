@@ -83,6 +83,7 @@ fun AppRoot(
                                 setArchived = controller.manager::setArchived,
                                 newChat = controller.manager::newChat,
                                 newSession = controller.manager::newSession,
+                                sessionSettings = controller.manager::sessionSettings,
                                 disposeSession = controller.manager::disposeSession,
                                 disposeChat = controller.manager::disposeChat,
                             )

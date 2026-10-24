@@ -41,6 +41,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.JsonElement
 
 /**
  * Everything between launching the app and looking at a host: restore the saved sign-in, sign in with GitHub, list the
@@ -88,8 +89,11 @@ class AppController(
         sessionState = { uri -> (_state.value as? AppState.Connected)?.open?.takeIf { it.uri == uri }?.store?.state?.value },
         dispatch = { channel, action -> liveSession().dispatch(channel, action) },
         commands = object : ManagementCommands {
-            override suspend fun createSession(uri: String, provider: String?, workingDirectories: List<String>?) =
-                liveSession().createSession(uri, provider, workingDirectories)
+            override suspend fun createSession(uri: String, provider: String?, workingDirectories: List<String>?, config: Map<String, JsonElement>?) =
+                liveSession().createSession(uri, provider, workingDirectories, config)
+
+            override suspend fun resolveSessionConfig(provider: String, workingDirectory: String, config: Map<String, JsonElement>?) =
+                liveSession().resolveSessionConfig(provider, workingDirectory, config)
 
             override suspend fun createChat(sessionUri: String, chatUri: String) = liveSession().createChat(sessionUri, chatUri)
 

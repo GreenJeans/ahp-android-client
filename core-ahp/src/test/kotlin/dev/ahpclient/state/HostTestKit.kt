@@ -91,6 +91,8 @@ internal class HostScript(
     val chatTurns: List<String> = emptyList(),
     /** What the host answers to a management command (create or dispose a session or chat); by default it accepts it. */
     val onCommand: (method: String, id: Long?, params: JsonObject) -> String? = { _, id, _ -> result(id, "null") },
+    /** What the host answers to a `resolveSessionConfig`; by default it offers no settings at all. */
+    val onResolveConfig: (id: Long?, params: JsonObject) -> String? = { id, _ -> result(id, """{"schema":{"type":"object","properties":{}},"values":{}}""") },
     /** What the host answers to a `resourceRead`; by default the content is not found. */
     val onResourceRead: (id: Long?, params: JsonObject) -> String? = { id, _ -> error(id, -32008, "no such content") },
     /** The terminals the root catalogue lists, as a JSON array of terminal infos; null for the fixture's own. */
@@ -109,6 +111,7 @@ internal class HostScript(
         "dispatchAction" -> onDispatch(params)
         "createSession", "createChat", "disposeSession", "disposeChat" -> onCommand(method, id, params)
         "resourceRead" -> onResourceRead(id, params)
+        "resolveSessionConfig" -> onResolveConfig(id, params)
         else -> null
     }
 

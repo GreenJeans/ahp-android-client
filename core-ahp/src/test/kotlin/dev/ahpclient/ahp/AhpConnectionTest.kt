@@ -212,6 +212,57 @@ class AhpConnectionTest {
     }
 
     @Test
+    fun `resolveSessionConfig asks the root channel for an agent and folder with the choices so far, and decodes the schema`() = runTest {
+        val answer = """{"schema":{"type":"object","properties":{"thinking":{"type":"string","title":"Thinking","enum":["low","high"]}}},"values":{"thinking":"low"}}"""
+        val socket = FakeSocket { method, id, _ -> if (method == "resolveSessionConfig") result(id, answer) else null }
+        val connection = connection(socket, policy = CapabilityPolicy.MANAGE)
+
+        val resolved = connection.resolveSessionConfig("claude", "file:///work/repo", mapOf("thinking" to kotlinx.serialization.json.JsonPrimitive("high")))
+
+        assertEquals(listOf("thinking"), resolved.schema.properties.keys.toList())
+        assertEquals("low", resolved.values.getValue("thinking").jsonPrimitive.content)
+        val frame = socket.sent.single()
+        assertEquals("resolveSessionConfig", frame["method"]!!.jsonPrimitive.content)
+        assertTrue(frame["id"] != null, "a question is a request, so the answer and any refusal can be read")
+        val params = frame["params"]!!.jsonObject
+        assertEquals(setOf("channel", "provider", "workingDirectory", "config"), params.keys)
+        assertEquals("ahp-root://", params["channel"]!!.jsonPrimitive.content)
+        assertEquals("claude", params["provider"]!!.jsonPrimitive.content)
+        assertEquals("file:///work/repo", params["workingDirectory"]!!.jsonPrimitive.content)
+        assertEquals("high", params["config"]!!.jsonObject["thinking"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `resolveSessionConfig with no choices sends no config, and createSession carries the config it is given`() = runTest {
+        val socket = FakeSocket { method, id, _ ->
+            when (method) {
+                "resolveSessionConfig" -> result(id, """{"schema":{"type":"object","properties":{}},"values":{}}""")
+                "createSession" -> result(id, "null")
+                else -> null
+            }
+        }
+        val connection = connection(socket, policy = CapabilityPolicy.MANAGE)
+
+        connection.resolveSessionConfig("claude", "file:///work/repo", null)
+        connection.createSession("ahp-session:/new", "claude", listOf("file:///work/repo"), mapOf("thinking" to kotlinx.serialization.json.JsonPrimitive("high")))
+
+        assertNull(socket.sent[0]["params"]!!.jsonObject["config"])
+        assertEquals("high", socket.sent[1]["params"]!!.jsonObject["config"]!!.jsonObject["thinking"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `READ and INTERACT refuse to ask for a new session's settings and send nothing`() = runTest {
+        for (policy in listOf(CapabilityPolicy.READ, CapabilityPolicy.INTERACT)) {
+            val socket = FakeSocket()
+            val connection = connection(socket, policy = policy)
+
+            assertFailsWith<CapabilityDeniedException> { connection.resolveSessionConfig("claude", "file:///work/repo", null) }
+
+            assertTrue(socket.sent.isEmpty())
+        }
+    }
+
+    @Test
     fun `READ and INTERACT refuse every management command and send nothing`() = runTest {
         for (policy in listOf(CapabilityPolicy.READ, CapabilityPolicy.INTERACT)) {
             val socket = FakeSocket()

@@ -92,6 +92,20 @@ class CapabilityPolicyTest {
 
     private val manageCommands = setOf("createSession", "createChat", "disposeSession", "disposeChat")
 
+    private val manageQueries = setOf("resolveSessionConfig")
+
+    @Test
+    fun `only MANAGE can ask what settings a new session would have, and nothing else of that kind`() {
+        assertEquals(manageQueries, CapabilityPolicy.MANAGE_QUERIES)
+        manageQueries.forEach { query ->
+            assertFailsWith<CapabilityDeniedException>(query) { CapabilityPolicy.READ.check(query) }
+            assertFailsWith<CapabilityDeniedException>(query) { CapabilityPolicy.INTERACT.check(query) }
+            CapabilityPolicy.MANAGE.check(query)
+        }
+        // The neighbouring question, completing a setting as you type, is not allowed.
+        assertFailsWith<CapabilityDeniedException> { CapabilityPolicy.MANAGE.check("sessionConfigCompletions") }
+    }
+
     private val manageActions = setOf("session/isReadChanged", "session/isArchivedChanged", "changeset/filesReviewChanged")
 
     @Test
@@ -144,7 +158,7 @@ class CapabilityPolicyTest {
 
     @Test
     fun `MANAGE denies every other method`() {
-        denied.filter { it != "dispatchAction" && it !in manageCommands }.forEach { method ->
+        denied.filter { it != "dispatchAction" && it !in manageCommands && it !in manageQueries }.forEach { method ->
             assertFailsWith<CapabilityDeniedException>(method) { CapabilityPolicy.MANAGE.check(method) }
             assertFailsWith<CapabilityDeniedException>(method) { CapabilityPolicy.MANAGE.check(method, "session/isReadChanged") }
         }

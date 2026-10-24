@@ -24,6 +24,8 @@ import dev.ahpclient.state.DispatchOutcome
 import dev.ahpclient.state.InteractResult
 import dev.ahpclient.state.ModelChoice
 import dev.ahpclient.state.ManageResult
+import dev.ahpclient.state.ConfigOffer
+import dev.ahpclient.state.ConfigPick
 import dev.ahpclient.state.SNAPSHOT_SEQ
 import dev.ahpclient.state.echoOf
 import dev.ahpclient.state.ConnState
@@ -56,6 +58,8 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonArray
@@ -1595,6 +1599,55 @@ class AppControllerTest {
 
             assertEquals(ManageResult.NotAllowed, controller.setFileReviewed("file:///work/a.kt", true))
             assertTrue(dispatches().isEmpty())
+        }
+    }
+
+    // ---- a new session's settings ---------------------------------------------------------------------------------------
+
+    @Test
+    fun `a new session's settings are asked of the host over the live connection, and the chosen ones are sent with the session`() = runTest {
+        var clientId = ""
+        val script = {
+            HostScript(
+                sessionChats = "[${chatSummaryJson(CHAT_A)}]",
+                onDispatch = { echoOf(it, SNAPSHOT_SEQ + 1, clientId = clientId) },
+                onResolveConfig = { id, params ->
+                    val chosen = params["config"]?.jsonObject ?: JsonObject(emptyMap())
+                    val values = JsonObject(mapOf<String, JsonElement>("thinking" to JsonPrimitive("low")) + chosen)
+                    result(id, """{"schema":{"type":"object","properties":{"thinking":{"type":"string","title":"Thinking","enum":["low","high"]}}},"values":$values}""")
+                },
+            )
+        }
+        withRig(script = script, interaction = managing, approvalGate = ApprovalGate { true }) {
+            val connected = connectToFirstHost()
+            clientId = "client-${connected.host.tunnelId}"
+            connected.session.canManage.first { it }
+            val folder = controller.manager.offeredFolders().first()
+
+            val form = assertIs<ConfigOffer.Form>(controller.manager.sessionSettings("copilotcli", folder)).form
+            assertEquals(listOf("thinking"), form.fields.map { it.id })
+
+            val picks = mapOf("thinking" to ConfigPick.Text("high"))
+            assertIs<ManageResult.Done>(controller.manager.newSession("copilotcli", folder, picks))
+
+            val asked = requests("resolveSessionConfig")
+            assertEquals(2, asked.size, "once to show the form, once to check the choice before sending")
+            assertEquals("high", asked[1]["config"]!!.jsonObject["thinking"]!!.jsonPrimitive.content)
+            assertEquals("copilotcli", asked[1]["provider"]!!.jsonPrimitive.content)
+            assertEquals(folder, asked[1]["workingDirectory"]!!.jsonPrimitive.content)
+            assertEquals("high", requests("createSession").single()["config"]!!.jsonObject["thinking"]!!.jsonPrimitive.content)
+        }
+    }
+
+    @Test
+    fun `a connection that is not on the manage tier never asks the host for a new session's settings`() = runTest {
+        withRig(script = { HostScript(sessionChats = "[${chatSummaryJson(CHAT_A)}]") }) {
+            connectToFirstHost()
+
+            assertIs<ConfigOffer.Unavailable>(controller.manager.sessionSettings("copilotcli", "file:///work/repo-a"))
+            assertEquals(ManageResult.NotAllowed, controller.manager.newSession("copilotcli", "file:///work/repo-a", mapOf("thinking" to ConfigPick.Text("high"))))
+
+            assertTrue(requests("resolveSessionConfig").isEmpty())
         }
     }
 

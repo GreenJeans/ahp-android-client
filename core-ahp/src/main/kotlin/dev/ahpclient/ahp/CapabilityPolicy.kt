@@ -69,6 +69,12 @@ class CapabilityPolicy private constructor(
         val MANAGE_COMMANDS = setOf("createSession", "createChat", "disposeSession", "disposeChat")
 
         /**
+         * A question the host answers about a session that does not exist yet: which settings would it offer for this agent in
+         * this folder. It changes nothing, and it is only asked while starting a session, so it sits with [MANAGE].
+         */
+        val MANAGE_QUERIES = setOf("resolveSessionConfig")
+
+        /**
          * What marking a session read or archived, or a changed file reviewed, dispatches. Each is reversible with the same
          * action, and none of them changes anything the agent runs or any file.
          */
@@ -81,7 +87,7 @@ class CapabilityPolicy private constructor(
          */
         val MANAGE = CapabilityPolicy(
             name = "MANAGE",
-            methods = READ_METHODS + DISPATCH_ACTION + MANAGE_COMMANDS,
+            methods = READ_METHODS + DISPATCH_ACTION + MANAGE_COMMANDS + MANAGE_QUERIES,
             actionTypes = INTERACT_ACTIONS + MANAGE_ACTIONS,
         )
     }

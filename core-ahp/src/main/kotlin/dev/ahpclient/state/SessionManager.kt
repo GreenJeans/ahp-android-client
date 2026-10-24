@@ -3,16 +3,22 @@ package dev.ahpclient.state
 import dev.ahpclient.ahp.AhpException
 import dev.ahpclient.ahp.CapabilityDeniedException
 import com.microsoft.agenthostprotocol.generated.AgentInfo
+import com.microsoft.agenthostprotocol.generated.ResolveSessionConfigResult
 import com.microsoft.agenthostprotocol.generated.SessionState
 import com.microsoft.agenthostprotocol.generated.SessionSummary
 import com.microsoft.agenthostprotocol.generated.StateAction
 import java.io.IOException
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
+import kotlinx.serialization.json.JsonElement
 
 /** The commands that create and remove sessions and chats, as the manager needs them. [HostSession] is the real one. */
 interface ManagementCommands {
-    suspend fun createSession(uri: String, provider: String?, workingDirectories: List<String>?)
+    /** [config] is what the host itself resolved for this agent and folder, with the person's choices in it; null leaves every setting to the host. */
+    suspend fun createSession(uri: String, provider: String?, workingDirectories: List<String>?, config: Map<String, JsonElement>? = null)
+
+    /** Asks which settings the host would offer for a new session of [provider] in [workingDirectory], given the values already chosen. */
+    suspend fun resolveSessionConfig(provider: String, workingDirectory: String, config: Map<String, JsonElement>?): ResolveSessionConfigResult
 
     suspend fun createChat(sessionUri: String, chatUri: String)
 
@@ -88,17 +94,70 @@ class SessionManager(
         return command { commands.createChat(sessionUri, chatUri) }.let { if (it is ManageResult.Done) ManageResult.Done(chatUri) else it }
     }
 
-    /** Starts a session with [provider] in [folder], after the device check. Both must be ones the host offered. */
-    suspend fun newSession(provider: String, folder: String): ManageResult {
+    /**
+     * Asks the host which settings it offers for a new session of [provider] in [folder], given the [picks] already made. Asked
+     * again after each pick, because the answer can change. Only an agent and folder the host offered are ever asked about.
+     */
+    suspend fun sessionSettings(provider: String, folder: String, picks: Map<String, ConfigPick> = emptyMap()): ConfigOffer {
+        if (!allowed()) return ConfigOffer.Unavailable(ManageMessages.describe(ManageResult.NotAllowed).orEmpty())
+        if (agents().none { it.provider == provider } || folder !in offeredFolders()) {
+            return ConfigOffer.Unavailable(ManageMessages.describe(ManageResult.InvalidChoice).orEmpty())
+        }
+        return when (val resolved = resolve(provider, folder, picks)) {
+            is Resolved.Form ->
+                if (resolved.form.fields.isEmpty() && resolved.form.omitted == 0) ConfigOffer.NoSettings else ConfigOffer.Form(resolved.form)
+            is Resolved.Failed -> ConfigOffer.Unavailable(ManageMessages.describe(resolved.result) ?: "The host did not answer.")
+        }
+    }
+
+    /**
+     * Starts a session with [provider] in [folder], after the device check. Both must be ones the host offered. With [picks] (the
+     * person's choices of settings), the host is asked again first, so every pick is checked against what it offers now and took;
+     * the device check then names the settings, so what is confirmed is what is sent. With none, the host keeps all its own settings.
+     */
+    suspend fun newSession(provider: String, folder: String, picks: Map<String, ConfigPick> = emptyMap()): ManageResult {
         if (!allowed()) return ManageResult.NotAllowed
         val agent = agents().firstOrNull { it.provider == provider } ?: return ManageResult.InvalidChoice
         if (folder !in offeredFolders()) return ManageResult.InvalidChoice
-        val request = ApprovalRequest(agent.displayName.ifBlank { agent.provider }, folder, title = "Start a new session?")
+        var config: Map<String, JsonElement>? = null
+        var chosen: List<String> = emptyList()
+        if (picks.isNotEmpty()) {
+            val form = when (val resolved = resolve(provider, folder, picks)) {
+                is Resolved.Form -> resolved.form
+                is Resolved.Failed -> return resolved.result
+            }
+            if (!form.accepts(picks) || form.missingRequired(picks).isNotEmpty()) return ManageResult.InvalidChoice
+            config = form.wireConfig()
+            chosen = form.describe(picks)
+        }
+        val request = ApprovalRequest(agent.displayName.ifBlank { agent.provider }, SettingsSummary.of(folder, chosen), title = "Start a new session?")
         if (!confirmed(request)) return ManageResult.NotConfirmed
         if (!allowed()) return ManageResult.NotAllowed
         val uri = "$SESSION_SCHEME${newId()}"
-        return command { commands.createSession(uri, provider, listOf(folder)) }.let { if (it is ManageResult.Done) ManageResult.Done(uri) else it }
+        return command { commands.createSession(uri, provider, listOf(folder), config) }.let { if (it is ManageResult.Done) ManageResult.Done(uri) else it }
     }
+
+    private sealed interface Resolved {
+        data class Form(val form: SessionConfigForm) : Resolved
+
+        data class Failed(val result: ManageResult) : Resolved
+    }
+
+    private suspend fun resolve(provider: String, folder: String, picks: Map<String, ConfigPick>): Resolved =
+        try {
+            val values = picks.takeIf { it.isNotEmpty() }?.mapValues { it.value.toJson() }
+            Resolved.Form(SessionConfigForm.from(commands.resolveSessionConfig(provider, folder, values)))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: CapabilityDeniedException) {
+            Resolved.Failed(ManageResult.NotAllowed)
+        } catch (e: AhpException.Rpc) {
+            Resolved.Failed(ManageResult.Refused(e.code, e.message.orEmpty()))
+        } catch (e: AhpException) {
+            Resolved.Failed(ManageResult.NotSent(e))
+        } catch (e: IOException) {
+            Resolved.Failed(ManageResult.NotSent(e))
+        }
 
     /** Removes a session and everything in it, after the device check. Cannot be undone; archiving is the way back. */
     suspend fun disposeSession(sessionUri: String): ManageResult {
