@@ -62,8 +62,8 @@ class CollapsibleBlocksTest {
 
     private fun transcript(vararg items: TranscriptItem) = Transcript("Fix the build", ActivityState.IN_PROGRESS, null, items.toList(), hasOlder = false)
 
-    private fun show(transcript: Transcript, expanded: Set<String> = emptySet(), onToggle: (String) -> Unit = {}, onOpenSubagent: ((String) -> Unit)? = null) =
-        rule.setContent { AhpTheme { ChatScreen(transcript, null, false, null, ConnState.Online, {}, {}, {}, expanded = expanded, onToggle = onToggle, onOpenSubagent = onOpenSubagent) } }
+    private fun show(transcript: Transcript, expanded: Set<String> = emptySet(), onToggle: (String) -> Unit = {}, onOpenSubagent: ((String) -> Unit)? = null, onOpenTerminal: ((String) -> Unit)? = null) =
+        rule.setContent { AhpTheme { ChatScreen(transcript, null, false, null, ConnState.Online, {}, {}, {}, expanded = expanded, onToggle = onToggle, onOpenSubagent = onOpenSubagent, onOpenTerminal = onOpenTerminal) } }
 
     private fun headerOf(text: String) = hasTestTag("block_header") and hasText(text)
 
@@ -306,6 +306,38 @@ class CollapsibleBlocksTest {
 
         rule.onNodeWithTag("subagent_open").assertDoesNotExist()
         rule.onNodeWithText("Its own transcript is not available.").assertExists()
+    }
+
+    // ---- terminals ---------------------------------------------------------------------------------------------
+
+    private fun terminal(resource: String) =
+        completed("""{"type":"terminal","resource":${JsonPrimitive(resource)},"title":"Build","isPty":false,"result":{"exitCode":0,"preview":"ok"}}""")
+
+    @Test
+    fun aTerminalResultOffersItsLiveOutputAndHandsOverTheAddressItWasGiven() {
+        val opened = mutableListOf<String>()
+        show(transcript(tool("t1", terminal("ahp-terminal:/a"))), expanded = setOf("t1"), onOpenTerminal = { opened += it })
+
+        rule.onNodeWithTag("terminal_open").performScrollTo().assertTextEquals("Open live output").performClick()
+
+        assertEquals(listOf("ahp-terminal:/a"), opened)
+    }
+
+    @Test
+    fun aTerminalWhoseAddressIsNotATerminalsIsNeverOffered() {
+        val opened = mutableListOf<String>()
+        show(transcript(tool("t1", terminal("https://example.test/x"))), expanded = setOf("t1"), onOpenTerminal = { opened += it })
+
+        rule.onNodeWithTag("terminal_open").assertDoesNotExist()
+        rule.onNodeWithTag("result_terminal").assertTextContains("ok", substring = true)
+        assertTrue(opened.isEmpty())
+    }
+
+    @Test
+    fun aTerminalIsNotOfferedWhereThereIsNowhereToOpenIt() {
+        show(transcript(tool("t1", terminal("ahp-terminal:/a"))), expanded = setOf("t1"))
+
+        rule.onNodeWithTag("terminal_open").assertDoesNotExist()
     }
 
     // ---- state -------------------------------------------------------------------------------------------------

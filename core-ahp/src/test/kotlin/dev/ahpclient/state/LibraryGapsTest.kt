@@ -14,12 +14,13 @@ class LibraryGapsTest {
     // The library picks a snapshot's kind from the keys it holds, and checks for `lifecycle` first: a session's lifecycle is a
     // word, but a terminal's is an object, so a terminal snapshot is taken for a session and fails to decode. A client built on
     // this library cannot subscribe to a terminal, and a reconnect that includes one would fail as a whole.
-    // Blocks: the read-only terminal viewer (Phase 5). Build it once this decodes, or decode terminal snapshots by hand.
+    // The terminal viewer works around it: `AhpConnection.subscribeTerminal` reads that one reply by hand, and a terminal is never
+    // named in `initialize` or `reconnect`. When this test starts failing the library is fixed, and that workaround can go.
     @Test
-    fun `a terminal snapshot does not decode, so terminals cannot be watched yet`() {
+    fun `a terminal snapshot does not decode, so terminals are subscribed by hand`() {
         val outcome = runCatching { Ahp.json.decodeFromString(Snapshot.serializer(), terminalSnapshotJson("ahp-terminal:/t1", 5)) }
 
-        assertTrue(outcome.isFailure, "terminal snapshots decode now: the terminal viewer can be built (docs/spec.md, Phase 5)")
+        assertTrue(outcome.isFailure, "terminal snapshots decode now: `AhpConnection.subscribeTerminal` and `AuxStore.byHand` can be removed")
     }
 
     @Test

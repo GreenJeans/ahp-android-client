@@ -17,6 +17,12 @@ internal interface AuxStore {
     val needsSubscribe: Boolean
     var openers: Int
 
+    /**
+     * True for a channel the library cannot decode a snapshot of (a terminal): it is subscribed with a hand-read reply, and is
+     * never named in `initialize` or `reconnect`, whose replies would carry that snapshot and fail to decode as a whole.
+     */
+    val byHand: Boolean
+
     fun seed(snapshot: Snapshot): Boolean
 
     fun apply(envelope: ActionEnvelope)
@@ -24,6 +30,9 @@ internal interface AuxStore {
     fun invalidate()
 
     fun markGone()
+
+    /** The host's answer for this channel could not be read. The old state, if any, stays; nothing is retried on its own. */
+    fun markFailed(cause: Throwable)
 }
 
 /**
@@ -36,6 +45,7 @@ class ChannelStore<S : Any> internal constructor(
     override val uri: String,
     private val pick: (SnapshotState) -> S?,
     private val reduce: (S, StateAction) -> S,
+    override val byHand: Boolean = false,
 ) : AuxStore {
     private val _state = MutableStateFlow<S?>(null)
 
@@ -87,6 +97,12 @@ class ChannelStore<S : Any> internal constructor(
     override fun markGone() {
         needsSubscribe = false
         _error.value = ChannelGoneException(uri)
+    }
+
+    @Synchronized
+    override fun markFailed(cause: Throwable) {
+        needsSubscribe = false
+        _error.value = cause
     }
 
     private fun applyInOrder(envelope: ActionEnvelope) {

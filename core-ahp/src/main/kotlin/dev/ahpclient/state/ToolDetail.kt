@@ -43,8 +43,11 @@ data class InputLine(val name: String, val value: Clipped)
 sealed interface ToolResultView {
     data class Text(val body: Clipped) : ToolResultView
 
-    /** [exitCode] is null while the command has not finished or the host reported none. [clippedByHost] means the host itself cut the output. */
-    data class Terminal(val title: String, val output: Clipped?, val exitCode: Long?, val clippedByHost: Boolean) : ToolResultView
+    /**
+     * [exitCode] is null while the command has not finished or the host reported none. [clippedByHost] means the host itself cut the output.
+     * [terminalUri] is set only when the host named a terminal address this app may subscribe to, so the live output can be opened.
+     */
+    data class Terminal(val title: String, val output: Clipped?, val exitCode: Long?, val clippedByHost: Boolean, val terminalUri: String? = null) : ToolResultView
 
     data class FileEdit(val path: String, val added: Long?, val removed: Long?) : ToolResultView
 
@@ -162,6 +165,7 @@ data class ToolDetail(
                     output = terminal.result?.preview?.takeIf { it.isNotEmpty() }?.let { Clipped.of(it, limits.text) },
                     exitCode = terminal.result?.exitCode,
                     clippedByHost = terminal.result?.truncated == true,
+                    terminalUri = terminal.resource.takeIf(TerminalLinks::isTerminalUri),
                 )
             }
             is ToolResultContent.FileEdit -> content.value.let { edit ->

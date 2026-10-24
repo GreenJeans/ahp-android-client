@@ -26,10 +26,13 @@ import com.microsoft.agenthostprotocol.generated.ResolveSessionConfigResult
 import com.microsoft.agenthostprotocol.generated.ResourceReadParams
 import com.microsoft.agenthostprotocol.generated.ResourceReadResult
 import com.microsoft.agenthostprotocol.generated.SUPPORTED_PROTOCOL_VERSIONS
+import com.microsoft.agenthostprotocol.generated.Snapshot
+import com.microsoft.agenthostprotocol.generated.SnapshotState
 import com.microsoft.agenthostprotocol.generated.StateAction
 import com.microsoft.agenthostprotocol.generated.SubscribeParams
 import com.microsoft.agenthostprotocol.generated.SubscribeResult
 import com.microsoft.agenthostprotocol.generated.SubscribeView
+import com.microsoft.agenthostprotocol.generated.TerminalState
 import com.microsoft.agenthostprotocol.generated.UnsupportedProtocolVersionErrorData
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -150,6 +153,31 @@ class AhpConnection(
 
     suspend fun subscribe(channel: String, view: SubscribeView? = null): SubscribeResult =
         request("subscribe", SubscribeParams.serializer(), SubscribeParams(channel = channel, view = view), SubscribeResult.serializer())
+
+    /**
+     * `subscribe` for a terminal, whose reply is read by hand. The library picks the kind of a snapshot from the keys it holds
+     * and checks for `lifecycle` first: a session's is a word but a terminal's is an object, so the library takes a terminal for
+     * a session and cannot decode the reply (`LibraryGapsTest` pins this). Here the snapshot's own pieces are read and only the
+     * terminal state is handed to the library. The method is still `subscribe`, so the same tier rule applies. The reply must be
+     * for the channel asked for and hold a terminal's `content`, or it is refused as a protocol error.
+     */
+    suspend fun subscribeTerminal(channel: String): Snapshot {
+        val result = requestRaw("subscribe", json.encodeToJsonElement(SubscribeParams.serializer(), SubscribeParams(channel = channel)).jsonObject)
+        val snapshot = (result as? JsonObject)?.get("snapshot") as? JsonObject
+        val resource = (snapshot?.get("resource") as? JsonPrimitive)?.contentOrNull
+        val fromSeq = (snapshot?.get("fromSeq") as? JsonPrimitive)?.longOrNull
+        val state = snapshot?.get("state") as? JsonObject
+        if (resource != channel || fromSeq == null || state == null || !state.containsKey("content")) {
+            throw AhpException.Protocol("'subscribe' result for a terminal does not hold that terminal's snapshot")
+        }
+        return try {
+            Snapshot(resource = resource, state = SnapshotState.Terminal(json.decodeFromJsonElement(TerminalState.serializer(), state)), fromSeq = fromSeq)
+        } catch (e: SerializationException) {
+            throw AhpException.Protocol("'subscribe' result does not match the expected shape for a terminal", e)
+        } catch (e: IllegalArgumentException) {
+            throw AhpException.Protocol("'subscribe' result does not match the expected shape for a terminal", e)
+        }
+    }
 
     suspend fun fetchTurns(chat: String, cursor: String? = null): FetchTurnsResult =
         request("fetchTurns", FetchTurnsParams.serializer(), FetchTurnsParams(channel = chat, cursor = cursor), FetchTurnsResult.serializer())

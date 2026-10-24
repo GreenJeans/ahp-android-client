@@ -149,8 +149,18 @@ diff worked out on the phone. The app asks only for the two content addresses th
 method that reads is internal to the core module. It is bounded (256 KiB a side by the host's own hint, 5,000 lines a side,
 1,000 changed lines, 2,000 lines shown, 500 characters a line), shows no file that has a NUL character or bytes that are not
 UTF-8, swaps characters that reorder text on screen for a visible mark, and shows everything as plain text. A "Viewed" box per
-file appears only when the host says the changeset is reviewable and the connection is on the manage tier. Terminals cannot be
-viewed yet because the pinned library mis-decodes a terminal snapshot as a session (pinned by `LibraryGapsTest`).
+file appears only when the host says the changeset is reviewable and the connection is on the manage tier.
+
+**Terminals** are watched, never typed into. A tool result that ran a command in a terminal gets an "Open live output" button, which
+shows that terminal's output as it arrives: plain text, the last 2,000 lines, with a Latest button when you scroll away. The pinned
+library mis-decodes a terminal snapshot as a session (pinned by `LibraryGapsTest`), so `AhpConnection.subscribeTerminal` reads that one
+reply by hand and gives only the terminal state to the library. For the same reason a terminal is never named in `initialize` or
+`reconnect` (their replies would carry the snapshot and fail to decode as a whole): it is subscribed afresh on every connection. It is
+still `subscribe`, a read-tier method, and `terminal/input` stays refused at every tier. Only an address that a tool result in the open
+chat names is opened, and it is checked again as a terminal's (a real one is `agenthost-terminal://shell/...`). The output is shown as plain text
+only: escape sequences are dropped, a carriage return or backspace overwrites as a terminal would, other control characters are dropped,
+characters that reorder text are swapped for a visible mark, and only the end of a very long output (256 KiB) is read. Cursor movement
+is not replayed, so a program that redraws several lines in place shows what it printed in order.
 
 **Choosing a model** is done per message, from the models the host lists for the chat's agent (a Model button in the message
 box). It rides on the message actions the interact tier already allows and adds no method. Only a model, and settings, that are

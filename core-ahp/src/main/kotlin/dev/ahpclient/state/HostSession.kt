@@ -18,8 +18,10 @@ import com.microsoft.agenthostprotocol.generated.ResourceReadResult
 import com.microsoft.agenthostprotocol.generated.SessionSummary
 import com.microsoft.agenthostprotocol.generated.Snapshot
 import com.microsoft.agenthostprotocol.generated.SnapshotState
+import com.microsoft.agenthostprotocol.generated.TerminalState
 import com.microsoft.agenthostprotocol.generated.StateAction
 import com.microsoft.agenthostprotocol.changesetReducer
+import com.microsoft.agenthostprotocol.terminalReducer
 import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -205,6 +207,16 @@ class HostSession(
         ChannelStore(uri, { (it as? SnapshotState.Changeset)?.value }, ::changesetReducer)
     }
 
+    /**
+     * The store for the terminal at [uri], read only. A terminal is subscribed by hand (see [AhpConnection.subscribeTerminal])
+     * and left out of `initialize` and `reconnect`, so it is subscribed afresh on every connection. Pair every call with [closeChannel].
+     * Only an address of a terminal is accepted: anything else is refused here, not subscribed.
+     */
+    fun openTerminal(uri: String): ChannelStore<TerminalState> {
+        require(TerminalLinks.isTerminalUri(uri)) { "Not a terminal address" }
+        return openAux(uri) { ChannelStore(uri, { (it as? SnapshotState.Terminal)?.value }, ::terminalReducer, byHand = true) }
+    }
+
     fun closeChannel(uri: String) {
         val dropped = synchronized(aux) {
             val store = aux[uri] ?: return
@@ -340,6 +352,9 @@ class HostSession(
 
     private suspend fun attach(ahp: AhpConnection, resume: Boolean) {
         val open = openChannels()
+        // A terminal is not named to the host here (its snapshot cannot be decoded in these replies) and a subscription belongs to
+        // one connection, so each is subscribed afresh below.
+        synchronized(aux) { aux.values.filter { it.byHand } }.forEach { it.invalidate() }
         if (resume) {
             try {
                 applyReconnect(ahp.reconnect(listOf(ROOT_CHANNEL) + open), open)
@@ -419,9 +434,13 @@ class HostSession(
     private suspend fun subscribeIfNeeded(ahp: AhpConnection, store: AuxStore) {
         if (!store.needsSubscribe) return
         try {
-            ahp.subscribe(store.uri).snapshot?.let(store::seed)
+            val snapshot = if (store.byHand) ahp.subscribeTerminal(store.uri) else ahp.subscribe(store.uri).snapshot
+            snapshot?.let(store::seed)
         } catch (e: AhpException.Rpc) {
             if (e.code == AhpErrorCodes.SESSION_NOT_FOUND || e.code == AhpErrorCodes.NOT_FOUND) store.markGone() else throw e
+        } catch (e: AhpException.Protocol) {
+            // The host answered, but not in a shape this app can read: say so, rather than wait for ever or fail the connection.
+            store.markFailed(e)
         }
     }
 
@@ -477,7 +496,8 @@ class HostSession(
     private fun auxFor(uri: String): AuxStore? = synchronized(aux) { aux[uri] }
 
     private fun openChannels(): List<String> =
-        synchronized(sessions) { sessions.keys.toList() } + synchronized(chats) { chats.keys.toList() } + synchronized(aux) { aux.keys.toList() }
+        synchronized(sessions) { sessions.keys.toList() } + synchronized(chats) { chats.keys.toList() } +
+            synchronized(aux) { aux.values.filter { !it.byHand }.map { it.uri } }
 
     private companion object {
         const val MAX_LIST_PAGES = 50

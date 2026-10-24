@@ -42,12 +42,13 @@ internal fun TranscriptRow(
     onToggle: () -> Unit = {},
     actions: ChatActionsUi? = null,
     onOpenSubagent: ((String) -> Unit)? = null,
+    onOpenTerminal: ((String) -> Unit)? = null,
 ) {
     when (item) {
         is TranscriptItem.User -> UserRow(item, modifier)
         is TranscriptItem.Markdown -> SelectionContainer { MarkdownPart(item.text, onOpenLink, modifier.fillMaxWidth().testTag("row_markdown")) }
         is TranscriptItem.Reasoning -> ReasoningBlock(item, expanded, onToggle, onOpenLink, modifier)
-        is TranscriptItem.Tool -> ToolCallBlock(item, expanded, onToggle, actions, onOpenSubagent, modifier)
+        is TranscriptItem.Tool -> ToolCallBlock(item, expanded, onToggle, actions, onOpenSubagent, onOpenTerminal, modifier)
         is TranscriptItem.Notice -> SelectionContainer {
             Text(
                 item.text,
@@ -115,7 +116,7 @@ private fun ReasoningBlock(item: TranscriptItem.Reasoning, expanded: Boolean, on
 
 /** A tool call opens to its input and its results. One made without the host's record has nothing to open and stays a plain row. */
 @Composable
-private fun ToolCallBlock(item: TranscriptItem.Tool, expanded: Boolean, onToggle: () -> Unit, actions: ChatActionsUi?, onOpenSubagent: ((String) -> Unit)?, modifier: Modifier) {
+private fun ToolCallBlock(item: TranscriptItem.Tool, expanded: Boolean, onToggle: () -> Unit, actions: ChatActionsUi?, onOpenSubagent: ((String) -> Unit)?, onOpenTerminal: ((String) -> Unit)?, modifier: Modifier) {
     val source = item.source
     if (source == null) {
         Row(
@@ -142,6 +143,7 @@ private fun ToolCallBlock(item: TranscriptItem.Tool, expanded: Boolean, onToggle
                 approveHere = waiting != null,
                 onShowAll = if (!showAll && detail.hasMore) ({ showAll = true }) else null,
                 onOpenSubagent = onOpenSubagent,
+                onOpenTerminal = onOpenTerminal,
             )
         }
         if (actions != null && waiting != null) ApprovalButtons(waiting.choices, waiting.toolCallId, waiting.forResult, actions)

@@ -66,6 +66,7 @@ fun ChatScreen(
     onToggle: (String) -> Unit = {},
     actions: ChatActionsUi? = null,
     onOpenSubagent: ((String) -> Unit)? = null,
+    onOpenTerminal: ((String) -> Unit)? = null,
     backLabel: String = "Back to session",
 ) {
     var pendingLink by rememberSaveable { mutableStateOf<String?>(null) }
@@ -83,7 +84,7 @@ fun ChatScreen(
         }
         when {
             error is ChatGoneException -> ErrorText("This chat is no longer on the host.", Modifier.padding(horizontal = 24.dp).testTag("chat_gone"))
-            transcript != null -> TranscriptList(transcript, loadingOlder, olderError, onLoadOlder, { pendingLink = it }, expanded, onToggle, actions, onOpenSubagent, Modifier.weight(1f))
+            transcript != null -> TranscriptList(transcript, loadingOlder, olderError, onLoadOlder, { pendingLink = it }, expanded, onToggle, actions, onOpenSubagent, onOpenTerminal, Modifier.weight(1f))
             error != null -> ErrorText("Could not load this chat (${error.javaClass.simpleName}).", Modifier.padding(horizontal = 24.dp).testTag("chat_error"))
             else -> Busy("Loading chat…", Modifier.padding(horizontal = 24.dp).testTag("chat_loading"))
         }
@@ -110,6 +111,7 @@ private fun TranscriptList(
     onToggle: (String) -> Unit,
     actions: ChatActionsUi?,
     onOpenSubagent: ((String) -> Unit)?,
+    onOpenTerminal: ((String) -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
@@ -154,7 +156,7 @@ private fun TranscriptList(
             verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Bottom),
         ) {
             items(newestFirst, key = { it.key }, contentType = { it::class }) { row ->
-                TranscriptRow(row, onOpenLink, expanded = row.key in expanded, onToggle = { onToggle(row.key) }, actions = actions, onOpenSubagent = onOpenSubagent)
+                TranscriptRow(row, onOpenLink, expanded = row.key in expanded, onToggle = { onToggle(row.key) }, actions = actions, onOpenSubagent = onOpenSubagent, onOpenTerminal = onOpenTerminal)
             }
             if (loadingOlder || olderError != null || transcript.hasOlder) {
                 item(key = OLDER_KEY, contentType = OLDER_KEY) { OlderRow(loadingOlder, olderError, onLoadOlder) }

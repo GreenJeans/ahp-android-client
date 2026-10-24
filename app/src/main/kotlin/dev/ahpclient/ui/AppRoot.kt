@@ -53,9 +53,11 @@ fun AppRoot(
     val chatOpen = (state as? AppState.Connected)?.open?.chat != null
     val changesetOpen = (state as? AppState.Connected)?.open?.changeset != null
     val diffOpen = (state as? AppState.Connected)?.open?.changeset?.diff != null
+    val terminalOpen = (state as? AppState.Connected)?.open?.terminal != null
     BackHandler(enabled = state is AppState.Connected && !detailOpen) { controller.disconnect() }
     BackHandler(enabled = detailOpen && !chatOpen && !changesetOpen) { controller.closeSession() }
-    BackHandler(enabled = chatOpen) { controller.closeChat() }
+    BackHandler(enabled = chatOpen && !terminalOpen) { controller.closeChat() }
+    BackHandler(enabled = terminalOpen) { controller.closeTerminal() }
     BackHandler(enabled = changesetOpen && !diffOpen) { controller.closeChangeset() }
     BackHandler(enabled = diffOpen) { controller.closeDiff() }
     BackHandler(enabled = (state as? AppState.SignedOut)?.step is SignInStep.AwaitingApproval) { controller.cancelSignIn() }
@@ -123,7 +125,12 @@ fun AppRoot(
                     } else {
                         val chat = open.chat
                         val changeset = open.changeset
-                        if (changeset != null) {
+                        val terminal = open.terminal
+                        if (terminal != null) {
+                            val terminalState by terminal.store.state.collectAsStateWithLifecycle()
+                            val terminalError by terminal.store.error.collectAsStateWithLifecycle()
+                            TerminalScreen(terminalState, terminalError, connection, controller::closeTerminal, content)
+                        } else if (changeset != null) {
                             val changesetState by changeset.store.state.collectAsStateWithLifecycle()
                             val changesetError by changeset.store.error.collectAsStateWithLifecycle()
                             val diff = changeset.diff
@@ -196,6 +203,7 @@ fun AppRoot(
                                 onToggle = chat.expansion::toggle,
                                 actions = actions,
                                 onOpenSubagent = controller::openSubagentChat,
+                                onOpenTerminal = controller::openTerminal,
                                 backLabel = if (chat.parent != null) "Back to chat" else "Back to session",
                                 modifier = content,
                             )

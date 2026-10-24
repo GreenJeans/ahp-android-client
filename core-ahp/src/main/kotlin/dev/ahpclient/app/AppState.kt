@@ -10,6 +10,7 @@ import dev.ahpclient.state.HostSession
 import dev.ahpclient.state.SessionStore
 import dev.ahpclient.tunnel.TunnelInfo
 import com.microsoft.agenthostprotocol.generated.ChangesetState
+import com.microsoft.agenthostprotocol.generated.TerminalState
 import java.time.Instant
 import kotlinx.coroutines.flow.StateFlow
 
@@ -63,7 +64,10 @@ sealed interface AppState {
     data class Connected(val host: TunnelInfo, val session: HostSession, val open: OpenSession? = null) : AppState
 }
 
-data class OpenSession(val uri: String, val store: SessionStore, val chat: OpenChat? = null, val changeset: OpenChangeset? = null)
+data class OpenSession(val uri: String, val store: SessionStore, val chat: OpenChat? = null, val changeset: OpenChangeset? = null, val terminal: OpenTerminal? = null)
+
+/** The live output of one terminal on screen, over the chat it was opened from. Its [store] stays subscribed until the user goes back. */
+data class OpenTerminal(val uri: String, val store: ChannelStore<TerminalState>)
 
 /**
  * A changeset on screen: the files that changed. Its [store] stays subscribed until the user goes back. [reviewable] is the

@@ -68,9 +68,21 @@ class ToolDetailTest {
 
         val (a, b, c) = detail("$finished,$running,$silent").results.map { assertIs<ToolResultView.Terminal>(it) }
 
-        assertEquals(ToolResultView.Terminal("Build", Clipped("error: no", 9), 2L, clippedByHost = true), a)
-        assertEquals(ToolResultView.Terminal("Server", null, null, clippedByHost = false), b)
-        assertEquals(ToolResultView.Terminal("Terminal", null, 0L, clippedByHost = false), c)
+        assertEquals(ToolResultView.Terminal("Build", Clipped("error: no", 9), 2L, clippedByHost = true, terminalUri = "ahp-terminal:/a"), a)
+        assertEquals(ToolResultView.Terminal("Server", null, null, clippedByHost = false, terminalUri = "ahp-terminal:/b"), b)
+        assertEquals(ToolResultView.Terminal("Terminal", null, 0L, clippedByHost = false, terminalUri = "ahp-terminal:/c"), c)
+    }
+
+    @Test
+    fun `a terminal result can be opened only when its address is a terminal's`() {
+        val real = """{"type":"terminal","resource":"$TERMINAL_REAL","title":"Run","isPty":false}"""
+        val web = """{"type":"terminal","resource":"https://evil.example/t","title":"Web"}"""
+        val chat = """{"type":"terminal","resource":"ahp-chat:/x","title":"Chat"}"""
+        val long = """{"type":"terminal","resource":"ahp-terminal:/${"x".repeat(2_000)}","title":"Long"}"""
+
+        val uris = detail("$real,$web,$chat,$long").results.map { assertIs<ToolResultView.Terminal>(it).terminalUri }
+
+        assertEquals(listOf(TERMINAL_REAL, null, null, null), uris)
     }
 
     @Test

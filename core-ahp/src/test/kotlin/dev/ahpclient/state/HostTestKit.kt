@@ -33,6 +33,11 @@ internal fun sessionSnapshot(uri: String, fromSeq: Long, title: String = "Sessio
 
 internal const val CHANGESET_A = "ahp-changeset:/c1"
 
+internal const val TERMINAL_A = "ahp-terminal:/t1"
+
+/** The shape of a real terminal address: a session, a tool call and a long query. */
+internal const val TERMINAL_REAL = "agenthost-terminal://shell/00000000-0000-4000-8000-000000000003/toolu_01Real?%7B%22storage%22%3A%22ahp-session%3A%2Fx%22%7D"
+
 internal fun terminalStateJson(content: String = """{"type":"unclassified","value":"hello\r\n"}""", lifecycle: String = """{"status":"running"}""", title: String = "build") =
     """{"title":"$title","cwd":"file:///work/repo","content":[$content],"lifecycle":$lifecycle,"claim":{"kind":"client","clientId":"someone"}}"""
 
@@ -101,6 +106,10 @@ internal class HostScript(
     val sessionChangesets: String? = null,
     /** What a subscribed changeset reports. */
     val changesetState: String = changesetStateJson(),
+    /** What a subscribed terminal reports, as the state JSON. */
+    val terminalState: String = terminalStateJson(),
+    /** Replaces the whole reply to a terminal `subscribe` (for a host that answers badly); null is the scripted snapshot. */
+    val onTerminalSubscribe: ((id: Long?, channel: String) -> String)? = null,
 ) {
     fun reply(method: String, id: Long?, params: JsonObject): String? = when (method) {
         "initialize" -> initializeReply(id, params)
@@ -122,7 +131,12 @@ internal class HostScript(
             .filter { it.startsWith("ahp-session:/") }
             .map { Json.parseToJsonElement(sessionSnapshot(it, INITIAL_SEQ, changesets = sessionChangesets)) }
         val snapshots = base["snapshots"]!!.jsonArray.map { snapshot -> withTerminals(snapshot.jsonObject) }
-        val merged = JsonObject(base + ("snapshots" to JsonArray(snapshots + sessionSnapshots)))
+        // A real host answers a named terminal with its snapshot, which the library cannot decode: so naming one here breaks the connection.
+        val terminalSnapshots = params["initialSubscriptions"]!!.jsonArray
+            .map { it.jsonPrimitive.content }
+            .filter { it.startsWith("ahp-terminal:/") || it.startsWith("agenthost-terminal://") }
+            .map { Json.parseToJsonElement(terminalSnapshotJson(it, INITIAL_SEQ, terminalState)) }
+        val merged = JsonObject(base + ("snapshots" to JsonArray(snapshots + sessionSnapshots + terminalSnapshots)))
         return result(id, merged.toString())
     }
 
@@ -135,6 +149,9 @@ internal class HostScript(
     }
 
     private fun subscribeReply(id: Long?, channel: String): String = when {
+        channel.startsWith("ahp-terminal:/") || channel.startsWith("agenthost-terminal://") ->
+            onTerminalSubscribe?.invoke(id, channel)
+                ?: if (channel in missingSessions) error(id, -32008, "no such terminal") else result(id, """{"snapshot":${terminalSnapshotJson(channel, SNAPSHOT_SEQ, terminalState)}}""")
         channel.startsWith("ahp-chat:/") ->
             if (channel in missingSessions) error(id, -32008, "no such chat") else result(id, """{"snapshot":${chatSnapshotJson(channel, SNAPSHOT_SEQ, turns = chatTurns, cursor = chatCursor, activeTurn = chatActiveTurn)}}""")
         channel.startsWith("ahp-changeset:/") ->

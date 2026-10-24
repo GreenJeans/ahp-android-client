@@ -31,7 +31,8 @@ import java.text.NumberFormat
 /**
  * What a tool call was asked and what it produced, as the body of its expanded block. [approveHere] is set when the buttons
  * to decide it are on screen, so the block does not send the person elsewhere. [onShowAll] is set when something was left
- * out for length and the person may ask for more. [onOpenSubagent] opens a subagent's own transcript. The text can be
+ * out for length and the person may ask for more. [onOpenSubagent] opens a subagent's own transcript and [onOpenTerminal] the live
+ * output of a terminal a command ran in. The text can be
  * selected and copied.
  */
 @Composable
@@ -40,6 +41,7 @@ internal fun ToolDetailBody(
     approveHere: Boolean = false,
     onShowAll: (() -> Unit)? = null,
     onOpenSubagent: ((String) -> Unit)? = null,
+    onOpenTerminal: ((String) -> Unit)? = null,
 ) {
     SelectionContainer {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -58,7 +60,7 @@ internal fun ToolDetailBody(
                     }
                 }
             }
-            detail.results.forEach { result -> ToolResultRow(result, onOpenSubagent) }
+            detail.results.forEach { result -> ToolResultRow(result, onOpenSubagent, onOpenTerminal) }
             detail.error?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("tool_error")) }
             if (detail.isEmpty) Text("No further details.", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("tool_nothing"))
             if (onShowAll != null) {
@@ -77,10 +79,10 @@ private fun InputLineView(line: InputLine) {
 }
 
 @Composable
-internal fun ToolResultRow(result: ToolResultView, onOpenSubagent: ((String) -> Unit)? = null) {
+internal fun ToolResultRow(result: ToolResultView, onOpenSubagent: ((String) -> Unit)? = null, onOpenTerminal: ((String) -> Unit)? = null) {
     when (result) {
         is ToolResultView.Text -> MonoBlock(result.body, Modifier.testTag("result_text"))
-        is ToolResultView.Terminal -> TerminalResult(result)
+        is ToolResultView.Terminal -> TerminalResult(result, onOpenTerminal)
         is ToolResultView.FileEdit -> FileEditResult(result)
         is ToolResultView.Subagent -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             val chatUri = result.chatUri
@@ -102,19 +104,26 @@ internal fun ToolResultRow(result: ToolResultView, onOpenSubagent: ((String) -> 
 }
 
 @Composable
-private fun TerminalResult(result: ToolResultView.Terminal) {
-    Column(modifier = Modifier.semantics(mergeDescendants = true) {}.testTag("result_terminal"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(result.title, style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
-            ExitBadge(result.exitCode)
+private fun TerminalResult(result: ToolResultView.Terminal, onOpenTerminal: ((String) -> Unit)?) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(modifier = Modifier.semantics(mergeDescendants = true) {}.testTag("result_terminal"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(result.title, style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+                ExitBadge(result.exitCode)
+            }
+            val output = result.output
+            if (output != null) {
+                MonoBlock(output)
+            } else {
+                Text(if (result.exitCode == null) "No output yet." else "No output.", style = MaterialTheme.typography.bodyMedium)
+            }
+            if (result.clippedByHost) Text("The host cut this output short.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        val output = result.output
-        if (output != null) {
-            MonoBlock(output)
-        } else {
-            Text(if (result.exitCode == null) "No output yet." else "No output.", style = MaterialTheme.typography.bodyMedium)
+        // The button is a control of its own, outside the merged words above.
+        val terminalUri = result.terminalUri
+        if (terminalUri != null && onOpenTerminal != null) {
+            OutlinedButton(onClick = { onOpenTerminal(terminalUri) }, modifier = Modifier.heightIn(min = 48.dp).testTag("terminal_open")) { Text("Open live output") }
         }
-        if (result.clippedByHost) Text("The host cut this output short.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

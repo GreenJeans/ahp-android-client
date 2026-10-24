@@ -35,6 +35,9 @@ import dev.ahpclient.state.HostScript
 import dev.ahpclient.state.HostSession
 import dev.ahpclient.state.ScriptedConnector
 import dev.ahpclient.state.SESSION_C
+import dev.ahpclient.state.TERMINAL_REAL
+import dev.ahpclient.state.TerminalView
+import dev.ahpclient.state.terminalStateJson
 import dev.ahpclient.state.chatSummaryJson
 import dev.ahpclient.state.turnJson
 import dev.ahpclient.state.fixture
@@ -1089,6 +1092,127 @@ class AppControllerTest {
             ),
         ),
     )
+
+    private fun terminalScript(running: Boolean = true) = HostScript(
+        sessionChats = "[${chatSummaryJson(CHAT_A)}]",
+        chatTurns = listOf(
+            turnJson(
+                "t1",
+                parts = """{"kind":"toolCall","toolCall":{"status":"completed","toolCallId":"c1","toolName":"powershell","displayName":"Shell",
+                    "invocationMessage":"Run","toolInput":"{}","confirmed":"not-needed","success":true,"pastTenseMessage":"Ran",
+                    "content":[{"type":"terminal","resource":"$TERMINAL_REAL","title":"Run Shell Command","isPty":false}]}}""",
+            ),
+        ),
+        terminalState = terminalStateJson(lifecycle = if (running) """{"status":"running"}""" else """{"status":"exited","exitCode":0}"""),
+    )
+
+    private suspend fun TestScope.openTerminalChat(rig: Rig) {
+        rig.controller.openSession(SESSION_C)
+        assertIs<AppState.Connected>(rig.state).open!!.store.state.first { it != null }
+        runCurrent()
+        rig.controller.openChat(CHAT_A)
+        assertIs<AppState.Connected>(rig.state).open!!.chat!!.store.state.first { it != null }
+    }
+
+    @Test
+    fun `a terminal a tool result names opens over the chat, and back returns to the chat`() = runTest {
+        withRig(script = { terminalScript() }) {
+            connectToFirstHost()
+            openTerminalChat(this)
+
+            controller.openTerminal(TERMINAL_REAL)
+            runCurrent()
+
+            val open = assertIs<AppState.Connected>(state).open!!
+            assertEquals(TERMINAL_REAL, open.terminal!!.uri)
+            assertEquals(listOf("hello"), TerminalView.from(open.terminal!!.store.state.value!!).lines)
+            assertEquals(CHAT_A, open.chat!!.uri, "the chat is still there underneath")
+
+            controller.closeTerminal()
+            runCurrent()
+
+            assertNull(assertIs<AppState.Connected>(state).open!!.terminal)
+            assertEquals(CHAT_A, assertIs<AppState.Connected>(state).open!!.chat!!.uri)
+            assertEquals(listOf(TERMINAL_REAL), unsubscribed())
+        }
+    }
+
+    @Test
+    fun `an address no tool result names, a second terminal over an open one, and anything that is not a terminal are never opened`() = runTest {
+        withRig(script = { terminalScript() }) {
+            connectToFirstHost()
+            openTerminalChat(this)
+
+            listOf("ahp-terminal:/not-named", "agenthost-terminal://shell/other", "https://evil.example/x", CHAT_B, "ahp-session:/x", "").forEach {
+                controller.openTerminal(it)
+                assertNull(assertIs<AppState.Connected>(state).open!!.terminal, it)
+            }
+            assertEquals(emptyList(), channelsSent("subscribe").filter { it.contains("terminal") })
+
+            controller.openTerminal(TERMINAL_REAL)
+            controller.openTerminal(TERMINAL_REAL)
+            runCurrent()
+            assertEquals(1, channelsSent("subscribe").count { it == TERMINAL_REAL }, "a second tap does not subscribe again")
+        }
+    }
+
+    @Test
+    fun `there is no terminal to open without an open chat`() = runTest {
+        withRig(script = { terminalScript() }) {
+            connectToFirstHost()
+            controller.openTerminal(TERMINAL_REAL)
+            assertNull(assertIs<AppState.Connected>(state).open)
+
+            controller.openSession(SESSION_C)
+            assertIs<AppState.Connected>(state).open!!.store.state.first { it != null }
+            runCurrent()
+            controller.openTerminal(TERMINAL_REAL)
+
+            assertNull(assertIs<AppState.Connected>(state).open!!.terminal, "no chat is open yet")
+        }
+    }
+
+    @Test
+    fun `leaving the chat or the session drops the terminal with it`() = runTest {
+        withRig(script = { terminalScript() }) {
+            connectToFirstHost()
+            openTerminalChat(this)
+            controller.openTerminal(TERMINAL_REAL)
+            runCurrent()
+
+            controller.closeChat()
+            runCurrent()
+            assertNull(assertIs<AppState.Connected>(state).open!!.terminal)
+            assertEquals(setOf(TERMINAL_REAL, CHAT_A), unsubscribed().toSet())
+
+            openChatAgain()
+            controller.openTerminal(TERMINAL_REAL)
+            runCurrent()
+            controller.closeSession()
+            runCurrent()
+            assertEquals(2, unsubscribed().count { it == TERMINAL_REAL }, "dropped again when the whole session is left")
+        }
+    }
+
+    private suspend fun Rig.openChatAgain() {
+        controller.openChat(CHAT_A)
+        assertIs<AppState.Connected>(state).open!!.chat!!.store.state.first { it != null }
+    }
+
+    @Test
+    fun `watching a terminal from the app sends nothing outside the read tier`() = runTest {
+        withRig(script = { terminalScript() }, interaction = InteractionConsent(FakeInteractionSettings(saved = true))) {
+            connectToFirstHost()
+            openTerminalChat(this)
+            controller.openTerminal(TERMINAL_REAL)
+            runCurrent()
+            controller.closeTerminal()
+            runCurrent()
+
+            val methods = connectors.single().sockets.flatMap { it.sent }.mapNotNull { it["method"]?.jsonPrimitive?.content }.toSet()
+            assertEquals(emptySet(), methods - setOf("initialize", "reconnect", "ping", "subscribe", "unsubscribe", "listSessions", "fetchTurns"))
+        }
+    }
 
     @Test
     fun `a saved yes is read before the first connection, which is then made under the interact tier`() = runTest {
