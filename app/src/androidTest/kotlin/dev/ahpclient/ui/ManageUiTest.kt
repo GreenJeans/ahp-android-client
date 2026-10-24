@@ -333,10 +333,10 @@ class ManageUiTest {
         chooseClaudeInB()
         rule.waitUntil(5_000) { rule.onAllNodesCount("setting_title_thinking") == 1 }
 
-        rule.onNodeWithTag("setting_autoApprove_0").performClick()
+        rule.onNodeWithTag("setting_autoApprove_0").performScrollTo().performClick()
         rule.waitUntil(5_000) { calls.asked.size >= 2 }
         rule.waitForIdle()
-        rule.onNodeWithTag("setting_thinking_1").performClick()
+        rule.onNodeWithTag("setting_thinking_1").performScrollTo().performClick()
         rule.waitUntil(5_000) { calls.asked.size >= 3 }
         rule.waitForIdle()
         rule.onNodeWithTag("new_session_start").performClick()
@@ -551,10 +551,10 @@ class ManageUiTest {
         rule.onNodeWithTag("new_session").performClick()
         chooseClaudeInB()
         rule.waitUntil(5_000) { rule.onAllNodesCount("setting_title_thinking") == 1 }
-        rule.onNodeWithTag("setting_thinking_1").performClick()
+        rule.onNodeWithTag("setting_thinking_1").performScrollTo().performClick()
         rule.waitUntil(5_000) { calls.asked.size >= 2 }
         rule.waitForIdle()
-        rule.onNodeWithTag("setting_autoApprove_0").performClick()
+        rule.onNodeWithTag("setting_autoApprove_0").performScrollTo().performClick()
         rule.waitUntil(5_000) { calls.asked.size >= 3 }
         rule.waitForIdle()
 

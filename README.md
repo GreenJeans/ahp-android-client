@@ -15,7 +15,7 @@ progress log live in this repo: [`docs/spec.md`](docs/spec.md).
 | Module | Type | Status |
 |---|---|---|
 | `core-ahp` | Pure Kotlin/JVM library: GitHub device-flow auth, Dev Tunnels REST, tunnel socket and gateway selection, AHP connection, state stores (sessions and chats, with older-turn paging), session list and detail models, the transcript model, background-monitoring logic, the capability allowlist, and the write path (action builders, the interactor, the question form model, the consent settings), the session manager, the changeset view model, the line diff and the model options | Phase 1 complete, live-verified except where `docs/verification/phase1-readonly.md` says otherwise; Phase 2 built; Phase 3 built and live-tested; Phases 4 and 5 built and tested, not yet live-tested |
-| `app` | Android application (Jetpack Compose): sign-in, host list, sessions list, read-only session detail, a chat transcript with markdown and collapsible reasoning, tool-call and result blocks (selectable text, "Show all", subagent transcripts), opt-in background monitoring with a foreground service and needs-input notifications, and, when the user turns it on (Android 11+), a message box with steering, tool and tool-result approval behind the phone's own device check (also from a notification), and a form for the agent's questions with draft sync; with a second switch, mark read, archive, new chat, new session and remove; and a session's changed files (a line diff of each, and a "Viewed" box), and a model picker for messages | Phase 1 built; Phase 2 transcript built; Phase 3 built; Phases 4 and 5 built; debug APK |
+| `app` | Android application (Jetpack Compose): sign-in, host list, sessions list, read-only session detail, a chat transcript with markdown and collapsible reasoning, tool-call and result blocks (selectable text, "Show all", subagent transcripts), opt-in background monitoring with a foreground service and needs-input notifications, and, when the user turns it on (Android 11+), a message box with steering, tool and tool-result approval behind the phone's own device check (also from a notification), and a form for the agent's questions with draft sync; with a second switch, mark read, archive, new chat, new session and remove; and a session's changed files (a line diff of each, and a "Viewed" box), a model picker for messages, and the settings the host offers for a new session | Phase 1 built; Phase 2 transcript built; Phase 3 built; Phases 4 and 5 built; debug APK |
 
 ## Build
 
@@ -103,7 +103,7 @@ local: `captures/` is gitignored. The device code lasts 15 minutes; approve it a
 
 The client never stores or logs a token in clear text. Its outbound AHP traffic is controlled by one gate,
 `CapabilityPolicy`, with three tiers: `READ` (the default: connect, subscribe, list, page through history, and read the content of a changed file), `INTERACT`
-(`READ` plus `dispatchAction` for exactly eight chat action types), and `MANAGE` (`INTERACT` plus four commands and three more
+(`READ` plus `dispatchAction` for exactly eight chat action types), and `MANAGE` (`INTERACT` plus four commands, one query and three more
 action types). See the spec's Security section before changing any of them.
 
 **Acting for the user is off by default.** The `INTERACT` tier is used only after the user turns on "Let this app act for me"
@@ -132,6 +132,16 @@ device check, looked up again after the prompt. Removing asks first and offers a
 can only use an agent the host lists and a folder one of the host's own sessions already uses, so nothing the host did not offer is
 sent. None of the controls exist on a connection that is not on the `MANAGE` tier. The three switches (monitoring, acting,
 managing) sit behind one collapsed "Settings" row that says what is on.
+
+**A new session's settings** come from the host: once an agent and folder are chosen, the dialog asks it (`resolveSessionConfig`,
+the one query on the manage tier; the read and interact tiers refuse it) which settings it offers and shows each as a short list
+(a list of text values, or on/off), asking again after every choice. Free text, numbers, read-only settings and "complete as you
+type" settings are not shown, only counted; the host keeps its own value for them. With choices made, Start first asks the host
+once more: every choice must be an option it lists now and be echoed back as the value it holds, a required setting needs a value,
+and what is sent is the host's own resolved values with the choices in them. The device check then names the chosen settings
+("Thinking: Thorough"), settings first and counted if they do not all fit, so what is confirmed is what is sent. With no choices,
+nothing extra is asked or sent. The app cannot know what a setting means (one could make the agent ask less before acting), so it
+shows the host's own words, repeats them at the device check, and keeps the whole start behind the manage switch.
 
 **Changed files** open as a list of paths with added, modified or deleted, line counts and the reviewed flag (at most 500 rows).
 Tapping a file reads its two sides with `resourceRead` (the one read of file content, allowed at every tier) and shows a line
