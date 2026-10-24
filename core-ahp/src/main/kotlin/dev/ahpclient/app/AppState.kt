@@ -1,12 +1,14 @@
 package dev.ahpclient.app
 
 import dev.ahpclient.auth.Secret
+import dev.ahpclient.state.ChannelStore
 import dev.ahpclient.state.ChatInteractor
 import dev.ahpclient.state.ChatStore
 import dev.ahpclient.state.ExpansionState
 import dev.ahpclient.state.HostSession
 import dev.ahpclient.state.SessionStore
 import dev.ahpclient.tunnel.TunnelInfo
+import com.microsoft.agenthostprotocol.generated.ChangesetState
 import java.time.Instant
 
 /** The small, non-secret preference the app remembers between launches. */
@@ -59,7 +61,10 @@ sealed interface AppState {
     data class Connected(val host: TunnelInfo, val session: HostSession, val open: OpenSession? = null) : AppState
 }
 
-data class OpenSession(val uri: String, val store: SessionStore, val chat: OpenChat? = null)
+data class OpenSession(val uri: String, val store: SessionStore, val chat: OpenChat? = null, val changeset: OpenChangeset? = null)
+
+/** A changeset on screen: the files that changed, read only. Its [store] stays subscribed until the user goes back. */
+data class OpenChangeset(val uri: String, val store: ChannelStore<ChangesetState>)
 
 /**
  * The chat whose transcript is on screen; its [store] stays subscribed until the user goes back. [expansion] outlives the

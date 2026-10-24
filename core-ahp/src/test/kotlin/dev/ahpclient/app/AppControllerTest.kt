@@ -10,6 +10,10 @@ import dev.ahpclient.security.TokenVault
 import dev.ahpclient.security.VaultLoad
 import dev.ahpclient.state.Backoff
 import dev.ahpclient.state.CHAT_A
+import dev.ahpclient.state.CHANGESET_A
+import dev.ahpclient.state.ChangesetView
+import dev.ahpclient.state.changesetFileJson
+import dev.ahpclient.state.changesetStateJson
 import dev.ahpclient.state.CHAT_B
 import dev.ahpclient.state.ApprovalGate
 import dev.ahpclient.state.ApprovalTarget
@@ -1425,6 +1429,101 @@ class AppControllerTest {
             val refused = assertIs<ManageResult.Refused>(controller.manager.newSession("copilotcli", folder))
 
             assertEquals(-32003, refused.code)
+        }
+    }
+
+    // ---- watching a changeset ------------------------------------------------------------------------------------
+
+    private val plainChangeset = """{"label":"Uncommitted","uriTemplate":"$CHANGESET_A","changeKind":"uncommitted"}"""
+    private val perTurnChangeset = """{"label":"Turn","uriTemplate":"ahp-changeset:/turn/{turnId}","changeKind":"turn"}"""
+
+    private fun changesetScript() = {
+        HostScript(
+            sessionChats = "[${chatSummaryJson(CHAT_A)}]",
+            sessionChangesets = "[$plainChangeset,$perTurnChangeset]",
+            changesetState = changesetStateJson("ready", changesetFileJson("work/a.kt")),
+        )
+    }
+
+    private suspend fun TestScope.openLoadedSession(rig: Rig) {
+        rig.controller.openSession(SESSION_C)
+        assertIs<AppState.Connected>(rig.state).open!!.store.state.first { it != null }
+        runCurrent()
+    }
+
+    @Test
+    fun `a changeset the open session advertises opens read only and its files load`() = runTest {
+        withRig(script = changesetScript()) {
+            connectToFirstHost()
+            openLoadedSession(this)
+
+            controller.openChangeset(CHANGESET_A)
+            val open = assertIs<AppState.Connected>(state).open!!.changeset!!
+            assertEquals(CHANGESET_A, open.uri)
+            open.store.state.first { it != null }
+
+            assertEquals(listOf("/work/a.kt"), ChangesetView.from(open.store.state.value!!).rows.map { it.path })
+            assertTrue(dispatches().isEmpty())
+        }
+    }
+
+    @Test
+    fun `an address the session did not advertise, one that needs values filled in, and an over long one are never opened`() = runTest {
+        withRig(script = changesetScript()) {
+            connectToFirstHost()
+            openLoadedSession(this)
+
+            controller.openChangeset("ahp-changeset:/somewhere-else")
+            controller.openChangeset("ahp-changeset:/turn/{turnId}")
+            controller.openChangeset("ahp-changeset:/" + "x".repeat(ApprovalTarget.MAX_CHAT_URI))
+            controller.openChangeset("")
+
+            assertNull(assertIs<AppState.Connected>(state).open!!.changeset)
+            assertTrue(connectors.single().sockets.flatMap { it.sent }.none { it["method"]?.jsonPrimitive?.content == "subscribe" && it["params"]!!.jsonObject["channel"]!!.jsonPrimitive.content.startsWith("ahp-changeset:") })
+        }
+    }
+
+    @Test
+    fun `nothing opens without an open session, or over an open chat, or twice`() = runTest {
+        withRig(script = changesetScript()) {
+            connectToFirstHost()
+
+            controller.openChangeset(CHANGESET_A)
+            assertNull(assertIs<AppState.Connected>(state).open, "no session is open")
+
+            openLoadedSession(this)
+            controller.openChat(CHAT_A)
+            assertIs<AppState.Connected>(state).open!!.chat!!.store.state.first { it != null }
+            controller.openChangeset(CHANGESET_A)
+            assertNull(assertIs<AppState.Connected>(state).open!!.changeset, "a chat is open")
+
+            controller.closeChat()
+            controller.openChangeset(CHANGESET_A)
+            controller.openChangeset(CHANGESET_A)
+            runCurrent()
+            assertEquals(1, connectors.single().sockets.flatMap { it.sent }.count { it["method"]?.jsonPrimitive?.content == "subscribe" && it["params"]!!.jsonObject["channel"]!!.jsonPrimitive.content == CHANGESET_A })
+        }
+    }
+
+    @Test
+    fun `going back from a changeset, or leaving the session, drops its subscription`() = runTest {
+        withRig(script = changesetScript()) {
+            connectToFirstHost()
+            openLoadedSession(this)
+
+            controller.openChangeset(CHANGESET_A)
+            assertIs<AppState.Connected>(state).open!!.changeset!!.store.state.first { it != null }
+            controller.closeChangeset()
+            runCurrent()
+            assertNull(assertIs<AppState.Connected>(state).open!!.changeset)
+            assertEquals(listOf(CHANGESET_A), unsubscribed().filter { it == CHANGESET_A })
+
+            controller.openChangeset(CHANGESET_A)
+            assertIs<AppState.Connected>(state).open!!.changeset!!.store.state.first { it != null }
+            controller.closeSession()
+            runCurrent()
+            assertEquals(listOf(CHANGESET_A, CHANGESET_A), unsubscribed().filter { it == CHANGESET_A })
+            assertTrue(SESSION_C in unsubscribed())
         }
     }
 

@@ -20,7 +20,11 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -28,6 +32,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -62,6 +67,10 @@ fun SessionsScreen(
     interactionAllowed: Boolean = false,
     interactionSupported: Boolean = true,
     onInteractionChange: (Boolean) -> Unit = {},
+    managementAllowed: Boolean = false,
+    onManagementChange: (Boolean) -> Unit = {},
+    manage: ManageActionsUi? = null,
+    settingsExpanded: Boolean = false,
 ) {
     val model = remember(sessions, showArchived, now) { SessionListModel.from(SessionCatalog.sorted(sessions), showArchived, now) }
     Column(modifier = modifier.fillMaxSize()) {
@@ -81,9 +90,20 @@ fun SessionsScreen(
                         modifier = Modifier.testTag("archived_toggle"),
                     )
                 }
+                if (manage != null) NewSessionButton(manage, onCreated = onOpen)
             }
-            MonitorToggle(monitorEnabled, notificationsAllowed, onMonitorChange)
-            InteractionToggle(interactionAllowed, onInteractionChange, supported = interactionSupported)
+            SettingsSection(
+                summary = listOf(
+                    if (monitorEnabled) "Monitoring on" else "Monitoring off",
+                    if (interactionAllowed) "Acting on" else "Acting off",
+                    if (managementAllowed) "Managing on" else "Managing off",
+                ).joinToString(" · "),
+                initiallyExpanded = settingsExpanded,
+            ) {
+                MonitorToggle(monitorEnabled, notificationsAllowed, onMonitorChange)
+                InteractionToggle(interactionAllowed, onInteractionChange, supported = interactionSupported)
+                ManagementToggle(managementAllowed, available = interactionAllowed && interactionSupported, onChange = onManagementChange)
+            }
         }
         if (model.rows.isEmpty()) {
             EmptyList(model, connection)
@@ -95,6 +115,35 @@ fun SessionsScreen(
                 }
             }
         }
+    }
+}
+
+/**
+ * The switches (background monitoring, acting for the user, looking after sessions) folded behind one row, so they do not
+ * take the screen the session list needs. Collapsed by default; the row says in a line what is on. It is one control, so
+ * its words and its state are read together.
+ */
+@Composable
+private fun SettingsSection(summary: String, initiallyExpanded: Boolean, content: @Composable () -> Unit) {
+    var expanded by rememberSaveable { mutableStateOf(initiallyExpanded) }
+    Column(modifier = Modifier.fillMaxWidth().testTag("settings_section")) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp)
+                .clickable(onClickLabel = if (expanded) "Hide settings" else "Show settings", role = Role.Button) { expanded = !expanded }
+                .semantics(mergeDescendants = true) { stateDescription = if (expanded) "Expanded" else "Collapsed" }
+                .testTag("settings_toggle"),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Settings", style = MaterialTheme.typography.titleSmall)
+                Text(summary, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("settings_summary"))
+            }
+            Text(if (expanded) "▴" else "▾", style = MaterialTheme.typography.titleMedium)
+        }
+        if (expanded) content()
     }
 }
 

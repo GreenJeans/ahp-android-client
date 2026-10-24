@@ -10,6 +10,8 @@ import dev.ahpclient.security.VaultLoad
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.ApprovalGate
 import dev.ahpclient.state.ApprovalTarget
+import dev.ahpclient.state.ChannelStore
+import dev.ahpclient.state.ChangesetEntry
 import dev.ahpclient.state.ChatInteractor
 import dev.ahpclient.state.ChatStore
 import dev.ahpclient.state.ExpansionState
@@ -193,8 +195,33 @@ class AppController(
         if (_state.compareAndSet(current, current.copy(open = null))) {
             // Every chat of the chain (a subagent's transcript and the ones it was opened from) holds a subscription.
             generateSequence(open.chat) { it.parent }.forEach { current.session.closeChat(it.uri) }
+            open.changeset?.let { current.session.closeChannel(it.uri) }
             current.session.closeSession(open.uri)
         }
+    }
+
+    /**
+     * Opens a changeset the open session advertises, to look at the files it changed. Read only. Only a changeset that the
+     * session itself lists, whose address needs nothing filled in, is opened, and not over an open chat.
+     */
+    @Synchronized
+    fun openChangeset(uri: String) {
+        val current = _state.value as? AppState.Connected ?: return
+        val open = current.open ?: return
+        if (open.chat != null || open.changeset != null) return
+        val advertised = open.store.state.value?.changesets.orEmpty().any { ChangesetEntry.from(it).uri == uri }
+        if (!advertised || uri.length > MAX_CHANNEL_URI) return
+        val store = current.session.openChangeset(uri)
+        if (!_state.compareAndSet(current, current.copy(open = open.copy(changeset = OpenChangeset(uri, store))))) current.session.closeChannel(uri)
+    }
+
+    /** Leaves the changeset and returns to the session detail. */
+    @Synchronized
+    fun closeChangeset() {
+        val current = _state.value as? AppState.Connected ?: return
+        val open = current.open ?: return
+        val changeset = open.changeset ?: return
+        if (_state.compareAndSet(current, current.copy(open = open.copy(changeset = null)))) current.session.closeChannel(changeset.uri)
     }
 
     /** Opens the transcript of one of the open session's chats. Ignores a chat the session does not list, and a second tap while one is open. */
@@ -463,5 +490,8 @@ class AppController(
 
         /** How long a notification button waits for the chat's first snapshot before giving up. */
         const val CHAT_LOAD_MS = 8_000L
+
+        /** No channel address this app opens is longer than this. */
+        const val MAX_CHANNEL_URI = 512
     }
 }

@@ -41,16 +41,21 @@ fun AppRoot(
 ) {
     val state by controller.state.collectAsStateWithLifecycle()
     val interactionAllowed by controller.interactionAllowed.collectAsStateWithLifecycle()
+    val managementAllowed by controller.managementAllowed.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var showArchived by rememberSaveable { mutableStateOf(false) }
+    // The label of the changeset being opened, kept here so the screen can name it; the host's own title is not needed.
+    var changesetTitle by rememberSaveable { mutableStateOf<String?>(null) }
     // Kept here, above the screen switch, so the list keeps its scroll position across a trip into a session and back.
     val listState = rememberLazyListState()
     val detailOpen = (state as? AppState.Connected)?.open != null
     val chatOpen = (state as? AppState.Connected)?.open?.chat != null
+    val changesetOpen = (state as? AppState.Connected)?.open?.changeset != null
     BackHandler(enabled = state is AppState.Connected && !detailOpen) { controller.disconnect() }
-    BackHandler(enabled = detailOpen && !chatOpen) { controller.closeSession() }
+    BackHandler(enabled = detailOpen && !chatOpen && !changesetOpen) { controller.closeSession() }
     BackHandler(enabled = chatOpen) { controller.closeChat() }
+    BackHandler(enabled = changesetOpen) { controller.closeChangeset() }
     BackHandler(enabled = (state as? AppState.SignedOut)?.step is SignInStep.AwaitingApproval) { controller.cancelSignIn() }
 
     AhpTheme {
@@ -63,6 +68,26 @@ fun AppRoot(
                 is AppState.Hosts -> HostsScreen(current, controller::refreshHosts, controller::connect, controller::signOut, content)
                 is AppState.Connected -> {
                     val connection by current.session.connection.collectAsStateWithLifecycle()
+                    val canManage by current.session.canManage.collectAsStateWithLifecycle()
+                    val rootState by current.session.root.root.collectAsStateWithLifecycle()
+                    val listed by current.session.root.sessions.collectAsStateWithLifecycle()
+                    // Nothing to look after sessions with unless the connection is on the manage tier: no controls, not disabled ones.
+                    val manageActions = if (canManage) {
+                        remember(controller.manager, rootState, listed) {
+                            ManageActionsUi(
+                                agents = controller.manager.offeredAgents().map { AgentOption(it.provider, it.displayName) },
+                                folders = controller.manager.offeredFolders(),
+                                setRead = controller.manager::setRead,
+                                setArchived = controller.manager::setArchived,
+                                newChat = controller.manager::newChat,
+                                newSession = controller.manager::newSession,
+                                disposeSession = controller.manager::disposeSession,
+                                disposeChat = controller.manager::disposeChat,
+                            )
+                        }
+                    } else {
+                        null
+                    }
                     val open = current.open
                     if (open == null) {
                         val sessions by current.session.root.sessions.collectAsStateWithLifecycle()
@@ -83,17 +108,41 @@ fun AppRoot(
                             onInteractionChange = { on ->
                                 scope.launch { if (!controller.setInteraction(on)) Toast.makeText(context, "Could not save the setting", Toast.LENGTH_SHORT).show() }
                             },
+                            managementAllowed = managementAllowed,
+                            onManagementChange = { on ->
+                                scope.launch { if (!controller.setManagement(on)) Toast.makeText(context, "Could not save the setting", Toast.LENGTH_SHORT).show() }
+                            },
+                            manage = manageActions,
                             onOpen = controller::openSession,
                             onDisconnect = controller::disconnect,
                             modifier = content,
                         )
                     } else {
                         val chat = open.chat
-                        if (chat == null) {
+                        val changeset = open.changeset
+                        if (changeset != null) {
+                            val changesetState by changeset.store.state.collectAsStateWithLifecycle()
+                            val changesetError by changeset.store.error.collectAsStateWithLifecycle()
+                            ChangesetScreen(
+                                title = changesetTitle ?: "Changes",
+                                state = changesetState,
+                                error = changesetError,
+                                connection = connection,
+                                onBack = controller::closeChangeset,
+                                modifier = content,
+                            )
+                        } else if (chat == null) {
                             val sessionState by open.store.state.collectAsStateWithLifecycle()
                             val error by open.store.error.collectAsStateWithLifecycle()
                             val now by rememberNow()
-                            SessionDetailScreen(sessionState, error, connection, now, controller::closeSession, content, onOpenChat = controller::openChat)
+                            SessionDetailScreen(
+                                sessionState, error, connection, now, controller::closeSession, content,
+                                onOpenChat = controller::openChat,
+                                manage = manageActions,
+                                sessionUri = open.uri,
+                                onRemoved = controller::closeSession,
+                                onOpenChangeset = { uri, label -> changesetTitle = label; controller.openChangeset(uri) },
+                            )
                         } else {
                             val transcript by rememberTranscript(chat.store)
                             val expanded by chat.expansion.expanded.collectAsStateWithLifecycle()

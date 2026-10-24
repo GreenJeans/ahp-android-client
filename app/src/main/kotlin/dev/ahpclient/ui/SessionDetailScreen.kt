@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -26,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.SessionDetail
 import dev.ahpclient.state.SessionGoneException
+import dev.ahpclient.state.SessionPhase
 import com.microsoft.agenthostprotocol.generated.SessionState
 import java.time.Instant
 
@@ -42,6 +44,10 @@ fun SessionDetailScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     onOpenChat: (String) -> Unit = {},
+    manage: ManageActionsUi? = null,
+    sessionUri: String = "",
+    onRemoved: () -> Unit = {},
+    onOpenChangeset: (uri: String, label: String) -> Unit = { _, _ -> },
 ) {
     Column(modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         ScreenColumn {
@@ -49,7 +55,7 @@ fun SessionDetailScreen(
             if (connection != ConnState.Online) ConnectionLine(connection)
             when {
                 error is SessionGoneException -> ErrorText("This session is no longer on the host.", Modifier.testTag("session_gone"))
-                state != null -> DetailBody(remember(state, now) { SessionDetail.from(state, now) }, onOpenChat)
+                state != null -> DetailBody(remember(state, now) { SessionDetail.from(state, now) }, onOpenChat, manage, sessionUri, onRemoved, onOpenChangeset)
                 error != null -> ErrorText("Could not load this session (${error.javaClass.simpleName}).", Modifier.testTag("detail_error"))
                 else -> Busy("Loading session…", Modifier.testTag("detail_loading"))
             }
@@ -58,12 +64,27 @@ fun SessionDetailScreen(
 }
 
 @Composable
-private fun DetailBody(detail: SessionDetail, onOpenChat: (String) -> Unit) {
+private fun DetailBody(
+    detail: SessionDetail,
+    onOpenChat: (String) -> Unit,
+    manage: ManageActionsUi?,
+    sessionUri: String,
+    onRemoved: () -> Unit,
+    onOpenChangeset: (uri: String, label: String) -> Unit,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text(detail.title, style = MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() }.testTag("detail_title"))
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
             StatusChip(detail.state)
             if (detail.isArchived) Text("Archived", style = MaterialTheme.typography.labelLarge)
+        }
+        when (detail.phase) {
+            SessionPhase.CREATING -> Text("Starting on the host…", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.testTag("session_starting").semantics { liveRegion = LiveRegionMode.Polite })
+            SessionPhase.FAILED -> ErrorText(
+                "The host could not start this session." + (detail.creationError?.let { " $it" }.orEmpty()),
+                Modifier.testTag("session_failed"),
+            )
+            SessionPhase.READY, SessionPhase.OTHER -> Unit
         }
         detail.activity?.let { Text(it, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.testTag("detail_activity")) }
 
@@ -80,25 +101,46 @@ private fun DetailBody(detail: SessionDetail, onOpenChat: (String) -> Unit) {
 
         Facts(detail)
 
+        if (detail.changesets.isNotEmpty()) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.testTag("changesets")) {
+                Text("Changes", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
+                detail.changesets.forEach { entry ->
+                    val uri = entry.uri
+                    if (uri != null) {
+                        OutlinedButton(onClick = { onOpenChangeset(uri, entry.label) }, modifier = Modifier.heightIn(min = 48.dp).testTag("open_changeset")) {
+                            Text(entry.label)
+                        }
+                    } else {
+                        Text("${entry.label}: not shown here yet", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("changeset_unsupported"))
+                    }
+                }
+            }
+        }
+
+        if (manage != null && sessionUri.isNotEmpty()) SessionManageBar(detail, sessionUri, manage, onRemoved)
+
         if (detail.chats.isNotEmpty()) {
             Text("Chats", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
             detail.chats.forEach { chat ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(onClickLabel = "Open chat", role = Role.Button) { onOpenChat(chat.uri) }
-                        .semantics(mergeDescendants = true) {}
-                        .padding(vertical = 8.dp)
-                        .testTag("chat_row"),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(chat.title, style = MaterialTheme.typography.bodyLarge)
-                        val line = listOfNotNull(chat.activity, chat.whenText.ifEmpty { null }).joinToString(" · ")
-                        if (line.isNotEmpty()) Text(line, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(onClickLabel = "Open chat", role = Role.Button) { onOpenChat(chat.uri) }
+                            .semantics(mergeDescendants = true) {}
+                            .padding(vertical = 8.dp)
+                            .testTag("chat_row"),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(chat.title, style = MaterialTheme.typography.bodyLarge)
+                            val line = listOfNotNull(chat.activity, chat.whenText.ifEmpty { null }).joinToString(" · ")
+                            if (line.isNotEmpty()) Text(line, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        StatusChip(chat.state)
                     }
-                    StatusChip(chat.state)
+                    if (manage != null && sessionUri.isNotEmpty()) RemoveChatButton(chat.title, sessionUri, chat.uri, manage)
                 }
             }
         }

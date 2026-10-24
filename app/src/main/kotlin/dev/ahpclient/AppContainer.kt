@@ -74,7 +74,11 @@ class AppContainer(context: Context) {
     /** Off until the user turns it on, and off again at sign-out. Decides the tier of every new connection. */
     private val interaction by lazy {
         // The device check in front of approvals needs Android 11 (R); before that the tier can never be INTERACT.
-        InteractionConsent(PrefsInteractionSettings(prefs), supported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
+        InteractionConsent(
+            PrefsInteractionSettings(prefs),
+            supported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
+            managementSettings = PrefsInteractionSettings(prefs, PrefsInteractionSettings.MANAGEMENT_KEY),
+        )
     }
 
     private val monitorService by lazy { AndroidMonitorService(appContext) }

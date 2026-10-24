@@ -38,6 +38,24 @@ data class QuestionView(
     val options: List<String>,
 )
 
+/** Where a session is in starting up, as the host reports it. A word this client does not know is [OTHER], never treated as ready. */
+enum class SessionPhase {
+    CREATING,
+    READY,
+    FAILED,
+    OTHER,
+    ;
+
+    companion object {
+        fun of(raw: String): SessionPhase = when (raw) {
+            "creating" -> CREATING
+            "ready" -> READY
+            "failed" -> FAILED
+            else -> OTHER
+        }
+    }
+}
+
 data class ChatRow(
     val uri: String,
     val title: String,
@@ -69,10 +87,20 @@ data class SessionDetail(
     val chats: List<ChatRow>,
     val inputNeeded: List<InputRequestView>,
     val isArchived: Boolean,
+    val isRead: Boolean = false,
+    /** Whether the host has finished starting the session. Chats can only be added once it is [SessionPhase.READY]. */
+    val phase: SessionPhase = SessionPhase.READY,
+    /** Why starting failed, in the host's own words: untrusted display text, already clipped. */
+    val creationError: String? = null,
+    /** The changesets the session advertises. One whose [ChangesetEntry.uri] is null needs values filled in and is not opened here. */
+    val changesets: List<ChangesetEntry> = emptyList(),
 ) {
     companion object {
         /** The hint every pending request carries: answering happens in VS Code, never here. */
         const val ANSWER_ELSEWHERE = "Answer in VS Code."
+
+        private const val MAX_ERROR_CHARS = 200
+        private const val MAX_CHANGESETS = 20
 
         fun from(state: SessionState, now: Instant): SessionDetail = SessionDetail(
             title = state.title.ifBlank { SessionListModel.UNTITLED },
@@ -92,6 +120,10 @@ data class SessionDetail(
             },
             inputNeeded = state.inputNeeded.orEmpty().map(::describe),
             isArchived = state.status.isArchived,
+            isRead = state.status.isRead,
+            phase = SessionPhase.of(state.lifecycle.rawValue),
+            creationError = state.creationError?.message?.take(MAX_ERROR_CHARS)?.takeIf { it.isNotBlank() },
+            changesets = state.changesets.orEmpty().take(MAX_CHANGESETS).map(ChangesetEntry::from),
         )
 
         /** Total: a request kind this client does not know is still shown rather than dropped. */

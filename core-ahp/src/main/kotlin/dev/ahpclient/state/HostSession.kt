@@ -8,6 +8,7 @@ import dev.ahpclient.tunnel.DevTunnelsException
 import dev.ahpclient.tunnel.UpgradeRejectedException
 import com.microsoft.agenthostprotocol.generated.ActionEnvelope
 import com.microsoft.agenthostprotocol.generated.AhpErrorCodes
+import com.microsoft.agenthostprotocol.generated.ChangesetState
 import com.microsoft.agenthostprotocol.generated.Implementation
 import com.microsoft.agenthostprotocol.generated.ReconnectResult
 import com.microsoft.agenthostprotocol.generated.ReconnectResultReplay
@@ -16,6 +17,7 @@ import com.microsoft.agenthostprotocol.generated.SessionSummary
 import com.microsoft.agenthostprotocol.generated.Snapshot
 import com.microsoft.agenthostprotocol.generated.SnapshotState
 import com.microsoft.agenthostprotocol.generated.StateAction
+import com.microsoft.agenthostprotocol.changesetReducer
 import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -103,6 +105,7 @@ class HostSession(
 
     private val sessions = LinkedHashMap<String, SessionStore>()
     private val chats = LinkedHashMap<String, ChatStore>()
+    private val aux = LinkedHashMap<String, AuxStore>()
     private val subscribeLock = Mutex()
 
     // Owned here, not by a connection, so it keeps increasing when a reconnect reuses this client id.
@@ -192,6 +195,35 @@ class HostSession(
             if (store.openers > 0) false else chats.remove(uri) != null
         }
         if (dropped) current?.unsubscribe(uri)
+    }
+
+    /** The store for the changeset at [uri], read only, subscribing now if online or on the next connection. Pair every call with [closeChannel]. */
+    fun openChangeset(uri: String): ChannelStore<ChangesetState> = openAux(uri) {
+        ChannelStore(uri, { (it as? SnapshotState.Changeset)?.value }, ::changesetReducer)
+    }
+
+    fun closeChannel(uri: String) {
+        val dropped = synchronized(aux) {
+            val store = aux[uri] ?: return
+            store.openers--
+            if (store.openers > 0) false else aux.remove(uri) != null
+        }
+        if (dropped) current?.unsubscribe(uri)
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun <S : Any> openAux(uri: String, create: () -> ChannelStore<S>): ChannelStore<S> {
+        val store = synchronized(aux) { aux.getOrPut(uri) { create() }.also { it.openers++ } } as ChannelStore<S>
+        scope.launch {
+            try {
+                subscribeLock.withLock { subscribeIfNeeded(current ?: return@launch, store) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // The connection dropped mid-subscribe; the next one subscribes because the store still needs it.
+            }
+        }
+        return store
     }
 
     private suspend fun fetchTurns(uri: String, cursor: String) {
@@ -309,6 +341,7 @@ class HostSession(
         subscribeLock.withLock {
             sessionsNeedingSubscribe().forEach { subscribeIfNeeded(ahp, it) }
             chatsNeedingSubscribe().forEach { subscribeIfNeeded(ahp, it) }
+            auxNeedingSubscribe().forEach { subscribeIfNeeded(ahp, it) }
         }
     }
 
@@ -323,6 +356,7 @@ class HostSession(
                 result.value.missing.forEach { uri ->
                     storeFor(uri)?.markGone()
                     chatFor(uri)?.markGone()
+                    auxFor(uri)?.markGone()
                 }
             }
             is ReconnectResultSnapshot -> {
@@ -331,6 +365,7 @@ class HostSession(
                 open.filter { it !in covered }.forEach {
                     storeFor(it)?.invalidate()
                     chatFor(it)?.invalidate()
+                    auxFor(it)?.invalidate()
                 }
             }
         }
@@ -342,7 +377,7 @@ class HostSession(
                 is SnapshotState.Root -> root.seedRoot(state.value)
                 is SnapshotState.Session -> storeFor(snapshot.resource)?.seed(snapshot)
                 is SnapshotState.Chat -> chatFor(snapshot.resource)?.seed(snapshot)
-                else -> Unit
+                else -> auxFor(snapshot.resource)?.seed(snapshot)
             }
         }
     }
@@ -364,6 +399,18 @@ class HostSession(
 
     private fun chatsNeedingSubscribe(): List<ChatStore> =
         synchronized(chats) { chats.values.filter { it.needsSubscribe } }
+
+    private fun auxNeedingSubscribe(): List<AuxStore> =
+        synchronized(aux) { aux.values.filter { it.needsSubscribe } }
+
+    private suspend fun subscribeIfNeeded(ahp: AhpConnection, store: AuxStore) {
+        if (!store.needsSubscribe) return
+        try {
+            ahp.subscribe(store.uri).snapshot?.let(store::seed)
+        } catch (e: AhpException.Rpc) {
+            if (e.code == AhpErrorCodes.SESSION_NOT_FOUND || e.code == AhpErrorCodes.NOT_FOUND) store.markGone() else throw e
+        }
+    }
 
     private suspend fun subscribeIfNeeded(ahp: AhpConnection, store: ChatStore) {
         if (!store.needsSubscribe) return
@@ -392,7 +439,7 @@ class HostSession(
                     if (envelope.channel == ROOT_CHANNEL) {
                         root.applyAction(envelope.action)
                     } else {
-                        storeFor(envelope.channel)?.apply(envelope) ?: chatFor(envelope.channel)?.apply(envelope)
+                        storeFor(envelope.channel)?.apply(envelope) ?: chatFor(envelope.channel)?.apply(envelope) ?: auxFor(envelope.channel)?.apply(envelope)
                     }
                 }
                 resolveDispatch(envelope)
@@ -414,7 +461,10 @@ class HostSession(
 
     private fun chatFor(uri: String): ChatStore? = synchronized(chats) { chats[uri] }
 
-    private fun openChannels(): List<String> = synchronized(sessions) { sessions.keys.toList() } + synchronized(chats) { chats.keys.toList() }
+    private fun auxFor(uri: String): AuxStore? = synchronized(aux) { aux[uri] }
+
+    private fun openChannels(): List<String> =
+        synchronized(sessions) { sessions.keys.toList() } + synchronized(chats) { chats.keys.toList() } + synchronized(aux) { aux.keys.toList() }
 
     private companion object {
         const val MAX_LIST_PAGES = 50

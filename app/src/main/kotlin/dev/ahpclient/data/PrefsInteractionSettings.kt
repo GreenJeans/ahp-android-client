@@ -10,15 +10,21 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
 
 /** Whether the user has allowed this app to send messages, answers and approvals as them. Off until they turn it on. Not a secret. */
-class PrefsInteractionSettings(private val dataStore: DataStore<Preferences>) : InteractionSettings {
+class PrefsInteractionSettings(
+    private val dataStore: DataStore<Preferences>,
+    private val key: Preferences.Key<Boolean> = KEY,
+) : InteractionSettings {
     // A damaged preferences file reads as "off": the permission is never granted by accident.
-    override val enabled: Flow<Boolean> = dataStore.data.map { it[KEY] ?: false }.catch { emit(false) }
+    override val enabled: Flow<Boolean> = dataStore.data.map { it[key] ?: false }.catch { emit(false) }
 
     override suspend fun setEnabled(on: Boolean) {
-        dataStore.edit { it[KEY] = on }
+        dataStore.edit { it[key] = on }
     }
 
-    private companion object {
+    companion object {
         val KEY = booleanPreferencesKey("allow_interaction")
+
+        /** The second choice: also create, archive and remove sessions and chats. Separate from [KEY] so each is its own decision. */
+        val MANAGEMENT_KEY = booleanPreferencesKey("allow_management")
     }
 }

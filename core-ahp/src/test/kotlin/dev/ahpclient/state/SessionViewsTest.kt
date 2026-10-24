@@ -3,11 +3,13 @@ package dev.ahpclient.state
 import com.microsoft.agenthostprotocol.Ahp
 import com.microsoft.agenthostprotocol.generated.ListSessionsResult
 import com.microsoft.agenthostprotocol.generated.SessionState
+import com.microsoft.agenthostprotocol.generated.SessionStatus
 import java.time.Instant
 import java.time.ZoneId
 import java.util.Locale
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class SessionListModelTest {
@@ -330,6 +332,60 @@ class SessionDetailTest {
         val request = """[{"kind":"toolConfirmation","id":"r6","chat":"c","turnId":"t","toolCall":{"status":"hologram","toolCallId":"tc"}}]"""
 
         assertEquals(listOf(InputRequestView("Approval", "A tool needs approval.")), SessionDetail.from(state(request), now).inputNeeded)
+    }
+
+    @Test
+    fun `the changesets a session advertises are listed, and only plain ones can be opened`() {
+        val detail = SessionDetail.from(
+            state(extra = ""","changesets":[{"label":"Uncommitted","uriTemplate":"ahp-changeset:/c1","changeKind":"uncommitted"},{"label":"Turn","uriTemplate":"ahp-changeset:/t/{turnId}","changeKind":"turn"}]"""),
+            now,
+        )
+
+        assertEquals(listOf("Uncommitted", "Turn"), detail.changesets.map { it.label })
+        assertEquals(listOf("ahp-changeset:/c1", null), detail.changesets.map { it.uri })
+        assertEquals(emptyList(), SessionDetail.from(state(), now).changesets)
+    }
+
+    @Test
+    fun `read and archived come from the status flags, and a plain session is neither`() {
+        val read = state().copy(status = SessionStatus.IDLE or SessionStatus.IS_READ)
+        val archived = state().copy(status = SessionStatus.IDLE or SessionStatus.IS_ARCHIVED)
+        val plain = state().copy(status = SessionStatus.IDLE)
+
+        assertEquals(listOf(true, false), SessionDetail.from(read, now).let { listOf(it.isRead, it.isArchived) })
+        assertEquals(listOf(false, true), SessionDetail.from(archived, now).let { listOf(it.isRead, it.isArchived) })
+        assertEquals(listOf(false, false), SessionDetail.from(plain, now).let { listOf(it.isRead, it.isArchived) })
+    }
+
+    @Test
+    fun `lifecycle words map to phases, and a word this client does not know is never taken as ready`() {
+        assertEquals(SessionPhase.CREATING, SessionPhase.of("creating"))
+        assertEquals(SessionPhase.READY, SessionPhase.of("ready"))
+        assertEquals(SessionPhase.FAILED, SessionPhase.of("failed"))
+        assertEquals(SessionPhase.OTHER, SessionPhase.of("hibernating"))
+        assertEquals(SessionPhase.OTHER, SessionPhase.of(""))
+        assertEquals(SessionPhase.READY, SessionDetail.from(state(), now).phase)
+    }
+
+    @Test
+    fun `a session that is still starting or has failed says so, with the host's reason clipped`() {
+        val creating = Ahp.json.decodeFromString(
+            SessionState.serializer(),
+            """{"provider":"copilotcli","title":"New","status":1,"lifecycle":"creating","activeClients":[],"chats":[]}""",
+        )
+        val failed = Ahp.json.decodeFromString(
+            SessionState.serializer(),
+            """{"provider":"copilotcli","title":"New","status":1,"lifecycle":"failed","activeClients":[],"chats":[],
+                "creationError":{"errorType":"E","message":"${"x".repeat(5_000)}"}}""",
+        )
+
+        val a = SessionDetail.from(creating, now)
+        val b = SessionDetail.from(failed, now)
+
+        assertEquals(SessionPhase.CREATING, a.phase)
+        assertNull(a.creationError)
+        assertEquals(SessionPhase.FAILED, b.phase)
+        assertEquals(200, b.creationError!!.length)
     }
 
     @Test

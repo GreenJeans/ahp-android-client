@@ -28,8 +28,26 @@ internal const val SESSION_E = "ahp-session:/00000000-0000-4000-8000-0000000000e
 internal const val INITIAL_SEQ = 126_551L
 internal const val SNAPSHOT_SEQ = 126_560L
 
-internal fun sessionSnapshot(uri: String, fromSeq: Long, title: String = "Session C", status: Int = 8, inputNeeded: String? = null, chats: String = "[]") =
-    """{"resource":"$uri","fromSeq":$fromSeq,"state":{"provider":"copilotcli","title":"$title","status":$status,"lifecycle":"ready","activeClients":[],"chats":$chats${inputNeeded?.let { ""","inputNeeded":$it""" }.orEmpty()}}}"""
+internal fun sessionSnapshot(uri: String, fromSeq: Long, title: String = "Session C", status: Int = 8, inputNeeded: String? = null, chats: String = "[]", changesets: String? = null) =
+    """{"resource":"$uri","fromSeq":$fromSeq,"state":{"provider":"copilotcli","title":"$title","status":$status,"lifecycle":"ready","activeClients":[],"chats":$chats${inputNeeded?.let { ""","inputNeeded":$it""" }.orEmpty()}${changesets?.let { ""","changesets":$it""" }.orEmpty()}}}"""
+
+internal const val CHANGESET_A = "ahp-changeset:/c1"
+
+internal fun terminalStateJson(content: String = """{"type":"unclassified","value":"hello\r\n"}""", lifecycle: String = """{"status":"running"}""", title: String = "build") =
+    """{"title":"$title","cwd":"file:///work/repo","content":[$content],"lifecycle":$lifecycle,"claim":{"kind":"client","clientId":"someone"}}"""
+
+internal fun terminalSnapshotJson(uri: String, fromSeq: Long, state: String = terminalStateJson()) = """{"resource":"$uri","fromSeq":$fromSeq,"state":$state}"""
+
+internal fun changesetStateJson(status: String = "ready", files: String = "") = """{"status":"$status","files":[$files]}"""
+
+internal fun changesetFileJson(path: String, added: Long? = 3, removed: Long? = 1, before: Boolean = true, after: Boolean = true, reviewed: Boolean? = null) =
+    """{"id":"file:///$path","edit":{${listOfNotNull(
+        if (before) """"before":{"uri":"file:///$path","content":{"uri":"ahp-content:/b-$path"}}""" else null,
+        if (after) """"after":{"uri":"file:///$path","content":{"uri":"ahp-content:/a-$path"}}""" else null,
+        if (added != null && removed != null) """"diff":{"added":$added,"removed":$removed}""" else null,
+    ).joinToString(",")}}${reviewed?.let { ""","reviewed":$it""" }.orEmpty()}}"""
+
+internal fun changesetSnapshotJson(uri: String, fromSeq: Long, state: String = changesetStateJson()) = """{"resource":"$uri","fromSeq":$fromSeq,"state":$state}"""
 
 internal fun actionFrame(channel: String, actionJson: String, seq: Long) =
     """{"jsonrpc":"2.0","method":"action","params":{"channel":"$channel","action":$actionJson,"serverSeq":$seq}}"""
@@ -73,6 +91,12 @@ internal class HostScript(
     val chatTurns: List<String> = emptyList(),
     /** What the host answers to a management command (create or dispose a session or chat); by default it accepts it. */
     val onCommand: (method: String, id: Long?, params: JsonObject) -> String? = { _, id, _ -> result(id, "null") },
+    /** The terminals the root catalogue lists, as a JSON array of terminal infos; null for the fixture's own. */
+    val rootTerminals: String? = null,
+    /** The changesets a subscribed session advertises, as a JSON array; null for none. */
+    val sessionChangesets: String? = null,
+    /** What a subscribed changeset reports. */
+    val changesetState: String = changesetStateJson(),
 ) {
     fun reply(method: String, id: Long?, params: JsonObject): String? = when (method) {
         "initialize" -> initializeReply(id, params)
@@ -90,16 +114,27 @@ internal class HostScript(
         val sessionSnapshots = params["initialSubscriptions"]!!.jsonArray
             .map { it.jsonPrimitive.content }
             .filter { it.startsWith("ahp-session:/") }
-            .map { Json.parseToJsonElement(sessionSnapshot(it, INITIAL_SEQ)) }
-        val merged = JsonObject(base + ("snapshots" to JsonArray(base["snapshots"]!!.jsonArray + sessionSnapshots)))
+            .map { Json.parseToJsonElement(sessionSnapshot(it, INITIAL_SEQ, changesets = sessionChangesets)) }
+        val snapshots = base["snapshots"]!!.jsonArray.map { snapshot -> withTerminals(snapshot.jsonObject) }
+        val merged = JsonObject(base + ("snapshots" to JsonArray(snapshots + sessionSnapshots)))
         return result(id, merged.toString())
+    }
+
+    /** Puts the scripted terminal catalogue into the root snapshot, when there is one. */
+    private fun withTerminals(snapshot: JsonObject): JsonObject {
+        val terminals = rootTerminals ?: return snapshot
+        if (!snapshot["resource"]!!.jsonPrimitive.content.startsWith("ahp-root")) return snapshot
+        val state = snapshot["state"]!!.jsonObject
+        return JsonObject(snapshot + ("state" to JsonObject(state + ("terminals" to Json.parseToJsonElement(terminals)))))
     }
 
     private fun subscribeReply(id: Long?, channel: String): String = when {
         channel.startsWith("ahp-chat:/") ->
             if (channel in missingSessions) error(id, -32008, "no such chat") else result(id, """{"snapshot":${chatSnapshotJson(channel, SNAPSHOT_SEQ, turns = chatTurns, cursor = chatCursor, activeTurn = chatActiveTurn)}}""")
+        channel.startsWith("ahp-changeset:/") ->
+            if (channel in missingSessions) error(id, -32008, "no such changeset") else result(id, """{"snapshot":${changesetSnapshotJson(channel, SNAPSHOT_SEQ, changesetState)}}""")
         channel in missingSessions -> error(id, -32001, "no such session")
-        else -> result(id, """{"snapshot":${sessionSnapshot(channel, SNAPSHOT_SEQ, inputNeeded = inputNeeded, chats = sessionChats)}}""")
+        else -> result(id, """{"snapshot":${sessionSnapshot(channel, SNAPSHOT_SEQ, inputNeeded = inputNeeded, chats = sessionChats, changesets = sessionChangesets)}}""")
     }
 }
 

@@ -63,7 +63,7 @@ class BiometricApprovalGate : ApprovalGate {
             val prompt = BiometricPrompt(activity, ContextCompat.getMainExecutor(activity), callback)
             // The tool's name and summary come from the host: plain text, and cut short.
             val info = BiometricPrompt.PromptInfo.Builder()
-                .setTitle("Approve this tool call?")
+                .setTitle(request.title.take(MAX_TITLE))
                 .setSubtitle(request.toolName.take(MAX_TITLE))
                 .setDescription(request.summary?.take(MAX_SUMMARY))
                 .setAllowedAuthenticators(AUTHENTICATORS)

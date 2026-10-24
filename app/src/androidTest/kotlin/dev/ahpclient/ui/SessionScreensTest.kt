@@ -4,7 +4,9 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHasClickAction
@@ -79,12 +81,14 @@ class SessionScreensTest {
         monitorEnabled: Boolean = false,
         notificationsAllowed: Boolean = true,
         onMonitorChange: (Boolean) -> Unit = {},
+        settingsExpanded: Boolean = false,
     ) = rule.setContent {
         var showArchived by androidx.compose.runtime.remember { mutableStateOf(initialShowArchived) }
         AhpTheme {
             SessionsScreen(
                 host, connection, sessions, now, showArchived, rememberLazyListState(), { showArchived = !showArchived; onToggle() }, onOpen, onDisconnect,
                 monitorEnabled = monitorEnabled, notificationsAllowed = notificationsAllowed, onMonitorChange = onMonitorChange,
+                settingsExpanded = settingsExpanded,
             )
         }
     }
@@ -170,9 +174,41 @@ class SessionScreensTest {
     }
 
     @Test
+    fun theSwitchesAreFoldedBehindOneSettingsRowThatSaysWhatIsOnAndOpensOnTap() {
+        showSessions(monitorEnabled = true)
+
+        rule.onNodeWithTag("monitor_toggle").assertDoesNotExist()
+        rule.onNodeWithTag("settings_toggle").assertTextContains("Monitoring on · Acting off · Managing off", substring = true)
+        rule.onNodeWithTag("settings_toggle").assertTouchTargetAtLeast(48.dp).performClick()
+
+        rule.onNodeWithTag("monitor_toggle").assertIsDisplayed()
+        rule.onNodeWithTag("interaction_toggle").assertExists()
+        rule.onNodeWithTag("management_toggle").assertExists()
+        rule.onNodeWithTag("settings_toggle").performClick()
+        rule.onNodeWithTag("monitor_toggle").assertDoesNotExist()
+    }
+
+    @Test
+    fun theSettingsRowSaysIfItIsOpenOrClosedToAScreenReader() {
+        showSessions()
+
+        rule.onNodeWithTag("settings_toggle").assert(
+            androidx.compose.ui.test.SemanticsMatcher("state is Collapsed") {
+                it.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.StateDescription) == "Collapsed"
+            },
+        )
+        rule.onNodeWithTag("settings_toggle").performClick()
+        rule.onNodeWithTag("settings_toggle").assert(
+            androidx.compose.ui.test.SemanticsMatcher("state is Expanded") {
+                it.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.StateDescription) == "Expanded"
+            },
+        )
+    }
+
+    @Test
     fun theMonitorSwitchIsOffByDefaultAndTurnsOnWithAFullWidthTouchTarget() {
         val changes = mutableListOf<Boolean>()
-        showSessions(onMonitorChange = { changes += it })
+        showSessions(onMonitorChange = { changes += it }, settingsExpanded = true)
 
         rule.onNodeWithTag("monitor_toggle").assertIsOff().assertTouchTargetAtLeast(48.dp).performClick()
 
@@ -183,7 +219,7 @@ class SessionScreensTest {
     @Test
     fun anEnabledMonitorTurnsOffAndSaysWhatItDoes() {
         val changes = mutableListOf<Boolean>()
-        showSessions(monitorEnabled = true, onMonitorChange = { changes += it })
+        showSessions(monitorEnabled = true, onMonitorChange = { changes += it }, settingsExpanded = true)
 
         rule.onNodeWithTag("monitor_toggle").assertIsOn().performClick()
 
@@ -193,14 +229,14 @@ class SessionScreensTest {
 
     @Test
     fun blockedNotificationsAreStatedSoTheUserKnowsTheyWillNotBeTold() {
-        showSessions(monitorEnabled = true, notificationsAllowed = false)
+        showSessions(monitorEnabled = true, notificationsAllowed = false, settingsExpanded = true)
 
         rule.onNodeWithTag("monitor_hint").assertTextContains("notifications are blocked", substring = true)
     }
 
     @Test
     fun theMonitorSwitchIsStillShownWhenTheConnectionHasFailed() {
-        showSessions(connection = ConnState.Failed(IllegalStateException("x")))
+        showSessions(connection = ConnState.Failed(IllegalStateException("x")), settingsExpanded = true)
 
         rule.onNodeWithTag("monitor_toggle").assertIsDisplayed()
     }

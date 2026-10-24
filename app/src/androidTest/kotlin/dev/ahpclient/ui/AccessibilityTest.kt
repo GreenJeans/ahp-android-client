@@ -113,7 +113,7 @@ class AccessibilityTest {
         checkEach(
             *states.map { connection ->
                 @Composable {
-                    SessionsScreen(host, connection, sessions, now, true, rememberLazyListState(), {}, {}, {}, monitorEnabled = true, notificationsAllowed = false)
+                    SessionsScreen(host, connection, sessions, now, true, rememberLazyListState(), {}, {}, {}, monitorEnabled = true, notificationsAllowed = false, settingsExpanded = true)
                 }
             }.toTypedArray(),
         )
