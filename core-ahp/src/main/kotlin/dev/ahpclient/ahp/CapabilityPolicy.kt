@@ -64,11 +64,14 @@ class CapabilityPolicy private constructor(
         /** The commands that create or remove a session or chat. Nothing else in [MANAGE] changes what exists. */
         val MANAGE_COMMANDS = setOf("createSession", "createChat", "disposeSession", "disposeChat")
 
-        /** What marking a session read or archived dispatches. Reversible, and changes nothing the agent runs. */
-        val MANAGE_ACTIONS = setOf("session/isReadChanged", "session/isArchivedChanged")
+        /**
+         * What marking a session read or archived, or a changed file reviewed, dispatches. Each is reversible with the same
+         * action, and none of them changes anything the agent runs or any file.
+         */
+        val MANAGE_ACTIONS = setOf("session/isReadChanged", "session/isArchivedChanged", "changeset/filesReviewChanged")
 
         /**
-         * INTERACT plus looking after sessions: mark one read or archived, start a chat or a session, and remove one. A
+         * INTERACT plus looking after sessions: mark one read or archived, mark a changed file reviewed, start a chat or a session, and remove one. A
          * separate permission from INTERACT, because creating a session starts an agent on the user's machine and removing
          * one cannot be undone. Still nothing that runs a command directly, touches files or signs in to anything.
          */

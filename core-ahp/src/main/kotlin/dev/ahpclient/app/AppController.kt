@@ -12,11 +12,13 @@ import dev.ahpclient.state.ApprovalGate
 import dev.ahpclient.state.ApprovalTarget
 import dev.ahpclient.state.ChannelStore
 import dev.ahpclient.state.ChangesetEntry
+import dev.ahpclient.state.ChangesetReviewer
 import dev.ahpclient.state.ChatInteractor
 import dev.ahpclient.state.ChatStore
 import dev.ahpclient.state.ExpansionState
 import dev.ahpclient.state.HostSession
 import dev.ahpclient.state.InteractResult
+import dev.ahpclient.state.ManageResult
 import dev.ahpclient.state.ManagementCommands
 import dev.ahpclient.state.SessionManager
 import dev.ahpclient.state.SubagentLinks
@@ -93,6 +95,23 @@ class AppController(
         },
         gate = approvalGate,
     )
+
+    /** Marks changed files of the open changeset reviewed. Needs the manage tier and a changeset the host says is reviewable. */
+    private val reviewer = ChangesetReviewer(
+        allowed = { connectedSession()?.canManage?.value == true },
+        reviewableFiles = { uri ->
+            (_state.value as? AppState.Connected)?.open?.changeset
+                ?.takeIf { it.uri == uri && it.reviewable }
+                ?.store?.state?.value?.files?.map { it.id }?.toSet()
+        },
+        dispatch = { channel, action -> liveSession().dispatch(channel, action) },
+    )
+
+    /** Sets the reviewed flag of one file of the open changeset. Nothing is shown as changed until the host echoes it. */
+    suspend fun setFileReviewed(fileId: String, reviewed: Boolean): ManageResult {
+        val uri = (_state.value as? AppState.Connected)?.open?.changeset?.uri ?: return ManageResult.NoSuchTarget
+        return reviewer.setReviewed(uri, fileId, reviewed)
+    }
 
     @Volatile
     private var token: GitHubToken? = null
@@ -209,10 +228,10 @@ class AppController(
         val current = _state.value as? AppState.Connected ?: return
         val open = current.open ?: return
         if (open.chat != null || open.changeset != null) return
-        val advertised = open.store.state.value?.changesets.orEmpty().any { ChangesetEntry.from(it).uri == uri }
-        if (!advertised || uri.length > MAX_CHANNEL_URI) return
+        val entry = open.store.state.value?.changesets.orEmpty().map(ChangesetEntry::from).firstOrNull { it.uri == uri }
+        if (entry == null || uri.length > MAX_CHANNEL_URI) return
         val store = current.session.openChangeset(uri)
-        if (!_state.compareAndSet(current, current.copy(open = open.copy(changeset = OpenChangeset(uri, store))))) current.session.closeChannel(uri)
+        if (!_state.compareAndSet(current, current.copy(open = open.copy(changeset = OpenChangeset(uri, store, entry.reviewable))))) current.session.closeChannel(uri)
     }
 
     /** Leaves the changeset and returns to the session detail. */

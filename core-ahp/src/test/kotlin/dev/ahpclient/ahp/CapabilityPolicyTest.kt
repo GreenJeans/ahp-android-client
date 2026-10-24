@@ -63,7 +63,7 @@ class CapabilityPolicyTest {
         val notAllowed = listOf(
             null, "", "chat/turnStarted ", "Chat/turnStarted",
             "terminal/input", "terminal/resized", "terminal/claimed",
-            "session/activeClientSet", "session/titleChanged", "session/isReadChanged", "session/isArchivedChanged",
+            "session/activeClientSet", "session/titleChanged", "session/isReadChanged", "session/isArchivedChanged", "changeset/filesReviewChanged",
             "session/mcpServerStarted", "session/mcpServerStopped", "session/customizationToggled",
             "chat/titleChanged", "chat/responsePart", "chat/toolCallStart", "chat/turnComplete",
             "root/activeSessionsChanged",
@@ -92,7 +92,7 @@ class CapabilityPolicyTest {
 
     private val manageCommands = setOf("createSession", "createChat", "disposeSession", "disposeChat")
 
-    private val manageActions = setOf("session/isReadChanged", "session/isArchivedChanged")
+    private val manageActions = setOf("session/isReadChanged", "session/isArchivedChanged", "changeset/filesReviewChanged")
 
     @Test
     fun `only MANAGE can create or remove sessions and chats`() {
@@ -113,7 +113,7 @@ class CapabilityPolicyTest {
     }
 
     @Test
-    fun `MANAGE allows the eight interaction actions and exactly two more`() {
+    fun `MANAGE allows the eight interaction actions and exactly three more`() {
         (interactActions + manageActions).forEach { CapabilityPolicy.MANAGE.check("dispatchAction", it) }
         assertEquals(manageActions, CapabilityPolicy.MANAGE_ACTIONS)
         assertEquals(manageCommands, CapabilityPolicy.MANAGE_COMMANDS)

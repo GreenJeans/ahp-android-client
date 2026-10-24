@@ -64,7 +64,7 @@ class ManageActionsUi(
 )
 
 @Composable
-private fun ManageNotice(text: String?, tag: String) {
+internal fun ManageNotice(text: String?, tag: String) {
     if (text == null) return
     Text(
         text,

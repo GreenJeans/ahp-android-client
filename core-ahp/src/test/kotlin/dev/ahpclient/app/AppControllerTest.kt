@@ -1528,6 +1528,83 @@ class AppControllerTest {
     }
 
     @Test
+    fun `a file of a reviewable changeset is marked reviewed on the host and shows once the host echoes it`() = runTest {
+        var clientId = ""
+        withRig(script = reviewScript { clientId }, interaction = managing) {
+            val connected = connectToFirstHost()
+            clientId = "client-${connected.host.tunnelId}"
+            connected.session.canManage.first { it }
+            openLoadedSession(this)
+            controller.openChangeset(CHANGESET_A)
+            val open = assertIs<AppState.Connected>(state).open!!.changeset!!
+            open.store.state.first { it != null }
+            assertTrue(open.reviewable)
+
+            assertEquals(ManageResult.Done(), controller.setFileReviewed("file:///work/a.kt", true))
+
+            val sent = dispatches().single()["params"]!!.jsonObject
+            assertEquals(CHANGESET_A, sent["channel"]!!.jsonPrimitive.content)
+            assertEquals("changeset/filesReviewChanged", sent["action"]!!.jsonObject["type"]!!.jsonPrimitive.content)
+            assertEquals(listOf(true), ChangesetView.from(open.store.state.value!!).rows.map { it.reviewed })
+        }
+    }
+
+    @Test
+    fun `a changeset the host does not call reviewable, and a file it does not list, are never sent`() = runTest {
+        var clientId = ""
+        withRig(script = reviewScript(plainChangeset) { clientId }, interaction = managing) {
+            val connected = connectToFirstHost()
+            clientId = "client-${connected.host.tunnelId}"
+            connected.session.canManage.first { it }
+            openLoadedSession(this)
+            controller.openChangeset(CHANGESET_A)
+            val open = assertIs<AppState.Connected>(state).open!!.changeset!!
+            open.store.state.first { it != null }
+
+            assertFalse(open.reviewable)
+            assertEquals(ManageResult.NoSuchTarget, controller.setFileReviewed("file:///work/a.kt", true))
+            assertTrue(dispatches().isEmpty())
+        }
+    }
+
+    @Test
+    fun `an unlisted file, no open changeset, and a connection that may not manage send nothing`() = runTest {
+        var clientId = ""
+        withRig(script = reviewScript { clientId }, interaction = managing) {
+            val connected = connectToFirstHost()
+            clientId = "client-${connected.host.tunnelId}"
+            connected.session.canManage.first { it }
+            openLoadedSession(this)
+            assertEquals(ManageResult.NoSuchTarget, controller.setFileReviewed("file:///work/a.kt", true), "no changeset is open")
+            controller.openChangeset(CHANGESET_A)
+            assertIs<AppState.Connected>(state).open!!.changeset!!.store.state.first { it != null }
+
+            assertEquals(ManageResult.NoSuchTarget, controller.setFileReviewed("file:///elsewhere.kt", true))
+            assertTrue(dispatches().isEmpty())
+        }
+        withRig(script = reviewScript { "" }, interaction = allowed) {
+            connectToFirstHost()
+            openLoadedSession(this)
+            controller.openChangeset(CHANGESET_A)
+            assertIs<AppState.Connected>(state).open!!.changeset!!.store.state.first { it != null }
+
+            assertEquals(ManageResult.NotAllowed, controller.setFileReviewed("file:///work/a.kt", true))
+            assertTrue(dispatches().isEmpty())
+        }
+    }
+
+    private val reviewableChangeset = """{"label":"Uncommitted","uriTemplate":"$CHANGESET_A","changeKind":"uncommitted","capabilities":{"review":{}}}"""
+
+    private fun reviewScript(changeset: String = reviewableChangeset, clientId: () -> String) = {
+        HostScript(
+            sessionChats = "[${chatSummaryJson(CHAT_A)}]",
+            sessionChangesets = "[$changeset]",
+            changesetState = changesetStateJson("ready", changesetFileJson("work/a.kt")),
+            onDispatch = { echoOf(it, SNAPSHOT_SEQ + 1, clientId = clientId()) },
+        )
+    }
+
+    @Test
     fun `an address that is too long is never subscribed to`() = runTest {
         withRig(script = decideScript { "" }, interaction = allowed, approvalGate = ApprovalGate { true }) {
             val connected = connectToFirstHost()

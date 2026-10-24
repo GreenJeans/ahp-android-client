@@ -1,6 +1,17 @@
 package dev.ahpclient.ui
 
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertContentDescriptionEquals
+import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.isToggleable
+import androidx.compose.ui.unit.dp
+import dev.ahpclient.state.ManageResult
+import kotlinx.coroutines.CompletableDeferred
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasTestTag
@@ -44,8 +55,8 @@ class ChangesetUiTest {
         """{"status":"$status","files":[${files.joinToString(",")}]${error?.let { ""","error":{"errorType":"E","message":"$it"}""" }.orEmpty()}}""",
     )
 
-    private fun show(state: ChangesetState?, error: Throwable? = null, connection: ConnState = ConnState.Online, onBack: () -> Unit = {}) =
-        rule.setContent { AhpTheme { ChangesetScreen("Uncommitted", state, error, connection, onBack) } }
+    private fun show(state: ChangesetState?, error: Throwable? = null, connection: ConnState = ConnState.Online, onBack: () -> Unit = {}, onSetReviewed: (suspend (String, Boolean) -> ManageResult)? = null) =
+        rule.setContent { AhpTheme { ChangesetScreen("Uncommitted", state, error, connection, onBack, onSetReviewed = onSetReviewed) } }
 
     @Test
     fun theTitleAndTheReadOnlyNoteAreShown() {
@@ -160,6 +171,79 @@ class ChangesetUiTest {
         rule.onNodeWithTag("back").performClick()
 
         assertEquals(1, back)
+    }
+
+    // ---- marking files viewed ---------------------------------------------------------------------------------------
+
+    private val twoFiles get() = changeset(files = arrayOf(file("work/a.kt"), file("work/b.kt", reviewed = true)))
+
+    @Test
+    fun withoutTheReviewCallbackThereAreNoViewedBoxes() {
+        show(twoFiles)
+
+        rule.onAllNodesWithTag("viewed_toggle").assertCountEquals(0)
+        rule.onNodeWithTag("changeset_note").assertTextContains("Read only", substring = true)
+    }
+
+    @Test
+    fun eachFileGetsAViewedBoxShowingWhatTheHostHolds() {
+        show(twoFiles, onSetReviewed = { _, _ -> ManageResult.Done() })
+
+        rule.onAllNodesWithTag("viewed_toggle").assertCountEquals(2)
+        rule.onAllNodesWithTag("viewed_toggle")[0].assertIsOff()
+        rule.onAllNodesWithTag("viewed_toggle")[1].assertIsOn()
+        rule.onNodeWithTag("changeset_note").assertTextContains("Viewed", substring = true)
+    }
+
+    @Test
+    fun tappingAsksTheHostToFlipThatFileAndTheBoxStaysAsTheHostHoldsIt() {
+        val asked = mutableListOf<Pair<String, Boolean>>()
+        show(twoFiles, onSetReviewed = { id, on -> asked += id to on; ManageResult.Done() })
+
+        rule.onAllNodesWithTag("viewed_toggle")[0].performClick()
+        rule.onAllNodesWithTag("viewed_toggle")[1].performClick()
+        rule.waitForIdle()
+
+        assertEquals(listOf("file:///work/a.kt" to true, "file:///work/b.kt" to false), asked)
+        // Nothing is ticked or cleared until the host echoes it, and the state passed in has not changed.
+        rule.onAllNodesWithTag("viewed_toggle")[0].assertIsOff()
+        rule.onAllNodesWithTag("viewed_toggle")[1].assertIsOn()
+        rule.onNodeWithTag("review_notice").assertDoesNotExist()
+    }
+
+    @Test
+    fun aRefusalIsSaidInWords() {
+        show(twoFiles, onSetReviewed = { _, _ -> ManageResult.Refused(-32009, "not yours") })
+
+        rule.onAllNodesWithTag("viewed_toggle")[0].performClick()
+        rule.waitForIdle()
+
+        rule.onNodeWithTag("review_notice").assertTextContains("not yours", substring = true)
+    }
+
+    @Test
+    fun aBoxIsDisabledWhileItsTapIsInFlightAndASecondTapIsNotSent() {
+        val answer = CompletableDeferred<ManageResult>()
+        var calls = 0
+        show(twoFiles, onSetReviewed = { _, _ -> calls++; answer.await() })
+
+        rule.onAllNodesWithTag("viewed_toggle")[0].performClick()
+        rule.waitForIdle()
+        rule.onAllNodesWithTag("viewed_toggle")[0].assertIsNotEnabled()
+        rule.onAllNodesWithTag("viewed_toggle")[0].performClick()
+        rule.onAllNodesWithTag("viewed_toggle")[1].assertIsEnabled()
+
+        answer.complete(ManageResult.Done())
+        rule.waitForIdle()
+        rule.onAllNodesWithTag("viewed_toggle")[0].assertIsEnabled()
+        assertEquals(1, calls)
+    }
+
+    @Test
+    fun theBoxNamesItsFileAndIsBigEnoughToTap() {
+        show(twoFiles, onSetReviewed = { _, _ -> ManageResult.Done() })
+
+        rule.onAllNodesWithTag("viewed_toggle")[0].assertContentDescriptionEquals("Viewed: /work/a.kt").assert(isToggleable()).assertHeightIsAtLeast(48.dp)
     }
 
     // ---- the way in from a session ----------------------------------------------------------------------------------

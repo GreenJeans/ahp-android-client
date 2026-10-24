@@ -63,8 +63,11 @@ sealed interface AppState {
 
 data class OpenSession(val uri: String, val store: SessionStore, val chat: OpenChat? = null, val changeset: OpenChangeset? = null)
 
-/** A changeset on screen: the files that changed, read only. Its [store] stays subscribed until the user goes back. */
-data class OpenChangeset(val uri: String, val store: ChannelStore<ChangesetState>)
+/**
+ * A changeset on screen: the files that changed. Its [store] stays subscribed until the user goes back. [reviewable] is the
+ * host's own statement that files in it can be marked reviewed.
+ */
+data class OpenChangeset(val uri: String, val store: ChannelStore<ChangesetState>, val reviewable: Boolean = false)
 
 /**
  * The chat whose transcript is on screen; its [store] stays subscribed until the user goes back. [expansion] outlives the

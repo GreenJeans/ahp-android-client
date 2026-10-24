@@ -129,6 +129,7 @@ fun AppRoot(
                                 error = changesetError,
                                 connection = connection,
                                 onBack = controller::closeChangeset,
+                                onSetReviewed = if (canManage && changeset.reviewable) controller::setFileReviewed else null,
                                 modifier = content,
                             )
                         } else if (chat == null) {

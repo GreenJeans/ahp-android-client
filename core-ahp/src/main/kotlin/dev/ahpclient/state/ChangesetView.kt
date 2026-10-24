@@ -36,8 +36,8 @@ enum class ChangesetPhase {
 }
 
 /**
- * A changeset as a screen shows it: the files that changed with their line counts. Read only: the files' contents are not
- * fetched and no diff is computed here, and nothing can be marked reviewed. At most [MAX_ROWS] files are listed, and how many
+ * A changeset as a screen shows it: the files that changed with their line counts. The files' contents are fetched only when a
+ * file is opened (see [ChangesetDiffs]); here nothing is read. At most [MAX_ROWS] files are listed, and how many
  * were left out is said.
  */
 data class ChangesetView(
@@ -81,8 +81,11 @@ data class ChangesetView(
     }
 }
 
-/** A changeset a session advertises. [uri] is set only when the template needs no values filled in, so it can be opened as it stands. */
-data class ChangesetEntry(val label: String, val description: String?, val kind: String, val uri: String?) {
+/**
+ * A changeset a session advertises. [uri] is set only when the template needs no values filled in, so it can be opened as it
+ * stands. [reviewable] is true when the host says files in it can be marked reviewed.
+ */
+data class ChangesetEntry(val label: String, val description: String?, val kind: String, val uri: String?, val reviewable: Boolean = false) {
     companion object {
         private const val MAX_LABEL = 120
         private const val MAX_URI = 512
@@ -95,6 +98,7 @@ data class ChangesetEntry(val label: String, val description: String?, val kind:
                 description = changeset.description?.takeIf { it.isNotBlank() }?.take(MAX_LABEL * 2),
                 kind = changeset.changeKind,
                 uri = template.takeIf { plain },
+                reviewable = changeset.capabilities?.review != null,
             )
         }
     }
