@@ -62,6 +62,8 @@ data class ChatRow(
     val state: ActivityState,
     val activity: String?,
     val whenText: String,
+    /** False for the session's main chat (and for a session's only chat): the host never removes those on its own. */
+    val removable: Boolean = true,
 )
 
 /** A working directory as a person reads it: a `file:` URI becomes its decoded path, anything else is shown unchanged. */
@@ -102,6 +104,9 @@ data class SessionDetail(
         private const val MAX_ERROR_CHARS = 200
         private const val MAX_CHANGESETS = 20
 
+        /** The host refuses to remove a session's main chat, and a session's only chat is its main one; removing the session is the way. */
+        fun canRemoveChat(state: SessionState, chatUri: String): Boolean = chatUri != state.defaultChat && state.chats.size > 1
+
         fun from(state: SessionState, now: Instant): SessionDetail = SessionDetail(
             title = state.title.ifBlank { SessionListModel.UNTITLED },
             state = state.status.activityState,
@@ -116,6 +121,7 @@ data class SessionDetail(
                     state = chat.status.activityState,
                     activity = chat.activity?.takeIf { it.isNotBlank() },
                     whenText = RelativeTime.format(chat.modifiedAt, now),
+                    removable = canRemoveChat(state, chat.resource),
                 )
             },
             inputNeeded = state.inputNeeded.orEmpty().map(::describe),

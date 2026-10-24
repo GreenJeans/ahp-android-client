@@ -16,6 +16,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 const val EXTRA_CHAT_URI = "dev.ahpclient.extra.CHAT_URI"
 const val EXTRA_TOOL_CALL_ID = "dev.ahpclient.extra.TOOL_CALL_ID"
+const val EXTRA_OPTION_ID = "dev.ahpclient.extra.OPTION_ID"
 const val ACTION_DENY_TOOL_CALL = "dev.ahpclient.action.DENY_TOOL_CALL"
 
 /**
@@ -27,13 +28,14 @@ class DecisionReceiver : BroadcastReceiver() {
         if (intent.action != ACTION_DENY_TOOL_CALL) return
         val chat = intent.getStringExtra(EXTRA_CHAT_URI) ?: return
         val call = intent.getStringExtra(EXTRA_TOOL_CALL_ID) ?: return
+        val option = intent.getStringExtra(EXTRA_OPTION_ID)
         val app = context.applicationContext
         val pending = goAsync()
         val finished = AtomicBoolean(false)
         val finish = { if (finished.compareAndSet(false, true)) pending.finish() }
         // A receiver may not run for long; if the host is slow the decision carries on without holding it open.
         Handler(Looper.getMainLooper()).postDelayed(finish, RECEIVER_BUDGET_MS)
-        (app as AhpApp).container.decideFromNotification(chat, call, approve = false) { result ->
+        (app as AhpApp).container.decideFromNotification(chat, call, approve = false, optionId = option) { result ->
             Toast.makeText(app, InteractMessages.describeDecision(approved = false, result), Toast.LENGTH_LONG).show()
             finish()
         }

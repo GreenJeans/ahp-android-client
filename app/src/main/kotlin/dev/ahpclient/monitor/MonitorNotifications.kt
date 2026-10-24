@@ -42,10 +42,11 @@ object MonitorChannels {
  * title beside it; when that could not be read in time it is the title alone. Both can be sensitive, so a phone set to hide
  * sensitive content shows only that something needs input.
  *
- * When what it waits for is one plain tool call and the app may act for the user ([canDecide]), the notification also has
- * Deny and Approve buttons, on the lock screen version too. Deny needs no check. Approve opens a screenless activity so the
- * phone's own device check can appear (after unlocking, on a locked phone) and name the tool before anything is sent. The
- * buttons carry only which call to decide; the live chat is what says whether it still can be.
+ * When what it waits for is one tool call and the app may act for the user ([canDecide]), the notification also has buttons,
+ * on the lock screen version too: a plain Deny and Approve, or, when the host offered options of its own, those options in
+ * the host's words (at most three, the refusal first). A refusal needs no check. An approval opens a screenless activity so the
+ * phone's own device check can appear (after unlocking, on a locked phone) and name the tool, and the option, before anything
+ * is sent. The buttons carry only which call and option to decide; the live chat is what says whether it still can be.
  */
 class NotificationInputNeededSink(
     private val context: Context,
@@ -92,34 +93,45 @@ class NotificationInputNeededSink(
         manager.cancel(resource, NOTIFICATION_ID)
     }
 
+    private class Button(val label: String, val approves: Boolean, val optionId: String?)
+
     private fun decisionActions(resource: String, target: ApprovalTarget): List<Notification.Action> {
-        val deny = PendingIntent.getBroadcast(
-            context,
-            0,
-            decisionIntent(Intent(context, DecisionReceiver::class.java).setAction(ACTION_DENY_TOOL_CALL), resource, target, "deny"),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
-        val approve = PendingIntent.getActivity(
-            context,
-            0,
-            decisionIntent(Intent(context, ApproveActivity::class.java), resource, target, "approve"),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
         val icon = Icon.createWithResource(context, R.drawable.ic_notification)
-        return listOf(
-            Notification.Action.Builder(icon, "Deny", deny).build(),
-            Notification.Action.Builder(icon, "Approve", approve).build(),
-        )
+        // With no options of its own the host expects a plain approve or deny; with options, its own words are the buttons.
+        val buttons = if (target.options.isEmpty()) {
+            listOf(Button("Deny", approves = false, optionId = null), Button("Approve", approves = true, optionId = null))
+        } else {
+            target.options.map { Button(it.label, it.approves, it.id) }
+        }
+        return buttons.map { button ->
+            val pending = if (button.approves) {
+                PendingIntent.getActivity(
+                    context,
+                    0,
+                    decisionIntent(Intent(context, ApproveActivity::class.java), resource, target, "approve", button.optionId),
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+                )
+            } else {
+                PendingIntent.getBroadcast(
+                    context,
+                    0,
+                    decisionIntent(Intent(context, DecisionReceiver::class.java).setAction(ACTION_DENY_TOOL_CALL), resource, target, "deny", button.optionId),
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+                )
+            }
+            Notification.Action.Builder(icon, button.label, pending).build()
+        }
     }
 
     /**
      * Android treats two intents that differ only in their extras as the same one, so a second notification's buttons would
-     * overwrite the first's. The data address differs for every session, call and button, which keeps each button its own.
+     * overwrite the first's. The data address differs for every session, call, button and option, which keeps each button its own.
      */
-    private fun decisionIntent(intent: Intent, resource: String, target: ApprovalTarget, button: String): Intent =
+    private fun decisionIntent(intent: Intent, resource: String, target: ApprovalTarget, button: String, optionId: String?): Intent =
         intent
             .putExtra(EXTRA_CHAT_URI, target.chat)
             .putExtra(EXTRA_TOOL_CALL_ID, target.toolCallId)
+            .apply { if (optionId != null) putExtra(EXTRA_OPTION_ID, optionId) }
             .setData(
                 Uri.Builder()
                     .scheme("ahp-decision")
@@ -127,6 +139,7 @@ class NotificationInputNeededSink(
                     .appendQueryParameter("session", resource)
                     .appendQueryParameter("chat", target.chat)
                     .appendQueryParameter("call", target.toolCallId)
+                    .apply { if (optionId != null) appendQueryParameter("option", optionId) }
                     .build(),
             )
 

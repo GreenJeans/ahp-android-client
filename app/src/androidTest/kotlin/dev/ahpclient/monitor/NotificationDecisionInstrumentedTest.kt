@@ -12,6 +12,7 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.ahpclient.state.ApprovalTarget
+import dev.ahpclient.state.DecisionOption
 import dev.ahpclient.state.InputNeeded
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -29,6 +30,14 @@ class NotificationDecisionInstrumentedTest {
     private val manager = context.getSystemService(NotificationManager::class.java)
 
     private val target = ApprovalTarget("ahp-chat://default/x", "call-1")
+
+    private val withOptions = target.copy(
+        options = listOf(
+            DecisionOption("o-no", "Skip", approves = false),
+            DecisionOption("o-once", "Allow once", approves = true),
+            DecisionOption("o-session", "Allow in this session", approves = true),
+        ),
+    )
 
     // Cancelling is asynchronous, so a notification from an earlier test may still be up: every test uses tags of its own.
     private val run = System.nanoTime()
@@ -102,6 +111,28 @@ class NotificationDecisionInstrumentedTest {
             val buttons = listOf(first, otherSession, sameSessionOtherCall).map { it.actions[index].actionIntent }
             assertEquals("each button is its own", 3, buttons.toSet().size)
         }
+    }
+
+    @Test
+    fun theHostsOwnOptionsAreTheButtonsInItsWordsWithTheRefusalFirst() {
+        val notification = post("ahp-session:/a", withOptions)
+
+        assertEquals(listOf("Skip", "Allow once", "Allow in this session"), titles(notification))
+        assertEquals("the lock screen version has them too", listOf("Skip", "Allow once", "Allow in this session"), titles(checkNotNull(notification.publicVersion)))
+    }
+
+    @Test
+    fun everyOptionButtonIsItsOwnAndNeverAnotherNotificationsButton() {
+        val first = post("ahp-session:/a", withOptions)
+        val otherCall = post("ahp-session:/b", withOptions.copy(toolCallId = "call-2"))
+
+        val buttons = (first.actions.toList() + otherCall.actions.toList()).map { it.actionIntent }
+        assertEquals("six buttons, six different intents", 6, buttons.toSet().size)
+    }
+
+    @Test
+    fun noOptionButtonsWhileTheAppIsNotAllowedToActForTheUser() {
+        assertEquals(emptyList<String>(), titles(post("ahp-session:/a", withOptions, canDecide = false)))
     }
 
     @Test

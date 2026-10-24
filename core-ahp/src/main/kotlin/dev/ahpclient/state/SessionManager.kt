@@ -41,6 +41,9 @@ sealed interface ManageResult {
     /** The session or chat is not (or is no longer) there, or is not ready for this. */
     data object NoSuchTarget : ManageResult
 
+    /** The chat is the session's main one (or its only one), which the host never removes on its own: remove the session instead. */
+    data object NotRemovable : ManageResult
+
     /** The agent or folder is not one the host offered. */
     data object InvalidChoice : ManageResult
 
@@ -77,8 +80,8 @@ class SessionManager(
     /** The agents the host lists, in its order. */
     fun offeredAgents(): List<AgentInfo> = agents()
 
-    /** The folders the person may start a session in: those the host's own sessions already use, each once, in the order first met. */
-    fun offeredFolders(): List<String> = sessions().flatMap { it.workingDirectories.orEmpty() }.distinct()
+    /** The folders the person may start a session in: the host's own sessions' folders, most recently used first, without its working copies. See [RecentFolders]. */
+    fun offeredFolders(): List<String> = RecentFolders.from(sessions())
 
     suspend fun setRead(sessionUri: String, read: Boolean): ManageResult =
         action(sessionUri, SessionActions.setRead(read))
@@ -168,10 +171,13 @@ class SessionManager(
         return command { commands.disposeSession(sessionUri) }
     }
 
-    /** Removes one chat of a session, after the device check. The chat must be listed by that session. */
+    /** Removes one chat of a session, after the device check. The chat must be listed by that session, and not be its main chat. */
     suspend fun disposeChat(sessionUri: String, chatUri: String): ManageResult {
         if (!allowed()) return ManageResult.NotAllowed
-        val chat = sessionState(sessionUri)?.chats?.firstOrNull { it.resource == chatUri } ?: return ManageResult.NoSuchTarget
+        val state = sessionState(sessionUri) ?: return ManageResult.NoSuchTarget
+        val chat = state.chats.firstOrNull { it.resource == chatUri } ?: return ManageResult.NoSuchTarget
+        // The host refuses this, but only after it has shut the chat's backend down: never ask it.
+        if (!SessionDetail.canRemoveChat(state, chatUri)) return ManageResult.NotRemovable
         if (!confirmed(ApprovalRequest(chat.title.ifBlank { "Untitled chat" }, null, title = "Remove this chat?"))) return ManageResult.NotConfirmed
         // Looked up again after the check: a chat that went away meanwhile is not removed blind.
         if (!allowed() || sessionState(sessionUri)?.chats?.any { it.resource == chatUri } != true) return ManageResult.NoSuchTarget
@@ -239,6 +245,7 @@ object ManageMessages {
         is ManageResult.Unconfirmed -> InteractMessages.describe(result.outcome)
         ManageResult.NotAllowed -> "This app is not allowed to do that right now."
         ManageResult.NoSuchTarget -> "That is no longer there, or is not ready yet."
+        ManageResult.NotRemovable -> "This is the session's main chat, which the host does not remove on its own. Remove the whole session instead."
         ManageResult.InvalidChoice -> "The host does not offer that agent or folder."
         ManageResult.NotConfirmed -> "Not done: the device check was not completed."
         // The host's own words are untrusted display text: bounded, and shown as plain text.

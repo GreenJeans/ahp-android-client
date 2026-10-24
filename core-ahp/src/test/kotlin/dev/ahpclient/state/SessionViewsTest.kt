@@ -158,7 +158,7 @@ class SessionDetailTest {
         assertEquals("copilotcli", d.provider)
         assertEquals("repo", d.project)
         assertEquals(listOf("file:///work/repo").map(::displayPath), d.workingDirectories)
-        assertEquals(listOf(ChatRow("ahp-chat://default/x", "Main", ActivityState.NEEDS_INPUT, null, "1 min ago")), d.chats)
+        assertEquals(listOf(ChatRow("ahp-chat://default/x", "Main", ActivityState.NEEDS_INPUT, null, "1 min ago", removable = false)), d.chats, "a lone chat is the main one")
         assertEquals(emptyList(), d.inputNeeded)
     }
 

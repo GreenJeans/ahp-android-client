@@ -126,11 +126,11 @@ a new decision: `terminal/input`, file writes, and signing in to anything on the
 **Looking after sessions is a second switch**, "Let this app look after sessions", also off by default, with its own dialog. It
 is only ever on while acting for the user is on, is cleared with it (on screen and on disk), is ignored on load without it, and
 is saved before it counts; turning it on or off reconnects under the new tier. It adds `session/isReadChanged`,
-`session/isArchivedChanged` and `changeset/filesReviewChanged` (mark read, archive, mark a file viewed: all reversible, no device check) and four commands: `createChat` (only in a session
+`session/isArchivedChanged` and `changeset/filesReviewChanged` (mark read and mark a file viewed need no check; archiving asks first, because this host may remove the session's working copy with it, but needs no device check) and four commands: `createChat` (only in a session
 the host reports as ready, no check), and `createSession`, `disposeSession` and `disposeChat`, which **do** go through the same
-device check, looked up again after the prompt. Removing asks first and offers archiving as the safe alternative. A new session
-can only use an agent the host lists and a folder one of the host's own sessions already uses, so nothing the host did not offer is
-sent. None of the controls exist on a connection that is not on the `MANAGE` tier. The three switches (monitoring, acting,
+device check, looked up again after the prompt. Removing asks first and offers archiving as the gentler alternative. A new session
+can only use an agent the host lists and a folder one of the host's own sessions already uses (most recent first, eight shown and the rest one tap away, never a working copy of a project: its project folder is offered instead), so nothing the host did not offer is
+sent. None of the controls exist on a connection that is not on the `MANAGE` tier. A session's main chat (and a lone chat) has no Remove button, because the host refuses it, but only after it has shut the chat down. The three switches (monitoring, acting,
 managing) sit behind one collapsed "Settings" row that says what is on.
 
 **A new session's settings** come from the host: once an agent and folder are chosen, the dialog asks it (`resolveSessionConfig`,
@@ -157,13 +157,13 @@ box). It rides on the message actions the interact tier already allows and adds 
 exactly among the options the host listed are sent, and a pick the host stops offering is dropped instead of sent.
 
 **Approving from a notification.** While monitoring is on, the "needs your input" notification for a session that waits on
-exactly one plain tool call (the host offered no options of its own, and the chat is one the session lists) has Deny and
-Approve buttons, on its lock-screen version too, and only while acting for the user is on. The buttons carry only which call
+exactly one tool call in a chat the session lists has buttons: a plain Deny and Approve when the host offered no options of its own,
+or else the host's own options in its own words (at most three, the refusal first), on its lock-screen version too, and only while acting for the user is on. The buttons carry only which call and option
 to decide; the live chat is what says whether it can still be decided, through the same `ChatInteractor` checks as on screen.
 Deny needs no check and works from the lock screen. Approve starts a screenless activity so the device check has somewhere to
 appear (after unlocking, on a locked phone), and the prompt names the tool before anything is sent. The activity and the Deny
 receiver are not exported and their intents are immutable, so only this app's own notification can reach them. A question,
-a tool with options of the host's own, a session waiting on more than one thing, and a tool's output are decided in the app.
+a session waiting on more than one thing, and a tool's output are decided in the app. An option is only sent if the host offers it now and means what the button says, and the device check names it ("Your choice: Allow in this session").
 
 When the outcome of an action is unknown (no echo in time, or the connection dropped first) the message stays in the box
 with a warning not to send it twice, because resending would duplicate it.

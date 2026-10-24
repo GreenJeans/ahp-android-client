@@ -44,6 +44,7 @@ import dev.ahpclient.state.ConfigOffer
 import dev.ahpclient.state.ConfigPick
 import dev.ahpclient.state.ManageMessages
 import dev.ahpclient.state.ManageResult
+import dev.ahpclient.state.RecentFolders
 import dev.ahpclient.state.SessionConfigForm
 import dev.ahpclient.state.SessionDetail
 import dev.ahpclient.state.SessionPhase
@@ -179,6 +180,8 @@ private fun NewSessionDialog(manage: ManageActionsUi, onDismiss: () -> Unit, onC
     var loading by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<String?>(null) }
+    var showAllFolders by rememberSaveable { mutableStateOf(false) }
+    val shownFolders = if (showAllFolders) manage.folders else manage.folders.take(RecentFolders.SHOWN)
     val scope = rememberCoroutineScope()
 
     // Asked again whenever the agent, folder or a choice changes: the host's list of settings can depend on all three.
@@ -233,7 +236,7 @@ private fun NewSessionDialog(manage: ManageActionsUi, onDismiss: () -> Unit, onC
                 if (manage.folders.isEmpty()) {
                     Text("No folders yet. Start a session in VS Code first; this app only offers folders your sessions already use.", modifier = Modifier.testTag("no_folders"))
                 }
-                manage.folders.forEach { path ->
+                shownFolders.forEach { path ->
                     ChoiceRow(displayPath(path).take(MAX_SHOWN), folder == path, "folder_$path") {
                         if (folder != path) {
                             folder = path
@@ -241,6 +244,11 @@ private fun NewSessionDialog(manage: ManageActionsUi, onDismiss: () -> Unit, onC
                             form = null
                             settingsNote = null
                         }
+                    }
+                }
+                if (shownFolders.size < manage.folders.size) {
+                    TextButton(onClick = { showAllFolders = true }, modifier = Modifier.heightIn(min = 48.dp).testTag("folders_show_all")) {
+                        Text("Show ${manage.folders.size - shownFolders.size} more folders")
                     }
                 }
                 form?.let { current -> SettingsSection(current, picks, missing) { id, pick -> picks = picks + (id to pick) } }
@@ -332,13 +340,15 @@ private fun ChoiceRow(label: String, selected: Boolean, tag: String, onSelect: (
 
 /**
  * The buttons that look after one open session: mark it read or unread, archive or restore it, start a chat (once it is
- * ready) and remove it. Removing asks first, and then for the device check. The words are what happened, in plain terms.
+ * ready) and remove it. Archiving and removing ask first (archiving may take the host's working copy of the project with it),
+ * and removing then asks for the device check. The words are what happened, in plain terms.
  */
 @Composable
 fun SessionManageBar(detail: SessionDetail, sessionUri: String, manage: ManageActionsUi, onRemoved: () -> Unit, modifier: Modifier = Modifier) {
     var busy by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<String?>(null) }
     var confirmRemove by rememberSaveable { mutableStateOf(false) }
+    var confirmArchive by rememberSaveable { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     fun run(call: suspend () -> ManageResult, then: (ManageResult) -> Unit = {}) {
         scope.launch {
@@ -355,7 +365,11 @@ fun SessionManageBar(detail: SessionDetail, sessionUri: String, manage: ManageAc
             OutlinedButton(onClick = { run({ manage.setRead(sessionUri, !detail.isRead) }) }, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp).testTag("toggle_read")) {
                 Text(if (detail.isRead) "Mark unread" else "Mark read")
             }
-            OutlinedButton(onClick = { run({ manage.setArchived(sessionUri, !detail.isArchived) }) }, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp).testTag("toggle_archive")) {
+            OutlinedButton(
+                onClick = { if (detail.isArchived) run({ manage.setArchived(sessionUri, false) }) else confirmArchive = true },
+                enabled = !busy,
+                modifier = Modifier.heightIn(min = 48.dp).testTag("toggle_archive"),
+            ) {
                 Text(if (detail.isArchived) "Restore" else "Archive")
             }
         }
@@ -368,6 +382,24 @@ fun SessionManageBar(detail: SessionDetail, sessionUri: String, manage: ManageAc
             OutlinedButton(onClick = { confirmRemove = true }, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp).testTag("remove_session")) { Text("Remove session…") }
         }
         ManageNotice(notice, "manage_notice")
+    }
+    if (confirmArchive) {
+        AlertDialog(
+            onDismissRequest = { confirmArchive = false },
+            title = { Text("Archive this session?") },
+            text = {
+                Text(
+                    "\"${detail.title.take(MAX_SHOWN)}\" moves to the archive. If it has its own working copy on your computer (a git worktree), " +
+                        "the host may remove that folder and keep any unsaved changes as a commit on its branch. Restoring the session later does " +
+                        "not bring the folder back.",
+                    modifier = Modifier.testTag("archive_dialog_text"),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { confirmArchive = false; run({ manage.setArchived(sessionUri, true) }) }, modifier = Modifier.testTag("archive_confirm")) { Text("Archive") }
+            },
+            dismissButton = { TextButton(onClick = { confirmArchive = false }, modifier = Modifier.testTag("archive_cancel")) { Text("Keep it") } },
+        )
     }
     if (confirmRemove) {
         ConfirmRemoveDialog(

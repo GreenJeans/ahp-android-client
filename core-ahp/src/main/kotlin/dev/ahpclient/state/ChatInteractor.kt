@@ -17,11 +17,23 @@ import kotlinx.coroutines.CancellationException
 /**
  * What the person is about to allow. Shown by the device check; it is display text and never sent anywhere. [forResult] is
  * set when it is the agent seeing a tool's output rather than running the tool. [title] is the question the prompt asks, for
- * the few things that are not a tool call (starting or removing a session).
+ * the few things that are not a tool call (starting or removing a session). [choice] is the label of the host's own option the
+ * person picked ("Allow in this session"), so the prompt says how much is being allowed, not only which tool.
  */
-data class ApprovalRequest(val toolName: String, val summary: String?, val forResult: Boolean = false, val title: String = TOOL_TITLE) {
+data class ApprovalRequest(
+    val toolName: String,
+    val summary: String?,
+    val forResult: Boolean = false,
+    val title: String = TOOL_TITLE,
+    val choice: String? = null,
+) {
+    /** What the prompt's description says: the picked option first, so a cut never hides it, then the tool's summary. */
+    val description: String?
+        get() = listOfNotNull(choice?.takeIf { it.isNotBlank() }?.let { "Your choice: ${it.take(MAX_CHOICE)}" }, summary).joinToString("\n").ifBlank { null }
+
     companion object {
         const val TOOL_TITLE = "Approve this tool call?"
+        private const val MAX_CHOICE = 60
     }
 }
 
@@ -213,7 +225,8 @@ class ChatInteractor(
     /** Allows a waiting tool call, after the device check. [optionId] is one of the host's own options, if it offered any. */
     suspend fun approve(toolCallId: String, optionId: String? = null): InteractResult {
         val pending = lookup(toolCallId, optionId, approves = true) ?: return refusal()
-        if (!confirmed(ApprovalRequest(pending.toolName, pending.summary))) return InteractResult.NotConfirmed
+        val picked = optionId?.let { id -> pending.choices.firstOrNull { it.optionId == id }?.label }
+        if (!confirmed(ApprovalRequest(pending.toolName, pending.summary, choice = picked))) return InteractResult.NotConfirmed
         // The person took their time: look again, so a call that finished or was answered elsewhere is not approved blind.
         val current = lookup(toolCallId, optionId, approves = true) ?: return refusal()
         return deliver(ChatActions.approveTool(current.turnId, toolCallId, optionId))

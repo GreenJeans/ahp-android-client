@@ -38,9 +38,9 @@ class SessionManagerTest {
     private fun agent(provider: String, name: String) =
         Ahp.json.decodeFromString(AgentInfo.serializer(), """{"provider":"$provider","displayName":"$name","description":"d","models":[]}""")
 
-    private fun state(lifecycle: String, vararg chats: Pair<String, String>) = Ahp.json.decodeFromString(
+    private fun state(lifecycle: String, vararg chats: Pair<String, String>, defaultChat: String? = null) = Ahp.json.decodeFromString(
         SessionState.serializer(),
-        """{"provider":"copilotcli","title":"T","status":1,"lifecycle":"$lifecycle","activeClients":[],
+        """{"provider":"copilotcli","title":"T","status":1,"lifecycle":"$lifecycle","activeClients":[]${defaultChat?.let { ""","defaultChat":"$it"""" }.orEmpty()},
             "chats":[${chats.joinToString(",") { """{"resource":"${it.first}","title":"${it.second}","status":1,"modifiedAt":"2026-10-26T10:29:00.000Z"}""" }}]}""",
     )
 
@@ -523,6 +523,42 @@ class SessionManagerTest {
     }
 
     @Test
+    fun `the session's main chat is never removed, and is not even asked about`() = runTest {
+        val rig = Rig()
+        rig.states[s1] = state("ready", c1 to "Main", c2 to "Side", defaultChat = c1)
+
+        assertEquals(ManageResult.NotRemovable, rig.manager.disposeChat(s1, c1))
+
+        assertTrue(rig.asked.isEmpty(), "no device check for something that cannot be done")
+        assertTrue(rig.commands.calls.isEmpty())
+        assertEquals(ManageResult.Done(), rig.manager.disposeChat(s1, c2), "its other chat still goes")
+    }
+
+    @Test
+    fun `a session's only chat is its main chat, so it is not removed either`() = runTest {
+        val rig = Rig()
+        rig.states[s1] = state("ready", c1 to "Main")
+
+        assertEquals(ManageResult.NotRemovable, rig.manager.disposeChat(s1, c1))
+
+        assertTrue(rig.asked.isEmpty())
+        assertTrue(rig.commands.calls.isEmpty())
+    }
+
+    @Test
+    fun `the chat list marks the main chat and a lone chat as not removable`() {
+        val now = java.time.Instant.parse("2026-10-26T10:30:00Z")
+
+        val two = SessionDetail.from(state("ready", c1 to "Main", c2 to "Side", defaultChat = c1), now)
+        val alone = SessionDetail.from(state("ready", c1 to "Main"), now)
+        val unknownMain = SessionDetail.from(state("ready", c1 to "Main", c2 to "Side"), now)
+
+        assertEquals(listOf(false, true), two.chats.map { it.removable })
+        assertEquals(listOf(false), alone.chats.map { it.removable })
+        assertEquals(listOf(true, true), unknownMain.chats.map { it.removable }, "with no main chat named, more than one chat can go")
+    }
+
+    @Test
     fun `removing a chat that fails the device check or went away meanwhile sends nothing`() = runTest {
         val refused = Rig().apply { answer = false }
         assertEquals(ManageResult.NotConfirmed, refused.manager.disposeChat(s1, c1))
@@ -574,7 +610,7 @@ class SessionManagerTest {
     fun `every result has words, the host's are clipped, and only Done says nothing`() {
         assertNull(ManageMessages.describe(ManageResult.Done("x")))
         listOf(
-            ManageResult.NotAllowed, ManageResult.NoSuchTarget, ManageResult.InvalidChoice, ManageResult.NotConfirmed,
+            ManageResult.NotAllowed, ManageResult.NoSuchTarget, ManageResult.NotRemovable, ManageResult.InvalidChoice, ManageResult.NotConfirmed,
             ManageResult.Refused(-32003, "no"), ManageResult.NotSent(IOException()), ManageResult.Unconfirmed(DispatchOutcome.NoReply),
         ).forEach { assertTrue(!ManageMessages.describe(it).isNullOrBlank(), "$it") }
         val text = ManageMessages.describe(ManageResult.Refused(-32003, "x".repeat(5_000)))!!

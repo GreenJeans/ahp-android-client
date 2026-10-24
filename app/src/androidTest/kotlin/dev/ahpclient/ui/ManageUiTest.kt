@@ -580,6 +580,46 @@ class ManageUiTest {
         assertTrue(calls.sessions.isEmpty())
     }
 
+    @Test
+    fun onlyTheMostRecentFoldersAreShownAtFirstAndTheRestOnRequest() {
+        val calls = Calls()
+        val folders = (1..12).map { "file:///work/f$it" }
+        showNewSession(calls, actions(calls, folders = folders))
+
+        rule.onNodeWithTag("folder_file:///work/f1").assertExists()
+        rule.onNodeWithTag("folder_file:///work/f8").assertExists()
+        rule.onNodeWithTag("folder_file:///work/f9").assertDoesNotExist()
+        rule.onNodeWithTag("folders_show_all").performScrollTo().assertTextEquals("Show 4 more folders").performClick()
+
+        rule.onNodeWithTag("folder_file:///work/f12").assertExists()
+        rule.onNodeWithTag("folders_show_all").assertDoesNotExist()
+    }
+
+    @Test
+    fun aFolderFromTheRestCanBePickedAndIsTheOneSent() {
+        val calls = Calls().apply { created = "ahp-session:/new" }
+        val folders = (1..12).map { "file:///work/f$it" }
+        showNewSession(calls, actions(calls, folders = folders))
+
+        rule.onNodeWithTag("folders_show_all").performScrollTo().performClick()
+        rule.onNodeWithTag("agent_claude").performScrollTo().performClick()
+        rule.onNodeWithTag("folder_file:///work/f11").performScrollTo().performClick()
+        rule.onNodeWithTag("folder_file:///work/f11").assertIsSelected()
+        rule.onNodeWithTag("new_session_start").assertIsEnabled().performClick()
+
+        rule.waitUntil(5_000) { calls.sessions.isNotEmpty() }
+        assertEquals(listOf("claude" to "file:///work/f11"), calls.sessions)
+    }
+
+    @Test
+    fun withEightFoldersOrFewerThereIsNothingMoreToShow() {
+        val calls = Calls()
+        showNewSession(calls, actions(calls, folders = (1..8).map { "file:///work/f$it" }))
+
+        rule.onNodeWithTag("folder_file:///work/f8").assertExists()
+        rule.onNodeWithTag("folders_show_all").assertDoesNotExist()
+    }
+
     // ---- one session ------------------------------------------------------------------------------------------
 
     private fun showBar(calls: Calls, detail: SessionDetail = detail(), onRemoved: () -> Unit = {}) {
@@ -592,9 +632,44 @@ class ManageUiTest {
         showBar(unread, detail(read = false, archived = false))
         rule.onNodeWithTag("toggle_read").assertTextEquals("Mark read").performClick()
         rule.onNodeWithTag("toggle_archive").assertTextEquals("Archive").performClick()
+        rule.onNodeWithTag("archive_confirm").performClick()
         rule.waitUntil(5_000) { unread.read.isNotEmpty() && unread.archived.isNotEmpty() }
         assertEquals(listOf(uri to true), unread.read)
         assertEquals(listOf(uri to true), unread.archived)
+    }
+
+    @Test
+    fun archivingAsksFirstAndSaysWhatTheHostMayDoToTheWorkingCopy() {
+        val calls = Calls()
+        showBar(calls)
+
+        rule.onNodeWithTag("toggle_archive").performClick()
+        rule.onNodeWithTag("archive_dialog_text")
+            .assertTextContains("Fix the build", substring = true)
+            .assertTextContains("working copy", substring = true)
+            .assertTextContains("not bring the folder back", substring = true)
+        assertTrue("nothing is sent before the answer", calls.archived.isEmpty())
+
+        rule.onNodeWithTag("archive_cancel").performClick()
+        rule.onNodeWithTag("archive_dialog_text").assertDoesNotExist()
+        assertTrue(calls.archived.isEmpty())
+
+        rule.onNodeWithTag("toggle_archive").performClick()
+        rule.onNodeWithTag("archive_confirm").performClick()
+        rule.waitUntil(5_000) { calls.archived.isNotEmpty() }
+        assertEquals(listOf(uri to true), calls.archived)
+    }
+
+    @Test
+    fun restoringASessionNeedsNoQuestion() {
+        val calls = Calls()
+        showBar(calls, detail(archived = true))
+
+        rule.onNodeWithTag("toggle_archive").performClick()
+
+        rule.waitUntil(5_000) { calls.archived.isNotEmpty() }
+        rule.onNodeWithTag("archive_dialog_text").assertDoesNotExist()
+        assertEquals(listOf(uri to false), calls.archived)
     }
 
     @Test
@@ -633,7 +708,7 @@ class ManageUiTest {
         val calls = Calls().apply { result = ManageResult.Refused(-32009, "not yours") }
         showBar(calls)
 
-        rule.onNodeWithTag("toggle_archive").performClick()
+        rule.onNodeWithTag("toggle_read").performClick()
 
         rule.waitUntil(5_000) { rule.onAllNodesCount("manage_notice") == 1 }
         rule.onNodeWithTag("manage_notice").assertTextContains("The host refused it: not yours")
@@ -696,8 +771,9 @@ class ManageUiTest {
 
     private fun state(lifecycle: String, extra: String = ""): SessionState = Ahp.json.decodeFromString(
         SessionState.serializer(),
-        """{"provider":"copilotcli","title":"Fix the build","status":1,"lifecycle":"$lifecycle","activeClients":[],
-            "chats":[{"resource":"ahp-chat://default/x","title":"Main chat","status":1,"modifiedAt":"2026-10-26T10:29:00.000Z"}]$extra}""",
+        """{"provider":"copilotcli","title":"Fix the build","status":1,"lifecycle":"$lifecycle","activeClients":[],"defaultChat":"ahp-chat://default/x",
+            "chats":[{"resource":"ahp-chat://default/x","title":"Main chat","status":1,"modifiedAt":"2026-10-26T10:29:00.000Z"},
+                     {"resource":"ahp-chat://default/y","title":"Side chat","status":1,"modifiedAt":"2026-10-26T10:29:00.000Z"}]$extra}""",
     )
 
     private fun showDetail(state: SessionState, manage: ManageActionsUi?) =
@@ -712,18 +788,32 @@ class ManageUiTest {
     }
 
     @Test
-    fun aDetailThatMayBeManagedShowsTheBarAndARemoveButtonForEachChat() {
+    fun aDetailThatMayBeManagedShowsTheBarAndARemoveButtonForEveryChatButTheMainOne() {
         showDetail(state("ready"), manage = actions(Calls()))
 
         rule.onNodeWithTag("manage_bar").performScrollTo().assertIsDisplayed()
         rule.onNodeWithTag("remove_chat").performScrollTo().assertIsDisplayed()
+        assertEquals("the main chat has none: the host would refuse it", 1, rule.onAllNodesCount("remove_chat"))
     }
 
     @Test
-    fun aSessionStillStartingSaysSo() {
+    fun aSessionsOnlyChatHasNoRemoveButton() {
+        val only: SessionState = Ahp.json.decodeFromString(
+            SessionState.serializer(),
+            """{"provider":"copilotcli","title":"Fix the build","status":1,"lifecycle":"ready","activeClients":[],
+                "chats":[{"resource":"ahp-chat://default/x","title":"Main chat","status":1,"modifiedAt":"2026-10-26T10:29:00.000Z"}]}""",
+        )
+        showDetail(only, manage = actions(Calls()))
+
+        rule.onNodeWithTag("manage_bar").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithTag("remove_chat").assertDoesNotExist()
+    }
+
+    @Test
+    fun aSessionStillStartingSaysSoAndThatItMayBeWaitingForTheFirstMessage() {
         showDetail(state("creating"), manage = actions(Calls()))
 
-        rule.onNodeWithTag("session_starting").assertTextEquals("Starting on the host…")
+        rule.onNodeWithTag("session_starting").assertTextContains("may wait for your first message", substring = true)
         rule.onNodeWithTag("new_chat").performScrollTo().assertIsNotEnabled()
     }
 

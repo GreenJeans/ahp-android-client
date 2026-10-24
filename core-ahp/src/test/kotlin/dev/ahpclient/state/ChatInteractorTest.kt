@@ -401,6 +401,34 @@ class ChatInteractorTest {
     }
 
     @Test
+    fun `the device check names the hosts option that is being approved`() = runTest {
+        val rig = rig(chat(active = activeTurn(pendingCall(options = twoOptions))))
+
+        rig.interactor.approve("c1", "o-session")
+
+        assertEquals("Allow in this session", rig.prompts.single().choice)
+        assertTrue(rig.prompts.single().description!!.startsWith("Your choice: Allow in this session"))
+    }
+
+    @Test
+    fun `an approval with no option names no choice`() = runTest {
+        val rig = rig(chat(active = activeTurn(pendingCall())))
+
+        rig.interactor.approve("c1")
+
+        assertNull(rig.prompts.single().choice)
+    }
+
+    @Test
+    fun `the prompt description puts the choice first, cut short, and skips a blank one`() {
+        assertEquals("Your choice: Allow once\nRun the tests", ApprovalRequest("Run", "Run the tests", choice = "Allow once").description)
+        assertEquals("Run the tests", ApprovalRequest("Run", "Run the tests", choice = "  ").description)
+        assertEquals("Run the tests", ApprovalRequest("Run", "Run the tests").description)
+        assertNull(ApprovalRequest("Run", null).description)
+        assertEquals("Your choice: " + "x".repeat(60), ApprovalRequest("Run", null, choice = "x".repeat(200)).description)
+    }
+
+    @Test
     fun `denying never needs the device check`() = runTest {
         val rig = rig(chat(active = activeTurn(pendingCall()))).apply { gateAnswer = false }
 

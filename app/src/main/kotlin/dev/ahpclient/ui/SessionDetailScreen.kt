@@ -79,7 +79,12 @@ private fun DetailBody(
             if (detail.isArchived) Text("Archived", style = MaterialTheme.typography.labelLarge)
         }
         when (detail.phase) {
-            SessionPhase.CREATING -> Text("Starting on the host…", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.testTag("session_starting").semantics { liveRegion = LiveRegionMode.Polite })
+            // A new session's chat is held back by the host until the first message is sent, so this can stay for as long as it takes to write one.
+            SessionPhase.CREATING -> Text(
+                "Starting on the host. A new session may wait for your first message: open its chat below and send one.",
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.testTag("session_starting").semantics { liveRegion = LiveRegionMode.Polite },
+            )
             SessionPhase.FAILED -> ErrorText(
                 "The host could not start this session." + (detail.creationError?.let { " $it" }.orEmpty()),
                 Modifier.testTag("session_failed"),
@@ -140,7 +145,7 @@ private fun DetailBody(
                         }
                         StatusChip(chat.state)
                     }
-                    if (manage != null && sessionUri.isNotEmpty()) RemoveChatButton(chat.title, sessionUri, chat.uri, manage)
+                    if (manage != null && sessionUri.isNotEmpty() && chat.removable) RemoveChatButton(chat.title, sessionUri, chat.uri, manage)
                 }
             }
         }

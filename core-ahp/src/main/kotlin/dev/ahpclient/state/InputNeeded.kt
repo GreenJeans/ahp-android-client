@@ -1,5 +1,6 @@
 package dev.ahpclient.state
 
+import com.microsoft.agenthostprotocol.generated.ConfirmationOptionKind
 import com.microsoft.agenthostprotocol.generated.SessionInputRequestToolConfirmation
 import com.microsoft.agenthostprotocol.generated.SessionState
 import com.microsoft.agenthostprotocol.generated.SessionSummary
@@ -14,27 +15,60 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
- * The one tool call a notification's Approve and Deny buttons act on: which chat it is in, and which call. It is only
- * ever made by [from], and acting on it still goes through everything an approval on screen goes through.
+ * One of the host's own options on the waiting tool call, as a notification button. [label] is the host's text, so it is
+ * untrusted: plain, one line and short. [approves] says which way it goes; it is checked again against the live chat when
+ * the button is pressed, and an option that now means the opposite, or is gone, is never sent.
  */
-data class ApprovalTarget(val chat: String, val toolCallId: String) {
+data class DecisionOption(val id: String, val label: String, val approves: Boolean)
+
+/**
+ * The one tool call a notification's buttons act on: which chat it is in, and which call. With no [options] the buttons are
+ * a plain Approve and Deny. When the host offered options of its own, they are the buttons, in the host's words, with the
+ * refusal first. It is only ever made by [from], and acting on it still goes through everything an approval on screen goes through.
+ */
+data class ApprovalTarget(val chat: String, val toolCallId: String, val options: List<DecisionOption> = emptyList()) {
     companion object {
         /** No chat address is longer than this; a longer one is never subscribed to. */
         const val MAX_CHAT_URI = 512
 
+        /** A notification has room for three buttons. */
+        const val MAX_BUTTONS = 3
+
+        /** The longest button text; a longer label is cut. */
+        const val MAX_LABEL = 28
+
+        /** The longest option id accepted; a longer one is not offered and not decided. */
+        const val MAX_OPTION_ID = 200
+
         /**
-         * The call a notification may offer to approve or deny, or null when it may not. That is when the session is waiting
-         * on exactly one thing, the thing is a tool call itself (not its output), the host offered no options of its own
-         * to choose between (so a plain approve or deny is what it expects), and the chat it is in is one the session lists.
-         * Anything else is decided in the app, where the person can see it all.
+         * The call a notification may offer to decide, or null when it may not. That is when the session is waiting on exactly
+         * one thing, the thing is a tool call itself (not its output), and the chat it is in is one the session lists. When the
+         * host offered options, the buttons are its first refusal and then its approvals, at most [MAX_BUTTONS]; the rest are
+         * decided in the app, where the person can see them all. Anything else is decided in the app too.
          */
         fun from(state: SessionState): ApprovalTarget? {
             val only = state.inputNeeded.orEmpty().singleOrNull() as? SessionInputRequestToolConfirmation ?: return null
             val call = only.value.toolCall as? ToolCallConfirmationStatePendingConfirmation ?: return null
-            if (!call.value.options.isNullOrEmpty()) return null
             val chat = only.value.chat
             if (chat.isBlank() || chat.length > MAX_CHAT_URI || state.chats.none { it.resource == chat }) return null
-            return ApprovalTarget(chat, call.value.toolCallId)
+            val offered = call.value.options.orEmpty()
+            if (offered.isEmpty()) return ApprovalTarget(chat, call.value.toolCallId)
+            val usable = offered
+                .filter { it.id.isNotBlank() && it.id.length <= MAX_OPTION_ID }
+                .distinctBy { it.id }
+                .map { option ->
+                    val approves = option.kind == ConfirmationOptionKind.APPROVE
+                    DecisionOption(option.id, label(option.label, approves), approves)
+                }
+            val refusal = usable.firstOrNull { !it.approves }
+            val approvals = usable.filter { it.approves }.take(MAX_BUTTONS - if (refusal != null) 1 else 0)
+            val buttons = listOfNotNull(refusal) + approvals
+            return if (buttons.isEmpty()) null else ApprovalTarget(chat, call.value.toolCallId, buttons)
+        }
+
+        private fun label(raw: String, approves: Boolean): String {
+            val oneLine = raw.replace(Regex("\\s+"), " ").trim().ifEmpty { if (approves) "Approve" else "Deny" }
+            return if (oneLine.length <= MAX_LABEL) oneLine else oneLine.take(MAX_LABEL - 1).trimEnd() + "…"
         }
     }
 }

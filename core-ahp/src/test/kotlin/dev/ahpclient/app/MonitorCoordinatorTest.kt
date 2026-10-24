@@ -260,7 +260,7 @@ class MonitorCoordinatorTest {
     }
 
     @Test
-    fun `a tool call with options of the hosts own carries no buttons`() = runTest {
+    fun `a tool call with options of the hosts own carries them as buttons`() = runTest {
         val options = ""","options":[{"id":"o1","label":"Allow once","kind":"approve"},{"id":"o2","label":"Not now","kind":"deny"}]"""
         val rig = rig()
         val host = connect(rig, HostScript(sessionChats = "[${chatSummaryJson(CHAT_A)}]", inputNeeded = approvalIn(CHAT_A, options)))
@@ -270,7 +270,7 @@ class MonitorCoordinatorTest {
         runCurrent()
         advanceTimeBy(3_500)
 
-        assertNull(rig.sink.posted.single().approval)
+        assertEquals(listOf("o2", "o1"), rig.sink.posted.single().approval?.options?.map { it.id })
     }
 
     @Test

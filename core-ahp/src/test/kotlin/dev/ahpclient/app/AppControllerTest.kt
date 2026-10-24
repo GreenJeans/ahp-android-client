@@ -18,6 +18,7 @@ import dev.ahpclient.state.changesetFileJson
 import dev.ahpclient.state.changesetStateJson
 import dev.ahpclient.state.CHAT_B
 import dev.ahpclient.state.ApprovalGate
+import dev.ahpclient.state.ApprovalRequest
 import dev.ahpclient.state.ApprovalTarget
 import dev.ahpclient.state.ChatInteractor
 import dev.ahpclient.state.DispatchOutcome
@@ -1285,6 +1286,87 @@ class AppControllerTest {
 
             assertEquals(InteractResult.NoSuchRequest, controller.decideToolCall(CHAT_A, "some-other-call", approve = true))
             assertEquals(InteractResult.NoSuchRequest, controller.decideToolCall(CHAT_A, "some-other-call", approve = false))
+            assertTrue(dispatches().isEmpty())
+        }
+    }
+
+    // A host that offers options of its own on the waiting call (as VS Code's Copilot agent does).
+    private val pendingToolWithOptions =
+        """{"id":"t9","message":{"text":"go","origin":{"kind":"user"}},"startedAt":"2026-10-22T10:05:00.000Z","responseParts":[
+            {"kind":"toolCall","toolCall":{"status":"pending-confirmation","toolCallId":"c1","toolName":"run_in_terminal","displayName":"Run in Terminal",
+            "invocationMessage":"Run it","toolInput":"{}","confirmationTitle":"Run?",
+            "options":[{"id":"o-allow","label":"Allow once","kind":"approve"},{"id":"o-no","label":"Skip","kind":"deny"}]}}]}"""
+
+    private fun decideWithOptionsScript(clientId: () -> String) = {
+        HostScript(
+            sessionChats = "[${chatSummaryJson(CHAT_A)}]",
+            chatActiveTurn = pendingToolWithOptions,
+            onDispatch = { echoOf(it, SNAPSHOT_SEQ + 1, clientId = clientId()) },
+        )
+    }
+
+    private fun Rig.dispatchedActions() = dispatches().map { it["params"]!!.jsonObject["action"]!!.jsonObject }
+
+    @Test
+    fun `a notification button for one of the hosts options sends that option, and the device check names it`() = runTest {
+        var clientId = ""
+        val asked = mutableListOf<ApprovalRequest>()
+        withRig(script = decideWithOptionsScript { clientId }, interaction = allowed, approvalGate = ApprovalGate { asked += it; true }) {
+            val connected = connectToFirstHost()
+            clientId = "client-${connected.host.tunnelId}"
+            connected.session.canInteract.first { it }
+
+            assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), controller.decideToolCall(CHAT_A, "c1", approve = true, optionId = "o-allow"))
+
+            assertEquals("Allow once", asked.single().choice)
+            val action = dispatchedActions().single()
+            assertEquals("o-allow", action["selectedOptionId"]!!.jsonPrimitive.content)
+            assertEquals(true, action["approved"]!!.jsonPrimitive.boolean)
+        }
+    }
+
+    @Test
+    fun `a refusing option from a notification needs no device check`() = runTest {
+        var clientId = ""
+        withRig(script = decideWithOptionsScript { clientId }, interaction = allowed, approvalGate = ApprovalGate { false }) {
+            val connected = connectToFirstHost()
+            clientId = "client-${connected.host.tunnelId}"
+            connected.session.canInteract.first { it }
+
+            assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), controller.decideToolCall(CHAT_A, "c1", approve = false, optionId = "o-no"))
+
+            val action = dispatchedActions().single()
+            assertEquals("o-no", action["selectedOptionId"]!!.jsonPrimitive.content)
+            assertEquals(false, action["approved"]!!.jsonPrimitive.boolean)
+        }
+    }
+
+    @Test
+    fun `a notification button cannot send an option the host did not offer, or one that means the opposite`() = runTest {
+        var clientId = ""
+        withRig(script = decideWithOptionsScript { clientId }, interaction = allowed, approvalGate = ApprovalGate { true }) {
+            val connected = connectToFirstHost()
+            clientId = "client-${connected.host.tunnelId}"
+            connected.session.canInteract.first { it }
+
+            assertEquals(InteractResult.NoSuchRequest, controller.decideToolCall(CHAT_A, "c1", approve = true, optionId = "o-no"), "a refusal cannot approve")
+            assertEquals(InteractResult.NoSuchRequest, controller.decideToolCall(CHAT_A, "c1", approve = false, optionId = "o-allow"), "an approval cannot refuse")
+            assertEquals(InteractResult.NoSuchRequest, controller.decideToolCall(CHAT_A, "c1", approve = true, optionId = "made-up"))
+            assertEquals(InteractResult.NotAllowed, controller.decideToolCall(CHAT_A, "c1", approve = true, optionId = ""))
+            assertEquals(InteractResult.NotAllowed, controller.decideToolCall(CHAT_A, "c1", approve = true, optionId = "o".repeat(ApprovalTarget.MAX_OPTION_ID + 1)))
+            assertTrue(dispatches().isEmpty())
+        }
+    }
+
+    @Test
+    fun `an option sent for a call that offers none is refused`() = runTest {
+        var clientId = ""
+        withRig(script = decideScript { clientId }, interaction = allowed, approvalGate = ApprovalGate { true }) {
+            val connected = connectToFirstHost()
+            clientId = "client-${connected.host.tunnelId}"
+            connected.session.canInteract.first { it }
+
+            assertEquals(InteractResult.NoSuchRequest, controller.decideToolCall(CHAT_A, "c1", approve = true, optionId = "o-allow"))
             assertTrue(dispatches().isEmpty())
         }
     }

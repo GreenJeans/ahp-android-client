@@ -39,8 +39,61 @@ class ApprovalTargetTest {
     }
 
     @Test
-    fun `a call with options of the hosts own is decided in the app`() {
+    fun `the hosts own options become the buttons, the refusal first`() {
         val options = ""","options":[{"id":"o1","label":"Allow once","kind":"approve"},{"id":"o2","label":"Not now","kind":"deny"}]"""
+
+        assertEquals(
+            ApprovalTarget(chat, "c1", listOf(DecisionOption("o2", "Not now", approves = false), DecisionOption("o1", "Allow once", approves = true))),
+            ApprovalTarget.from(state("[${tool(call = pendingCall(options = options))}]")),
+        )
+    }
+
+    @Test
+    fun `a notification has room for three buttons, the first refusal and then the first approvals`() {
+        val options = ""","options":[{"id":"a1","label":"One","kind":"approve"},{"id":"a2","label":"Two","kind":"approve"},{"id":"a3","label":"Three","kind":"approve"},
+            {"id":"d1","label":"No","kind":"deny"},{"id":"d2","label":"Never","kind":"deny"}]"""
+
+        val target = ApprovalTarget.from(state("[${tool(call = pendingCall(options = options))}]"))
+
+        assertEquals(listOf("d1", "a1", "a2"), target?.options?.map { it.id })
+        assertEquals(ApprovalTarget.MAX_BUTTONS, target?.options?.size)
+    }
+
+    @Test
+    fun `with no refusal offered the approvals alone are the buttons, at most three`() {
+        val options = ""","options":[{"id":"a1","label":"One","kind":"approve"},{"id":"a2","label":"Two","kind":"approve"},
+            {"id":"a3","label":"Three","kind":"approve"},{"id":"a4","label":"Four","kind":"approve"}]"""
+
+        assertEquals(listOf("a1", "a2", "a3"), ApprovalTarget.from(state("[${tool(call = pendingCall(options = options))}]"))?.options?.map { it.id })
+    }
+
+    @Test
+    fun `a label is one short line, and a blank one falls back to the plain word`() {
+        val options = ""","options":[{"id":"a1","label":"  Allow\n   everything  in this folder for ever and ever  ","kind":"approve"},
+            {"id":"a2","label":"   ","kind":"approve"},{"id":"d1","label":"","kind":"deny"}]"""
+
+        val labels = ApprovalTarget.from(state("[${tool(call = pendingCall(options = options))}]"))?.options?.associate { it.id to it.label }
+
+        assertEquals("Deny", labels?.get("d1"))
+        assertEquals("Approve", labels?.get("a2"))
+        assertEquals(ApprovalTarget.MAX_LABEL, labels?.get("a1")?.length)
+        assertEquals("Allow everything in this fo…", labels?.get("a1"))
+    }
+
+    @Test
+    fun `an option without a usable id is not offered, and a repeated id only once`() {
+        val tooLong = "o".repeat(ApprovalTarget.MAX_OPTION_ID + 1)
+        val options = ""","options":[{"id":"","label":"Blank","kind":"approve"},{"id":"$tooLong","label":"Long","kind":"approve"},
+            {"id":"a1","label":"First","kind":"approve"},{"id":"a1","label":"Again","kind":"approve"}]"""
+
+        val target = ApprovalTarget.from(state("[${tool(call = pendingCall(options = options))}]"))
+
+        assertEquals(listOf(DecisionOption("a1", "First", approves = true)), target?.options)
+    }
+
+    @Test
+    fun `options that are all unusable leave no buttons at all`() {
+        val options = ""","options":[{"id":"","label":"Blank","kind":"approve"}]"""
 
         assertNull(ApprovalTarget.from(state("[${tool(call = pendingCall(options = options))}]")))
     }

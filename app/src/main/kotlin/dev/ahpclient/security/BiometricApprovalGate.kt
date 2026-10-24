@@ -65,7 +65,7 @@ class BiometricApprovalGate : ApprovalGate {
             val info = BiometricPrompt.PromptInfo.Builder()
                 .setTitle(request.title.take(MAX_TITLE))
                 .setSubtitle(request.toolName.take(MAX_TITLE))
-                .setDescription(request.summary?.take(MAX_SUMMARY))
+                .setDescription(request.description?.take(MAX_SUMMARY))
                 .setAllowedAuthenticators(AUTHENTICATORS)
                 .setConfirmationRequired(true)
                 .build()

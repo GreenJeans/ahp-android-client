@@ -33,11 +33,12 @@ class ApproveActivity : FragmentActivity() {
         started = true
         val chat = intent.getStringExtra(EXTRA_CHAT_URI)
         val call = intent.getStringExtra(EXTRA_TOOL_CALL_ID)
+        val option = intent.getStringExtra(EXTRA_OPTION_ID)
         if (chat == null || call == null) {
             finish()
             return
         }
-        container.decideFromNotification(chat, call, approve = true) { result ->
+        container.decideFromNotification(chat, call, approve = true, optionId = option) { result ->
             Toast.makeText(applicationContext, InteractMessages.describeDecision(approved = true, result), Toast.LENGTH_LONG).show()
             finish()
         }

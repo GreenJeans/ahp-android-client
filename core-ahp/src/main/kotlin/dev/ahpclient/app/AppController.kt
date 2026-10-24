@@ -348,17 +348,19 @@ class AppController(
      * as long as it takes to read the call and send the answer, then closed again (a chat already open is only shared, never
      * closed). The same [ChatInteractor] that the chat screen uses does the deciding, so everything that guards it there guards
      * this: the write tier must be on, the call must still be waiting in the live chat, an approval goes through the device
-     * check (and is looked up again after it), denying needs none, and nothing counts as done until the host echoes it.
+     * check (and is looked up again after it), denying needs none, and nothing counts as done until the host echoes it. With an
+     * [optionId] it is one of the host's own options, and only if the host offers it now and it means what the button says.
      */
-    suspend fun decideToolCall(chatUri: String, toolCallId: String, approve: Boolean): InteractResult {
+    suspend fun decideToolCall(chatUri: String, toolCallId: String, approve: Boolean, optionId: String? = null): InteractResult {
         val session = (_state.value as? AppState.Connected)?.session ?: return InteractResult.NotAllowed
         if (chatUri.isBlank() || chatUri.length > ApprovalTarget.MAX_CHAT_URI) return InteractResult.NotAllowed
+        if (optionId != null && (optionId.isBlank() || optionId.length > ApprovalTarget.MAX_OPTION_ID)) return InteractResult.NotAllowed
         val store = session.openChat(chatUri)
         try {
             withTimeoutOrNull(CHAT_LOAD_MS) { store.state.first { it != null } }
                 ?: return InteractResult.NotSent(IOException("The chat did not load in time"))
             val interactor = interactorFor(session, chatUri, store)
-            return if (approve) interactor.approve(toolCallId) else interactor.deny(toolCallId)
+            return if (approve) interactor.approve(toolCallId, optionId) else interactor.deny(toolCallId, optionId)
         } finally {
             session.closeChat(chatUri)
         }

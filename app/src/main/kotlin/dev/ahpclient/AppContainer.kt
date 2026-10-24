@@ -99,10 +99,10 @@ class AppContainer(context: Context) {
      * Decides one waiting tool call for a notification button, off the main thread, and reports back on it. The decision
      * itself is [AppController.decideToolCall]: nothing here adds a way around its checks.
      */
-    fun decideFromNotification(chatUri: String, toolCallId: String, approve: Boolean, done: (InteractResult) -> Unit) {
+    fun decideFromNotification(chatUri: String, toolCallId: String, approve: Boolean, optionId: String?, done: (InteractResult) -> Unit) {
         appScope.launch {
             val result = try {
-                controller.decideToolCall(chatUri, toolCallId, approve)
+                controller.decideToolCall(chatUri, toolCallId, approve, optionId)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
