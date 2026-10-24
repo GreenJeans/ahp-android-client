@@ -98,6 +98,47 @@ class SessionListModelTest {
         assertEquals(0, m.rows.size)
         assertEquals("", m.summary)
     }
+
+    private fun search(query: String, showArchived: Boolean = false) =
+        SessionListModel.from(SessionCatalog.sorted(sessions), showArchived, now, query)
+
+    @Test
+    fun `a search keeps the sessions whose title or second line contains it, ignoring case`() {
+        assertEquals(listOf("Session D"), search("session d").rows.map { it.title })
+        assertEquals(listOf("Session C"), search("REPO-C").rows.map { it.title })
+    }
+
+    @Test
+    fun `a blank search changes nothing, and the query is kept trimmed`() {
+        assertEquals(model().rows, search("   ").rows)
+        assertEquals("", search("   ").query)
+        assertEquals("repo-c", search("  repo-c ").query)
+    }
+
+    @Test
+    fun `a search leaves the counts and the summary as the host sees them`() {
+        val m = search("Session B")
+
+        assertEquals(1, m.rows.size)
+        assertEquals(model().summary, m.summary)
+        assertEquals(1, m.needsInput)
+        assertEquals(6, m.total)
+    }
+
+    @Test
+    fun `a search that matches nothing is an empty list that still knows how many sessions there are`() {
+        val m = search("no such session")
+
+        assertEquals(0, m.rows.size)
+        assertEquals(6, m.total)
+        assertEquals("no such session", m.query)
+    }
+
+    @Test
+    fun `a search only looks inside what the archive filter lets through`() {
+        assertTrue(search("Session A").rows.isEmpty())
+        assertEquals(1, search("Session A", showArchived = true).rows.size)
+    }
 }
 
 class RelativeTimeTest {

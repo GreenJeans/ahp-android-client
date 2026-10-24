@@ -3,11 +3,15 @@ package dev.ahpclient.ui
 import androidx.activity.compose.BackHandler
 import android.widget.Toast
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -45,6 +49,8 @@ fun AppRoot(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var showArchived by rememberSaveable { mutableStateOf(false) }
+    var query by rememberSaveable { mutableStateOf("") }
+    var settingsOpen by rememberSaveable { mutableStateOf(false) }
     // The label of the changeset being opened, kept here so the screen can name it; the host's own title is not needed.
     var changesetTitle by rememberSaveable { mutableStateOf<String?>(null) }
     // Kept here, above the screen switch, so the list keeps its scroll position across a trip into a session and back.
@@ -61,11 +67,17 @@ fun AppRoot(
     BackHandler(enabled = changesetOpen && !diffOpen) { controller.closeChangeset() }
     BackHandler(enabled = diffOpen) { controller.closeDiff() }
     BackHandler(enabled = (state as? AppState.SignedOut)?.step is SignInStep.AwaitingApproval) { controller.cancelSignIn() }
+    BackHandler(enabled = settingsOpen) { settingsOpen = false }
+    // Settings belong to the session list: leaving it (into a session, or off the host) closes them.
+    val connected = state is AppState.Connected
+    LaunchedEffect(connected, detailOpen) { if (!connected || detailOpen) settingsOpen = false }
 
     AhpTheme {
-        // Scaffold applies the system-bar insets, so nothing draws under the status or navigation bar.
-        Scaffold(modifier = Modifier.fillMaxSize()) { padding ->
-            val content = Modifier.padding(padding)
+        // The screens in the new style bring their own bars and apply the system-bar insets themselves. The ones not yet moved
+        // over get the insets from `legacy`, so nothing draws under the status or navigation bar.
+        val legacy = Modifier.windowInsetsPadding(WindowInsets.systemBars)
+        Scaffold(modifier = Modifier.fillMaxSize(), contentWindowInsets = WindowInsets(0, 0, 0, 0)) { padding ->
+            val content = Modifier.padding(padding).then(legacy)
             when (val current = state) {
                 AppState.Restoring -> Box(content.fillMaxSize().testTag("restoring"), contentAlignment = Alignment.Center) { Busy("Loading…") }
                 is AppState.SignedOut -> SignInScreen(current, controller::signIn, controller::cancelSignIn, onOpenGitHub, onCopyCode, content)
@@ -97,31 +109,39 @@ fun AppRoot(
                     if (open == null) {
                         val sessions by current.session.root.sessions.collectAsStateWithLifecycle()
                         val now by rememberNow()
-                        SessionsScreen(
-                            host = current.host,
-                            connection = connection,
-                            sessions = sessions,
-                            now = now,
-                            showArchived = showArchived,
-                            listState = listState,
-                            onToggleArchived = { showArchived = !showArchived },
-                            monitorEnabled = monitorEnabled,
-                            notificationsAllowed = notificationsAllowed,
-                            onMonitorChange = onMonitorChange,
-                            interactionAllowed = interactionAllowed,
-                            interactionSupported = controller.interactionSupported,
-                            onInteractionChange = { on ->
-                                scope.launch { if (!controller.setInteraction(on)) Toast.makeText(context, "Could not save the setting", Toast.LENGTH_SHORT).show() }
-                            },
-                            managementAllowed = managementAllowed,
-                            onManagementChange = { on ->
-                                scope.launch { if (!controller.setManagement(on)) Toast.makeText(context, "Could not save the setting", Toast.LENGTH_SHORT).show() }
-                            },
-                            manage = manageActions,
-                            onOpen = controller::openSession,
-                            onDisconnect = controller::disconnect,
-                            modifier = content,
-                        )
+                        if (settingsOpen) {
+                            SettingsScreen(
+                                onBack = { settingsOpen = false },
+                                monitorEnabled = monitorEnabled,
+                                notificationsAllowed = notificationsAllowed,
+                                onMonitorChange = onMonitorChange,
+                                interactionAllowed = interactionAllowed,
+                                interactionSupported = controller.interactionSupported,
+                                onInteractionChange = { on ->
+                                    scope.launch { if (!controller.setInteraction(on)) Toast.makeText(context, "Could not save the setting", Toast.LENGTH_SHORT).show() }
+                                },
+                                managementAllowed = managementAllowed,
+                                onManagementChange = { on ->
+                                    scope.launch { if (!controller.setManagement(on)) Toast.makeText(context, "Could not save the setting", Toast.LENGTH_SHORT).show() }
+                                },
+                            )
+                        } else {
+                            SessionsScreen(
+                                host = current.host,
+                                connection = connection,
+                                sessions = sessions,
+                                now = now,
+                                showArchived = showArchived,
+                                listState = listState,
+                                onToggleArchived = { showArchived = !showArchived },
+                                onOpen = controller::openSession,
+                                onDisconnect = controller::disconnect,
+                                onOpenSettings = { settingsOpen = true },
+                                manage = manageActions,
+                                query = query,
+                                onQueryChange = { query = it },
+                            )
+                        }
                     } else {
                         val chat = open.chat
                         val changeset = open.changeset

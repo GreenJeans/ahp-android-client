@@ -835,16 +835,28 @@ class ManageUiTest {
         var manage by mutableStateOf<ManageActionsUi?>(null)
         rule.setContent {
             AhpTheme {
-                SessionsScreen(host, ConnState.Online, emptyList(), now, false, rememberLazyListState(), {}, {}, {}, manage = manage, settingsExpanded = true)
+                SessionsScreen(host, ConnState.Online, emptyList(), now, false, rememberLazyListState(), {}, {}, {}, manage = manage)
             }
         }
 
         rule.onNodeWithTag("new_session").assertDoesNotExist()
-        rule.onNodeWithTag("management_toggle").assertIsNotEnabled()
 
         manage = actions(Calls())
         rule.waitForIdle()
         rule.onNodeWithTag("new_session").assertIsDisplayed()
+    }
+
+    @Test
+    fun theManagementSwitchIsOnTheSettingsScreenAndNeedsActingForMeFirst() {
+        var allowed by mutableStateOf(false)
+        rule.setContent { AhpTheme { SettingsScreen({}, interactionAllowed = allowed) } }
+
+        rule.onNodeWithTag("management_toggle").assertIsNotEnabled()
+        rule.onNodeWithTag("management_hint").assertTextContains("turn on", ignoreCase = true, substring = true)
+
+        allowed = true
+        rule.waitForIdle()
+        rule.onNodeWithTag("management_toggle").assertIsEnabled()
     }
 
     private fun androidx.compose.ui.test.junit4.ComposeContentTestRule.onAllNodesCount(tag: String) =
@@ -855,21 +867,21 @@ class ManageUiTest {
         """{"resource":"ahp-session:/$n","provider":"copilotcli","title":"$title","status":$status,"createdAt":"2026-10-20T10:00:00.000Z","modifiedAt":"2026-10-26T10:00:00.000Z"}""",
     )
 
-    // A narrow phone with the long "Show archived (199)" chip and Settings open: what hid the New session button on a real device.
+    // A narrow phone with the long "Show archived (199)" chip: what hid the New session button on a real device.
     private fun showCrowdedList(width: androidx.compose.ui.unit.Dp, height: androidx.compose.ui.unit.Dp) {
         val host = TunnelInfo("t-online", "usw2", "dev-box", 6, 1, listOf(31546))
         val sessions = listOf(listSummary(0, "Visible one", 1), listSummary(1, "Visible two", 1)) + (2..200).map { listSummary(it, "Old $it", 97) }
         rule.setContent {
             AhpTheme {
                 androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.size(width, height)) {
-                    SessionsScreen(host, ConnState.Online, sessions, now, false, rememberLazyListState(), {}, {}, {}, manage = actions(Calls()), settingsExpanded = true)
+                    SessionsScreen(host, ConnState.Online, sessions, now, false, rememberLazyListState(), {}, {}, {}, manage = actions(Calls()))
                 }
             }
         }
     }
 
     @Test
-    fun aLongRowOfHeaderButtonsWrapsInsteadOfPushingNewSessionOffTheScreen() {
+    fun theNewSessionButtonStaysOnTheScreenOnANarrowPhoneWithALongArchivedChip() {
         showCrowdedList(width = 360.dp, height = 800.dp)
 
         rule.onNodeWithTag("archived_toggle").assertIsDisplayed()
@@ -879,7 +891,7 @@ class ManageUiTest {
     }
 
     @Test
-    fun anOpenSettingsSectionNeverSqueezesTheSessionsOutOfTheScreen() {
+    fun aLongListStillScrollsToItsRowsOnASmallScreen() {
         showCrowdedList(width = 360.dp, height = 480.dp)
 
         rule.onNodeWithTag("session_list").performScrollToNode(androidx.compose.ui.test.hasText("Visible one"))

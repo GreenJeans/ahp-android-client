@@ -25,6 +25,8 @@ data class SessionListModel(
     val hiddenArchived: Int,
     /** All sessions the host reported, shown or not. */
     val total: Int,
+    /** The search the rows were narrowed by, trimmed; empty when none. The counts above ignore it, so the summary stays true to the host. */
+    val query: String = "",
 ) {
     /** One line for the top of the screen, for example "2 need input · 1 in progress". Empty when nothing is happening. */
     val summary: String
@@ -39,18 +41,23 @@ data class SessionListModel(
 
         /**
          * Archived sessions are hidden unless [showArchived], except one that needs the user: hiding a question the
-         * agent is waiting on would be worse than a cluttered list. Row order is kept from [sessions].
+         * agent is waiting on would be worse than a cluttered list. Row order is kept from [sessions]. A non-blank [query]
+         * narrows the rows to those whose title or second line contains it, ignoring case; the counts are of the rows before
+         * the search, so searching never makes the summary say fewer sessions need the user.
          */
-        fun from(sessions: List<SessionSummary>, showArchived: Boolean, now: Instant): SessionListModel {
+        fun from(sessions: List<SessionSummary>, showArchived: Boolean, now: Instant, query: String = ""): SessionListModel {
             val visible = sessions.filter { showArchived || !it.status.isArchived || it.status.activityState == ActivityState.NEEDS_INPUT }
-            val rows = visible.map { row(it, now) }
+            val all = visible.map { row(it, now) }
+            val needle = query.trim()
+            val rows = if (needle.isEmpty()) all else all.filter { it.title.contains(needle, ignoreCase = true) || it.subtitle?.contains(needle, ignoreCase = true) == true }
             return SessionListModel(
                 rows = rows,
-                needsInput = rows.count { it.state == ActivityState.NEEDS_INPUT },
-                inProgress = rows.count { it.state == ActivityState.IN_PROGRESS },
-                errors = rows.count { it.state == ActivityState.ERROR },
+                needsInput = all.count { it.state == ActivityState.NEEDS_INPUT },
+                inProgress = all.count { it.state == ActivityState.IN_PROGRESS },
+                errors = all.count { it.state == ActivityState.ERROR },
                 hiddenArchived = sessions.size - visible.size,
                 total = sessions.size,
+                query = needle,
             )
         }
 

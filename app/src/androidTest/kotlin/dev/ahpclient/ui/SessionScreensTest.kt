@@ -4,9 +4,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsNodeInteraction
-import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHasClickAction
@@ -21,6 +19,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
@@ -78,19 +77,26 @@ class SessionScreensTest {
         onOpen: (String) -> Unit = {},
         onToggle: () -> Unit = {},
         onDisconnect: () -> Unit = {},
-        monitorEnabled: Boolean = false,
-        notificationsAllowed: Boolean = true,
-        onMonitorChange: (Boolean) -> Unit = {},
-        settingsExpanded: Boolean = false,
+        onOpenSettings: () -> Unit = {},
+        initialQuery: String = "",
     ) = rule.setContent {
         var showArchived by androidx.compose.runtime.remember { mutableStateOf(initialShowArchived) }
+        var query by androidx.compose.runtime.remember { mutableStateOf(initialQuery) }
         AhpTheme {
             SessionsScreen(
                 host, connection, sessions, now, showArchived, rememberLazyListState(), { showArchived = !showArchived; onToggle() }, onOpen, onDisconnect,
-                monitorEnabled = monitorEnabled, notificationsAllowed = notificationsAllowed, onMonitorChange = onMonitorChange,
-                settingsExpanded = settingsExpanded,
+                onOpenSettings = onOpenSettings, query = query, onQueryChange = { query = it },
             )
         }
+    }
+
+    private fun showSettings(
+        monitorEnabled: Boolean = false,
+        notificationsAllowed: Boolean = true,
+        onMonitorChange: (Boolean) -> Unit = {},
+        onBack: () -> Unit = {},
+    ) = rule.setContent {
+        AhpTheme { SettingsScreen(onBack, monitorEnabled = monitorEnabled, notificationsAllowed = notificationsAllowed, onMonitorChange = onMonitorChange) }
     }
 
     private fun detailState(inputNeeded: String? = null): SessionState = Ahp.json.decodeFromString(
@@ -174,41 +180,79 @@ class SessionScreensTest {
     }
 
     @Test
-    fun theSwitchesAreFoldedBehindOneSettingsRowThatSaysWhatIsOnAndOpensOnTap() {
-        showSessions(monitorEnabled = true)
+    fun theSettingsGearOpensSettingsAndIsBigEnough() {
+        var opened = 0
+        showSessions(onOpenSettings = { opened++ })
 
-        rule.onNodeWithTag("monitor_toggle").assertDoesNotExist()
-        rule.onNodeWithTag("settings_toggle").assertTextContains("Monitoring on · Acting off · Managing off", substring = true)
-        rule.onNodeWithTag("settings_toggle").assertTouchTargetAtLeast(48.dp).performClick()
+        rule.onNodeWithTag("settings").assertContentDescriptionEquals("Settings").assertTouchTargetAtLeast(48.dp).performClick()
 
-        rule.onNodeWithTag("monitor_toggle").assertIsDisplayed()
-        rule.onNodeWithTag("interaction_toggle").assertExists()
-        rule.onNodeWithTag("management_toggle").assertExists()
-        rule.onNodeWithTag("settings_toggle").performClick()
-        rule.onNodeWithTag("monitor_toggle").assertDoesNotExist()
+        assertEquals(1, opened)
     }
 
     @Test
-    fun theSettingsRowSaysIfItIsOpenOrClosedToAScreenReader() {
+    fun theSwitchesAreNotOnTheListAnyMore() {
         showSessions()
 
-        rule.onNodeWithTag("settings_toggle").assert(
-            androidx.compose.ui.test.SemanticsMatcher("state is Collapsed") {
-                it.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.StateDescription) == "Collapsed"
-            },
-        )
-        rule.onNodeWithTag("settings_toggle").performClick()
-        rule.onNodeWithTag("settings_toggle").assert(
-            androidx.compose.ui.test.SemanticsMatcher("state is Expanded") {
-                it.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.StateDescription) == "Expanded"
-            },
-        )
+        rule.onNodeWithTag("monitor_toggle").assertDoesNotExist()
+        rule.onNodeWithTag("interaction_toggle").assertDoesNotExist()
+        rule.onNodeWithTag("management_toggle").assertDoesNotExist()
+    }
+
+    @Test
+    fun searchNarrowsTheListAsYouTypeAndClearsWithItsButton() {
+        showSessions()
+
+        rule.onNodeWithTag("search").performTextInput("work")
+
+        rule.onAllNodesWithTag("session_row").assertCountEquals(1)
+        rule.onAllNodesWithTag("session_row")[0].assertContentDescriptionEquals("Working, In progress, Running tests, 5 min ago")
+        rule.onNodeWithTag("search_clear").assertContentDescriptionEquals("Clear search").assertTouchTargetAtLeast(48.dp).performClick()
+        rule.onAllNodesWithTag("session_row").assertCountEquals(3)
+        rule.onNodeWithTag("search_clear").assertDoesNotExist()
+    }
+
+    @Test
+    fun aSearchWithNoMatchSaysSoAndNamesWhatWasSearchedFor() {
+        showSessions(initialQuery = "zzz")
+
+        rule.onNodeWithTag("empty_list").assertIsDisplayed()
+        rule.onNodeWithText("No sessions match \"zzz\"").assertIsDisplayed()
+        rule.onNodeWithTag("search").assertIsDisplayed()
+    }
+
+    @Test
+    fun searchingDoesNotChangeTheSummaryOfWhatNeedsYou() {
+        showSessions(initialQuery = "Unread")
+
+        rule.onAllNodesWithTag("session_row").assertCountEquals(1)
+        rule.onNodeWithTag("summary").assertTextEquals("1 needs input · 1 in progress")
+    }
+
+    @Test
+    fun anEmptyHostHasNoSearchField() {
+        showSessions(emptyList())
+
+        rule.onAllNodesWithTag("search").assertCountEquals(0)
+    }
+
+    @Test
+    fun settingsShowTheThreeSwitchesAndGoBack() {
+        var back = 0
+        showSettings(onBack = { back++ })
+
+        rule.onNodeWithTag("settings_title").assertTextEquals("Settings")
+        rule.onNodeWithTag("monitor_toggle").assertIsDisplayed()
+        rule.onNodeWithTag("interaction_toggle").assertIsDisplayed()
+        rule.onNodeWithTag("management_toggle").assertExists()
+        rule.onNodeWithTag("back").assertContentDescriptionEquals("Back to sessions").assertTouchTargetAtLeast(48.dp).performClick()
+
+        assertEquals(1, back)
     }
 
     @Test
     fun theMonitorSwitchIsOffByDefaultAndTurnsOnWithAFullWidthTouchTarget() {
         val changes = mutableListOf<Boolean>()
-        showSessions(onMonitorChange = { changes += it }, settingsExpanded = true)
+        showSettings(onMonitorChange = { changes += it })
 
         rule.onNodeWithTag("monitor_toggle").assertIsOff().assertTouchTargetAtLeast(48.dp).performClick()
 
@@ -219,7 +263,7 @@ class SessionScreensTest {
     @Test
     fun anEnabledMonitorTurnsOffAndSaysWhatItDoes() {
         val changes = mutableListOf<Boolean>()
-        showSessions(monitorEnabled = true, onMonitorChange = { changes += it }, settingsExpanded = true)
+        showSettings(monitorEnabled = true, onMonitorChange = { changes += it })
 
         rule.onNodeWithTag("monitor_toggle").assertIsOn().performClick()
 
@@ -229,16 +273,9 @@ class SessionScreensTest {
 
     @Test
     fun blockedNotificationsAreStatedSoTheUserKnowsTheyWillNotBeTold() {
-        showSessions(monitorEnabled = true, notificationsAllowed = false, settingsExpanded = true)
+        showSettings(monitorEnabled = true, notificationsAllowed = false)
 
         rule.onNodeWithTag("monitor_hint").assertTextContains("notifications are blocked", substring = true)
-    }
-
-    @Test
-    fun theMonitorSwitchIsStillShownWhenTheConnectionHasFailed() {
-        showSessions(connection = ConnState.Failed(IllegalStateException("x")), settingsExpanded = true)
-
-        rule.onNodeWithTag("monitor_toggle").assertIsDisplayed()
     }
 
     @Test

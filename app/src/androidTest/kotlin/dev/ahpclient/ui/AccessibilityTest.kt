@@ -113,9 +113,27 @@ class AccessibilityTest {
         checkEach(
             *states.map { connection ->
                 @Composable {
-                    SessionsScreen(host, connection, sessions, now, true, rememberLazyListState(), {}, {}, {}, monitorEnabled = true, notificationsAllowed = false, settingsExpanded = true)
+                    SessionsScreen(host, connection, sessions, now, true, rememberLazyListState(), {}, {}, {})
                 }
             }.toTypedArray(),
+        )
+    }
+
+    @Test
+    fun sessionListSearchedAndEmpty() {
+        checkEach(
+            { SessionsScreen(host, ConnState.Online, sessions, now, false, rememberLazyListState(), {}, {}, {}, query = "no such session") },
+            { SessionsScreen(host, ConnState.Online, emptyList(), now, false, rememberLazyListState(), {}, {}, {}) },
+        )
+    }
+
+    @Test
+    fun settingsInEveryState() {
+        checkEach(
+            { SettingsScreen({}) },
+            { SettingsScreen({}, monitorEnabled = true, notificationsAllowed = false) },
+            { SettingsScreen({}, monitorEnabled = true, interactionAllowed = true, managementAllowed = true) },
+            { SettingsScreen({}, interactionSupported = false) },
         )
     }
 

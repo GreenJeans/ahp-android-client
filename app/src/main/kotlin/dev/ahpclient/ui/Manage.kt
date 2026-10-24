@@ -12,6 +12,8 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
@@ -143,7 +145,12 @@ fun ManagementToggle(allowed: Boolean, available: Boolean, onChange: (Boolean) -
 @Composable
 fun NewSessionButton(manage: ManageActionsUi, onCreated: (String) -> Unit, modifier: Modifier = Modifier) {
     var open by rememberSaveable { mutableStateOf(false) }
-    Button(onClick = { open = true }, modifier = modifier.heightIn(min = 48.dp).testTag("new_session")) { Text("New session") }
+    ExtendedFloatingActionButton(
+        onClick = { open = true },
+        icon = { Icon(AppIcons.Add, contentDescription = null) },
+        text = { Text("New session") },
+        modifier = modifier.heightIn(min = 48.dp).testTag("new_session"),
+    )
     if (open) NewSessionDialog(manage, onDismiss = { open = false }, onCreated = { open = false; onCreated(it) })
 }
 
