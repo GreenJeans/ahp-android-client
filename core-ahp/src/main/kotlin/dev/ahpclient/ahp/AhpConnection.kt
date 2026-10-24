@@ -5,7 +5,11 @@ import dev.ahpclient.tunnel.TextSocket
 import com.microsoft.agenthostprotocol.Ahp
 import com.microsoft.agenthostprotocol.generated.ActionEnvelope
 import com.microsoft.agenthostprotocol.generated.AhpErrorCodes
+import com.microsoft.agenthostprotocol.generated.CreateChatParams
+import com.microsoft.agenthostprotocol.generated.CreateSessionParams
 import com.microsoft.agenthostprotocol.generated.DispatchActionParams
+import com.microsoft.agenthostprotocol.generated.DisposeChatParams
+import com.microsoft.agenthostprotocol.generated.DisposeSessionParams
 import com.microsoft.agenthostprotocol.generated.FetchTurnsParams
 import com.microsoft.agenthostprotocol.generated.FetchTurnsResult
 import com.microsoft.agenthostprotocol.generated.Implementation
@@ -108,6 +112,9 @@ class AhpConnection(
     /** Whether this connection's tier lets it send any action at all. */
     val canDispatch: Boolean get() = policy.canDispatch
 
+    /** Whether this connection's tier lets it create and remove sessions and chats. */
+    val canManage: Boolean get() = policy.canManage
+
     init {
         scope.launch { readLoop() }
     }
@@ -144,6 +151,32 @@ class AhpConnection(
 
     suspend fun ping() {
         requestRaw("ping", buildJsonObject { put("channel", ROOT_CHANNEL) })
+    }
+
+    /**
+     * Creates the session at [uri], which the client picks. The host answers once it has accepted the request; the session
+     * then reaches `ready` (or fails) on its own channel, which the caller watches. Refused with [CapabilityDeniedException],
+     * before anything is sent, unless the tier lists the command.
+     */
+    suspend fun createSession(uri: String, provider: String?, workingDirectories: List<String>?) {
+        val params = CreateSessionParams(channel = uri, provider = provider, workingDirectories = workingDirectories)
+        requestRaw("createSession", json.encodeToJsonElement(CreateSessionParams.serializer(), params).jsonObject)
+    }
+
+    /** Creates the chat at [chatUri], which the client picks, in the session at [sessionUri]. */
+    suspend fun createChat(sessionUri: String, chatUri: String) {
+        val params = CreateChatParams(channel = sessionUri, chat = chatUri)
+        requestRaw("createChat", json.encodeToJsonElement(CreateChatParams.serializer(), params).jsonObject)
+    }
+
+    /** Removes the session at [uri] and everything in it. Cannot be undone. */
+    suspend fun disposeSession(uri: String) {
+        requestRaw("disposeSession", json.encodeToJsonElement(DisposeSessionParams.serializer(), DisposeSessionParams(channel = uri)).jsonObject)
+    }
+
+    /** Removes the chat at [uri]. Cannot be undone. */
+    suspend fun disposeChat(uri: String) {
+        requestRaw("disposeChat", json.encodeToJsonElement(DisposeChatParams.serializer(), DisposeChatParams(channel = uri)).jsonObject)
     }
 
     /** `unsubscribe` is a notification in AHP 1.0: fire and forget. */

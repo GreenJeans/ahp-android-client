@@ -29,6 +29,9 @@ class CapabilityPolicy private constructor(
     /** True when this tier can send any action at all. */
     val canDispatch: Boolean get() = DISPATCH_ACTION in methods
 
+    /** True when this tier can create or remove sessions and chats. */
+    val canManage: Boolean get() = MANAGE_COMMANDS.all { it in methods }
+
     companion object {
         const val DISPATCH_ACTION = "dispatchAction"
 
@@ -37,6 +40,17 @@ class CapabilityPolicy private constructor(
 
         val READ = CapabilityPolicy(name = "READ", methods = READ_METHODS, actionTypes = emptySet())
 
+        private val INTERACT_ACTIONS = setOf(
+            "chat/turnStarted",
+            "chat/pendingMessageSet",
+            "chat/pendingMessageRemoved",
+            "chat/inputAnswerChanged",
+            "chat/inputCompleted",
+            "chat/toolCallConfirmed",
+            "chat/toolCallResultConfirmed",
+            "chat/turnCancelled",
+        )
+
         /**
          * READ plus the actions that let a person take part in a chat: send a message, answer the agent's question, approve or
          * deny a tool, and stop a turn. Nothing that changes a session itself, runs a command directly or touches files.
@@ -44,16 +58,24 @@ class CapabilityPolicy private constructor(
         val INTERACT = CapabilityPolicy(
             name = "INTERACT",
             methods = READ_METHODS + DISPATCH_ACTION,
-            actionTypes = setOf(
-                "chat/turnStarted",
-                "chat/pendingMessageSet",
-                "chat/pendingMessageRemoved",
-                "chat/inputAnswerChanged",
-                "chat/inputCompleted",
-                "chat/toolCallConfirmed",
-                "chat/toolCallResultConfirmed",
-                "chat/turnCancelled",
-            ),
+            actionTypes = INTERACT_ACTIONS,
+        )
+
+        /** The commands that create or remove a session or chat. Nothing else in [MANAGE] changes what exists. */
+        val MANAGE_COMMANDS = setOf("createSession", "createChat", "disposeSession", "disposeChat")
+
+        /** What marking a session read or archived dispatches. Reversible, and changes nothing the agent runs. */
+        val MANAGE_ACTIONS = setOf("session/isReadChanged", "session/isArchivedChanged")
+
+        /**
+         * INTERACT plus looking after sessions: mark one read or archived, start a chat or a session, and remove one. A
+         * separate permission from INTERACT, because creating a session starts an agent on the user's machine and removing
+         * one cannot be undone. Still nothing that runs a command directly, touches files or signs in to anything.
+         */
+        val MANAGE = CapabilityPolicy(
+            name = "MANAGE",
+            methods = READ_METHODS + DISPATCH_ACTION + MANAGE_COMMANDS,
+            actionTypes = INTERACT_ACTIONS + MANAGE_ACTIONS,
         )
     }
 }

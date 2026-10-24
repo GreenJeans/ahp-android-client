@@ -80,7 +80,7 @@ class HostSession(
     private val clientInfo: Implementation,
     private val backoff: Backoff = Backoff(),
     private val clientId: String = UUID.randomUUID().toString(),
-) {
+) : ManagementCommands {
     val root = RootStore()
 
     private val _connection = MutableStateFlow<ConnState>(ConnState.Stopped)
@@ -90,6 +90,11 @@ class HostSession(
 
     /** True only while the live connection's tier lets this client send actions. What the UI shows write controls from, not a setting. */
     val canInteract: StateFlow<Boolean> = _canInteract.asStateFlow()
+
+    private val _canManage = MutableStateFlow(false)
+
+    /** True only while the live connection's tier lets this client create and remove sessions and chats. Not a setting: it follows the connection. */
+    val canManage: StateFlow<Boolean> = _canManage.asStateFlow()
 
     private val _undecodableFrames = MutableStateFlow(0)
 
@@ -125,6 +130,7 @@ class HostSession(
         job = null
         current?.close()
         _canInteract.value = false
+        _canManage.value = false
         _connection.value = ConnState.Stopped
     }
 
@@ -136,6 +142,7 @@ class HostSession(
     fun restart() {
         epoch.incrementAndGet()
         _canInteract.value = false
+        _canManage.value = false
         current?.close()
     }
 
@@ -212,6 +219,22 @@ class HostSession(
         }
     }
 
+    private fun live(): AhpConnection = current ?: throw IOException("Not connected to the host")
+
+    /**
+     * The management commands, sent on the live connection. Each waits for the host's answer to the request.
+     *
+     * @throws dev.ahpclient.ahp.CapabilityDeniedException when this connection's tier does not allow it.
+     * @throws IOException when there is no connection. Nothing was sent in either case.
+     */
+    override suspend fun createSession(uri: String, provider: String?, workingDirectories: List<String>?) = live().createSession(uri, provider, workingDirectories)
+
+    override suspend fun createChat(sessionUri: String, chatUri: String) = live().createChat(sessionUri, chatUri)
+
+    override suspend fun disposeSession(uri: String) = live().disposeSession(uri)
+
+    override suspend fun disposeChat(uri: String) = live().disposeChat(uri)
+
     private suspend fun supervise() {
         var attempt = 0
         var resume = false
@@ -232,6 +255,7 @@ class HostSession(
                 attempt = 0
                 lastError = null
                 _canInteract.value = ahp.canDispatch
+                _canManage.value = ahp.canManage
                 _connection.value = ConnState.Online
                 ahp.notifications.collect(::route)
             } catch (e: CancellationException) {
@@ -245,6 +269,7 @@ class HostSession(
             } finally {
                 current = null
                 _canInteract.value = false
+                _canManage.value = false
                 ahp?.let {
                     lastSeq = maxOf(lastSeq, it.lastServerSeq)
                     it.close()

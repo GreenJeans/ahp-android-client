@@ -15,6 +15,8 @@ import dev.ahpclient.state.ChatStore
 import dev.ahpclient.state.ExpansionState
 import dev.ahpclient.state.HostSession
 import dev.ahpclient.state.InteractResult
+import dev.ahpclient.state.ManagementCommands
+import dev.ahpclient.state.SessionManager
 import dev.ahpclient.state.SubagentLinks
 import dev.ahpclient.tunnel.DevTunnelsClient
 import dev.ahpclient.tunnel.DevTunnelsException
@@ -63,6 +65,33 @@ class AppController(
     /** False on a phone that cannot run the device check in front of approvals (Android before 11): the switch is shown but cannot be turned on. */
     val interactionSupported: Boolean get() = interaction.supported
 
+    /** Whether the user has also allowed this app to look after sessions (mark read, archive, start and remove). Only ever on while [interactionAllowed] is. */
+    val managementAllowed: StateFlow<Boolean> get() = interaction.managementAllowed
+
+    private fun connectedSession(): HostSession? = (_state.value as? AppState.Connected)?.session
+
+    private fun liveSession(): HostSession = connectedSession() ?: throw IOException("Not connected to the host")
+
+    /** Looks after sessions and chats on the live host. Every request checks the tier, the target and, where it matters, the device check first. */
+    val manager = SessionManager(
+        allowed = { connectedSession()?.canManage?.value == true },
+        sessions = { connectedSession()?.root?.sessions?.value.orEmpty() },
+        agents = { connectedSession()?.root?.root?.value?.agents.orEmpty() },
+        sessionState = { uri -> (_state.value as? AppState.Connected)?.open?.takeIf { it.uri == uri }?.store?.state?.value },
+        dispatch = { channel, action -> liveSession().dispatch(channel, action) },
+        commands = object : ManagementCommands {
+            override suspend fun createSession(uri: String, provider: String?, workingDirectories: List<String>?) =
+                liveSession().createSession(uri, provider, workingDirectories)
+
+            override suspend fun createChat(sessionUri: String, chatUri: String) = liveSession().createChat(sessionUri, chatUri)
+
+            override suspend fun disposeSession(uri: String) = liveSession().disposeSession(uri)
+
+            override suspend fun disposeChat(uri: String) = liveSession().disposeChat(uri)
+        },
+        gate = approvalGate,
+    )
+
     @Volatile
     private var token: GitHubToken? = null
     private var signInJob: Job? = null
@@ -90,6 +119,18 @@ class AppController(
         val saved = interaction.set(on)
         // Reconnect only when the permission really changed: a turn-on that could not be saved changed nothing.
         if (interaction.allowed.value == on) (_state.value as? AppState.Connected)?.session?.restart()
+        return saved
+    }
+
+    /**
+     * Allows or forbids this app to look after sessions (mark read, archive, start and remove) as well, and reconnects the live
+     * session so the new tier applies now. Refused, with nothing changed, unless the app may already act for the user.
+     *
+     * @return true when the choice was saved. Turning it off takes effect either way.
+     */
+    suspend fun setManagement(on: Boolean): Boolean {
+        val saved = interaction.setManagement(on)
+        if (interaction.managementAllowed.value == on) (_state.value as? AppState.Connected)?.session?.restart()
         return saved
     }
 

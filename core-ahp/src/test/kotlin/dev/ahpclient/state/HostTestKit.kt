@@ -71,6 +71,8 @@ internal class HostScript(
     val chatActiveTurn: String? = null,
     /** The finished turns a subscribed chat reports, as JSON objects. */
     val chatTurns: List<String> = emptyList(),
+    /** What the host answers to a management command (create or dispose a session or chat); by default it accepts it. */
+    val onCommand: (method: String, id: Long?, params: JsonObject) -> String? = { _, id, _ -> result(id, "null") },
 ) {
     fun reply(method: String, id: Long?, params: JsonObject): String? = when (method) {
         "initialize" -> initializeReply(id, params)
@@ -79,6 +81,7 @@ internal class HostScript(
         "fetchTurns" -> result(id, "{}")
         "reconnect" -> onReconnect(id)
         "dispatchAction" -> onDispatch(params)
+        "createSession", "createChat", "disposeSession", "disposeChat" -> onCommand(method, id, params)
         else -> null
     }
 

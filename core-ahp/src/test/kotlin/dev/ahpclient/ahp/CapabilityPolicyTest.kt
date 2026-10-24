@@ -89,4 +89,64 @@ class CapabilityPolicyTest {
 
         assertTrue(message.contains("resourceWrite"))
     }
+
+    private val manageCommands = setOf("createSession", "createChat", "disposeSession", "disposeChat")
+
+    private val manageActions = setOf("session/isReadChanged", "session/isArchivedChanged")
+
+    @Test
+    fun `only MANAGE can create or remove sessions and chats`() {
+        assertEquals(false, CapabilityPolicy.READ.canManage)
+        assertEquals(false, CapabilityPolicy.INTERACT.canManage)
+        assertEquals(true, CapabilityPolicy.MANAGE.canManage)
+        assertEquals(true, CapabilityPolicy.MANAGE.canDispatch)
+        manageCommands.forEach { command ->
+            assertFailsWith<CapabilityDeniedException>(command) { CapabilityPolicy.READ.check(command) }
+            assertFailsWith<CapabilityDeniedException>(command) { CapabilityPolicy.INTERACT.check(command) }
+            CapabilityPolicy.MANAGE.check(command)
+        }
+    }
+
+    @Test
+    fun `MANAGE allows every READ method`() {
+        allowed.forEach { CapabilityPolicy.MANAGE.check(it) }
+    }
+
+    @Test
+    fun `MANAGE allows the eight interaction actions and exactly two more`() {
+        (interactActions + manageActions).forEach { CapabilityPolicy.MANAGE.check("dispatchAction", it) }
+        assertEquals(manageActions, CapabilityPolicy.MANAGE_ACTIONS)
+        assertEquals(manageCommands, CapabilityPolicy.MANAGE_COMMANDS)
+    }
+
+    @Test
+    fun `INTERACT and READ still refuse the management actions`() {
+        manageActions.forEach { type ->
+            assertFailsWith<CapabilityDeniedException>(type) { CapabilityPolicy.INTERACT.check("dispatchAction", type) }
+            assertFailsWith<CapabilityDeniedException>(type) { CapabilityPolicy.READ.check("dispatchAction", type) }
+        }
+    }
+
+    @Test
+    fun `MANAGE denies every other action type and a missing one`() {
+        val notAllowed = listOf(
+            null, "", "session/isReadChanged ", "Session/isReadChanged",
+            "terminal/input", "terminal/resized", "terminal/claimed",
+            "session/activeClientSet", "session/titleChanged", "session/chatAdded", "session/chatRemoved", "session/workingDirectorySet",
+            "session/mcpServerStarted", "session/mcpServerStopped", "session/customizationToggled",
+            "chat/titleChanged", "chat/responsePart", "chat/toolCallStart", "chat/turnComplete",
+            "root/activeSessionsChanged",
+        )
+        notAllowed.forEach { type ->
+            assertFailsWith<CapabilityDeniedException>("$type") { CapabilityPolicy.MANAGE.check("dispatchAction", type) }
+        }
+    }
+
+    @Test
+    fun `MANAGE denies every other method`() {
+        denied.filter { it != "dispatchAction" && it !in manageCommands }.forEach { method ->
+            assertFailsWith<CapabilityDeniedException>(method) { CapabilityPolicy.MANAGE.check(method) }
+            assertFailsWith<CapabilityDeniedException>(method) { CapabilityPolicy.MANAGE.check(method, "session/isReadChanged") }
+        }
+    }
 }

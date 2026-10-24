@@ -14,8 +14,16 @@ import java.time.Instant
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 
-/** What the person is about to allow. Shown by the device check; it is display text and never sent anywhere. [forResult] is set when it is the agent seeing a tool's output rather than running the tool. */
-data class ApprovalRequest(val toolName: String, val summary: String?, val forResult: Boolean = false)
+/**
+ * What the person is about to allow. Shown by the device check; it is display text and never sent anywhere. [forResult] is
+ * set when it is the agent seeing a tool's output rather than running the tool. [title] is the question the prompt asks, for
+ * the few things that are not a tool call (starting or removing a session).
+ */
+data class ApprovalRequest(val toolName: String, val summary: String?, val forResult: Boolean = false, val title: String = TOOL_TITLE) {
+    companion object {
+        const val TOOL_TITLE = "Approve this tool call?"
+    }
+}
 
 /**
  * The device check that stands in front of every tool approval: a fingerprint, face or screen-lock prompt on the phone.

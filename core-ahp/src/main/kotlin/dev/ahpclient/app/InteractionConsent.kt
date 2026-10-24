@@ -40,35 +40,76 @@ class InMemoryInteractionSettings : InteractionSettings {
 class InteractionConsent(
     private val settings: InteractionSettings = InMemoryInteractionSettings(),
     val supported: Boolean = true,
+    /** The second, separate choice: may it also create, archive and remove sessions and chats. Only ever on while the first is. */
+    private val managementSettings: InteractionSettings = InMemoryInteractionSettings(),
 ) {
     private val _allowed = MutableStateFlow(false)
     val allowed: StateFlow<Boolean> = _allowed.asStateFlow()
 
-    /** The tier a new connection should be made under right now. */
-    fun policy(): CapabilityPolicy = if (_allowed.value) CapabilityPolicy.INTERACT else CapabilityPolicy.READ
+    private val _managementAllowed = MutableStateFlow(false)
 
-    /** Reads the saved choice. An unreadable one counts as off, and so does any choice on a phone that is not [supported]. */
+    /** Whether the user has also allowed this app to look after sessions. Never true while [allowed] is false. */
+    val managementAllowed: StateFlow<Boolean> = _managementAllowed.asStateFlow()
+
+    /** The tier a new connection should be made under right now. */
+    fun policy(): CapabilityPolicy = when {
+        !_allowed.value -> CapabilityPolicy.READ
+        _managementAllowed.value -> CapabilityPolicy.MANAGE
+        else -> CapabilityPolicy.INTERACT
+    }
+
+    /** Reads the saved choices. An unreadable one counts as off, and so does any choice on a phone that is not [supported]. */
     suspend fun load() {
-        _allowed.value = supported && try {
-            settings.enabled.first()
+        _allowed.value = supported && read(settings)
+        _managementAllowed.value = _allowed.value && read(managementSettings)
+    }
+
+    private suspend fun read(from: InteractionSettings): Boolean = try {
+        from.enabled.first()
+    } catch (_: IOException) {
+        false
+    }
+
+    /**
+     * Turns the permission on or off. Off takes effect at once, before anything is written, so it cannot be held up by
+     * a full disk; on takes effect only once the choice is saved, so a consent that could not be recorded is not granted.
+     * On is refused outright, and nothing is written, when the phone is not [supported]. Turning it off also turns
+     * looking after sessions off, so the second permission can never outlive the first.
+     *
+     * @return true when the choice was saved. Turning it off always takes effect, whatever this returns.
+     */
+    suspend fun set(on: Boolean): Boolean {
+        if (on && !supported) return false
+        if (!on) {
+            _allowed.value = false
+            _managementAllowed.value = false
+            try {
+                managementSettings.setEnabled(false)
+            } catch (_: IOException) {
+                // Off already took effect above; the saved value is also ignored on load while the first choice is off.
+            }
+        }
+        return try {
+            settings.setEnabled(on)
+            if (on) _allowed.value = true
+            true
         } catch (_: IOException) {
             false
         }
     }
 
     /**
-     * Turns the permission on or off. Off takes effect at once, before anything is written, so it cannot be held up by
-     * a full disk; on takes effect only once the choice is saved, so a consent that could not be recorded is not granted.
-     * On is refused outright, and nothing is written, when the phone is not [supported].
+     * Turns looking after sessions on or off. Refused, with nothing written, unless the app may already act for the user.
+     * Off takes effect at once; on only once it is saved.
      *
-     * @return true when the choice was saved. Turning it off always takes effect, whatever this returns.
+     * @return true when the choice was saved.
      */
-    suspend fun set(on: Boolean): Boolean {
-        if (on && !supported) return false
-        if (!on) _allowed.value = false
+    suspend fun setManagement(on: Boolean): Boolean {
+        if (on && !_allowed.value) return false
+        if (!on) _managementAllowed.value = false
         return try {
-            settings.setEnabled(on)
-            if (on) _allowed.value = true
+            managementSettings.setEnabled(on)
+            if (on) _managementAllowed.value = true
             true
         } catch (_: IOException) {
             false

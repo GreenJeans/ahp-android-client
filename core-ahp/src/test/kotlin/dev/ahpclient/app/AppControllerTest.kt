@@ -3,6 +3,7 @@ package dev.ahpclient.app
 import dev.ahpclient.auth.GitHubDeviceAuth
 import dev.ahpclient.auth.GitHubToken
 import dev.ahpclient.auth.Secret
+import dev.ahpclient.ahp.error
 import dev.ahpclient.security.FakeBox
 import dev.ahpclient.security.FakeStore
 import dev.ahpclient.security.TokenVault
@@ -15,6 +16,7 @@ import dev.ahpclient.state.ApprovalTarget
 import dev.ahpclient.state.ChatInteractor
 import dev.ahpclient.state.DispatchOutcome
 import dev.ahpclient.state.InteractResult
+import dev.ahpclient.state.ManageResult
 import dev.ahpclient.state.SNAPSHOT_SEQ
 import dev.ahpclient.state.echoOf
 import dev.ahpclient.state.ConnState
@@ -47,6 +49,7 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.mockwebserver.MockResponse
@@ -1270,6 +1273,158 @@ class AppControllerTest {
             assertEquals(InteractResult.NoSuchRequest, controller.decideToolCall(CHAT_A, "some-other-call", approve = true))
             assertEquals(InteractResult.NoSuchRequest, controller.decideToolCall(CHAT_A, "some-other-call", approve = false))
             assertTrue(dispatches().isEmpty())
+        }
+    }
+
+    // ---- looking after sessions ----------------------------------------------------------------------------------
+
+    private val managing get() = InteractionConsent(FakeInteractionSettings(saved = true), supported = true, managementSettings = FakeInteractionSettings(saved = true))
+
+    private fun Rig.requests(method: String) = connectors.single().sockets.flatMap { it.sent }
+        .filter { it["method"]?.jsonPrimitive?.content == method }
+        .map { it["params"]!!.jsonObject }
+
+    @Test
+    fun `looking after sessions is its own switch, refused until acting for the user is on, and reconnects under its own tier`() = runTest {
+        withRig {
+            val session = connectToFirstHost().session
+            assertFalse(session.canManage.value)
+            assertFalse(controller.setManagement(true), "refused while the app may not act for the user at all")
+            assertFalse(controller.managementAllowed.value)
+            assertEquals(1, connectors.single().sockets.size, "a refused change reconnects nothing")
+
+            assertTrue(controller.setInteraction(true))
+            session.canInteract.first { it }
+            assertFalse(session.canManage.value, "acting for the user alone is the interact tier")
+
+            assertTrue(controller.setManagement(true))
+            session.canManage.first { it }
+            assertTrue(controller.managementAllowed.value)
+            assertEquals(3, connectors.single().sockets.size, "one connection for each tier change")
+        }
+    }
+
+    @Test
+    fun `turning looking after sessions off, and acting for the user off, each drop the tier at once`() = runTest {
+        withRig(interaction = managing) {
+            val session = connectToFirstHost().session
+            session.canManage.first { it }
+
+            assertTrue(controller.setManagement(false))
+            assertFalse(session.canManage.value, "the controls go the moment the permission does")
+            runCurrent()
+            session.connection.first { it == ConnState.Online }
+            session.canInteract.first { it }
+            assertFalse(session.canManage.value)
+            assertTrue(session.canInteract.value, "acting for the user is still on")
+
+            assertTrue(controller.setInteraction(false))
+            assertFalse(controller.managementAllowed.value)
+            assertFalse(session.canInteract.value)
+        }
+    }
+
+    @Test
+    fun `signing out turns looking after sessions off with the rest`() = runTest {
+        val interaction = managing
+        withRig(interaction = interaction) {
+            val session = connectToFirstHost().session
+            session.canManage.first { it }
+
+            controller.signOut()
+            await { it is AppState.SignedOut }
+            runCurrent()
+
+            assertFalse(controller.managementAllowed.value)
+            assertFalse(controller.interactionAllowed.value)
+        }
+    }
+
+    private fun managementScript(clientId: () -> String) = {
+        HostScript(
+            sessionChats = "[${chatSummaryJson(CHAT_A)}]",
+            onDispatch = { echoOf(it, SNAPSHOT_SEQ + 1, clientId = clientId()) },
+        )
+    }
+
+    @Test
+    fun `the manager reaches the host through the live connection with the commands and actions the protocol defines`() = runTest {
+        var clientId = ""
+        withRig(script = managementScript { clientId }, interaction = managing, approvalGate = ApprovalGate { true }) {
+            val connected = connectToFirstHost()
+            clientId = "client-${connected.host.tunnelId}"
+            connected.session.canManage.first { it }
+            controller.openSession(SESSION_C)
+            assertIs<AppState.Connected>(state).open!!.store.state.first { it != null }
+            runCurrent()
+
+            assertEquals(ManageResult.Done(), controller.manager.setRead(SESSION_C, true))
+            val action = dispatches().single()["params"]!!.jsonObject
+            assertEquals(SESSION_C, action["channel"]!!.jsonPrimitive.content)
+            assertEquals("session/isReadChanged", action["action"]!!.jsonObject["type"]!!.jsonPrimitive.content)
+
+            val chat = assertIs<ManageResult.Done>(controller.manager.newChat(SESSION_C)).created!!
+            assertEquals(listOf(SESSION_C to chat), requests("createChat").map { it["channel"]!!.jsonPrimitive.content to it["chat"]!!.jsonPrimitive.content })
+
+            val folder = controller.manager.offeredFolders().first()
+            val session = assertIs<ManageResult.Done>(controller.manager.newSession("copilotcli", folder)).created!!
+            val created = requests("createSession").single()
+            assertEquals(session, created["channel"]!!.jsonPrimitive.content)
+            assertEquals("copilotcli", created["provider"]!!.jsonPrimitive.content)
+            assertEquals(listOf(folder), created["workingDirectories"]!!.jsonArray.map { it.jsonPrimitive.content })
+
+            assertEquals(ManageResult.Done(), controller.manager.disposeSession(SESSION_C))
+            assertEquals(SESSION_C, requests("disposeSession").single()["channel"]!!.jsonPrimitive.content)
+        }
+    }
+
+    @Test
+    fun `the manager sends nothing, and asks no device check, on a connection that is not on the manage tier`() = runTest {
+        var asked = 0
+        withRig(script = managementScript { "" }, interaction = InteractionConsent(FakeInteractionSettings(saved = true)), approvalGate = ApprovalGate { asked++; true }) {
+            val connected = connectToFirstHost()
+            connected.session.canInteract.first { it }
+            controller.openSession(SESSION_C)
+            assertIs<AppState.Connected>(state).open!!.store.state.first { it != null }
+            runCurrent()
+
+            assertEquals(ManageResult.NotAllowed, controller.manager.setRead(SESSION_C, true))
+            assertEquals(ManageResult.NotAllowed, controller.manager.newChat(SESSION_C))
+            assertEquals(ManageResult.NotAllowed, controller.manager.newSession("copilotcli", "file:///work/repo-a"))
+            assertEquals(ManageResult.NotAllowed, controller.manager.disposeSession(SESSION_C))
+            assertTrue(dispatches().isEmpty())
+            assertTrue(requests("createChat").isEmpty() && requests("createSession").isEmpty() && requests("disposeSession").isEmpty())
+            assertEquals(0, asked, "nobody is prompted for something that cannot be done")
+        }
+    }
+
+    @Test
+    fun `with the default gate nothing that starts or removes is ever sent`() = runTest {
+        withRig(script = managementScript { "" }, interaction = managing) {
+            val connected = connectToFirstHost()
+            connected.session.canManage.first { it }
+            controller.openSession(SESSION_C)
+            assertIs<AppState.Connected>(state).open!!.store.state.first { it != null }
+            runCurrent()
+
+            val folder = controller.manager.offeredFolders().first()
+            assertEquals(ManageResult.NotConfirmed, controller.manager.newSession("copilotcli", folder))
+            assertEquals(ManageResult.NotConfirmed, controller.manager.disposeSession(SESSION_C))
+            assertTrue(requests("createSession").isEmpty() && requests("disposeSession").isEmpty())
+        }
+    }
+
+    @Test
+    fun `a host that refuses a command is reported with its own code`() = runTest {
+        val script = { HostScript(onCommand = { _, id, _ -> error(id, -32003, "already exists") }) }
+        withRig(script = script, interaction = managing, approvalGate = ApprovalGate { true }) {
+            val connected = connectToFirstHost()
+            connected.session.canManage.first { it }
+            val folder = controller.manager.offeredFolders().first()
+
+            val refused = assertIs<ManageResult.Refused>(controller.manager.newSession("copilotcli", folder))
+
+            assertEquals(-32003, refused.code)
         }
     }
 

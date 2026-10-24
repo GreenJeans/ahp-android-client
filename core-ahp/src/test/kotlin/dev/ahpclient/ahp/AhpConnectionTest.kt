@@ -165,6 +165,71 @@ class AhpConnectionTest {
     }
 
     @Test
+    fun `MANAGE sends each management command as a request with the params the protocol defines`() = runTest {
+        val socket = FakeSocket { method, id, _ -> if (method in CapabilityPolicy.MANAGE_COMMANDS) result(id, "null") else null }
+        val connection = connection(socket, policy = CapabilityPolicy.MANAGE)
+
+        connection.createSession("ahp-session:/new", provider = "copilotcli", workingDirectories = listOf("file:///work/repo"))
+        connection.createChat("ahp-session:/new", "ahp-chat:/c1")
+        connection.disposeChat("ahp-chat:/c1")
+        connection.disposeSession("ahp-session:/new")
+
+        assertEquals(listOf("createSession", "createChat", "disposeChat", "disposeSession"), socket.sent.map { it["method"]!!.jsonPrimitive.content })
+        assertTrue(socket.sent.all { it["id"] != null }, "commands are requests, so the host's refusal can be read")
+        val session = socket.sent[0]["params"]!!.jsonObject
+        assertEquals("ahp-session:/new", session["channel"]!!.jsonPrimitive.content)
+        assertEquals("copilotcli", session["provider"]!!.jsonPrimitive.content)
+        assertEquals(listOf("file:///work/repo"), session["workingDirectories"]!!.jsonArray.map { it.jsonPrimitive.content })
+        assertNull(session["activeClient"], "the app never claims the active client role")
+        assertNull(session["config"])
+        val chat = socket.sent[1]["params"]!!.jsonObject
+        assertEquals("ahp-session:/new", chat["channel"]!!.jsonPrimitive.content)
+        assertEquals("ahp-chat:/c1", chat["chat"]!!.jsonPrimitive.content)
+        assertNull(chat["initialMessage"])
+        assertEquals("ahp-chat:/c1", socket.sent[2]["params"]!!.jsonObject["channel"]!!.jsonPrimitive.content)
+        assertEquals("ahp-session:/new", socket.sent[3]["params"]!!.jsonObject["channel"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `READ and INTERACT refuse every management command and send nothing`() = runTest {
+        for (policy in listOf(CapabilityPolicy.READ, CapabilityPolicy.INTERACT)) {
+            val socket = FakeSocket()
+            val connection = connection(socket, policy = policy)
+
+            assertFailsWith<CapabilityDeniedException> { connection.createSession("ahp-session:/new", null, null) }
+            assertFailsWith<CapabilityDeniedException> { connection.createChat("ahp-session:/new", "ahp-chat:/c1") }
+            assertFailsWith<CapabilityDeniedException> { connection.disposeChat("ahp-chat:/c1") }
+            assertFailsWith<CapabilityDeniedException> { connection.disposeSession("ahp-session:/new") }
+
+            assertTrue(socket.sent.isEmpty(), policy.name)
+            assertEquals(false, connection.canManage)
+        }
+    }
+
+    @Test
+    fun `the host's refusal of a management command is an Rpc error`() = runTest {
+        val socket = FakeSocket { method, id, _ -> if (method == "createSession") error(id, -32003, "already exists") else null }
+        val connection = connection(socket, policy = CapabilityPolicy.MANAGE)
+
+        val failure = assertFailsWith<AhpException.Rpc> { connection.createSession("ahp-session:/dup", null, null) }
+
+        assertEquals(-32003, failure.code)
+        assertEquals(true, connection.canManage)
+    }
+
+    @Test
+    fun `MANAGE may mark a session read or archived and still refuses a rename`() = runTest {
+        val socket = FakeSocket()
+        val connection = connection(socket, policy = CapabilityPolicy.MANAGE)
+
+        connection.dispatchAction("ahp-session:/a", stateAction("""{"type":"session/isReadChanged","isRead":true}"""), clientSeq = 1)
+        connection.dispatchAction("ahp-session:/a", stateAction("""{"type":"session/isArchivedChanged","isArchived":true}"""), clientSeq = 2)
+        assertFailsWith<CapabilityDeniedException> { connection.dispatchAction("ahp-session:/a", renameSession, clientSeq = 3) }
+
+        assertEquals(listOf("session/isReadChanged", "session/isArchivedChanged"), socket.sent.map { it["params"]!!.jsonObject["action"]!!.jsonObject["type"]!!.jsonPrimitive.content })
+    }
+
+    @Test
     fun `dispatching on a closed socket fails instead of reporting success`() = runTest {
         val socket = FakeSocket()
         val connection = connection(socket, policy = CapabilityPolicy.INTERACT)

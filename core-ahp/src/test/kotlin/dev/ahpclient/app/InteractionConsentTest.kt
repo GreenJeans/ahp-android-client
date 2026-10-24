@@ -34,6 +34,142 @@ internal class FakeInteractionSettings(saved: Boolean = false) : InteractionSett
 }
 
 class InteractionConsentTest {
+    private fun both(interact: Boolean = false, manage: Boolean = false, supported: Boolean = true): Triple<InteractionConsent, FakeInteractionSettings, FakeInteractionSettings> {
+        val i = FakeInteractionSettings(interact)
+        val m = FakeInteractionSettings(manage)
+        return Triple(InteractionConsent(i, supported, m), i, m)
+    }
+
+    @Test
+    fun `looking after sessions is off by default and the tier stays interact until it is turned on`() = runTest {
+        val (consent, _, _) = both(interact = true)
+        consent.load()
+
+        assertFalse(consent.managementAllowed.value)
+        assertSame(CapabilityPolicy.INTERACT, consent.policy())
+
+        assertTrue(consent.setManagement(true))
+
+        assertTrue(consent.managementAllowed.value)
+        assertSame(CapabilityPolicy.MANAGE, consent.policy())
+    }
+
+    @Test
+    fun `it cannot be turned on while acting for the user is off, and nothing is written`() = runTest {
+        val (consent, _, m) = both()
+        consent.load()
+
+        assertFalse(consent.setManagement(true))
+
+        assertFalse(consent.managementAllowed.value)
+        assertTrue(m.writes.isEmpty())
+        assertSame(CapabilityPolicy.READ, consent.policy())
+    }
+
+    @Test
+    fun `a saved yes to it is ignored while acting for the user is off`() = runTest {
+        val (consent, _, _) = both(interact = false, manage = true)
+
+        consent.load()
+
+        assertFalse(consent.managementAllowed.value)
+        assertSame(CapabilityPolicy.READ, consent.policy())
+    }
+
+    @Test
+    fun `a saved yes to both gives the manage tier on the next start`() = runTest {
+        val (consent, _, _) = both(interact = true, manage = true)
+
+        consent.load()
+
+        assertSame(CapabilityPolicy.MANAGE, consent.policy())
+    }
+
+    @Test
+    fun `a saved yes to both is ignored on a phone that cannot run the device check`() = runTest {
+        val (consent, _, _) = both(interact = true, manage = true, supported = false)
+
+        consent.load()
+
+        assertFalse(consent.managementAllowed.value)
+        assertSame(CapabilityPolicy.READ, consent.policy())
+    }
+
+    @Test
+    fun `looking after sessions cannot be turned on without being able to save it`() = runTest {
+        val (consent, _, m) = both(interact = true)
+        consent.load()
+        m.failWrites = true
+
+        assertFalse(consent.setManagement(true))
+
+        assertFalse(consent.managementAllowed.value)
+        assertSame(CapabilityPolicy.INTERACT, consent.policy())
+    }
+
+    @Test
+    fun `a saved looking-after-sessions choice that cannot be read counts as off`() = runTest {
+        val (consent, _, m) = both(interact = true, manage = true)
+        m.failReads = true
+
+        consent.load()
+
+        assertFalse(consent.managementAllowed.value)
+        assertSame(CapabilityPolicy.INTERACT, consent.policy())
+    }
+
+    @Test
+    fun `turning looking after sessions off takes effect even when it cannot be saved`() = runTest {
+        val (consent, _, m) = both(interact = true, manage = true)
+        consent.load()
+        m.failWrites = true
+
+        assertFalse(consent.setManagement(false))
+
+        assertFalse(consent.managementAllowed.value)
+        assertSame(CapabilityPolicy.INTERACT, consent.policy())
+    }
+
+    @Test
+    fun `turning acting for the user off turns looking after sessions off with it, on screen and on disk`() = runTest {
+        val (consent, i, m) = both(interact = true, manage = true)
+        consent.load()
+
+        consent.set(false)
+
+        assertFalse(consent.allowed.value)
+        assertFalse(consent.managementAllowed.value)
+        assertSame(CapabilityPolicy.READ, consent.policy())
+        assertFalse(i.saved)
+        assertFalse(m.saved, "the second permission must not be waiting to come back")
+    }
+
+    @Test
+    fun `acting for the user turns off even when the second choice cannot be written`() = runTest {
+        val (consent, _, m) = both(interact = true, manage = true)
+        consent.load()
+        m.failWrites = true
+
+        consent.set(false)
+
+        assertFalse(consent.allowed.value)
+        assertFalse(consent.managementAllowed.value)
+        assertSame(CapabilityPolicy.READ, consent.policy())
+    }
+
+    @Test
+    fun `turning acting for the user back on does not bring looking after sessions back`() = runTest {
+        val (consent, _, _) = both(interact = true, manage = true)
+        consent.load()
+        consent.set(false)
+
+        consent.set(true)
+
+        assertTrue(consent.allowed.value)
+        assertFalse(consent.managementAllowed.value)
+        assertSame(CapabilityPolicy.INTERACT, consent.policy())
+    }
+
     @Test
     fun `it is off by default and the tier is read only`() {
         val consent = InteractionConsent(FakeInteractionSettings())
