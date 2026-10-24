@@ -7,15 +7,15 @@ that backs **Remote Tunnel Access** (the blue **A** in VS Code) and `vscode.dev/
 Phases 1 and 2 are a **read-only monitor** with a read-only chat transcript. Phase 3 adds acting for the user (send a message,
 answer a question, approve or deny a tool call, stop the agent), **off by default** and behind an explicit switch. Phase 4 adds
 looking after sessions (mark read, archive, new chat, new session, remove), behind a second switch that is also off by default,
-and Phase 5 adds a read-only list of a session's changed files; the long-term goal is a near-full replacement for the VS Code Agents panel. The authoritative plan, acceptance criteria and
+and Phase 5 adds a session's changed files (the list, a line-by-line diff of each file, and a "Viewed" box on the manage tier); the long-term goal is a near-full replacement for the VS Code Agents panel. The authoritative plan, acceptance criteria and
 progress log live in this repo: [`docs/spec.md`](docs/spec.md).
 
 ## Modules
 
 | Module | Type | Status |
 |---|---|---|
-| `core-ahp` | Pure Kotlin/JVM library: GitHub device-flow auth, Dev Tunnels REST, tunnel socket and gateway selection, AHP connection, state stores (sessions and chats, with older-turn paging), session list and detail models, the transcript model, background-monitoring logic, the capability allowlist, and the write path (action builders, the interactor, the question form model, the consent settings), the session manager, and the changeset view model | Phase 1 complete, live-verified except where `docs/verification/phase1-readonly.md` says otherwise; Phase 2 built; Phase 3 built and live-tested; Phases 4 and 5 built and tested, not yet live-tested |
-| `app` | Android application (Jetpack Compose): sign-in, host list, sessions list, read-only session detail, a chat transcript with markdown and collapsible reasoning, tool-call and result blocks (selectable text, "Show all", subagent transcripts), opt-in background monitoring with a foreground service and needs-input notifications, and, when the user turns it on (Android 11+), a message box with steering, tool and tool-result approval behind the phone's own device check (also from a notification), and a form for the agent's questions with draft sync; with a second switch, mark read, archive, new chat, new session and remove; and a read-only list of a session's changed files | Phase 1 built; Phase 2 transcript built; Phase 3 built; Phases 4 and 5 built; debug APK |
+| `core-ahp` | Pure Kotlin/JVM library: GitHub device-flow auth, Dev Tunnels REST, tunnel socket and gateway selection, AHP connection, state stores (sessions and chats, with older-turn paging), session list and detail models, the transcript model, background-monitoring logic, the capability allowlist, and the write path (action builders, the interactor, the question form model, the consent settings), the session manager, the changeset view model, the line diff and the model options | Phase 1 complete, live-verified except where `docs/verification/phase1-readonly.md` says otherwise; Phase 2 built; Phase 3 built and live-tested; Phases 4 and 5 built and tested, not yet live-tested |
+| `app` | Android application (Jetpack Compose): sign-in, host list, sessions list, read-only session detail, a chat transcript with markdown and collapsible reasoning, tool-call and result blocks (selectable text, "Show all", subagent transcripts), opt-in background monitoring with a foreground service and needs-input notifications, and, when the user turns it on (Android 11+), a message box with steering, tool and tool-result approval behind the phone's own device check (also from a notification), and a form for the agent's questions with draft sync; with a second switch, mark read, archive, new chat, new session and remove; and a session's changed files (a line diff of each, and a "Viewed" box), and a model picker for messages | Phase 1 built; Phase 2 transcript built; Phase 3 built; Phases 4 and 5 built; debug APK |
 
 ## Build
 
@@ -102,8 +102,8 @@ local: `captures/` is gitignored. The device code lasts 15 minutes; approve it a
 ## Security
 
 The client never stores or logs a token in clear text. Its outbound AHP traffic is controlled by one gate,
-`CapabilityPolicy`, with three tiers: `READ` (the default: connect, subscribe, list, page through history), `INTERACT`
-(`READ` plus `dispatchAction` for exactly eight chat action types), and `MANAGE` (`INTERACT` plus four commands and two more
+`CapabilityPolicy`, with three tiers: `READ` (the default: connect, subscribe, list, page through history, and read the content of a changed file), `INTERACT`
+(`READ` plus `dispatchAction` for exactly eight chat action types), and `MANAGE` (`INTERACT` plus four commands and three more
 action types). See the spec's Security section before changing any of them.
 
 **Acting for the user is off by default.** The `INTERACT` tier is used only after the user turns on "Let this app act for me"
@@ -121,22 +121,30 @@ is behind the phone's own device check (`BiometricApprovalGate`: strong biometri
 needs Android 11+). The prompt names the tool. It is skipped for deny, refused when no screen of the app is up, and is
 checked twice (before the prompt and again after it, in case the call finished meanwhile). It proves a person unlocked the
 phone; it does not bind a key to the approval. A build with no gate refuses every approval. Never allowed at any tier without
-a new decision: `terminal/input`, file writes, marking changed files reviewed, and signing in to anything on the user's behalf.
+a new decision: `terminal/input`, file writes, and signing in to anything on the user's behalf.
 
 **Looking after sessions is a second switch**, "Let this app look after sessions", also off by default, with its own dialog. It
 is only ever on while acting for the user is on, is cleared with it (on screen and on disk), is ignored on load without it, and
-is saved before it counts; turning it on or off reconnects under the new tier. It adds `session/isReadChanged` and
-`session/isArchivedChanged` (mark read, archive: reversible, no device check) and four commands: `createChat` (only in a session
+is saved before it counts; turning it on or off reconnects under the new tier. It adds `session/isReadChanged`,
+`session/isArchivedChanged` and `changeset/filesReviewChanged` (mark read, archive, mark a file viewed: all reversible, no device check) and four commands: `createChat` (only in a session
 the host reports as ready, no check), and `createSession`, `disposeSession` and `disposeChat`, which **do** go through the same
 device check, looked up again after the prompt. Removing asks first and offers archiving as the safe alternative. A new session
 can only use an agent the host lists and a folder one of the host's own sessions already uses, so nothing the host did not offer is
 sent. None of the controls exist on a connection that is not on the `MANAGE` tier. The three switches (monitoring, acting,
 managing) sit behind one collapsed "Settings" row that says what is on.
 
-**Changed files are read-only.** A session's changeset opens as a list of paths with added, modified or deleted, line counts and
-the reviewed flag (at most 500 rows). It only subscribes to one more channel; no file contents are read and nothing can be marked
-reviewed. Terminals cannot be viewed yet because the pinned library mis-decodes a terminal snapshot as a session (pinned by
-`LibraryGapsTest`).
+**Changed files** open as a list of paths with added, modified or deleted, line counts and the reviewed flag (at most 500 rows).
+Tapping a file reads its two sides with `resourceRead` (the one read of file content, allowed at every tier) and shows a line
+diff worked out on the phone. The app asks only for the two content addresses the open changeset's own file entry names, and the
+method that reads is internal to the core module. It is bounded (256 KiB a side by the host's own hint, 5,000 lines a side,
+1,000 changed lines, 2,000 lines shown, 500 characters a line), shows no file that has a NUL character or bytes that are not
+UTF-8, swaps characters that reorder text on screen for a visible mark, and shows everything as plain text. A "Viewed" box per
+file appears only when the host says the changeset is reviewable and the connection is on the manage tier. Terminals cannot be
+viewed yet because the pinned library mis-decodes a terminal snapshot as a session (pinned by `LibraryGapsTest`).
+
+**Choosing a model** is done per message, from the models the host lists for the chat's agent (a Model button in the message
+box). It rides on the message actions the interact tier already allows and adds no method. Only a model, and settings, that are
+exactly among the options the host listed are sent, and a pick the host stops offering is dropped instead of sent.
 
 **Approving from a notification.** While monitoring is on, the "needs your input" notification for a session that waits on
 exactly one plain tool call (the host offered no options of its own, and the chat is one the session lists) has Deny and
