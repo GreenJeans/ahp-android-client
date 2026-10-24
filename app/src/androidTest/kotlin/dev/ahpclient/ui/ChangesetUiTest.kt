@@ -55,8 +55,8 @@ class ChangesetUiTest {
         """{"status":"$status","files":[${files.joinToString(",")}]${error?.let { ""","error":{"errorType":"E","message":"$it"}""" }.orEmpty()}}""",
     )
 
-    private fun show(state: ChangesetState?, error: Throwable? = null, connection: ConnState = ConnState.Online, onBack: () -> Unit = {}, onSetReviewed: (suspend (String, Boolean) -> ManageResult)? = null) =
-        rule.setContent { AhpTheme { ChangesetScreen("Uncommitted", state, error, connection, onBack, onSetReviewed = onSetReviewed) } }
+    private fun show(state: ChangesetState?, error: Throwable? = null, connection: ConnState = ConnState.Online, onBack: () -> Unit = {}, onSetReviewed: (suspend (String, Boolean) -> ManageResult)? = null, onOpenFile: ((String) -> Unit)? = null) =
+        rule.setContent { AhpTheme { ChangesetScreen("Uncommitted", state, error, connection, onBack, onSetReviewed = onSetReviewed, onOpenFile = onOpenFile) } }
 
     @Test
     fun theTitleAndTheReadOnlyNoteAreShown() {
@@ -244,6 +244,40 @@ class ChangesetUiTest {
         show(twoFiles, onSetReviewed = { _, _ -> ManageResult.Done() })
 
         rule.onAllNodesWithTag("viewed_toggle")[0].assertContentDescriptionEquals("Viewed: /work/a.kt").assert(isToggleable()).assertHeightIsAtLeast(48.dp)
+    }
+
+    // ---- opening a file ---------------------------------------------------------------------------------------------
+
+    @Test
+    fun tappingAFileAsksToOpenItAndTheRowSaysSo() {
+        val opened = mutableListOf<String>()
+        show(twoFiles, onOpenFile = { opened += it })
+
+        rule.onAllNodesWithTag("change_row")[1].performClick()
+
+        assertEquals(listOf("file:///work/b.kt"), opened)
+        rule.onNodeWithTag("changeset_note").assertTextContains("Tap a file", substring = true)
+        rule.onAllNodesWithTag("change_row")[0].assertHeightIsAtLeast(48.dp)
+    }
+
+    @Test
+    fun withoutTheOpenCallbackARowDoesNothingWhenTapped() {
+        show(twoFiles)
+
+        rule.onAllNodesWithTag("change_row")[0].performClick()
+
+        rule.onNodeWithTag("changeset_note").assertTextContains("Read only", substring = true)
+    }
+
+    @Test
+    fun tappingTheViewedBoxDoesNotOpenTheFile() {
+        val opened = mutableListOf<String>()
+        show(twoFiles, onSetReviewed = { _, _ -> ManageResult.Done() }, onOpenFile = { opened += it })
+
+        rule.onAllNodesWithTag("viewed_toggle")[0].performClick()
+        rule.waitForIdle()
+
+        assertEquals(emptyList<String>(), opened)
     }
 
     // ---- the way in from a session ----------------------------------------------------------------------------------

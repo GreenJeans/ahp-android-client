@@ -4,12 +4,14 @@ import dev.ahpclient.auth.Secret
 import dev.ahpclient.state.ChannelStore
 import dev.ahpclient.state.ChatInteractor
 import dev.ahpclient.state.ChatStore
+import dev.ahpclient.state.DiffResult
 import dev.ahpclient.state.ExpansionState
 import dev.ahpclient.state.HostSession
 import dev.ahpclient.state.SessionStore
 import dev.ahpclient.tunnel.TunnelInfo
 import com.microsoft.agenthostprotocol.generated.ChangesetState
 import java.time.Instant
+import kotlinx.coroutines.flow.StateFlow
 
 /** The small, non-secret preference the app remembers between launches. */
 interface LastHostStore {
@@ -67,7 +69,17 @@ data class OpenSession(val uri: String, val store: SessionStore, val chat: OpenC
  * A changeset on screen: the files that changed. Its [store] stays subscribed until the user goes back. [reviewable] is the
  * host's own statement that files in it can be marked reviewed.
  */
-data class OpenChangeset(val uri: String, val store: ChannelStore<ChangesetState>, val reviewable: Boolean = false)
+data class OpenChangeset(val uri: String, val store: ChannelStore<ChangesetState>, val reviewable: Boolean = false, val diff: OpenDiff? = null)
+
+/** What loading one file's changes is doing: still going, or how it ended. */
+sealed interface DiffLoad {
+    data object Loading : DiffLoad
+
+    data class Loaded(val result: DiffResult) : DiffLoad
+}
+
+/** One file's line-by-line changes on screen, over its changeset. [path] is how the file is named; [load] follows the loading. */
+data class OpenDiff(val fileId: String, val path: String, val load: StateFlow<DiffLoad>)
 
 /**
  * The chat whose transcript is on screen; its [store] stays subscribed until the user goes back. [expansion] outlives the

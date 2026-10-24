@@ -52,10 +52,12 @@ fun AppRoot(
     val detailOpen = (state as? AppState.Connected)?.open != null
     val chatOpen = (state as? AppState.Connected)?.open?.chat != null
     val changesetOpen = (state as? AppState.Connected)?.open?.changeset != null
+    val diffOpen = (state as? AppState.Connected)?.open?.changeset?.diff != null
     BackHandler(enabled = state is AppState.Connected && !detailOpen) { controller.disconnect() }
     BackHandler(enabled = detailOpen && !chatOpen && !changesetOpen) { controller.closeSession() }
     BackHandler(enabled = chatOpen) { controller.closeChat() }
-    BackHandler(enabled = changesetOpen) { controller.closeChangeset() }
+    BackHandler(enabled = changesetOpen && !diffOpen) { controller.closeChangeset() }
+    BackHandler(enabled = diffOpen) { controller.closeDiff() }
     BackHandler(enabled = (state as? AppState.SignedOut)?.step is SignInStep.AwaitingApproval) { controller.cancelSignIn() }
 
     AhpTheme {
@@ -123,13 +125,18 @@ fun AppRoot(
                         if (changeset != null) {
                             val changesetState by changeset.store.state.collectAsStateWithLifecycle()
                             val changesetError by changeset.store.error.collectAsStateWithLifecycle()
-                            ChangesetScreen(
+                            val diff = changeset.diff
+                            if (diff != null) {
+                                val diffLoad by diff.load.collectAsStateWithLifecycle()
+                                FileDiffScreen(path = diff.path, load = diffLoad, connection = connection, onBack = controller::closeDiff, modifier = content)
+                            } else ChangesetScreen(
                                 title = changesetTitle ?: "Changes",
                                 state = changesetState,
                                 error = changesetError,
                                 connection = connection,
                                 onBack = controller::closeChangeset,
                                 onSetReviewed = if (canManage && changeset.reviewable) controller::setFileReviewed else null,
+                                onOpenFile = controller::openDiff,
                                 modifier = content,
                             )
                         } else if (chat == null) {

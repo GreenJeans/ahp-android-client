@@ -13,6 +13,7 @@ import com.microsoft.agenthostprotocol.generated.Implementation
 import com.microsoft.agenthostprotocol.generated.ReconnectResult
 import com.microsoft.agenthostprotocol.generated.ReconnectResultReplay
 import com.microsoft.agenthostprotocol.generated.ReconnectResultSnapshot
+import com.microsoft.agenthostprotocol.generated.ResourceReadResult
 import com.microsoft.agenthostprotocol.generated.SessionSummary
 import com.microsoft.agenthostprotocol.generated.Snapshot
 import com.microsoft.agenthostprotocol.generated.SnapshotState
@@ -252,6 +253,12 @@ class HostSession(
     }
 
     private fun live(): AhpConnection = current ?: throw IOException("Not connected to the host")
+
+    /**
+     * Reads the content a changed file's side points at. Internal on purpose: only code in this module, which hands it an
+     * address taken from the open changeset's own state, may ask the host to read anything.
+     */
+    internal suspend fun readResource(uri: String): ResourceReadResult = live().resourceRead(uri)
 
     /**
      * The management commands, sent on the live connection. Each waits for the host's answer to the request.

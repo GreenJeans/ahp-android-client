@@ -11,6 +11,7 @@ import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.ApprovalGate
 import dev.ahpclient.state.ApprovalTarget
 import dev.ahpclient.state.ChannelStore
+import dev.ahpclient.state.ChangesetDiffs
 import dev.ahpclient.state.ChangesetEntry
 import dev.ahpclient.state.ChangesetReviewer
 import dev.ahpclient.state.ChatInteractor
@@ -22,6 +23,7 @@ import dev.ahpclient.state.ManageResult
 import dev.ahpclient.state.ManagementCommands
 import dev.ahpclient.state.SessionManager
 import dev.ahpclient.state.SubagentLinks
+import dev.ahpclient.state.displayPath
 import dev.ahpclient.tunnel.DevTunnelsClient
 import dev.ahpclient.tunnel.DevTunnelsException
 import dev.ahpclient.tunnel.TunnelInfo
@@ -96,6 +98,15 @@ class AppController(
         gate = approvalGate,
     )
 
+    /**
+     * Reads the two sides of a changed file of the open changeset, for its line-by-line changes. It is asked only for files the
+     * open changeset lists, and reads only the content addresses that file's own entry names.
+     */
+    private val diffs = ChangesetDiffs(
+        files = { (_state.value as? AppState.Connected)?.open?.changeset?.store?.state?.value?.files.orEmpty() },
+        read = { uri -> liveSession().readResource(uri) },
+    )
+
     /** Marks changed files of the open changeset reviewed. Needs the manage tier and a changeset the host says is reviewable. */
     private val reviewer = ChangesetReviewer(
         allowed = { connectedSession()?.canManage?.value == true },
@@ -118,6 +129,7 @@ class AppController(
     private var signInJob: Job? = null
     private var hostsJob: Job? = null
     private var watchJob: Job? = null
+    private var diffJob: Job? = null
 
     /** Which blocks the user opened in each chat, kept while connected so leaving a chat and coming back finds them as they were. */
     private val expansions = LinkedHashMap<String, ExpansionState>()
@@ -214,6 +226,7 @@ class AppController(
         if (_state.compareAndSet(current, current.copy(open = null))) {
             // Every chat of the chain (a subagent's transcript and the ones it was opened from) holds a subscription.
             generateSequence(open.chat) { it.parent }.forEach { current.session.closeChat(it.uri) }
+            cancelDiffJob()
             open.changeset?.let { current.session.closeChannel(it.uri) }
             current.session.closeSession(open.uri)
         }
@@ -234,13 +247,45 @@ class AppController(
         if (!_state.compareAndSet(current, current.copy(open = open.copy(changeset = OpenChangeset(uri, store, entry.reviewable))))) current.session.closeChannel(uri)
     }
 
+    /**
+     * Opens the line-by-line changes of one file of the open changeset, over it. Ignored unless the changeset lists that file
+     * and no file is open, so a stale or made-up id reads nothing and a double tap does not read twice. The reading happens
+     * in the background; the screen follows [OpenDiff.load].
+     */
+    @Synchronized
+    fun openDiff(fileId: String) {
+        val current = _state.value as? AppState.Connected ?: return
+        val open = current.open ?: return
+        val changeset = open.changeset ?: return
+        if (changeset.diff != null) return
+        val file = changeset.store.state.value?.files?.firstOrNull { it.id == fileId } ?: return
+        val load = MutableStateFlow<DiffLoad>(DiffLoad.Loading)
+        val shown = OpenDiff(fileId, displayPath(file.edit.after?.uri ?: file.edit.before?.uri ?: file.id), load.asStateFlow())
+        if (!_state.compareAndSet(current, current.copy(open = open.copy(changeset = changeset.copy(diff = shown))))) return
+        diffJob?.cancel()
+        diffJob = scope.launch { load.value = DiffLoad.Loaded(diffs.load(fileId)) }
+    }
+
+    /** Leaves the file and returns to the changeset's files. Anything still being read is dropped. */
+    @Synchronized
+    fun closeDiff() {
+        val current = _state.value as? AppState.Connected ?: return
+        val open = current.open ?: return
+        val changeset = open.changeset ?: return
+        if (changeset.diff == null) return
+        if (_state.compareAndSet(current, current.copy(open = open.copy(changeset = changeset.copy(diff = null))))) cancelDiffJob()
+    }
+
     /** Leaves the changeset and returns to the session detail. */
     @Synchronized
     fun closeChangeset() {
         val current = _state.value as? AppState.Connected ?: return
         val open = current.open ?: return
         val changeset = open.changeset ?: return
-        if (_state.compareAndSet(current, current.copy(open = open.copy(changeset = null)))) current.session.closeChannel(changeset.uri)
+        if (_state.compareAndSet(current, current.copy(open = open.copy(changeset = null)))) {
+            cancelDiffJob()
+            current.session.closeChannel(changeset.uri)
+        }
     }
 
     /** Opens the transcript of one of the open session's chats. Ignores a chat the session does not list, and a second tap while one is open. */
@@ -320,6 +365,7 @@ class AppController(
         val connected = _state.value as? AppState.Connected ?: return
         cancelWatchJob()
         forgetExpansions()
+        cancelDiffJob()
         connected.session.stop()
         showHosts()
     }
@@ -455,10 +501,17 @@ class AppController(
         cancelWatchJob()
         forgetExpansions()
         (_state.value as? AppState.Connected)?.session?.stop()
+        cancelDiffJob()
         interaction.set(false)
         token = null
         safeClear()
         _state.value = AppState.SignedOut(SignInStep.Idle, notice, offerRevoke)
+    }
+
+    @Synchronized
+    private fun cancelDiffJob() {
+        diffJob?.cancel()
+        diffJob = null
     }
 
     /** A storage error while wiping must not keep the user signed in: the in-memory token is already gone. */

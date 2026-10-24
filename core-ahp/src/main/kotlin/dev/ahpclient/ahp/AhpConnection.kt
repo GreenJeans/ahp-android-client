@@ -5,6 +5,7 @@ import dev.ahpclient.tunnel.TextSocket
 import com.microsoft.agenthostprotocol.Ahp
 import com.microsoft.agenthostprotocol.generated.ActionEnvelope
 import com.microsoft.agenthostprotocol.generated.AhpErrorCodes
+import com.microsoft.agenthostprotocol.generated.ContentEncoding
 import com.microsoft.agenthostprotocol.generated.CreateChatParams
 import com.microsoft.agenthostprotocol.generated.CreateSessionParams
 import com.microsoft.agenthostprotocol.generated.DispatchActionParams
@@ -20,6 +21,8 @@ import com.microsoft.agenthostprotocol.generated.ListSessionsParams
 import com.microsoft.agenthostprotocol.generated.ListSessionsResult
 import com.microsoft.agenthostprotocol.generated.ReconnectParams
 import com.microsoft.agenthostprotocol.generated.ReconnectResult
+import com.microsoft.agenthostprotocol.generated.ResourceReadParams
+import com.microsoft.agenthostprotocol.generated.ResourceReadResult
 import com.microsoft.agenthostprotocol.generated.SUPPORTED_PROTOCOL_VERSIONS
 import com.microsoft.agenthostprotocol.generated.StateAction
 import com.microsoft.agenthostprotocol.generated.SubscribeParams
@@ -148,6 +151,18 @@ class AhpConnection(
 
     suspend fun fetchTurns(chat: String, cursor: String? = null): FetchTurnsResult =
         request("fetchTurns", FetchTurnsParams.serializer(), FetchTurnsParams(channel = chat, cursor = cursor), FetchTurnsResult.serializer())
+
+    /**
+     * Reads the content at [uri], a content address the host itself published (a changed file's side). Text is asked for as
+     * UTF-8; a host may still answer in base64. Read only. The caller decides which addresses to ask for.
+     */
+    suspend fun resourceRead(uri: String): ResourceReadResult =
+        request(
+            "resourceRead",
+            ResourceReadParams.serializer(),
+            ResourceReadParams(channel = ROOT_CHANNEL, uri = uri, encoding = ContentEncoding.UTF8),
+            ResourceReadResult.serializer(),
+        )
 
     suspend fun ping() {
         requestRaw("ping", buildJsonObject { put("channel", ROOT_CHANNEL) })

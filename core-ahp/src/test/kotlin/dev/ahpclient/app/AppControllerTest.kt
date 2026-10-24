@@ -4,6 +4,7 @@ import dev.ahpclient.auth.GitHubDeviceAuth
 import dev.ahpclient.auth.GitHubToken
 import dev.ahpclient.auth.Secret
 import dev.ahpclient.ahp.error
+import dev.ahpclient.ahp.result
 import dev.ahpclient.security.FakeBox
 import dev.ahpclient.security.FakeStore
 import dev.ahpclient.security.TokenVault
@@ -12,6 +13,7 @@ import dev.ahpclient.state.Backoff
 import dev.ahpclient.state.CHAT_A
 import dev.ahpclient.state.CHANGESET_A
 import dev.ahpclient.state.ChangesetView
+import dev.ahpclient.state.DiffResult
 import dev.ahpclient.state.changesetFileJson
 import dev.ahpclient.state.changesetStateJson
 import dev.ahpclient.state.CHAT_B
@@ -52,6 +54,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -1590,6 +1594,132 @@ class AppControllerTest {
 
             assertEquals(ManageResult.NotAllowed, controller.setFileReviewed("file:///work/a.kt", true))
             assertTrue(dispatches().isEmpty())
+        }
+    }
+
+    // ---- a file's line-by-line changes ------------------------------------------------------------------------------
+
+    private fun diffScript(reads: MutableList<String>, answer: Boolean = true) = {
+        val content = mapOf("ahp-content:/b-work/a.kt" to "one\ntwo\n", "ahp-content:/a-work/a.kt" to "one\nTWO\n")
+        HostScript(
+            sessionChats = "[${chatSummaryJson(CHAT_A)}]",
+            sessionChangesets = "[$plainChangeset]",
+            changesetState = changesetStateJson("ready", changesetFileJson("work/a.kt")),
+            onResourceRead = { id, params ->
+                val uri = params["uri"]!!.jsonPrimitive.content
+                reads += uri
+                if (!answer) {
+                    null
+                } else {
+                    content[uri]?.let { result(id, """{"data":${JsonPrimitive(it)},"encoding":"utf-8"}""") } ?: error(id, -32008, "no such content")
+                }
+            },
+        )
+    }
+
+    private suspend fun TestScope.openChangesetOf(rig: Rig) {
+        rig.connectToFirstHost()
+        openLoadedSession(rig)
+        rig.controller.openChangeset(CHANGESET_A)
+        assertIs<AppState.Connected>(rig.state).open!!.changeset!!.store.state.first { it != null }
+    }
+
+    private val Rig.openedChangeset get() = assertIs<AppState.Connected>(state).open!!.changeset
+
+    @Test
+    fun `a file of the open changeset opens as a line diff, read through the read only connection`() = runTest {
+        val reads = mutableListOf<String>()
+        withRig(script = diffScript(reads)) {
+            openChangesetOf(this)
+
+            controller.openDiff("file:///work/a.kt")
+
+            val diff = openedChangeset!!.diff!!
+            assertEquals("/work/a.kt", diff.path)
+            val ready = assertIs<DiffResult.Ready>((diff.load.first { it is DiffLoad.Loaded } as DiffLoad.Loaded).result)
+            assertEquals(1, ready.diff.added)
+            assertEquals(1, ready.diff.removed)
+            assertEquals(listOf("ahp-content:/b-work/a.kt", "ahp-content:/a-work/a.kt"), reads)
+            assertEquals(listOf("resourceRead", "resourceRead"), connectors.single().sockets.flatMap { it.sent }.mapNotNull { it["method"]?.jsonPrimitive?.content }.filter { it == "resourceRead" })
+            assertTrue(dispatches().isEmpty(), "reading changes nothing on the host")
+        }
+    }
+
+    @Test
+    fun `a file the changeset does not list, no open changeset, and a second tap read nothing more`() = runTest {
+        val reads = mutableListOf<String>()
+        withRig(script = diffScript(reads)) {
+            connectToFirstHost()
+            openLoadedSession(this)
+            controller.openDiff("file:///work/a.kt")
+            assertNull(assertIs<AppState.Connected>(state).open!!.changeset, "no changeset is open, so there is nothing to open a file of")
+
+            controller.openChangeset(CHANGESET_A)
+            assertIs<AppState.Connected>(state).open!!.changeset!!.store.state.first { it != null }
+            controller.openDiff("file:///elsewhere.kt")
+            controller.openDiff("")
+            assertNull(openedChangeset!!.diff)
+            assertTrue(reads.isEmpty())
+
+            controller.openDiff("file:///work/a.kt")
+            val first = openedChangeset!!.diff!!
+            first.load.first { it is DiffLoad.Loaded }
+            controller.openDiff("file:///work/a.kt")
+            runCurrent()
+            assertSame(first, openedChangeset!!.diff, "a second tap does not start another read")
+            assertEquals(2, reads.size, "one file read once, two sides")
+        }
+    }
+
+    @Test
+    fun `going back from a file returns to the changeset's files and keeps the changeset`() = runTest {
+        val reads = mutableListOf<String>()
+        withRig(script = diffScript(reads)) {
+            openChangesetOf(this)
+            controller.openDiff("file:///work/a.kt")
+            openedChangeset!!.diff!!.load.first { it is DiffLoad.Loaded }
+
+            controller.closeDiff()
+            runCurrent()
+
+            assertNull(openedChangeset!!.diff)
+            assertEquals(CHANGESET_A, openedChangeset!!.uri)
+            assertTrue(unsubscribed().none { it == CHANGESET_A })
+            controller.closeDiff()
+        }
+    }
+
+    @Test
+    fun `leaving the file, the changeset or the session drops a read that is still going`() = runTest {
+        val leaves = listOf<(AppController) -> Unit>({ it.closeDiff() }, { it.closeChangeset() }, { it.closeSession() })
+        for (leave in leaves) {
+            val reads = mutableListOf<String>()
+            withRig(script = diffScript(reads, answer = false)) {
+                openChangesetOf(this)
+                controller.openDiff("file:///work/a.kt")
+                val load = openedChangeset!!.diff!!.load
+                runCurrent()
+                assertEquals(1, reads.size, "the read is on its way")
+
+                leave(controller)
+                advanceTimeBy(120_000)
+                runCurrent()
+
+                assertEquals(DiffLoad.Loading, load.value, "a dropped read never reports back")
+            }
+        }
+    }
+
+    @Test
+    fun `a host that never answers ends in a failure in words, not a screen that waits for ever`() = runTest {
+        val reads = mutableListOf<String>()
+        withRig(script = diffScript(reads, answer = false)) {
+            openChangesetOf(this)
+            controller.openDiff("file:///work/a.kt")
+
+            val load = openedChangeset!!.diff!!.load.first { it is DiffLoad.Loaded } as DiffLoad.Loaded
+
+            assertIs<DiffResult.Failed>(load.result)
         }
     }
 

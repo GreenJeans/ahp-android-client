@@ -10,8 +10,8 @@ class CapabilityDeniedException(val method: String, val actionType: String?) :
  * caller when the connection is made, never inferred, and a method or action type that is not listed is refused before
  * any bytes leave the device.
  *
- * Never allowed in any tier without a new decision (see the spec's Design Notes): `authenticate`, `resource*`
- * writes, `terminal/input`, `session/activeClientSet`, MCP start/stop and customization toggles.
+ * Never allowed in any tier without a new decision (see the spec's Design Notes): `authenticate`, `resource*` methods
+ * other than `resourceRead`, `terminal/input`, `session/activeClientSet`, MCP start/stop and customization toggles.
  */
 class CapabilityPolicy private constructor(
     val name: String,
@@ -35,8 +35,12 @@ class CapabilityPolicy private constructor(
     companion object {
         const val DISPATCH_ACTION = "dispatchAction"
 
-        /** Connect, observe, page through history. `unsubscribe` is a notification in AHP 1.0 but is still a method name on the wire. */
-        private val READ_METHODS = setOf("initialize", "reconnect", "ping", "subscribe", "unsubscribe", "listSessions", "fetchTurns")
+        /**
+         * Connect, observe, page through history, and read the content a changed file points at. `resourceRead` is the only
+         * `resource*` method here: it changes nothing on the host, and the app asks only for content addresses the open
+         * changeset itself lists (see `ChangesetDiffs`). `unsubscribe` is a notification in AHP 1.0 but is still a method name on the wire.
+         */
+        private val READ_METHODS = setOf("initialize", "reconnect", "ping", "subscribe", "unsubscribe", "listSessions", "fetchTurns", "resourceRead")
 
         val READ = CapabilityPolicy(name = "READ", methods = READ_METHODS, actionTypes = emptySet())
 

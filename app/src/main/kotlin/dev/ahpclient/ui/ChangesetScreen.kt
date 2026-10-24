@@ -1,5 +1,6 @@
 package dev.ahpclient.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -61,6 +62,7 @@ fun ChangesetScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     onSetReviewed: (suspend (fileId: String, reviewed: Boolean) -> ManageResult)? = null,
+    onOpenFile: ((fileId: String) -> Unit)? = null,
 ) {
     Column(modifier = modifier.fillMaxSize()) {
         Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -70,7 +72,7 @@ fun ChangesetScreen(
         }
         when {
             error is ChannelGoneException -> ErrorText("These changes are no longer on the host.", Modifier.padding(horizontal = 24.dp).testTag("changeset_gone"))
-            state != null -> ChangesetBody(remember(state) { ChangesetView.from(state) }, onSetReviewed)
+            state != null -> ChangesetBody(remember(state) { ChangesetView.from(state) }, onSetReviewed, onOpenFile)
             error != null -> ErrorText("Could not load these changes (${error.javaClass.simpleName}).", Modifier.padding(horizontal = 24.dp).testTag("changeset_error"))
             else -> Busy("Loading changes…", Modifier.padding(horizontal = 24.dp).testTag("changeset_loading"))
         }
@@ -78,10 +80,14 @@ fun ChangesetScreen(
 }
 
 @Composable
-private fun ChangesetBody(view: ChangesetView, onSetReviewed: (suspend (String, Boolean) -> ManageResult)?) {
+private fun ChangesetBody(view: ChangesetView, onSetReviewed: (suspend (String, Boolean) -> ManageResult)?, onOpenFile: ((String) -> Unit)?) {
     val scope = rememberCoroutineScope()
     val inFlight = remember { mutableStateListOf<String>() }
     var notice by remember { mutableStateOf<String?>(null) }
+    val note = listOfNotNull(
+        if (onOpenFile != null) "Tap a file to see what changed in it." else null,
+        if (onSetReviewed != null) "Tick “Viewed” to mark a file reviewed on the host." else null,
+    ).joinToString(" ").ifEmpty { "Read only: you can look at what changed, not change it." }
     Column(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             when (view.phase) {
@@ -101,7 +107,7 @@ private fun ChangesetBody(view: ChangesetView, onSetReviewed: (suspend (String, 
                 Text("No files changed.", modifier = Modifier.testTag("changeset_empty"))
             }
             Text(
-                if (onSetReviewed != null) "Tick “Viewed” to mark a file reviewed on the host." else "Read only: you can look at what changed, not change it.",
+                note,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.testTag("changeset_note"),
@@ -112,6 +118,7 @@ private fun ChangesetBody(view: ChangesetView, onSetReviewed: (suspend (String, 
             items(view.rows, key = { it.id }) { row ->
                 ChangeRowItem(
                     row = row,
+                    onOpen = onOpenFile?.let { open -> { open(row.id) } },
                     reviewEnabled = row.id !in inFlight,
                     onReviewChange = onSetReviewed?.let { set ->
                         { reviewed ->
@@ -141,7 +148,7 @@ private fun ChangesetBody(view: ChangesetView, onSetReviewed: (suspend (String, 
 }
 
 @Composable
-private fun ChangeRowItem(row: ChangeRow, reviewEnabled: Boolean, onReviewChange: ((Boolean) -> Unit)?) {
+private fun ChangeRowItem(row: ChangeRow, onOpen: (() -> Unit)?, reviewEnabled: Boolean, onReviewChange: ((Boolean) -> Unit)?) {
     val kind = when (row.kind) {
         ChangeKind.ADDED -> "Added"
         ChangeKind.MODIFIED -> "Modified"
@@ -156,6 +163,7 @@ private fun ChangeRowItem(row: ChangeRow, reviewEnabled: Boolean, onReviewChange
         Row(
             modifier = Modifier
                 .weight(1f)
+                .then(if (onOpen != null) Modifier.heightIn(min = 48.dp).clickable(onClickLabel = "Show the changes in this file", onClick = onOpen) else Modifier)
                 .semantics(mergeDescendants = true) {
                     contentDescription = listOfNotNull(row.path, kind, counts?.replace("−", "minus ")?.replace("+", "plus "), if (row.reviewed) "reviewed" else null).joinToString(", ")
                 }

@@ -191,6 +191,27 @@ class AhpConnectionTest {
     }
 
     @Test
+    fun `resourceRead asks for text on the root channel and decodes the answer, at every tier`() = runTest {
+        for (policy in listOf(CapabilityPolicy.READ, CapabilityPolicy.INTERACT, CapabilityPolicy.MANAGE)) {
+            val socket = FakeSocket { method, id, _ -> if (method == "resourceRead") result(id, """{"data":"hello","encoding":"utf-8","contentType":"text/plain"}""") else null }
+            val connection = connection(socket, policy = policy)
+
+            val read = connection.resourceRead("ahp-content:/a")
+
+            assertEquals("hello", read.data)
+            assertEquals(com.microsoft.agenthostprotocol.generated.ContentEncoding.UTF8, read.encoding)
+            val frame = socket.sent.single()
+            assertEquals("resourceRead", frame["method"]!!.jsonPrimitive.content)
+            assertTrue(frame["id"] != null, "a read is a request, so the host's refusal can be read")
+            val params = frame["params"]!!.jsonObject
+            assertEquals(setOf("channel", "uri", "encoding"), params.keys)
+            assertEquals("ahp-root://", params["channel"]!!.jsonPrimitive.content)
+            assertEquals("ahp-content:/a", params["uri"]!!.jsonPrimitive.content)
+            assertEquals("utf-8", params["encoding"]!!.jsonPrimitive.content)
+        }
+    }
+
+    @Test
     fun `READ and INTERACT refuse every management command and send nothing`() = runTest {
         for (policy in listOf(CapabilityPolicy.READ, CapabilityPolicy.INTERACT)) {
             val socket = FakeSocket()

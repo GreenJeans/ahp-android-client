@@ -6,7 +6,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class CapabilityPolicyTest {
-    private val allowed = setOf("initialize", "reconnect", "ping", "subscribe", "unsubscribe", "listSessions", "fetchTurns")
+    private val allowed = setOf("initialize", "reconnect", "ping", "subscribe", "unsubscribe", "listSessions", "fetchTurns", "resourceRead")
 
     private val interactActions = setOf(
         "chat/turnStarted", "chat/pendingMessageSet", "chat/pendingMessageRemoved", "chat/inputAnswerChanged",
@@ -16,7 +16,7 @@ class CapabilityPolicyTest {
     // Everything the spec's Design Notes name as denied, plus the rest of the protocol surface.
     private val denied = listOf(
         "dispatchAction", "authenticate",
-        "resourceRead", "resourceWrite", "resourceList", "resourceCopy", "resourceDelete", "resourceMove", "resourceMkdir", "resourceRequest", "resourceResolve",
+        "resourceWrite", "resourceList", "resourceCopy", "resourceDelete", "resourceMove", "resourceMkdir", "resourceRequest", "resourceResolve",
         "createSession", "disposeSession", "createChat", "disposeChat", "createTerminal", "disposeTerminal",
         "invokeChangesetOperation", "createResourceWatch", "completions", "resolveSessionConfig", "sessionConfigCompletions",
         "runAutomation", "fetchAutomationRuns", "listAutomationTriggerDefinitions", "channel/credit", "tcp/data", "", "Initialize",
