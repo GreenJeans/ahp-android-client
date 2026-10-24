@@ -124,6 +124,9 @@ sealed interface InteractResult {
     /** The person did not pass the device check, so the approval was not sent. */
     data object NotConfirmed : InteractResult
 
+    /** The model the person picked is not one the host offers (any more), so nothing was sent. */
+    data object InvalidModel : InteractResult
+
     /** Sending failed before anything left the phone (offline, or the connection was just lost). Safe to try again. */
     data class NotSent(val cause: Throwable) : InteractResult
 }
@@ -144,12 +147,18 @@ class ChatInteractor(
     private val gate: ApprovalGate,
     private val newId: () -> String = { UUID.randomUUID().toString() },
     private val now: () -> Instant = Instant::now,
+    /** The models the host offers for this chat's agent. A message names a model only if it is one of these. */
+    private val models: () -> List<ModelOption> = { emptyList() },
 ) {
-    suspend fun send(text: String): InteractResult {
+    /** The models a message in this chat may be sent with, as the host offers them now. */
+    fun modelOptions(): List<ModelOption> = models()
+
+    suspend fun send(text: String, model: ModelChoice? = null): InteractResult {
         val state = usable() ?: return InteractResult.NotAllowed
         if (text.isBlank()) return InteractResult.Blank
+        if (model != null && !ModelOptions.isOffered(models(), model)) return InteractResult.InvalidModel
         // A turn already running cannot take a second one: the message waits in the queue and starts when it ends.
-        val action = if (state.activeTurn == null) ChatActions.startTurn(newId(), now(), text) else ChatActions.queueMessage(newId(), text)
+        val action = if (state.activeTurn == null) ChatActions.startTurn(newId(), now(), text, model = model) else ChatActions.queueMessage(newId(), text, model)
         return deliver(action)
     }
 
@@ -169,11 +178,12 @@ class ChatInteractor(
         usable()?.let { deliver(ChatActions.completeInput(requestId, InputResponse.CANCEL)) } ?: InteractResult.NotAllowed
 
     /** A message that steers the turn running now. Needs a running turn: with none, a new message is [send], not a steer. */
-    suspend fun steer(text: String): InteractResult {
+    suspend fun steer(text: String, model: ModelChoice? = null): InteractResult {
         val state = usable() ?: return InteractResult.NotAllowed
         if (text.isBlank()) return InteractResult.Blank
         if (state.activeTurn == null) return InteractResult.NoActiveTurn
-        return deliver(ChatActions.steerTurn(newId(), text))
+        if (model != null && !ModelOptions.isOffered(models(), model)) return InteractResult.InvalidModel
+        return deliver(ChatActions.steerTurn(newId(), text, model))
     }
 
     /**

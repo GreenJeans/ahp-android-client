@@ -162,7 +162,7 @@ fun AppRoot(
                             val running = chatState?.activeTurn != null
                             // Nothing to act with unless the connection allows it and the host shows this chat as interactive.
                             val actions = if (ChatInteractor.available(chatState, canInteract)) {
-                                remember(chat.interactor, running) {
+                                remember(chat.interactor, running, rootState) {
                                     ChatActionsUi(
                                         running = running,
                                         send = chat.interactor::send,
@@ -176,6 +176,7 @@ fun AppRoot(
                                         saveDraft = chat.interactor::saveDraft,
                                         decline = chat.interactor::declineInput,
                                         dismiss = chat.interactor::dismissInput,
+                                        models = chat.interactor.modelOptions(),
                                     )
                                 }
                             } else {

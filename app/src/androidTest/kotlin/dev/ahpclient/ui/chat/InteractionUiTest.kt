@@ -1,8 +1,21 @@
 package dev.ahpclient.ui.chat
 
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertHeightIsAtLeast
+import androidx.compose.ui.test.junit4.StateRestorationTester
+import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.isSelectable
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.unit.dp
+import dev.ahpclient.state.ModelChoice
+import dev.ahpclient.state.ModelOption
+import dev.ahpclient.state.ModelSetting
+import dev.ahpclient.state.ModelSettingValue
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.performScrollTo
@@ -50,6 +63,8 @@ class InteractionUiTest {
 
     private class Calls {
         val sent = mutableListOf<String>()
+        val sentModels = mutableListOf<ModelChoice?>()
+        val steeredModels = mutableListOf<ModelChoice?>()
         val steered = mutableListOf<String>()
         var cancels = 0
         val approved = mutableListOf<Pair<String, String?>>()
@@ -63,10 +78,10 @@ class InteractionUiTest {
         var result: InteractResult = InteractResult.Sent(DispatchOutcome.Accepted)
     }
 
-    private fun actions(calls: Calls, running: Boolean = false) = ChatActionsUi(
+    private fun actions(calls: Calls, running: Boolean = false, models: List<ModelOption> = emptyList()) = ChatActionsUi(
         running = running,
-        send = { calls.sent += it; calls.result },
-        steer = { calls.steered += it; calls.result },
+        send = { text, model -> calls.sent += text; calls.sentModels += model; calls.result },
+        steer = { text, model -> calls.steered += text; calls.steeredModels += model; calls.result },
         cancel = { calls.cancels++; calls.result },
         approve = { id, option -> calls.approved += id to option; calls.result },
         deny = { id, option -> calls.denied += id to option; calls.result },
@@ -76,6 +91,7 @@ class InteractionUiTest {
         saveDraft = { id, question, answer -> calls.drafts += Triple(id, question, answer); calls.result },
         decline = { calls.declined += it; calls.result },
         dismiss = { calls.dismissed += it; calls.result },
+        models = models,
     )
 
     private fun transcript(vararg items: TranscriptItem) = Transcript("Fix the build", ActivityState.IN_PROGRESS, null, items.toList(), hasOlder = false)
@@ -109,6 +125,214 @@ class InteractionUiTest {
     private fun form(vararg questions: FormQuestion) = InputForm("req-1", null, questions.toList())
 
     private fun text(id: String = "a", required: Boolean = true) = FormQuestion(id, "Your name", QuestionKind.TEXT, required)
+
+    // ---- the model picker ---------------------------------------------------------------------------------------
+
+    private val sonnet = ModelOption(
+        "claude-sonnet-5.5",
+        "Claude Sonnet 5.5",
+        listOf(ModelSetting("thinking", "Thinking", listOf(ModelSettingValue("low", "Quick"), ModelSettingValue("high", "Thorough")))),
+    )
+    private val auto = ModelOption("auto", "Auto", emptyList())
+
+    private fun pickSonnetThorough() {
+        rule.onNodeWithTag("model_button").performClick()
+        rule.onAllNodesWithTag("model_option")[1].performClick()
+        rule.onAllNodesWithTag("model_setting_value")[1].performClick()
+        rule.onNodeWithTag("model_use").performClick()
+    }
+
+    private fun sendHi() {
+        rule.onNodeWithTag("composer_input").performTextInput("hi")
+        rule.onNodeWithTag("composer_send").performClick()
+        rule.waitForIdle()
+    }
+
+    @Test
+    fun withNoModelsThereIsNoPickerAndMessagesGoWithNoModel() {
+        val calls = Calls()
+        show(transcript(), actions(calls))
+
+        rule.onNodeWithTag("model_button").assertDoesNotExist()
+        sendHi()
+
+        assertEquals(listOf<ModelChoice?>(null), calls.sentModels)
+    }
+
+    @Test
+    fun theButtonSaysTheHostChoosesUntilOneIsPicked() {
+        show(transcript(), actions(Calls(), models = listOf(auto, sonnet)))
+
+        rule.onNodeWithTag("model_button").assertTextContains("host default", substring = true)
+    }
+
+    @Test
+    fun aPickedModelAndItsSettingAreShownAndSentWithTheMessage() {
+        val calls = Calls()
+        show(transcript(), actions(calls, models = listOf(auto, sonnet)))
+
+        pickSonnetThorough()
+        rule.onNodeWithTag("model_button").assertTextContains("Claude Sonnet 5.5 · Thorough", substring = true)
+        sendHi()
+
+        assertEquals(listOf<ModelChoice?>(ModelChoice("claude-sonnet-5.5", mapOf("thinking" to "high"))), calls.sentModels)
+    }
+
+    @Test
+    fun aSteeringMessageCarriesTheModelToo() {
+        val calls = Calls()
+        show(transcript(), actions(calls, running = true, models = listOf(auto, sonnet)))
+
+        pickSonnetThorough()
+        rule.onNodeWithTag("composer_input").performTextInput("now")
+        rule.onNodeWithTag("composer_steer").performClick()
+        rule.waitForIdle()
+
+        assertEquals(listOf<ModelChoice?>(ModelChoice("claude-sonnet-5.5", mapOf("thinking" to "high"))), calls.steeredModels)
+    }
+
+    @Test
+    fun aModelWithNoSettingChosenSendsJustTheModel() {
+        val calls = Calls()
+        show(transcript(), actions(calls, models = listOf(auto, sonnet)))
+
+        rule.onNodeWithTag("model_button").performClick()
+        rule.onAllNodesWithTag("model_option")[0].performClick()
+        rule.onNodeWithTag("model_use").performClick()
+        rule.onNodeWithTag("model_button").assertTextContains("Auto", substring = true)
+        sendHi()
+
+        assertEquals(listOf<ModelChoice?>(ModelChoice("auto")), calls.sentModels)
+    }
+
+    @Test
+    fun hostDefaultSendsNoModelAtAll() {
+        val calls = Calls()
+        show(transcript(), actions(calls, models = listOf(auto, sonnet)))
+        pickSonnetThorough()
+
+        rule.onNodeWithTag("model_button").performClick()
+        rule.onNodeWithTag("model_default").performClick()
+        rule.onNodeWithTag("model_use").performClick()
+        sendHi()
+
+        assertEquals(listOf<ModelChoice?>(null), calls.sentModels)
+    }
+
+    @Test
+    fun anotherModelStartsWithItsOwnDefaultSettings() {
+        val calls = Calls()
+        show(transcript(), actions(calls, models = listOf(auto, sonnet)))
+        pickSonnetThorough()
+
+        rule.onNodeWithTag("model_button").performClick()
+        rule.onAllNodesWithTag("model_option")[0].performClick()
+        rule.onAllNodesWithTag("model_option")[1].performClick()
+        rule.onNodeWithTag("model_use").performClick()
+        sendHi()
+
+        assertEquals(listOf<ModelChoice?>(ModelChoice("claude-sonnet-5.5")), calls.sentModels)
+    }
+
+    @Test
+    fun cancellingKeepsTheEarlierPick() {
+        show(transcript(), actions(Calls(), models = listOf(auto, sonnet)))
+        pickSonnetThorough()
+
+        rule.onNodeWithTag("model_button").performClick()
+        rule.onAllNodesWithTag("model_option")[0].performClick()
+        rule.onNodeWithTag("model_cancel").performClick()
+
+        rule.onNodeWithTag("model_button").assertTextContains("Claude Sonnet 5.5 · Thorough", substring = true)
+    }
+
+    @Test
+    fun aPickTheHostNoLongerOffersIsDroppedAndNeverSent() {
+        val calls = Calls()
+        val models = mutableStateOf(listOf(auto, sonnet))
+        rule.setContent {
+            AhpTheme { ChatScreen(transcript(), null, false, null, ConnState.Online, {}, {}, {}, actions = actions(calls, models = models.value)) }
+        }
+        pickSonnetThorough()
+
+        models.value = listOf(auto)
+        rule.waitForIdle()
+        rule.onNodeWithTag("model_button").assertTextContains("host default", substring = true)
+        sendHi()
+
+        assertEquals(listOf<ModelChoice?>(null), calls.sentModels)
+    }
+
+    @Test
+    fun theRowsAreBigEnoughAndAreRadioButtonsAndTheHostsWordsAreJustText() {
+        val odd = ModelOption("x", "<b>bold</b> [link](https://evil.example)", emptyList())
+        show(transcript(), actions(Calls(), models = listOf(odd)))
+
+        rule.onNodeWithTag("model_button").performClick()
+
+        rule.onAllNodesWithTag("model_option")[0].assert(isSelectable()).assertHeightIsAtLeast(48.dp)
+            .assertTextContains("<b>bold</b> [link](https://evil.example)", substring = true)
+        rule.onNodeWithTag("model_default").assert(isSelectable()).assertHeightIsAtLeast(48.dp)
+    }
+
+    @Test
+    fun tappingTheChosenModelAgainKeepsItsSettings() {
+        val calls = Calls()
+        show(transcript(), actions(calls, models = listOf(auto, sonnet)))
+
+        rule.onNodeWithTag("model_button").performClick()
+        rule.onAllNodesWithTag("model_option")[1].performClick()
+        rule.onAllNodesWithTag("model_setting_value")[1].performClick()
+        rule.onAllNodesWithTag("model_option")[1].performClick()
+        rule.onNodeWithTag("model_use").performClick()
+        sendHi()
+
+        assertEquals(listOf<ModelChoice?>(ModelChoice("claude-sonnet-5.5", mapOf("thinking" to "high"))), calls.sentModels)
+    }
+
+    @Test
+    fun reopeningThePickerShowsWhatIsPickedNow() {
+        show(transcript(), actions(Calls(), models = listOf(auto, sonnet)))
+        pickSonnetThorough()
+
+        rule.onNodeWithTag("model_button").performClick()
+
+        rule.onAllNodesWithTag("model_option")[1].assertIsSelected()
+        rule.onAllNodesWithTag("model_option")[0].assertIsNotSelected()
+        rule.onNodeWithTag("model_default").assertIsNotSelected()
+        rule.onAllNodesWithTag("model_setting_value")[1].assertIsSelected()
+        rule.onNodeWithTag("model_setting_default").assertIsNotSelected()
+    }
+
+    @Test
+    fun aSettingCanGoBackToTheModelsOwnDefault() {
+        val calls = Calls()
+        show(transcript(), actions(calls, models = listOf(auto, sonnet)))
+        pickSonnetThorough()
+
+        rule.onNodeWithTag("model_button").performClick()
+        rule.onNodeWithTag("model_setting_default").performClick()
+        rule.onNodeWithTag("model_use").performClick()
+        sendHi()
+
+        assertEquals(listOf<ModelChoice?>(ModelChoice("claude-sonnet-5.5")), calls.sentModels)
+    }
+
+    @Test
+    fun aPickSurvivesRotation() {
+        val calls = Calls()
+        val restoration = StateRestorationTester(rule)
+        restoration.setContent {
+            AhpTheme { ChatScreen(transcript(), null, false, null, ConnState.Online, {}, {}, {}, actions = actions(calls, models = listOf(auto, sonnet))) }
+        }
+        pickSonnetThorough()
+
+        restoration.emulateSavedInstanceStateRestore()
+
+        rule.onNodeWithTag("model_button").assertTextContains("Claude Sonnet 5.5 · Thorough", substring = true)
+        sendHi()
+        assertEquals(listOf<ModelChoice?>(ModelChoice("claude-sonnet-5.5", mapOf("thinking" to "high"))), calls.sentModels)
+    }
 
     // ---- a read only chat has nothing to act with ---------------------------------------------------------------
 

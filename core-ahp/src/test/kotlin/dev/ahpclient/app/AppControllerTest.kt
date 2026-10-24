@@ -22,6 +22,7 @@ import dev.ahpclient.state.ApprovalTarget
 import dev.ahpclient.state.ChatInteractor
 import dev.ahpclient.state.DispatchOutcome
 import dev.ahpclient.state.InteractResult
+import dev.ahpclient.state.ModelChoice
 import dev.ahpclient.state.ManageResult
 import dev.ahpclient.state.SNAPSHOT_SEQ
 import dev.ahpclient.state.echoOf
@@ -1594,6 +1595,29 @@ class AppControllerTest {
 
             assertEquals(ManageResult.NotAllowed, controller.setFileReviewed("file:///work/a.kt", true))
             assertTrue(dispatches().isEmpty())
+        }
+    }
+
+    // ---- picking a model ---------------------------------------------------------------------------------------
+
+    @Test
+    fun `an open chat offers its agent's models, and a picked one reaches the host with the message`() = runTest {
+        var clientId = ""
+        val script = { HostScript(sessionChats = "[${chatSummaryJson(CHAT_A)}]", onDispatch = { echoOf(it, SNAPSHOT_SEQ + 1, clientId = clientId) }) }
+        withRig(script = script, interaction = allowed) {
+            val connected = connectToFirstHost()
+            clientId = "client-${connected.host.tunnelId}"
+            connected.session.canInteract.first { it }
+            val interactor = openChatInteractor(this)
+
+            assertEquals(listOf("auto", "claude-sonnet-5.5"), interactor.modelOptions().map { it.id })
+
+            assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), interactor.send("hello", ModelChoice("claude-sonnet-5.5")))
+            val message = dispatches().single()["params"]!!.jsonObject["action"]!!.jsonObject["message"]!!.jsonObject
+            assertEquals("""{"id":"claude-sonnet-5.5"}""", message["model"].toString())
+
+            assertEquals(InteractResult.InvalidModel, interactor.send("hello", ModelChoice("not-a-model")))
+            assertEquals(1, dispatches().size)
         }
     }
 

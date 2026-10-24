@@ -21,6 +21,8 @@ import dev.ahpclient.state.HostSession
 import dev.ahpclient.state.InteractResult
 import dev.ahpclient.state.ManageResult
 import dev.ahpclient.state.ManagementCommands
+import dev.ahpclient.state.ModelOption
+import dev.ahpclient.state.ModelOptions
 import dev.ahpclient.state.SessionManager
 import dev.ahpclient.state.SubagentLinks
 import dev.ahpclient.state.displayPath
@@ -328,7 +330,14 @@ class AppController(
         canInteract = { session.canInteract.value },
         dispatch = session::dispatch,
         gate = approvalGate,
+        models = { modelsFor(session) },
     )
+
+    /** The models the host offers for the agent of the session on screen; none when no session is open or the agent is not listed. */
+    private fun modelsFor(session: HostSession): List<ModelOption> {
+        val provider = (_state.value as? AppState.Connected)?.open?.store?.state?.value?.provider ?: return emptyList()
+        return ModelOptions.forProvider(session.root.root.value?.agents.orEmpty(), provider)
+    }
 
     /**
      * Approves or denies one waiting tool call for a notification button, with no screen showing it. The chat is opened for

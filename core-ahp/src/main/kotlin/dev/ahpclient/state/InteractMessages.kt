@@ -11,6 +11,7 @@ object InteractMessages {
         InteractResult.NoActiveTurn -> "Nothing is running to stop."
         InteractResult.NoSuchRequest -> "That is no longer waiting for an answer."
         InteractResult.NotConfirmed -> "Not approved: the device check was not completed."
+        InteractResult.InvalidModel -> "The host does not offer that model here any more. Pick another and send again."
         is InteractResult.NotSent -> "Could not send. Check the connection and try again."
     }
 

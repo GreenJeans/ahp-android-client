@@ -7,9 +7,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
@@ -18,6 +21,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
@@ -27,6 +31,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -34,6 +40,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.Role
@@ -47,6 +54,9 @@ import dev.ahpclient.state.FormValue
 import dev.ahpclient.state.InputForm
 import dev.ahpclient.state.InteractMessages
 import dev.ahpclient.state.InteractResult
+import dev.ahpclient.state.ModelChoice
+import dev.ahpclient.state.ModelOption
+import dev.ahpclient.state.ModelOptions
 import dev.ahpclient.state.QuestionKind
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -61,8 +71,8 @@ import kotlinx.coroutines.launch
 class ChatActionsUi(
     /** True while the agent is working: a message sent now waits its turn, can steer the turn, and there is something to stop. */
     val running: Boolean,
-    val send: suspend (String) -> InteractResult,
-    val steer: suspend (String) -> InteractResult,
+    val send: suspend (text: String, model: ModelChoice?) -> InteractResult,
+    val steer: suspend (text: String, model: ModelChoice?) -> InteractResult,
     val cancel: suspend () -> InteractResult,
     val approve: suspend (toolCallId: String, optionId: String?) -> InteractResult,
     val deny: suspend (toolCallId: String, optionId: String?) -> InteractResult,
@@ -72,6 +82,8 @@ class ChatActionsUi(
     val saveDraft: suspend (requestId: String, questionId: String, answer: AnswerValue?) -> InteractResult,
     val decline: suspend (requestId: String) -> InteractResult,
     val dismiss: suspend (requestId: String) -> InteractResult,
+    /** The models the host offers for this chat's agent. None means no picker is shown and messages go with the host's own default. */
+    val models: List<ModelOption> = emptyList(),
 )
 
 /** The host's own words on a button or a field are untrusted display text: shown as plain text and cut to a sane length. */
@@ -79,6 +91,71 @@ private const val MAX_LABEL = 80
 
 /** How long a form waits after the last change before it tells the host what has been entered. */
 private const val DRAFT_PAUSE_MS = 700L
+
+/** Keeps a picked model across rotation: its id, then each setting as a key and a value. A null pick is an empty list. */
+private val ModelPickSaver: Saver<ModelChoice?, Any> = listSaver(
+    save = { choice -> if (choice == null) emptyList<String>() else listOf(choice.id) + choice.config.flatMap { listOf(it.key, it.value) } },
+    restore = { saved -> if (saved.isEmpty()) null else ModelChoice(saved[0], saved.drop(1).chunked(2).filter { it.size == 2 }.associate { it[0] to it[1] }) },
+)
+
+/** What the model button says: the model's name and the labels of the settings picked for it, or that the host chooses. */
+private fun modelLabel(models: List<ModelOption>, choice: ModelChoice?): String {
+    val model = choice?.let { c -> models.firstOrNull { it.id == c.id } } ?: return "host default"
+    val settings = model.settings.mapNotNull { s -> choice.config[s.id]?.let { v -> s.values.firstOrNull { it.value == v }?.label } }
+    return (listOf(model.name) + settings).joinToString(" · ")
+}
+
+@Composable
+private fun PickRow(label: String, selected: Boolean, tag: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
+            .testTag(tag),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected = selected, onClick = null)
+        Text(label, style = MaterialTheme.typography.bodyLarge)
+    }
+}
+
+/**
+ * Picks the model for the next messages: one the host lists for this agent, and for it, one of each setting's listed values.
+ * "Host default" sends no model at all. The names and labels are the host's words, shown as plain text.
+ */
+@Composable
+private fun ModelPickerDialog(models: List<ModelOption>, current: ModelChoice?, onDismiss: () -> Unit, onPick: (ModelChoice?) -> Unit) {
+    var draft by rememberSaveable(stateSaver = ModelPickSaver) { mutableStateOf(current) }
+    val model = models.firstOrNull { it.id == draft?.id }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Model for your messages") },
+        text = {
+            Column(
+                modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()).testTag("model_dialog"),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                PickRow("Host default", draft == null, "model_default") { draft = null }
+                models.forEach { m -> PickRow(m.name, draft?.id == m.id, "model_option") { if (draft?.id != m.id) draft = ModelChoice(m.id) } }
+                model?.settings?.forEach { setting ->
+                    Text(setting.title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 12.dp).semantics { heading() })
+                    PickRow("Default", draft?.config?.containsKey(setting.id) != true, "model_setting_default") {
+                        draft = draft?.let { it.copy(config = it.config - setting.id) }
+                    }
+                    setting.values.forEach { v ->
+                        PickRow(v.label, draft?.config?.get(setting.id) == v.value, "model_setting_value") {
+                            draft = draft?.let { it.copy(config = it.config + (setting.id to v.value)) }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { onPick(draft) }, modifier = Modifier.testTag("model_use")) { Text("Use") } },
+        dismissButton = { TextButton(onClick = onDismiss, modifier = Modifier.testTag("model_cancel")) { Text("Cancel") } },
+    )
+}
 
 @Composable
 private fun Notice(text: String?, tag: String) {
@@ -98,6 +175,10 @@ private fun Notice(text: String?, tag: String) {
 @Composable
 internal fun Composer(actions: ChatActionsUi, modifier: Modifier = Modifier) {
     var text by rememberSaveable { mutableStateOf("") }
+    var pick by rememberSaveable(stateSaver = ModelPickSaver) { mutableStateOf<ModelChoice?>(null) }
+    var choosing by rememberSaveable { mutableStateOf(false) }
+    // A pick the host no longer offers is dropped, so the box never shows or sends a model that has gone.
+    val chosen = pick?.takeIf { ModelOptions.isOffered(actions.models, it) }
     var busy by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -106,6 +187,12 @@ internal fun Composer(actions: ChatActionsUi, modifier: Modifier = Modifier) {
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Notice(notice, "composer_notice")
+        if (actions.models.isNotEmpty()) {
+            OutlinedButton(onClick = { choosing = true }, modifier = Modifier.heightIn(min = 48.dp).testTag("model_button")) {
+                Text("Model: ${modelLabel(actions.models, chosen)}")
+            }
+            if (choosing) ModelPickerDialog(actions.models, chosen, onDismiss = { choosing = false }, onPick = { pick = it; choosing = false })
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Bottom) {
             OutlinedTextField(
                 value = text,
@@ -119,7 +206,7 @@ internal fun Composer(actions: ChatActionsUi, modifier: Modifier = Modifier) {
                     val sending = text
                     scope.launch {
                         busy = true
-                        val result = actions.send(sending)
+                        val result = actions.send(sending, chosen)
                         notice = InteractMessages.describe(result)
                         // Only a message the host has taken is cleared, and only if the box still holds what was sent.
                         if (InteractMessages.succeeded(result) && text == sending) text = ""
@@ -138,7 +225,7 @@ internal fun Composer(actions: ChatActionsUi, modifier: Modifier = Modifier) {
                         val sending = text
                         scope.launch {
                             busy = true
-                            val result = actions.steer(sending)
+                            val result = actions.steer(sending, chosen)
                             notice = InteractMessages.describe(result)
                             if (InteractMessages.succeeded(result) && text == sending) text = ""
                             busy = false

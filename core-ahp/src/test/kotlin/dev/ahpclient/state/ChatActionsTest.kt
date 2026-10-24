@@ -61,6 +61,20 @@ class ChatActionsTest {
     }
 
     @Test
+    fun `a message carries the model it was picked with, and none when none was`() {
+        val plain = wire(ChatActions.startTurn("t", at, "hi"))
+        val picked = wire(ChatActions.startTurn("t", at, "hi", model = ModelChoice("claude-sonnet-5.5")))
+        val withSettings = wire(ChatActions.queueMessage("q", "hi", ModelChoice("m", mapOf("thinking" to "high"))))
+        val steering = wire(ChatActions.steerTurn("s", "hi", ModelChoice("m")))
+
+        assertNull(plain.getValue("message").jsonObject["model"])
+        assertEquals("""{"id":"claude-sonnet-5.5"}""", picked.getValue("message").jsonObject.getValue("model").toString())
+        assertEquals("""{"id":"m","config":{"thinking":"high"}}""", withSettings.getValue("message").jsonObject.getValue("model").toString())
+        assertEquals("""{"id":"m"}""", steering.getValue("message").jsonObject.getValue("model").toString())
+        assertEquals("hi", picked.getValue("message").jsonObject.str("text"))
+    }
+
+    @Test
     fun `queueMessage and removeQueuedMessage use the queued kind`() {
         val set = ChatActions.queueMessage("q-1", "later")
         val removed = ChatActions.removeQueuedMessage("q-1")

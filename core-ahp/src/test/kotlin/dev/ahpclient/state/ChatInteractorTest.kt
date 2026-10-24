@@ -41,6 +41,7 @@ class ChatInteractorTest {
 
     private class Rig(var chat: ChatState?, uri: String, at: Instant) {
         var canInteract = true
+        var models: List<ModelOption> = emptyList()
         var gateAnswer = true
         var gateThrows = false
         var outcome: DispatchOutcome = DispatchOutcome.Accepted
@@ -70,6 +71,7 @@ class ChatInteractorTest {
             },
             newId = { "id-${++ids}" },
             now = { at },
+            models = { models },
         )
 
         fun types() = sent.map { (_, action) -> Ahp.json.encodeToJsonElement(StateAction.serializer(), action).jsonObject["type"]!!.jsonPrimitive.content }
@@ -92,6 +94,70 @@ class ChatInteractorTest {
         assertEquals("id-1", json["turnId"]!!.jsonPrimitive.content)
         assertEquals("2026-10-22T12:00:00Z", json["startedAt"]!!.jsonPrimitive.content)
         assertEquals("hello", json["message"]!!.jsonObject["text"]!!.jsonPrimitive.content)
+    }
+
+    private val sonnet = ModelOption(
+        "claude-sonnet-5.5",
+        "Claude Sonnet 5.5",
+        listOf(ModelSetting("thinking", "Thinking", listOf(ModelSettingValue("low", "Low"), ModelSettingValue("high", "High")))),
+    )
+
+    private fun Rig.modelOf(index: Int = 0) = wire(index)["message"]!!.jsonObject["model"]?.toString()
+
+    @Test
+    fun `a model the host offers goes out with the message, whether it starts a turn, queues or steers`() = runTest {
+        val idle = rig().apply { models = listOf(sonnet) }
+        idle.interactor.send("hi", ModelChoice("claude-sonnet-5.5", mapOf("thinking" to "high")))
+        assertEquals("""{"id":"claude-sonnet-5.5","config":{"thinking":"high"}}""", idle.modelOf())
+
+        val busy = rig(chat(active = activeTurn())).apply { models = listOf(sonnet) }
+        busy.interactor.send("later", ModelChoice("claude-sonnet-5.5"))
+        busy.interactor.steer("now", ModelChoice("claude-sonnet-5.5"))
+        assertEquals(listOf("queued", "steering"), listOf(busy.wire(0)["kind"], busy.wire(1)["kind"]).map { it!!.jsonPrimitive.content })
+        assertEquals("""{"id":"claude-sonnet-5.5"}""", busy.modelOf(0))
+        assertEquals("""{"id":"claude-sonnet-5.5"}""", busy.modelOf(1))
+    }
+
+    @Test
+    fun `a model the host does not offer is never sent, by a new message or a steering one`() = runTest {
+        val rig = rig().apply { models = listOf(sonnet) }
+
+        assertEquals(InteractResult.InvalidModel, rig.interactor.send("hi", ModelChoice("gpt-made-up")))
+        assertEquals(InteractResult.InvalidModel, rig.interactor.send("hi", ModelChoice("claude-sonnet-5.5", mapOf("thinking" to "extreme"))))
+        assertEquals(InteractResult.InvalidModel, rig.interactor.send("hi", ModelChoice("claude-sonnet-5.5", mapOf("unknown" to "x"))))
+        assertTrue(rig.sent.isEmpty())
+
+        val busy = rig(chat(active = activeTurn())).apply { models = listOf(sonnet) }
+        assertEquals(InteractResult.InvalidModel, busy.interactor.steer("now", ModelChoice("nope")))
+        assertTrue(busy.sent.isEmpty())
+    }
+
+    @Test
+    fun `a blank message and a refused chat are told apart from a bad model`() = runTest {
+        val blank = rig().apply { models = listOf(sonnet) }
+        assertEquals(InteractResult.Blank, blank.interactor.send("  ", ModelChoice("nope")))
+
+        val refused = rig().apply { canInteract = false; models = listOf(sonnet) }
+        assertEquals(InteractResult.NotAllowed, refused.interactor.send("hi", ModelChoice("nope")))
+    }
+
+    @Test
+    fun `with no model picked nothing about a model is added, even when the host lists none`() = runTest {
+        val rig = rig()
+
+        assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), rig.interactor.send("hi"))
+
+        assertNull(rig.modelOf())
+    }
+
+    @Test
+    fun `the options are whatever the host offers now`() {
+        val rig = rig()
+        assertEquals(emptyList(), rig.interactor.modelOptions())
+
+        rig.models = listOf(sonnet)
+
+        assertEquals(listOf(sonnet), rig.interactor.modelOptions())
     }
 
     @Test
