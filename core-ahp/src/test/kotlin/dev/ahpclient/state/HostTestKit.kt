@@ -110,11 +110,16 @@ internal class HostScript(
     val terminalState: String = terminalStateJson(),
     /** Replaces the whole reply to a terminal `subscribe` (for a host that answers badly); null is the scripted snapshot. */
     val onTerminalSubscribe: ((id: Long?, channel: String) -> String)? = null,
+    /** Replaces the reply to a chat `subscribe`, given its params; returning null is a host that never answers. */
+    val onChatSubscribe: ((id: Long?, params: JsonObject) -> String?)? = null,
 ) {
     fun reply(method: String, id: Long?, params: JsonObject): String? = when (method) {
         "initialize" -> initializeReply(id, params)
         "listSessions" -> result(id, listJson)
-        "subscribe" -> subscribeReply(id, params["channel"]!!.jsonPrimitive.content)
+        "subscribe" -> {
+            val channel = params["channel"]!!.jsonPrimitive.content
+            if (channel.startsWith("ahp-chat:/") && onChatSubscribe != null) onChatSubscribe.invoke(id, params) else subscribeReply(id, channel)
+        }
         "fetchTurns" -> result(id, "{}")
         "reconnect" -> onReconnect(id)
         "dispatchAction" -> onDispatch(params)

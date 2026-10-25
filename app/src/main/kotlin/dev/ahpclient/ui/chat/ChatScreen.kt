@@ -5,6 +5,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -32,6 +34,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import dev.ahpclient.state.ChatGoneException
+import dev.ahpclient.state.ChatNotLoadedException
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.Transcript
 import dev.ahpclient.state.label
@@ -39,6 +42,7 @@ import dev.ahpclient.ui.Busy
 import dev.ahpclient.ui.ConnectionLine
 import dev.ahpclient.ui.ErrorText
 import dev.ahpclient.ui.ScreenScaffold
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
@@ -48,6 +52,9 @@ private const val SHORT_PANE_DP = 400
 
 /** How close to the oldest loaded row the user has to scroll before the next page of older turns is asked for. */
 private const val LOAD_OLDER_MARGIN = 2
+
+/** How long "Loading chat…" runs before it says that a long chat takes a while. */
+private const val SLOW_LOAD_MS = 6_000L
 
 /**
  * One chat as a screen of its own, read-only: a top bar with the way back, the chat's title and its state, and the
@@ -71,6 +78,7 @@ fun ChatScreen(
     onOpenSubagent: ((String) -> Unit)? = null,
     onOpenTerminal: ((String) -> Unit)? = null,
     backLabel: String = "Back to session",
+    onRetry: (() -> Unit)? = null,
 ) {
     ScreenScaffold(
         title = transcript?.title ?: "Chat",
@@ -81,7 +89,7 @@ fun ChatScreen(
         large = false,
         modifier = modifier,
     ) {
-        ChatPane(transcript, error, loadingOlder, olderError, connection, onLoadOlder, onOpenLink, Modifier, expanded, onToggle, actions, onOpenSubagent, onOpenTerminal)
+        ChatPane(transcript, error, loadingOlder, olderError, connection, onLoadOlder, onOpenLink, Modifier, expanded, onToggle, actions, onOpenSubagent, onOpenTerminal, onRetry)
     }
 }
 
@@ -105,8 +113,10 @@ fun ChatPane(
     actions: ChatActionsUi? = null,
     onOpenSubagent: ((String) -> Unit)? = null,
     onOpenTerminal: ((String) -> Unit)? = null,
+    onRetry: (() -> Unit)? = null,
 ) {
     var pendingLink by rememberSaveable { mutableStateOf<String?>(null) }
+    val notLoaded = error as? ChatNotLoadedException
     // A short pane (a phone on its side, split screen) gets the compact composer. Decided from the room the pane really has.
     var short by remember { mutableStateOf(false) }
     val shortBelowPx = with(LocalDensity.current) { SHORT_PANE_DP.dp.roundToPx() }
@@ -119,14 +129,50 @@ fun ChatPane(
         }
         when {
             error is ChatGoneException -> ErrorText("This chat is no longer on the host.", Modifier.padding(horizontal = 24.dp).testTag("chat_gone"))
-            transcript != null -> TranscriptList(transcript, loadingOlder, olderError, onLoadOlder, { pendingLink = it }, expanded, onToggle, actions, onOpenSubagent, onOpenTerminal, Modifier.weight(1f))
+            notLoaded != null && transcript == null ->
+                NotLoaded(notLoaded, onRetry, stale = false, Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
+            transcript != null -> {
+                if (notLoaded != null) NotLoaded(notLoaded, onRetry, stale = true, Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
+                TranscriptList(transcript, loadingOlder, olderError, onLoadOlder, { pendingLink = it }, expanded, onToggle, actions, onOpenSubagent, onOpenTerminal, Modifier.weight(1f))
+            }
             error != null -> ErrorText("Could not load this chat (${error.javaClass.simpleName}).", Modifier.padding(horizontal = 24.dp).testTag("chat_error"))
-            else -> Busy("Loading chat…", Modifier.padding(horizontal = 24.dp).testTag("chat_loading"))
+            else -> LoadingChat(Modifier.padding(horizontal = 24.dp))
         }
         if (actions != null && transcript != null) Composer(actions, compact = short)
     }
     pendingLink?.let { link ->
         LinkConfirmDialog(url = link, onOpen = { pendingLink = null; onOpenLink(link) }, onDismiss = { pendingLink = null })
+    }
+}
+
+/** Why a chat is not there (or not up to date) and the way to ask for it again. A long chat is the usual reason. */
+@Composable
+private fun NotLoaded(failure: ChatNotLoadedException, onRetry: (() -> Unit)?, stale: Boolean, modifier: Modifier = Modifier) {
+    val why = if (failure.interrupted) "The connection kept dropping while this chat loaded." else "The host took too long to send this chat."
+    Column(modifier = modifier.fillMaxWidth().testTag("chat_not_loaded"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        ErrorText(if (stale) "$why What is shown is not being kept up to date." else "$why It may be a very long one.", Modifier.testTag("chat_not_loaded_text"))
+        if (onRetry != null) FilledTonalButton(onClick = onRetry, modifier = Modifier.heightIn(min = 48.dp).testTag("chat_retry")) { Text("Try again") }
+    }
+}
+
+/** A spinner with its words, and after a few seconds a line saying why it is taking a while: the wait is never silent. */
+@Composable
+private fun LoadingChat(modifier: Modifier = Modifier) {
+    var slow by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        delay(SLOW_LOAD_MS)
+        slow = true
+    }
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Busy("Loading chat…", Modifier.testTag("chat_loading"))
+        if (slow) {
+            Text(
+                "This chat is long, so it can take a while.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.testTag("chat_loading_slow"),
+            )
+        }
     }
 }
 

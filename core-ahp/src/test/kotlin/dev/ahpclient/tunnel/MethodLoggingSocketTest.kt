@@ -1,9 +1,13 @@
 package dev.ahpclient.tunnel
 
 import dev.ahpclient.ahp.FakeSocket
+import java.io.IOException
+import java.net.SocketTimeoutException
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 
 class MethodLoggingSocketTest {
@@ -55,5 +59,46 @@ class MethodLoggingSocketTest {
 
         assertEquals(false, sent)
         assertEquals(listOf("ping"), lines)
+    }
+
+    @Test
+    fun `a big inbound frame is logged by its size alone, and a small one not at all`() = runTest {
+        val socket = FakeSocket()
+        val lines = mutableListOf<String>()
+        val wrapped = MethodLoggingSocketOpener({ _, _ -> socket }, lines::add).open("wss://x", emptyMap())
+        val big = """{"secret":"private-text-${"x".repeat(300_000)}"}"""
+        socket.serverSends("""{"small":"private-small"}""")
+        socket.serverSends(big)
+
+        assertEquals("""{"small":"private-small"}""", wrapped.receive())
+        assertEquals(big, wrapped.receive())
+
+        assertEquals(listOf("received a frame of ${big.length} characters"), lines)
+        assertFalse(lines.joinToString().contains("private"))
+    }
+
+    @Test
+    fun `the end of a socket is logged with its close code and never its reason`() = runTest {
+        val socket = FakeSocket()
+        val lines = mutableListOf<String>()
+        val wrapped = MethodLoggingSocketOpener({ _, _ -> socket }, lines::add).open("wss://x", emptyMap())
+        socket.serverCloses(1011)
+
+        assertFailsWith<SocketClosedException> { wrapped.receive() }
+
+        assertEquals(1, lines.size)
+        assertTrue(lines.single().startsWith("socket ended: SocketClosedException code=1011"), lines.single())
+    }
+
+    @Test
+    fun `a failure is described by the classes of its causes, a close code, and the words of a timeout only`() {
+        val ping = SocketTimeoutException("sent ping but didn't receive pong within 30000ms (after 0 successful ping/pongs)")
+        assertEquals(
+            "SocketClosedException <- SocketTimeoutException \"sent ping but didn't receive pong within 30000ms (after 0 successful ping/pongs)\"",
+            describeFailure(SocketClosedException(null, ping.message, ping)),
+        )
+        assertEquals("SocketClosedException code=1011", describeFailure(SocketClosedException(1011, "private reason")))
+        val other = describeFailure(IllegalStateException("wss://secret-host.example/?tkn=abc", IOException("Authorization: tunnel secret-token")))
+        assertEquals("IllegalStateException <- IOException", other)
     }
 }

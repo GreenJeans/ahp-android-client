@@ -261,6 +261,7 @@ private fun OpenChatView(
             actions = actions,
             onOpenSubagent = controller::openSubagentChat,
             onOpenTerminal = controller::openTerminal,
+            onRetry = chat.store::retry,
             backLabel = "Back to chat",
             modifier = modifier,
         )
@@ -278,6 +279,7 @@ private fun OpenChatView(
             actions = actions,
             onOpenSubagent = controller::openSubagentChat,
             onOpenTerminal = controller::openTerminal,
+            onRetry = chat.store::retry,
             modifier = modifier,
         )
     }

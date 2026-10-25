@@ -17,6 +17,7 @@ import dev.ahpclient.monitor.AndroidMonitorService
 import dev.ahpclient.monitor.NotificationInputNeededSink
 import dev.ahpclient.security.AndroidTokenVault
 import dev.ahpclient.security.BiometricApprovalGate
+import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.HostSession
 import dev.ahpclient.state.InteractResult
 import dev.ahpclient.state.TunnelHostConnector
@@ -25,6 +26,7 @@ import dev.ahpclient.tunnel.MethodLoggingSocketOpener
 import dev.ahpclient.tunnel.OkHttpSocketOpener
 import dev.ahpclient.tunnel.SocketOpener
 import dev.ahpclient.tunnel.TunnelGateway
+import dev.ahpclient.tunnel.describeFailure
 import com.microsoft.agenthostprotocol.generated.Implementation
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -32,6 +34,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.transformWhile
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -57,6 +61,7 @@ class AppContainer(context: Context) {
         val devTunnels = DevTunnelsClient(http, userAgent = "ahp-android-client/$versionName")
         val gateway = TunnelGateway(withWireLog(OkHttpSocketOpener(http)))
         val clientInfo = Implementation(name = "ahp-android-client", version = versionName)
+        val debuggable = appContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
         AppController(
             auth = GitHubDeviceAuth(http),
             vault = AndroidTokenVault.create(appContext, ioScope),
@@ -64,6 +69,7 @@ class AppContainer(context: Context) {
             lastHost = PrefsLastHostStore(prefs),
             sessions = HostSessionFactory { tunnel, accessToken ->
                 HostSession(TunnelHostConnector(devTunnels, gateway, tunnel, accessToken, policy = interaction::policy), appScope, clientInfo)
+                    .also { if (debuggable) logConnection(it) }
             },
             scope = appScope,
             interaction = interaction,
@@ -130,6 +136,22 @@ class AppContainer(context: Context) {
         return if (debuggable) MethodLoggingSocketOpener(opener) { Log.i(WIRE_TAG, it) } else opener
     }
 
+    /**
+     * Debug builds only: one logcat line each time the connection changes state, under the tag `AhpConn`, with why it was lost
+     * (the classes of the causes and a close code, see [describeFailure]). A reconnect loop is otherwise silent.
+     */
+    private fun logConnection(session: HostSession) {
+        appScope.launch {
+            session.connection.transformWhile { state -> emit(state); state != ConnState.Stopped }.collect { state ->
+                Log.i(CONN_TAG, when (state) {
+                    is ConnState.Reconnecting -> "reconnecting, attempt ${state.attempt}: ${state.cause?.let(::describeFailure) ?: "no cause"}"
+                    is ConnState.Failed -> "failed: ${describeFailure(state.cause)}"
+                    else -> state.javaClass.simpleName
+                })
+            }
+        }
+    }
+
     /** Safe to call from every Activity start: only the first call begins restoring the saved sign-in. */
     fun start() {
         if (started.compareAndSet(false, true)) {
@@ -140,5 +162,6 @@ class AppContainer(context: Context) {
 
     companion object {
         const val WIRE_TAG = "AhpWire"
+        const val CONN_TAG = "AhpConn"
     }
 }

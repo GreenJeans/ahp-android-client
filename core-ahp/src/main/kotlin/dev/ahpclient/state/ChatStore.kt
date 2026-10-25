@@ -22,6 +22,13 @@ import kotlinx.coroutines.withTimeout
 class ChatGoneException(val uri: String) : Exception("Chat $uri is gone")
 
 /**
+ * This chat was not loaded, and the app stopped trying on its own: the host was too slow to send it
+ * ([interrupted] false: no answer within the request timeout on a connection that stayed up), or the connection was lost while
+ * it was loading, over and over ([interrupted] true). A long chat is the usual reason. [ChatStore.retry] tries again.
+ */
+class ChatNotLoadedException(val uri: String, val interrupted: Boolean) : Exception("Chat $uri was not loaded (interrupted=$interrupted)")
+
+/**
  * One subscribed chat: a snapshot plus the ordered actions after it, folded with the generated `chatReducer`.
  * Ordering and duplicate handling follow [SessionStore]: actions before the snapshot are held, and anything at or below
  * the last applied `serverSeq` is dropped.
@@ -36,6 +43,8 @@ class ChatStore internal constructor(
     /** Asks the host for the page that starts at the cursor. The turns arrive as a `chat/turnsLoaded` action, not as the reply. */
     private val fetchOlder: suspend (cursor: String) -> Unit,
     private val publishIntervalMs: Long = PUBLISH_INTERVAL_MS,
+    /** Asks the connection to subscribe to this chat again, for [retry]. */
+    private val subscribeAgain: () -> Unit = {},
 ) {
     private val _state = MutableStateFlow<ChatState?>(null)
 
@@ -70,12 +79,16 @@ class ChatStore internal constructor(
     /** Counts openers; the host connection drops the subscription at zero. */
     internal var openers = 0
 
+    /** Connections lost, one after another, while this chat's subscription was waiting for its snapshot. A snapshot clears it. */
+    private var interrupted = 0
+
     /** @return false when [snapshot] holds no chat state, so nothing was seeded. */
     internal fun seed(snapshot: Snapshot): Boolean {
         val chat = (snapshot.state as? SnapshotState.Chat)?.value ?: return false
         synchronized(lock) {
             latest = chat
             _error.value = null
+            interrupted = 0
             lastApplied = snapshot.fromSeq
             needsSubscribe = false
             val held = early.sortedBy { it.serverSeq }
@@ -98,9 +111,15 @@ class ChatStore internal constructor(
         }
     }
 
-    /** The old state stays visible, but the next connection subscribes again to get a fresh snapshot. */
+    /**
+     * The old state stays visible, but the next connection subscribes again to get a fresh snapshot. A chat the app has given up
+     * on (see [markNotLoaded]) stays given up until [retry], whatever connection comes next: that is what stops a reconnect loop.
+     */
     internal fun invalidate() {
-        needsSubscribe = true
+        synchronized(lock) {
+            if (_error.value is ChatNotLoadedException) return
+            needsSubscribe = true
+        }
     }
 
     internal fun markGone() {
@@ -109,6 +128,32 @@ class ChatStore internal constructor(
             _error.value = ChatGoneException(uri)
             olderArrived?.complete(Unit)
         }
+    }
+
+    /**
+     * Gives up loading this chat for now: [error] says why and nothing subscribes it again until [retry]. Any state already
+     * shown stays, but it is no longer being kept up to date.
+     */
+    internal fun markNotLoaded(interrupted: Boolean) {
+        synchronized(lock) {
+            needsSubscribe = false
+            _error.value = ChatNotLoadedException(uri, interrupted)
+            olderArrived?.complete(Unit)
+        }
+    }
+
+    /** Notes a connection lost while waiting for the snapshot. @return true once that has happened [MAX_INTERRUPTED] times in a row. */
+    internal fun noteInterrupted(): Boolean = synchronized(lock) { ++interrupted >= MAX_INTERRUPTED }
+
+    /** Clears the error and asks the connection to subscribe again. For the button that follows [ChatNotLoadedException]. */
+    fun retry() {
+        synchronized(lock) {
+            if (_error.value is ChatGoneException) return
+            _error.value = null
+            interrupted = 0
+            needsSubscribe = true
+        }
+        subscribeAgain()
     }
 
     /**
@@ -169,6 +214,9 @@ class ChatStore internal constructor(
     internal companion object {
         const val PUBLISH_INTERVAL_MS = 50L
         const val OLDER_TIMEOUT_MS = 15_000L
+
+        /** Connections lost in a row while waiting for this chat's snapshot, after which the app stops asking on its own. */
+        const val MAX_INTERRUPTED = 3
         private const val MAX_EARLY_ACTIONS = 1_000
     }
 }

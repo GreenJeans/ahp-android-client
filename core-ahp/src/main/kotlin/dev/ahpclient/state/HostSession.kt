@@ -18,6 +18,7 @@ import com.microsoft.agenthostprotocol.generated.ResourceReadResult
 import com.microsoft.agenthostprotocol.generated.SessionSummary
 import com.microsoft.agenthostprotocol.generated.Snapshot
 import com.microsoft.agenthostprotocol.generated.SnapshotState
+import com.microsoft.agenthostprotocol.generated.SubscribeView
 import com.microsoft.agenthostprotocol.generated.TerminalState
 import com.microsoft.agenthostprotocol.generated.StateAction
 import com.microsoft.agenthostprotocol.changesetReducer
@@ -180,7 +181,16 @@ class HostSession(
 
     /** The store for the chat at [uri], subscribing now if online or on the next connection. Pair every call with [closeChat]. */
     fun openChat(uri: String): ChatStore {
-        val store = synchronized(chats) { chats.getOrPut(uri) { ChatStore(uri, scope, fetchOlder = { cursor -> fetchTurns(uri, cursor) }) }.also { it.openers++ } }
+        val store = synchronized(chats) {
+            chats.getOrPut(uri) {
+                ChatStore(uri, scope, fetchOlder = { cursor -> fetchTurns(uri, cursor) }, subscribeAgain = { chatFor(uri)?.let(::subscribeNow) })
+            }.also { it.openers++ }
+        }
+        subscribeNow(store)
+        return store
+    }
+
+    private fun subscribeNow(store: ChatStore) {
         scope.launch {
             try {
                 subscribeLock.withLock { subscribeIfNeeded(current ?: return@launch, store) }
@@ -190,7 +200,6 @@ class HostSession(
                 // The connection dropped mid-subscribe; the next one subscribes because the store still needs it.
             }
         }
-        return store
     }
 
     fun closeChat(uri: String) {
@@ -314,6 +323,7 @@ class HostSession(
                 _canInteract.value = ahp.canDispatch
                 _canManage.value = ahp.canManage
                 _connection.value = ConnState.Online
+                chatsNeedingSubscribe().forEach(::subscribeNow)
                 ahp.notifications.collect(::route)
             } catch (e: CancellationException) {
                 throw e
@@ -355,6 +365,9 @@ class HostSession(
         // A terminal is not named to the host here (its snapshot cannot be decoded in these replies) and a subscription belongs to
         // one connection, so each is subscribed afresh below.
         synchronized(aux) { aux.values.filter { it.byHand } }.forEach { it.invalidate() }
+        // A chat is not named here either, so the host cannot answer with all of its history in `initialize` or `reconnect`: it is
+        // subscribed afresh below, asking for only its latest turns (see [CHAT_SNAPSHOT_TURNS]). What is shown stays until it arrives.
+        synchronized(chats) { chats.values.toList() }.forEach { it.invalidate() }
         if (resume) {
             try {
                 applyReconnect(ahp.reconnect(listOf(ROOT_CHANNEL) + open), open)
@@ -368,9 +381,10 @@ class HostSession(
         refreshCatalog(ahp)
         subscribeLock.withLock {
             sessionsNeedingSubscribe().forEach { subscribeIfNeeded(ahp, it) }
-            chatsNeedingSubscribe().forEach { subscribeIfNeeded(ahp, it) }
             auxNeedingSubscribe().forEach { subscribeIfNeeded(ahp, it) }
         }
+        // The chats are not subscribed here: a long one is slow to arrive, and the connection is not made to wait for it. They are
+        // asked for once it is online, so the sessions stay usable while a chat loads, and one slow chat cannot hold the rest hostage.
     }
 
     private suspend fun initialize(ahp: AhpConnection, open: List<String>) {
@@ -447,9 +461,16 @@ class HostSession(
     private suspend fun subscribeIfNeeded(ahp: AhpConnection, store: ChatStore) {
         if (!store.needsSubscribe) return
         try {
-            ahp.subscribe(store.uri).snapshot?.let(store::seed)
+            ahp.subscribe(store.uri, SubscribeView(turns = CHAT_SNAPSHOT_TURNS)).snapshot?.let(store::seed)
         } catch (e: AhpException.Rpc) {
             if (e.code == AhpErrorCodes.SESSION_NOT_FOUND || e.code == AhpErrorCodes.NOT_FOUND) store.markGone() else throw e
+        } catch (_: AhpException.Timeout) {
+            // The connection is fine and the host is slow with this chat: say so, instead of tearing down a good connection to ask again.
+            store.markNotLoaded(interrupted = false)
+        } catch (e: AhpException.ConnectionClosed) {
+            // Lost while waiting for this chat. Once it has happened a few times in a row the chat is the problem, not the network.
+            if (store.noteInterrupted()) store.markNotLoaded(interrupted = true)
+            throw e
         }
     }
 
@@ -496,12 +517,18 @@ class HostSession(
     private fun auxFor(uri: String): AuxStore? = synchronized(aux) { aux[uri] }
 
     private fun openChannels(): List<String> =
-        synchronized(sessions) { sessions.keys.toList() } + synchronized(chats) { chats.keys.toList() } +
-            synchronized(aux) { aux.values.filter { !it.byHand }.map { it.uri } }
+        synchronized(sessions) { sessions.keys.toList() } + synchronized(aux) { aux.values.filter { !it.byHand }.map { it.uri } }
 
     private companion object {
         const val MAX_LIST_PAGES = 50
         const val DISPATCH_TIMEOUT_MS = 15_000L
         val TERMINAL_UPGRADE_CODES = setOf(401, 403, 404)
+
+        /**
+         * How many of a chat's latest finished turns the host is asked for in its snapshot. The host sends all of a chat's history
+         * in one frame unless told otherwise, and a long chat (with screenshots in its tool results) is tens of megabytes: more than
+         * a phone link delivers before the keep-alive gives up on the socket. Older turns are paged in as the person scrolls.
+         */
+        const val CHAT_SNAPSHOT_TURNS = 10L
     }
 }

@@ -2,6 +2,8 @@ package dev.ahpclient.tunnel
 
 import dev.ahpclient.ahp.CapabilityPolicy
 import dev.ahpclient.ahp.CapabilityDeniedException
+import java.net.SocketTimeoutException
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -26,6 +28,37 @@ internal class MethodLoggingSocket(private val inner: TextSocket, private val lo
         log(describeOutbound(text))
         return inner.send(text)
     }
+
+    /** Inbound frames leave a line only when they are big (just their size) or when the socket ends (why, never what it carried). */
+    override suspend fun receive(): String {
+        val frame = try {
+            inner.receive()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            log("socket ended: ${describeFailure(e)}")
+            throw e
+        }
+        if (frame.length >= BIG_FRAME_CHARS) log("received a frame of ${frame.length} characters")
+        return frame
+    }
+
+    private companion object {
+        const val BIG_FRAME_CHARS = 256 * 1024
+    }
+}
+
+/**
+ * Why something failed, for a log read on a developer's own phone: the class of each cause in the chain, the close code of a
+ * socket, and the words of a timeout (which name only the ping interval). Never the message of anything else, because a message
+ * can carry an address or a header.
+ */
+fun describeFailure(failure: Throwable): String {
+    val chain = generateSequence(failure) { it.cause?.takeIf { cause -> cause !== it } }.take(6).toList()
+    val names = chain.joinToString(" <- ") { it.javaClass.simpleName.ifEmpty { "(anonymous)" } }
+    val code = chain.filterIsInstance<SocketClosedException>().firstOrNull()?.code?.let { " code=$it" }.orEmpty()
+    val timeout = chain.filterIsInstance<SocketTimeoutException>().firstOrNull()?.message?.take(120)?.let { " \"$it\"" }.orEmpty()
+    return names + code + timeout
 }
 
 /** The log line for one outbound frame. Public so a test can state exactly what may appear. */

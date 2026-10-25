@@ -21,9 +21,11 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.ahpclient.state.ActivityState
 import dev.ahpclient.state.ChatGoneException
+import dev.ahpclient.state.ChatNotLoadedException
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.InputRequestView
 import dev.ahpclient.state.ToolState
@@ -197,6 +199,70 @@ class ChatScreenTest {
     fun aChatThatHasNotArrivedYetSaysItIsLoading() {
         show(null)
         rule.onNodeWithTag("chat_loading").assertIsDisplayed()
+        rule.onAllNodesWithTag("chat_loading_slow").assertCountEquals(0)
+    }
+
+    @Test
+    fun aChatThatIsStillLoadingAfterAFewSecondsSaysWhyItTakesAWhile() {
+        rule.mainClock.autoAdvance = false
+        show(null)
+        rule.mainClock.advanceTimeBy(2_000)
+        rule.onAllNodesWithTag("chat_loading_slow").assertCountEquals(0)
+
+        rule.mainClock.advanceTimeBy(5_000)
+
+        rule.onNodeWithTag("chat_loading_slow").assertTextContains("long", substring = true)
+        rule.onNodeWithTag("chat_loading").assertIsDisplayed()
+    }
+
+    private fun androidx.compose.ui.test.SemanticsNodeInteraction.assertTouchTargetAtLeast(minimum: androidx.compose.ui.unit.Dp): androidx.compose.ui.test.SemanticsNodeInteraction {
+        val bounds = fetchSemanticsNode().touchBoundsInRoot
+        val minimumPx = with(rule.density) { minimum.toPx() }
+        assertTrue("touch target is ${bounds.width} x ${bounds.height} px, smaller than $minimum", bounds.height + 0.5f >= minimumPx && bounds.width + 0.5f >= minimumPx)
+        return this
+    }
+
+    private fun showNotLoaded(
+        failure: ChatNotLoadedException,
+        transcript: Transcript? = null,
+        onRetry: (() -> Unit)? = {},
+    ) = rule.setContent {
+        AhpTheme { ChatScreen(transcript, failure, false, null, ConnState.Online, {}, {}, {}, onRetry = onRetry) }
+    }
+
+    @Test
+    fun aChatTheHostWasTooSlowToSendSaysSoAndOffersToTryAgain() {
+        var retries = 0
+        showNotLoaded(ChatNotLoadedException("ahp-chat:/x", interrupted = false), onRetry = { retries++ })
+
+        rule.onNodeWithTag("chat_not_loaded_text").assertTextContains("took too long", substring = true)
+        rule.onNodeWithTag("chat_retry").assertIsDisplayed().assertTouchTargetAtLeast(48.dp).performClick()
+
+        assertEquals(1, retries)
+    }
+
+    @Test
+    fun aChatLostToDroppedConnectionsSaysThatInstead() {
+        showNotLoaded(ChatNotLoadedException("ahp-chat:/x", interrupted = true))
+
+        rule.onNodeWithTag("chat_not_loaded_text").assertTextContains("kept dropping", substring = true)
+    }
+
+    @Test
+    fun withNoWayToRetryThereIsNoButton() {
+        showNotLoaded(ChatNotLoadedException("ahp-chat:/x", interrupted = false), onRetry = null)
+
+        rule.onNodeWithTag("chat_not_loaded").assertIsDisplayed()
+        rule.onAllNodesWithTag("chat_retry").assertCountEquals(0)
+    }
+
+    @Test
+    fun aChatThatStoppedUpdatingKeepsWhatItShowedAndSaysItIsOutOfDate() {
+        showNotLoaded(ChatNotLoadedException("ahp-chat:/x", interrupted = true), transcript = transcript(rows(1..3)))
+
+        rule.onNodeWithTag("chat_not_loaded_text").assertTextContains("not being kept up to date", substring = true)
+        rule.onNodeWithTag("chat_retry").assertIsDisplayed()
+        rule.onNodeWithText("message 3").assertIsDisplayed()
     }
 
     @Test
