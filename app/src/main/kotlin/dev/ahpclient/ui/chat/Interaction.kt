@@ -1,6 +1,7 @@
 package dev.ahpclient.ui.chat
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -10,18 +11,24 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
@@ -38,6 +45,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.heading
@@ -173,7 +181,7 @@ private fun Notice(text: String?, tag: String) {
  * failed send loses nothing, and it survives rotation.
  */
 @Composable
-internal fun Composer(actions: ChatActionsUi, modifier: Modifier = Modifier) {
+internal fun Composer(actions: ChatActionsUi, modifier: Modifier = Modifier, compact: Boolean = false) {
     var text by rememberSaveable { mutableStateOf("") }
     var pick by rememberSaveable(stateSaver = ModelPickSaver) { mutableStateOf<ModelChoice?>(null) }
     var choosing by rememberSaveable { mutableStateOf(false) }
@@ -182,63 +190,86 @@ internal fun Composer(actions: ChatActionsUi, modifier: Modifier = Modifier) {
     var busy by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-    Column(
-        modifier = modifier.fillMaxWidth().imePadding().padding(horizontal = 24.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        modifier = modifier.fillMaxWidth().imePadding(),
     ) {
-        Notice(notice, "composer_notice")
-        if (actions.models.isNotEmpty()) {
-            OutlinedButton(onClick = { choosing = true }, modifier = Modifier.heightIn(min = 48.dp).testTag("model_button")) {
-                Text("Model: ${modelLabel(actions.models, chosen)}")
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Notice(notice, "composer_notice")
+            // In a short pane (a phone on its side) the model chip shares the message row instead of taking a row of its own.
+            val modelChip: @Composable () -> Unit = {
+                AssistChip(
+                    onClick = { choosing = true },
+                    label = { Text("Model: ${modelLabel(actions.models, chosen)}") },
+                    modifier = Modifier.testTag("model_button"),
+                )
             }
-            if (choosing) ModelPickerDialog(actions.models, chosen, onDismiss = { choosing = false }, onPick = { pick = it; choosing = false })
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Bottom) {
-            OutlinedTextField(
-                value = text,
-                onValueChange = { text = it },
-                label = { Text("Message") },
-                maxLines = 5,
-                modifier = Modifier.weight(1f).testTag("composer_input"),
-            )
-            Button(
-                onClick = {
-                    val sending = text
-                    scope.launch {
-                        busy = true
-                        val result = actions.send(sending, chosen)
-                        notice = InteractMessages.describe(result)
-                        // Only a message the host has taken is cleared, and only if the box still holds what was sent.
-                        if (InteractMessages.succeeded(result) && text == sending) text = ""
-                        busy = false
-                    }
-                },
-                enabled = text.isNotBlank() && !busy,
-                modifier = Modifier.heightIn(min = 56.dp).testTag("composer_send"),
-            ) { Text(if (actions.running) "Queue" else "Send") }
-        }
-        if (actions.running) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                // Steer reaches the turn that is running now; Queue (the main button) waits for it to end.
-                OutlinedButton(
+            if (actions.models.isNotEmpty()) {
+                if (!compact) modelChip()
+                if (choosing) ModelPickerDialog(actions.models, chosen, onDismiss = { choosing = false }, onPick = { pick = it; choosing = false })
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Bottom) {
+                if (compact && actions.models.isNotEmpty()) Box(Modifier.padding(bottom = 12.dp)) { modelChip() }
+                val field = MaterialTheme.colorScheme.surfaceContainerHigh
+                TextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    label = { Text("Message") },
+                    maxLines = 5,
+                    shape = RoundedCornerShape(24.dp),
+                    colors = TextFieldDefaults.colors(
+                        focusedContainerColor = field,
+                        unfocusedContainerColor = field,
+                        focusedIndicatorColor = Color.Transparent,
+                        unfocusedIndicatorColor = Color.Transparent,
+                        disabledIndicatorColor = Color.Transparent,
+                        errorIndicatorColor = Color.Transparent,
+                    ),
+                    modifier = Modifier.weight(1f).testTag("composer_input"),
+                )
+                Button(
                     onClick = {
                         val sending = text
                         scope.launch {
                             busy = true
-                            val result = actions.steer(sending, chosen)
+                            val result = actions.send(sending, chosen)
                             notice = InteractMessages.describe(result)
+                            // Only a message the host has taken is cleared, and only if the box still holds what was sent.
                             if (InteractMessages.succeeded(result) && text == sending) text = ""
                             busy = false
                         }
                     },
                     enabled = text.isNotBlank() && !busy,
-                    modifier = Modifier.heightIn(min = 48.dp).testTag("composer_steer"),
-                ) { Text("Steer now") }
-                OutlinedButton(
-                    onClick = { scope.launch { busy = true; notice = InteractMessages.describe(actions.cancel()); busy = false } },
-                    enabled = !busy,
-                    modifier = Modifier.heightIn(min = 48.dp).testTag("composer_stop"),
-                ) { Text("Stop the agent") }
+                    modifier = Modifier.heightIn(min = 56.dp).testTag("composer_send"),
+                ) { Text(if (actions.running) "Queue" else "Send") }
+            }
+            if (actions.running) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Steer reaches the turn that is running now; Queue (the main button) waits for it to end.
+                    FilledTonalButton(
+                        onClick = {
+                            val sending = text
+                            scope.launch {
+                                busy = true
+                                val result = actions.steer(sending, chosen)
+                                notice = InteractMessages.describe(result)
+                                if (InteractMessages.succeeded(result) && text == sending) text = ""
+                                busy = false
+                            }
+                        },
+                        enabled = text.isNotBlank() && !busy,
+                        modifier = Modifier.heightIn(min = 48.dp).testTag("composer_steer"),
+                    ) { Text("Steer now") }
+                    OutlinedButton(
+                        onClick = { scope.launch { busy = true; notice = InteractMessages.describe(actions.cancel()); busy = false } },
+                        enabled = !busy,
+                        modifier = Modifier.heightIn(min = 48.dp).testTag("composer_stop"),
+                    ) { Text("Stop the agent") }
+                }
             }
         }
     }

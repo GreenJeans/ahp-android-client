@@ -141,6 +141,21 @@ class TerminalUiTest {
     }
 
     @Test
+    fun theEndStaysInViewWhenTheListLosesRoom() {
+        var height by mutableStateOf(800)
+        val many = state((1..300).joinToString("") { "line $it\n" })
+        rule.setContent { AhpTheme { Box(Modifier.size(360.dp, height.dp)) { TerminalScreen(many, null, ConnState.Online, {}) } } }
+        rule.waitForIdle()
+        rule.onNode(hasText("line 300")).assertIsDisplayed()
+
+        height = 500
+        rule.waitForIdle()
+
+        rule.onNode(hasText("line 300")).assertIsDisplayed()
+        rule.onNodeWithTag("terminal_latest").assertDoesNotExist()
+    }
+
+    @Test
     fun theEndKeepsFollowingAsMoreOutputArrives() {
         var current by mutableStateOf(state((1..300).joinToString("") { "line $it\n" }))
         rule.setContent { AhpTheme { Box(Modifier.size(360.dp, 800.dp)) { TerminalScreen(current, null, ConnState.Online, {}) } } }

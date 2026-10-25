@@ -21,6 +21,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -36,6 +37,7 @@ import dev.ahpclient.state.ChannelGoneException
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.TerminalView
 import com.microsoft.agenthostprotocol.generated.TerminalState
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 /**
@@ -86,6 +88,14 @@ private fun TerminalBody(view: TerminalView) {
     }
     LaunchedEffect(view.lines.size, view.lines.lastOrNull()) {
         if (following && last >= 0) listState.scrollToItem(last)
+    }
+    // A change in the room the list has (the system bars arriving after the first layout, a rotation) moves the end out from
+    // under a list that was following it, with no new output to bring it back. Not a scroll by the person, so it leaves `following` alone.
+    val lastLine by rememberUpdatedState(last)
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.layoutInfo.viewportSize.height }.distinctUntilChanged().collect {
+            if (following && lastLine >= 0) listState.scrollToItem(lastLine)
+        }
     }
 
     Box(modifier = Modifier.fillMaxSize()) {

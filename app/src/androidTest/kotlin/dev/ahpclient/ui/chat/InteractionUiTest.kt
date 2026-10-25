@@ -1,6 +1,8 @@
 package dev.ahpclient.ui.chat
 
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.assert
@@ -164,6 +166,34 @@ class InteractionUiTest {
         show(transcript(), actions(Calls(), models = listOf(auto, sonnet)))
 
         rule.onNodeWithTag("model_button").assertTextContains("host default", substring = true)
+    }
+
+    private fun showInWindowOfHeight(heightDp: Int) = rule.setContent {
+        AhpTheme {
+            androidx.compose.foundation.layout.Box(Modifier.size(360.dp, heightDp.dp)) {
+                ChatScreen(transcript(), null, false, null, ConnState.Online, {}, {}, {}, actions = actions(Calls(), models = listOf(auto, sonnet)))
+            }
+        }
+    }
+
+    @Test
+    fun inATallWindowTheModelButtonHasARowAboveTheMessageBox() {
+        showInWindowOfHeight(900)
+
+        val chip = rule.onNodeWithTag("model_button").fetchSemanticsNode().boundsInRoot
+        val field = rule.onNodeWithTag("composer_input").fetchSemanticsNode().boundsInRoot
+        assertTrue("the chip (bottom ${chip.bottom}) is above the field (top ${field.top})", chip.bottom <= field.top)
+    }
+
+    @Test
+    fun inAShortWindowTheModelButtonSharesTheRowWithTheMessageBoxAndStillWorks() {
+        showInWindowOfHeight(400)
+
+        val chip = rule.onNodeWithTag("model_button").fetchSemanticsNode().boundsInRoot
+        val field = rule.onNodeWithTag("composer_input").fetchSemanticsNode().boundsInRoot
+        assertTrue("the chip (${chip.left}..${chip.right}) sits beside the field (${field.left}..${field.right})", chip.right <= field.left && chip.top < field.bottom && chip.bottom > field.top)
+        rule.onNodeWithTag("model_button").performClick()
+        rule.onNodeWithTag("model_use").assertIsDisplayed()
     }
 
     @Test

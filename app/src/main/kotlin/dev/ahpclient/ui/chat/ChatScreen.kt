@@ -27,6 +27,8 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import dev.ahpclient.state.ChatGoneException
@@ -40,6 +42,9 @@ import dev.ahpclient.ui.ScreenScaffold
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
+
+/** How many dp of height a chat pane needs before the composer takes a row of its own for the model button. */
+private const val SHORT_PANE_DP = 400
 
 /** How close to the oldest loaded row the user has to scroll before the next page of older turns is asked for. */
 private const val LOAD_OLDER_MARGIN = 2
@@ -102,7 +107,10 @@ fun ChatPane(
     onOpenTerminal: ((String) -> Unit)? = null,
 ) {
     var pendingLink by rememberSaveable { mutableStateOf<String?>(null) }
-    Column(modifier = modifier.fillMaxSize()) {
+    // A short pane (a phone on its side, split screen) gets the compact composer. Decided from the room the pane really has.
+    var short by remember { mutableStateOf(false) }
+    val shortBelowPx = with(LocalDensity.current) { SHORT_PANE_DP.dp.roundToPx() }
+    Column(modifier = modifier.fillMaxSize().onSizeChanged { short = it.height < shortBelowPx }) {
         if (connection != ConnState.Online || transcript?.activity != null) {
             Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (connection != ConnState.Online) ConnectionLine(connection)
@@ -115,7 +123,7 @@ fun ChatPane(
             error != null -> ErrorText("Could not load this chat (${error.javaClass.simpleName}).", Modifier.padding(horizontal = 24.dp).testTag("chat_error"))
             else -> Busy("Loading chat…", Modifier.padding(horizontal = 24.dp).testTag("chat_loading"))
         }
-        if (actions != null && transcript != null) Composer(actions)
+        if (actions != null && transcript != null) Composer(actions, compact = short)
     }
     pendingLink?.let { link ->
         LinkConfirmDialog(url = link, onOpen = { pendingLink = null; onOpenLink(link) }, onDismiss = { pendingLink = null })

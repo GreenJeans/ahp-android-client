@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -60,6 +61,8 @@ fun AppRoot(
     var changesetTitle by rememberSaveable { mutableStateOf<String?>(null) }
     // Kept here, above the screen switch, so the list keeps its scroll position across a trip into a session and back.
     val listState = rememberLazyListState()
+    // The list's bar too, so coming back from a session finds the bar as scrolled as the list.
+    val sessionsBarState = rememberTopAppBarState()
     val detailOpen = (state as? AppState.Connected)?.open != null
     // A session's own chat is part of the session screen, left by leaving the session. Only a subagent's transcript is a screen over it.
     val subagentOpen = (state as? AppState.Connected)?.open?.chat?.parent != null
@@ -143,6 +146,7 @@ fun AppRoot(
                                 manage = manageActions,
                                 query = query,
                                 onQueryChange = { query = it },
+                                barState = sessionsBarState,
                             )
                         }
                     } else {

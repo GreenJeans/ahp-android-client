@@ -15,7 +15,23 @@ progress log live in this repo: [`docs/spec.md`](docs/spec.md).
 | Module | Type | Status |
 |---|---|---|
 | `core-ahp` | Pure Kotlin/JVM library: GitHub device-flow auth, Dev Tunnels REST, tunnel socket and gateway selection, AHP connection, state stores (sessions and chats, with older-turn paging), session list and detail models, the transcript model, background-monitoring logic, the capability allowlist, and the write path (action builders, the interactor, the question form model, the consent settings), the session manager, the changeset view model, the line diff and the model options | Phase 1 complete, live-verified except where `docs/verification/phase1-readonly.md` says otherwise; Phase 2 built; Phase 3 built and live-tested; Phases 4 and 5 built and tested, not yet live-tested |
-| `app` | Android application (Jetpack Compose): sign-in, host list, sessions list, read-only session detail, a chat transcript with markdown and collapsible reasoning, tool-call and result blocks (selectable text, "Show all", subagent transcripts), opt-in background monitoring with a foreground service and needs-input notifications, and, when the user turns it on (Android 11+), a message box with steering, tool and tool-result approval behind the phone's own device check (also from a notification), and a form for the agent's questions with draft sync; with a second switch, mark read, archive, new chat, new session and remove; and a session's changed files (a line diff of each, and a "Viewed" box), a model picker for messages, and the settings the host offers for a new session | Phase 1 built; Phase 2 transcript built; Phase 3 built; Phases 4 and 5 built; debug APK |
+| `app` | Android application (Jetpack Compose): sign-in, host list, a sessions list with search, a session screen (a tab for each chat, a menu, a Details sheet), a chat transcript with markdown and collapsible reasoning, tool-call and result blocks (selectable text, "Show all", subagent transcripts), opt-in background monitoring with a foreground service and needs-input notifications, and, when the user turns it on (Android 11+), a message box with steering, tool and tool-result approval behind the phone's own device check (also from a notification), and a form for the agent's questions with draft sync; with a second switch, mark read, archive, new chat, new session and remove; and a session's changed files (a line diff of each, and a "Viewed" box), a model picker for messages, and the settings the host offers for a new session | Phase 1 built; Phase 2 transcript built; Phase 3 built; Phases 4 and 5 built; design pass done; debug APK |
+
+## Look and feel
+
+Material 3 with the system's dynamic colour (Android 12+; a fixed scheme below that), in the manner of Obtainium: a large app
+bar that collapses as a list scrolls, content held to 720 dp, rounded stacked cards (24 dp outer corners, 6 dp between, a 3 dp gap)
+instead of ruled lists, tonal banners, pill fields and buttons, an extended button for the main action, and a bottom sheet for
+detail. The shared pieces are in `ui/Design.kt` (`ScreenScaffold`, `TileCard`, `connectedShape`, `SectionHeader`, `EmptyState`) and
+`ui/Icons.kt`, which draws the handful of icons used from path data, so the app takes no icons library. Where things are:
+
+| Screen | What is on it |
+|---|---|
+| Hosts | Refresh in the bar; Sign out in a menu |
+| Sessions | The state of the host, a summary banner, search, a filter chip for archived sessions, one card per session, "New session" (only when managing is on), a gear for Settings |
+| Settings | The three switches, each with the words that say what it does |
+| A session | The session's state under its title, a tab for each chat (the main chat first, a dot on one waiting on you), the chat, and a menu: Details, then (only when managing is on) mark read, archive, new chat, remove this chat, remove session |
+| Details | A bottom sheet: what the session is doing, what it waits on, where it runs, and its changes |
 
 ## Build
 
@@ -130,8 +146,8 @@ is saved before it counts; turning it on or off reconnects under the new tier. I
 the host reports as ready, no check), and `createSession`, `disposeSession` and `disposeChat`, which **do** go through the same
 device check, looked up again after the prompt. Removing asks first and offers archiving as the gentler alternative. A new session
 can only use an agent the host lists and a folder one of the host's own sessions already uses (most recent first, eight shown and the rest one tap away, never a working copy of a project: its project folder is offered instead), so nothing the host did not offer is
-sent. None of the controls exist on a connection that is not on the `MANAGE` tier. A session's main chat (and a lone chat) has no Remove button, because the host refuses it, but only after it has shut the chat down. The three switches (monitoring, acting,
-managing) sit behind one collapsed "Settings" row that says what is on.
+sent. None of the controls exist on a connection that is not on the `MANAGE` tier. A session's main chat (and a lone chat) has no "Remove this chat…" menu item, because the host refuses it, but only after it has shut the chat down. The three switches (monitoring, acting,
+managing) are on a Settings screen, behind the gear on the session list.
 
 **A new session's settings** come from the host: once an agent and folder are chosen, the dialog asks it (`resolveSessionConfig`,
 the one query on the manage tier; the read and interact tiers refuse it) which settings it offers and shows each as a short list

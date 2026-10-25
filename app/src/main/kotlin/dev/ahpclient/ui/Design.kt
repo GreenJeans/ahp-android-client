@@ -23,6 +23,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.TopAppBarState
+import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -54,12 +56,13 @@ fun ScreenScaffold(
     titleTag: String? = null,
     subtitle: String? = null,
     large: Boolean = true,
+    barState: TopAppBarState = rememberTopAppBarState(),
     actions: @Composable RowScope.() -> Unit = {},
     floatingActionButton: @Composable () -> Unit = {},
     bottomBar: @Composable () -> Unit = {},
     content: @Composable () -> Unit,
 ) {
-    val scrollBehavior = if (large) TopAppBarDefaults.exitUntilCollapsedScrollBehavior() else TopAppBarDefaults.pinnedScrollBehavior()
+    val scrollBehavior = if (large) TopAppBarDefaults.exitUntilCollapsedScrollBehavior(state = barState) else TopAppBarDefaults.pinnedScrollBehavior(state = barState)
     val titleText: @Composable () -> Unit = {
         val name: @Composable () -> Unit = {
             Text(

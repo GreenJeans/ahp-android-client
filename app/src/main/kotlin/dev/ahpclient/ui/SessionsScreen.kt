@@ -23,6 +23,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.TopAppBarState
+import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -68,10 +70,12 @@ fun SessionsScreen(
     manage: ManageActionsUi? = null,
     query: String = "",
     onQueryChange: (String) -> Unit = {},
+    barState: TopAppBarState = rememberTopAppBarState(),
 ) {
     val model = remember(sessions, showArchived, now, query) { SessionListModel.from(SessionCatalog.sorted(sessions), showArchived, now, query) }
     ScreenScaffold(
         title = "Sessions",
+        barState = barState,
         onBack = onDisconnect,
         backLabel = "Back to hosts",
         backTag = "disconnect",

@@ -12,7 +12,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.junit4.accessibility.enableAccessibilityChecks
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.tryPerformAccessibilityChecks
 import androidx.compose.ui.unit.dp
 import android.os.Build
@@ -24,11 +26,17 @@ import dev.ahpclient.app.SignInStep
 import dev.ahpclient.state.ActivityState
 import dev.ahpclient.state.ChatGoneException
 import dev.ahpclient.state.ConnState
+import dev.ahpclient.state.DispatchOutcome
 import dev.ahpclient.state.InputRequestView
+import dev.ahpclient.state.InteractResult
+import dev.ahpclient.state.ManageResult
+import dev.ahpclient.state.ModelOption
 import dev.ahpclient.state.ToolState
 import dev.ahpclient.state.Transcript
 import dev.ahpclient.state.TranscriptItem
 import dev.ahpclient.tunnel.TunnelInfo
+import dev.ahpclient.ui.chat.ChatActionsUi
+import dev.ahpclient.ui.chat.ChatPane
 import dev.ahpclient.ui.chat.ChatScreen
 import dev.ahpclient.ui.theme.AhpTheme
 import com.microsoft.agenthostprotocol.Ahp
@@ -145,6 +153,108 @@ class AccessibilityTest {
             { SessionScreen(null, IllegalStateException("x"), ConnState.Reconnecting(1, null), now, {}) },
         )
     }
+
+    private val twoChatSession: SessionState = Ahp.json.decodeFromString(
+        SessionState.serializer(),
+        """{"provider":"copilotcli","title":"Fix the build","status":56,"lifecycle":"ready","activeClients":[],"defaultChat":"ahp-chat://default/x",
+            "project":{"uri":"file:///work/repo","displayName":"repo"},"workingDirectories":["file:///work/repo"],
+            "changesets":[{"label":"Uncommitted","uriTemplate":"ahp-changeset:/c1","changeKind":"uncommitted"}],
+            "chats":[{"resource":"ahp-chat://default/x","title":"Main chat","status":1,"modifiedAt":"2026-10-26T10:29:00.000Z"},
+                     {"resource":"ahp-chat://default/y","title":"Side chat waiting","status":56,"modifiedAt":"2026-10-26T10:28:00.000Z"}]}""",
+    )
+
+    private fun chatActions(running: Boolean = false) = ChatActionsUi(
+        running = running,
+        send = { _, _ -> InteractResult.Sent(DispatchOutcome.Accepted) },
+        steer = { _, _ -> InteractResult.Sent(DispatchOutcome.Accepted) },
+        cancel = { InteractResult.Sent(DispatchOutcome.Accepted) },
+        approve = { _, _ -> InteractResult.Sent(DispatchOutcome.Accepted) },
+        deny = { _, _ -> InteractResult.Sent(DispatchOutcome.Accepted) },
+        approveResult = { InteractResult.Sent(DispatchOutcome.Accepted) },
+        denyResult = { InteractResult.Sent(DispatchOutcome.Accepted) },
+        answer = { _, _ -> InteractResult.Sent(DispatchOutcome.Accepted) },
+        saveDraft = { _, _, _ -> InteractResult.Sent(DispatchOutcome.Accepted) },
+        decline = { InteractResult.Sent(DispatchOutcome.Accepted) },
+        dismiss = { InteractResult.Sent(DispatchOutcome.Accepted) },
+        models = listOf(ModelOption("auto", "Auto", emptyList())),
+    )
+
+    @Test
+    fun sessionScreenWithTabsAndAChat() {
+        checkEach(
+            {
+                SessionScreen(twoChatSession, null, ConnState.Online, now, {}, shownChat = "ahp-chat://default/x") {
+                    ChatPane(everyRow, null, false, null, ConnState.Online, {}, {})
+                }
+            },
+            {
+                SessionScreen(twoChatSession, null, ConnState.Online, now, {}, shownChat = "ahp-chat://default/y") {
+                    ChatPane(everyRow, null, false, null, ConnState.Reconnecting(1, null), {}, {}, actions = chatActions())
+                }
+            },
+            {
+                SessionScreen(twoChatSession, null, ConnState.Online, now, {}, shownChat = "ahp-chat://default/x") {
+                    ChatPane(everyRow, null, false, null, ConnState.Online, {}, {}, actions = chatActions(running = true))
+                }
+            },
+        )
+    }
+
+    @Test
+    fun sessionScreenWithItsMenuOpen() {
+        rule.setContent { AhpTheme { SessionScreen(twoChatSession, null, ConnState.Online, now, {}, shownChat = "ahp-chat://default/y", manage = manageActions(), sessionUri = "ahp-session:/s") {} } }
+        rule.onNodeWithTag("session_menu").performClick()
+        rule.waitForIdle()
+
+        check()
+    }
+
+    @Test
+    fun sessionScreenWithItsDetailsSheetOpen() {
+        rule.setContent { AhpTheme { SessionScreen(detail(), null, ConnState.Online, now, {}, shownChat = "ahp-chat://default/x") {} } }
+        rule.onNodeWithTag("session_menu").performClick()
+        rule.onNodeWithTag("menu_details").performClick()
+        rule.waitForIdle()
+
+        check()
+    }
+
+    @Test
+    fun sessionScreenWithAnUnreadableAndAnArchivedSession() {
+        val archived: SessionState = Ahp.json.decodeFromString(
+            SessionState.serializer(),
+            """{"provider":"copilotcli","title":"Old one","status":97,"lifecycle":"ready","activeClients":[],"chats":[]}""",
+        )
+        val starting: SessionState = Ahp.json.decodeFromString(
+            SessionState.serializer(),
+            """{"provider":"copilotcli","title":"New one","status":1,"lifecycle":"creating","activeClients":[],"chats":[]}""",
+        )
+        checkEach(
+            { SessionScreen(archived, null, ConnState.Online, now, {}) },
+            { SessionScreen(starting, null, ConnState.Online, now, {}) },
+        )
+    }
+
+    @Test
+    fun hostsScreenWithItsMenuOpen() {
+        val lists = HostList.Loaded(listOf(HostEntry(host, isLastUsed = true)))
+        rule.setContent { AhpTheme { HostsScreen(AppState.Hosts(lists, now.plusSeconds(3600)), {}, {}, {}) } }
+        rule.onNodeWithTag("hosts_menu").performClick()
+        rule.waitForIdle()
+
+        check()
+    }
+
+    private fun manageActions() = ManageActionsUi(
+        agents = emptyList(),
+        folders = emptyList(),
+        setRead = { _, _ -> ManageResult.Done() },
+        setArchived = { _, _ -> ManageResult.Done() },
+        newChat = { ManageResult.Done() },
+        newSession = { _, _, _ -> ManageResult.Done() },
+        disposeSession = { ManageResult.Done() },
+        disposeChat = { _, _ -> ManageResult.Done() },
+    )
 
     private val everyRow = Transcript(
         title = "Fix the build",

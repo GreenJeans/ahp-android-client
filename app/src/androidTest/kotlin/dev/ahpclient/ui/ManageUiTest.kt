@@ -973,8 +973,8 @@ class ManageUiTest {
     fun aLongListStillScrollsToItsRowsOnASmallScreen() {
         showCrowdedList(width = 360.dp, height = 480.dp)
 
-        rule.onNodeWithTag("session_list").performScrollToNode(androidx.compose.ui.test.hasText("Visible one"))
-        rule.onNodeWithText("Visible one").assertIsDisplayed()
+        rule.onNodeWithTag("session_list").performScrollToNode(androidx.compose.ui.test.hasText("Visible two"))
         rule.onNodeWithText("Visible two").assertIsDisplayed()
+        rule.onNodeWithTag("new_session").assertIsDisplayed()
     }
 }
