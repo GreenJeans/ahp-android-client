@@ -33,6 +33,28 @@ class GitHubDeviceAuthEdgeCasesTest {
     }
 
     @Test
+    fun `a refresh that cannot reach GitHub fails as an IO error, not as a refusal of the token`() = runTest {
+        MockWebServer().use { server ->
+            server.start()
+            server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AT_START))
+            val auth = GitHubDeviceAuth(baseUrl = server.url("/").toString())
+
+            assertFailsWith<java.io.IOException> { auth.refresh(Secret("ghr_old")) }
+        }
+    }
+
+    @Test
+    fun `a refresh answered with a page that is not JSON is not a refusal either`() = runTest {
+        MockWebServer().use { server ->
+            server.start()
+            server.enqueue(MockResponse().setResponseCode(502).setBody("<html>Bad gateway</html>"))
+            val auth = GitHubDeviceAuth(baseUrl = server.url("/").toString())
+
+            assertFailsWith<GitHubAuthException> { auth.refresh(Secret("ghr_old")) }
+        }
+    }
+
+    @Test
     fun `a page that is not JSON is reported as such, with the HTTP status`() = runTest {
         MockWebServer().use { server ->
             server.start()

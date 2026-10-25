@@ -63,7 +63,8 @@ class ScreensTest {
         onRefresh: () -> Unit = {},
         onConnect: (TunnelInfo) -> Unit = {},
         onSignOut: () -> Unit = {},
-    ) = rule.setContent { AhpTheme { HostsScreen(AppState.Hosts(list, expiresAt), onRefresh, onConnect, onSignOut) } }
+        renews: Boolean = false,
+    ) = rule.setContent { AhpTheme { HostsScreen(AppState.Hosts(list, expiresAt, renews), onRefresh, onConnect, onSignOut) } }
 
     // ---- sign in ----------------------------------------------------------------------------------------------
 
@@ -189,6 +190,14 @@ class ScreensTest {
         showHosts(HostList.Loaded(listOf(HostEntry(online, false), HostEntry(offline, false))), expiresAt = Instant.parse("2026-10-23T04:00:00Z"))
 
         rule.onNodeWithTag("token_expiry").assertIsDisplayed().assertTextContains("Signed in until", substring = true)
+    }
+
+    @Test
+    fun aSignInThatRenewsItselfSaysSoInsteadOfNamingTheHourItsTokenRunsOut() {
+        showHosts(HostList.Loaded(listOf(HostEntry(online, false))), expiresAt = Instant.parse("2026-10-23T04:00:00Z"), renews = true)
+
+        rule.onNodeWithTag("token_expiry").assertIsDisplayed().assertTextContains("renews this on its own", substring = true)
+        rule.onAllNodesWithText("Signed in until", substring = true).assertCountEquals(0)
     }
 
     @Test

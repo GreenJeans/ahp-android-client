@@ -45,6 +45,15 @@ sealed interface DeviceFlowResult {
     data class Failed(val error: String, val description: String?) : DeviceFlowResult
 }
 
+/** What GitHub answered when asked to renew a sign-in. */
+sealed interface RefreshResult {
+    /** A new pair. The refresh token in it replaces the one that was sent: each can be used once. */
+    data class Renewed(val token: GitHubToken) : RefreshResult
+
+    /** GitHub will not renew this sign-in (it is too old, was used already, or was revoked): the user has to sign in again. */
+    data class Rejected(val error: String) : RefreshResult
+}
+
 class GitHubAuthException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
 /** GitHub OAuth device flow: no client secret, so it is safe to run inside a mobile app. */
@@ -98,6 +107,20 @@ class GitHubDeviceAuth(
             }
         }
         return DeviceFlowResult.Expired
+    }
+
+    /**
+     * Trades a refresh token for a new token pair. GitHub asks for no client secret when the token came from the device flow, which
+     * is how this app signs in. Throws [IOException] (or [GitHubAuthException] for a reply that is not JSON) when GitHub cannot be
+     * reached or answers badly: that says nothing about the token, which must be kept and tried again later.
+     */
+    suspend fun refresh(refreshToken: Secret): RefreshResult {
+        val body = postForm(
+            "/login/oauth/access_token",
+            mapOf("client_id" to clientId, "grant_type" to "refresh_token", "refresh_token" to refreshToken.reveal()),
+        )
+        if (body.string("access_token") != null) return RefreshResult.Renewed(body.toToken())
+        return RefreshResult.Rejected(body.string("error") ?: "unexpected response")
     }
 
     private fun JsonObject.toToken(): GitHubToken = GitHubToken(

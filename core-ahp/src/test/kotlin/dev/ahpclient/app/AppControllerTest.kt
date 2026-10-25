@@ -17,6 +17,7 @@ import dev.ahpclient.state.DiffResult
 import dev.ahpclient.state.changesetFileJson
 import dev.ahpclient.state.changesetStateJson
 import dev.ahpclient.state.CHAT_B
+import dev.ahpclient.state.actionFrame
 import dev.ahpclient.state.CHAT_C
 import dev.ahpclient.state.ApprovalGate
 import dev.ahpclient.state.ApprovalRequest
@@ -72,6 +73,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.SocketPolicy
 
 private class FakeLastHost(var id: String? = null) : LastHostStore {
     var failReads = false
@@ -370,6 +372,160 @@ class AppControllerTest {
 
             assertEquals(before, state)
             controller.cancelSignIn()
+        }
+    }
+
+    private val renewed = """{"access_token":"ghu_new","token_type":"bearer","refresh_token":"ghr_new","expires_in":28800}"""
+    private val refreshRefused = """{"error":"bad_refresh_token","error_description":"The refresh token passed is incorrect or expired."}"""
+    private val renewalNow = Instant.parse("2026-10-23T12:00:00Z")
+
+    /** The paths the app asked for, in order: tells a renewal from a host list. */
+    private fun Rig.paths(): List<String> = (1..server.requestCount).map { server.takeRequest().path!! }
+
+    @Test
+    fun `an expired saved token that can be renewed is renewed, saved, and used to list the hosts`() = runTest {
+        withRig(now = { renewalNow }) {
+            vault.save(GitHubToken(Secret("ghu_old"), Secret("ghr_old"), Instant.parse("2026-10-22T04:00:00Z")))
+            server.json(renewed)
+            server.json(fixture("list-tunnels.json"))
+
+            controller.start()
+            awaitHosts()
+
+            val renewal = server.takeRequest()
+            assertEquals("/login/oauth/access_token", renewal.path)
+            assertTrue(renewal.body.readUtf8().contains("refresh_token=ghr_old"))
+            assertEquals("github ghu_new", server.takeRequest().getHeader("Authorization"))
+            val saved = assertIs<VaultLoad.Present>(vault.load()).token
+            assertEquals("ghu_new", saved.access.reveal())
+            assertEquals("ghr_new", saved.refresh?.reveal(), "the refresh token was spent, so the new one is what is kept")
+            val hosts = state as AppState.Hosts
+            assertEquals(renewalNow.plusSeconds(28800), hosts.tokenExpiresAt)
+            assertTrue(hosts.renews)
+        }
+    }
+
+    @Test
+    fun `a token about to run out is renewed when a host is connected to, and the new one is used for the connection`() = runTest {
+        var clock = renewalNow
+        withRig(now = { clock }) {
+            vault.save(GitHubToken(Secret("ghu_saved"), Secret("ghr_saved"), renewalNow.plusSeconds(3600)))
+            server.json(fixture("list-tunnels.json"))
+            controller.start()
+            awaitHosts()
+            assertTrue(tokensSeenByHost.isEmpty())
+            clock = renewalNow.plusSeconds(3600 - 120)
+            server.json(renewed)
+
+            controller.connect(loaded().first().tunnel)
+            val connected = assertIs<AppState.Connected>(state)
+            connected.session.connection.first { it == ConnState.Online }
+
+            assertEquals(listOf("ghu_new"), tokensSeenByHost)
+            assertEquals("ghr_new", assertIs<VaultLoad.Present>(vault.load()).token.refresh?.reveal())
+        }
+    }
+
+    @Test
+    fun `a token far from running out is not renewed`() = runTest {
+        withRig(now = { renewalNow }) {
+            vault.save(GitHubToken(Secret("ghu_saved"), Secret("ghr_saved"), renewalNow.plusSeconds(3600)))
+            server.json(fixture("list-tunnels.json"))
+
+            controller.start()
+            awaitHosts()
+
+            assertEquals(listOf("/tunnels"), paths().map { it.substringBefore('?') })
+        }
+    }
+
+    @Test
+    fun `when GitHub refuses the renewal a token that is still valid is used, and the refused refresh token is not sent again`() = runTest {
+        withRig(now = { renewalNow }) {
+            vault.save(GitHubToken(Secret("ghu_saved"), Secret("ghr_saved"), renewalNow.plusSeconds(120)))
+            server.json(refreshRefused)
+            server.json(fixture("list-tunnels.json"))
+            server.json(fixture("list-tunnels.json"))
+
+            controller.start()
+            awaitHosts()
+            controller.refreshHosts()
+            awaitHosts()
+
+            assertEquals(
+                listOf("/login/oauth/access_token", "/tunnels", "/tunnels"),
+                paths().map { it.substringBefore('?') },
+                "one attempt at renewing, then the token that still works",
+            )
+            assertIs<AppState.Hosts>(state)
+        }
+    }
+
+    @Test
+    fun `when GitHub refuses the renewal of an expired token the user is asked to sign in again`() = runTest {
+        withRig(now = { renewalNow }) {
+            vault.save(GitHubToken(Secret("ghu_old"), Secret("ghr_old"), Instant.parse("2026-10-22T04:00:00Z")))
+            server.json(refreshRefused)
+
+            controller.start()
+            val out = assertIs<AppState.SignedOut>(await { it is AppState.SignedOut })
+
+            assertTrue(out.notice!!.contains("no longer accepts"))
+            assertEquals(VaultLoad.Absent, vault.load())
+            assertEquals(1, server.requestCount, "no host request is made with a token that is known to be dead")
+        }
+    }
+
+    @Test
+    fun `a renewal that cannot reach GitHub keeps the sign-in and succeeds on the next try`() = runTest {
+        withRig(now = { renewalNow }) {
+            vault.save(GitHubToken(Secret("ghu_old"), Secret("ghr_old"), Instant.parse("2026-10-22T04:00:00Z")))
+            server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AT_START))
+
+            controller.start()
+            val failed = awaitHosts()
+
+            assertIs<HostList.Failed>(failed)
+            assertEquals("ghr_old", assertIs<VaultLoad.Present>(vault.load()).token.refresh?.reveal(), "a network error does not cost the user their sign-in")
+
+            server.json(renewed)
+            server.json(fixture("list-tunnels.json"))
+            controller.refreshHosts()
+
+            assertIs<HostList.Loaded>(awaitHosts())
+            assertEquals("ghr_new", assertIs<VaultLoad.Present>(vault.load()).token.refresh?.reveal())
+        }
+    }
+
+    @Test
+    fun `two requests for a token at the same moment renew it once, because a refresh token can be used once`() = runTest {
+        withRig(now = { renewalNow }) {
+            vault.save(GitHubToken(Secret("ghu_old"), Secret("ghr_old"), Instant.parse("2026-10-22T04:00:00Z")))
+            server.json(renewed)
+            server.json(fixture("list-tunnels.json"))
+
+            controller.start()
+            runCurrent()
+            controller.refreshHosts()
+            awaitHosts()
+
+            val renewals = paths().count { it == "/login/oauth/access_token" }
+            assertEquals(1, renewals)
+        }
+    }
+
+    @Test
+    fun `a saved sign-in that cannot be renewed shows its expiry, one that can says it renews itself`() = runTest {
+        withRig(now = { renewalNow }) {
+            vault.save(GitHubToken(Secret("ghu_saved"), null, renewalNow.plusSeconds(3600)))
+            server.json(fixture("list-tunnels.json"))
+
+            controller.start()
+            awaitHosts()
+
+            val hosts = state as AppState.Hosts
+            assertEquals(renewalNow.plusSeconds(3600), hosts.tokenExpiresAt)
+            assertFalse(hosts.renews)
         }
     }
 
@@ -694,7 +850,7 @@ class AppControllerTest {
     }
 
     @Test
-    fun `selecting a chat opens it when none is open, swaps it for the one that is, and releases exactly the one it left`() = runTest {
+    fun `selecting a chat opens it when none is open and swaps it for the one that is, which stays subscribed`() = runTest {
         withRig(script = { HostScript(sessionChats = "[${chatSummaryJson(CHAT_A)}, ${chatSummaryJson(CHAT_B, "Second")}]") }) {
             connectToFirstHost()
             controller.openSession(SESSION_C)
@@ -713,7 +869,76 @@ class AppControllerTest {
             assertEquals(CHAT_B, open.chat!!.uri)
             assertNull(open.chat!!.parent)
             assertEquals(SESSION_C, open.uri)
-            assertEquals(listOf(CHAT_A), unsubscribed())
+            assertEquals(listOf(CHAT_A), open.warm.map { it.uri }, "the chat left is kept, so its tab is instant when the person comes back")
+            assertEquals(emptyList(), unsubscribed())
+        }
+    }
+
+    private fun Rig.subscribesTo(channel: String): Int = connectors.single().sockets.flatMap { it.sent }
+        .count { it["method"]?.jsonPrimitive?.content == "subscribe" && it["params"]!!.jsonObject["channel"]?.jsonPrimitive?.content == channel }
+
+    @Test
+    fun `going back to a chat looked at before shows the same live chat with no new subscription`() = runTest {
+        withRig(script = { HostScript(sessionChats = "[${chatSummaryJson(CHAT_A)}, ${chatSummaryJson(CHAT_B, "Second")}]") }) {
+            connectToFirstHost()
+            controller.openSession(SESSION_C)
+            assertIs<AppState.Connected>(state).open!!.store.state.first { it != null }
+            runCurrent()
+            controller.selectChat(CHAT_A)
+            val first = assertIs<AppState.Connected>(state).open!!.chat!!
+            first.store.state.first { it != null }
+            controller.selectChat(CHAT_B)
+            runCurrent()
+
+            controller.selectChat(CHAT_A)
+            runCurrent()
+
+            val open = assertIs<AppState.Connected>(state).open!!
+            assertSame(first, open.chat, "the very chat that was on screen before, already loaded")
+            assertEquals(listOf(CHAT_B), open.warm.map { it.uri })
+            assertEquals(1, subscribesTo(CHAT_A), "it was asked for once, not again on the way back")
+            assertEquals(emptyList(), unsubscribed())
+        }
+    }
+
+    @Test
+    fun `a session keeps only a few chats warm, and lets the oldest go`() = runTest {
+        val chats = listOf(CHAT_A, CHAT_B, CHAT_C, "ahp-chat:/d4", "ahp-chat:/d5")
+        withRig(script = { HostScript(sessionChats = chats.joinToString(prefix = "[", postfix = "]") { chatSummaryJson(it, "Chat $it") }) }) {
+            connectToFirstHost()
+            controller.openSession(SESSION_C)
+            assertIs<AppState.Connected>(state).open!!.store.state.first { it != null }
+            runCurrent()
+
+            chats.forEach { controller.selectChat(it); runCurrent() }
+
+            val open = assertIs<AppState.Connected>(state).open!!
+            assertEquals(chats.last(), open.chat!!.uri)
+            assertEquals(chats.subList(1, 4), open.warm.map { it.uri }, "the three before it, the oldest of all let go")
+            assertEquals(listOf(chats.first()), unsubscribed())
+        }
+    }
+
+    @Test
+    fun `a chat that has left the session is not kept warm`() = runTest {
+        withRig(script = { HostScript(sessionChats = "[${chatSummaryJson(CHAT_A)}, ${chatSummaryJson(CHAT_B, "Second")}, ${chatSummaryJson(CHAT_C, "Third")}]") }) {
+            connectToFirstHost()
+            controller.openSession(SESSION_C)
+            assertIs<AppState.Connected>(state).open!!.store.state.first { it != null }
+            runCurrent()
+            controller.selectChat(CHAT_A)
+            runCurrent()
+            controller.selectChat(CHAT_B)
+            runCurrent()
+            connectors.single().sockets.single().serverSends(actionFrame(SESSION_C, """{"type":"session/chatRemoved","chat":"$CHAT_A"}""", SNAPSHOT_SEQ + 1))
+            runCurrent()
+
+            controller.selectChat(CHAT_C)
+            runCurrent()
+
+            val open = assertIs<AppState.Connected>(state).open!!
+            assertEquals(listOf(CHAT_B), open.warm.map { it.uri })
+            assertEquals(listOf(CHAT_A), unsubscribed(), "the removed chat was let go")
         }
     }
 

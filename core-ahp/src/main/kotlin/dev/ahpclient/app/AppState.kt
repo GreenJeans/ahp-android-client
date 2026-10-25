@@ -58,13 +58,18 @@ sealed interface AppState {
     /** [notice] explains why the user is back here, for example an expired sign-in. [offerRevoke] is set only after the user signed out on purpose. */
     data class SignedOut(val step: SignInStep, val notice: String?, val offerRevoke: Boolean = false) : AppState
 
-    data class Hosts(val list: HostList, val tokenExpiresAt: Instant?) : AppState
+    /** [tokenExpiresAt] is when the current access token runs out; with [renews] the app trades it for a new one on its own before then. */
+    data class Hosts(val list: HostList, val tokenExpiresAt: Instant?, val renews: Boolean = false) : AppState
 
     /** [open] is the session whose detail is on screen; its [OpenSession.store] stays subscribed until the user goes back. */
     data class Connected(val host: TunnelInfo, val session: HostSession, val open: OpenSession? = null) : AppState
 }
 
-data class OpenSession(val uri: String, val store: SessionStore, val chat: OpenChat? = null, val changeset: OpenChangeset? = null, val terminal: OpenTerminal? = null)
+/**
+ * [chat] is the chat on screen. [warm] holds the session's other chats that were looked at, which stay subscribed so that going back
+ * to one is instant instead of a reload; they are released with the session.
+ */
+data class OpenSession(val uri: String, val store: SessionStore, val chat: OpenChat? = null, val changeset: OpenChangeset? = null, val terminal: OpenTerminal? = null, val warm: List<OpenChat> = emptyList())
 
 /** The live output of one terminal on screen, over the chat it was opened from. Its [store] stays subscribed until the user goes back. */
 data class OpenTerminal(val uri: String, val store: ChannelStore<TerminalState>)

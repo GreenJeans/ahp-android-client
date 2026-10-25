@@ -4,6 +4,8 @@ import dev.ahpclient.auth.DeviceFlowResult
 import dev.ahpclient.auth.GitHubAuthException
 import dev.ahpclient.auth.GitHubDeviceAuth
 import dev.ahpclient.auth.GitHubToken
+import dev.ahpclient.auth.RefreshResult
+import dev.ahpclient.auth.Secret
 import dev.ahpclient.security.TokenVault
 import dev.ahpclient.security.VaultCryptoException
 import dev.ahpclient.security.VaultLoad
@@ -31,6 +33,7 @@ import dev.ahpclient.tunnel.DevTunnelsClient
 import dev.ahpclient.tunnel.DevTunnelsException
 import dev.ahpclient.tunnel.TunnelInfo
 import java.io.IOException
+import java.time.Duration
 import java.time.Instant
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -42,6 +45,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonElement
@@ -67,6 +72,10 @@ class AppController(
     private val interaction: InteractionConsent = InteractionConsent(),
     /** The device check in front of every tool approval. The default refuses everything, so a build with no gate can never approve. */
     private val approvalGate: ApprovalGate = ApprovalGate { false },
+    /** How close to running out a sign-in is renewed. */
+    private val renewBefore: Duration = Duration.ofMinutes(5),
+    /** Where renewals are noted, for a debug build's log: only what happened, never a token. */
+    private val note: (String) -> Unit = {},
 ) {
     private val _state = MutableStateFlow<AppState>(AppState.Restoring)
     val state: StateFlow<AppState> = _state.asStateFlow()
@@ -135,6 +144,13 @@ class AppController(
 
     @Volatile
     private var token: GitHubToken? = null
+
+    /** One renewal at a time: a refresh token can be used once, so a second caller must see the first one's result, not spend it again. */
+    private val renewLock = Mutex()
+
+    /** The refresh token GitHub refused, so it is not offered again on every request until the user signs in afresh. */
+    @Volatile
+    private var refusedRefresh: Secret? = null
     private var signInJob: Job? = null
     private var hostsJob: Job? = null
     private var watchJob: Job? = null
@@ -195,7 +211,7 @@ class AppController(
     fun connect(tunnel: TunnelInfo) {
         if (_state.value !is AppState.Hosts) return
         cancelHostsJob()
-        val session = sessions.create(tunnel) { token?.access ?: throw DevTunnelsException.AuthExpired() }
+        val session = sessions.create(tunnel) { freshToken().access }
         session.start()
         _state.value = AppState.Connected(tunnel, session)
         scope.launch {
@@ -235,6 +251,7 @@ class AppController(
         if (_state.compareAndSet(current, current.copy(open = null))) {
             // Every chat of the chain (a subagent's transcript and the ones it was opened from) holds a subscription.
             generateSequence(open.chat) { it.parent }.forEach { current.session.closeChat(it.uri) }
+            open.warm.forEach { current.session.closeChat(it.uri) }
             cancelDiffJob()
             open.changeset?.let { current.session.closeChannel(it.uri) }
             open.terminal?.let { current.session.closeChannel(it.uri) }
@@ -313,7 +330,7 @@ class AppController(
 
     /**
      * Makes [uri], one of the open session's chats, the one on screen: opens it when none is, or swaps it for the one that
-     * is (which is released, while what the person had expanded in each chat is kept). The session screen is the chat plus the
+     * is (which stays subscribed in [OpenSession.warm], with what the person had expanded in it). The session screen is the chat plus the
      * tabs that call this, so it is the way between chats. Ignored for a chat the session does not list, the chat already
      * shown, and while a subagent's transcript, a terminal or a changeset is over the chat: those are left first.
      */
@@ -324,13 +341,19 @@ class AppController(
         val shown = open.chat
         if (shown == null) return openChat(uri)
         if (shown.parent != null || shown.uri == uri || open.terminal != null || open.changeset != null) return
-        if (open.store.state.value?.chats?.any { it.resource == uri } != true) return
-        val next = newChat(current.session, uri, parent = null)
-        if (!_state.compareAndSet(current, current.copy(open = open.copy(chat = next)))) {
-            current.session.closeChat(uri)
+        val listed = open.store.state.value?.chats?.map { it.resource }?.toSet().orEmpty()
+        if (uri !in listed) return
+        val back = open.warm.firstOrNull { it.uri == uri }
+        val next = back ?: newChat(current.session, uri, parent = null)
+        // The chat left behind stays subscribed, so its tab is instant when the person comes back. One that has left the session is let go,
+        // and so is the oldest beyond a few, so a long session does not hold a subscription for every chat it ever had.
+        val kept = (open.warm.filter { it !== back } + shown).filter { it.uri in listed }.takeLast(MAX_WARM_CHATS)
+        val dropped = (open.warm + shown).filter { it !== next && it !in kept }
+        if (!_state.compareAndSet(current, current.copy(open = open.copy(chat = next, warm = kept)))) {
+            if (back == null) current.session.closeChat(uri)
             return
         }
-        current.session.closeChat(shown.uri)
+        dropped.forEach { current.session.closeChat(it.uri) }
     }
 
     /**
@@ -457,7 +480,8 @@ class AppController(
         when (loaded) {
             is VaultLoad.Present -> {
                 val saved = loaded.token
-                if (saved.expiresAt?.let { !now().isBefore(it) } == true) {
+                // An expired token that can be renewed is kept: it is renewed when it is first needed, which is when the hosts are listed.
+                if (saved.refresh == null && saved.expiresAt?.let { !now().isBefore(it) } == true) {
                     safeClear()
                     _state.value = AppState.SignedOut(SignInStep.Idle, "Your GitHub sign-in expired. Sign in again.")
                 } else {
@@ -485,6 +509,7 @@ class AppController(
                 is DeviceFlowResult.Success -> {
                     vault.save(result.token)
                     token = result.token
+                    refusedRefresh = null
                     showHosts()
                 }
                 DeviceFlowResult.Expired -> failSignIn("The code expired before it was approved. Start again.")
@@ -512,6 +537,61 @@ class AppController(
         _state.update { if (it is AppState.SignedOut) AppState.SignedOut(SignInStep.Failed(message), null) else it }
     }
 
+    /**
+     * The sign-in to use now. A GitHub user token lasts eight hours, so one that is about to run out (or has) is traded for a new
+     * one first, when a refresh token is held; the new pair is saved before anything else uses it. When GitHub will not renew it the
+     * old token is used for as long as it is valid, and when it is not valid any more the user has to sign in again.
+     */
+    private suspend fun freshToken(): GitHubToken {
+        val held = token ?: throw DevTunnelsException.AuthExpired()
+        val expiresAt = held.expiresAt
+        val expired = expiresAt != null && !now().isBefore(expiresAt)
+        val due = expired || (expiresAt != null && !now().plus(renewBefore).isBefore(expiresAt))
+        if (!due) return held
+        val usable = !expired
+        val refresh = held.refresh
+        if (refresh == null || refresh == refusedRefresh) return if (usable) held else throw DevTunnelsException.AuthExpired()
+        return renewLock.withLock {
+            val current = token ?: throw DevTunnelsException.AuthExpired()
+            if (current !== held) return@withLock current
+            // Not cancellable: once GitHub has been asked, the old refresh token is spent and the new pair must be saved.
+            withContext(NonCancellable) {
+                val result = try {
+                    auth.refresh(refresh)
+                } catch (e: IOException) {
+                    note("renewal not attempted: ${e.javaClass.simpleName}")
+                    return@withContext if (usable) held else throw e
+                } catch (e: GitHubAuthException) {
+                    return@withContext if (usable) held else throw IOException("Could not renew the GitHub sign-in", e)
+                }
+                when (result) {
+                    is RefreshResult.Renewed -> {
+                        note("sign-in renewed")
+                        adopt(result.token)
+                    }
+                    is RefreshResult.Rejected -> {
+                        note("renewal refused: ${result.error}")
+                        refusedRefresh = refresh
+                        if (usable) held else throw DevTunnelsException.AuthExpired()
+                    }
+                }
+            }
+        }
+    }
+
+    /** Makes a renewed sign-in the one in use, and keeps it at rest: a storage error loses only the saved copy, not this session. */
+    private suspend fun adopt(renewed: GitHubToken): GitHubToken {
+        token = renewed
+        try {
+            vault.save(renewed)
+        } catch (_: IOException) {
+            // The in-memory token still works; the next launch will find the old pair and sign in again if that was already spent.
+        } catch (_: VaultCryptoException) {
+            // As above.
+        }
+        _state.update { if (it is AppState.Hosts) it.copy(tokenExpiresAt = renewed.expiresAt, renews = renewed.refresh != null) else it }
+        return renewed
+    }
     @Synchronized
     private fun showHosts() {
         val signedIn = token
@@ -519,14 +599,14 @@ class AppController(
             _state.value = AppState.SignedOut(SignInStep.Idle, null)
             return
         }
-        _state.value = AppState.Hosts(HostList.Loading, signedIn.expiresAt)
+        _state.value = AppState.Hosts(HostList.Loading, signedIn.expiresAt, renews = signedIn.refresh != null)
         hostsJob?.cancel()
-        hostsJob = scope.launch { loadHosts(signedIn) }
+        hostsJob = scope.launch { loadHosts() }
     }
 
-    private suspend fun loadHosts(signedIn: GitHubToken) {
+    private suspend fun loadHosts() {
         val list = try {
-            val tunnels = devTunnels.listAgentHostTunnels(signedIn.access)
+            val tunnels = devTunnels.listAgentHostTunnels(freshToken().access)
             val last = try {
                 lastHost.get()
             } catch (_: IOException) {
@@ -551,7 +631,7 @@ class AppController(
             HostList.Failed("Could not load your hosts (${e.javaClass.simpleName}).")
         }
         // Only update while still on the host list: the user may have connected or signed out while this was loading.
-        _state.update { if (it is AppState.Hosts) AppState.Hosts(list, it.tokenExpiresAt) else it }
+        _state.update { if (it is AppState.Hosts) it.copy(list = list) else it }
     }
 
     @Synchronized
@@ -581,6 +661,7 @@ class AppController(
         cancelDiffJob()
         interaction.set(false)
         token = null
+        refusedRefresh = null
         safeClear()
         _state.value = AppState.SignedOut(SignInStep.Idle, notice, offerRevoke)
     }
@@ -633,6 +714,9 @@ class AppController(
 
     private companion object {
         const val MAX_REMEMBERED_CHATS = 20
+
+        /** How many chats a session keeps subscribed besides the one on screen. */
+        const val MAX_WARM_CHATS = 3
 
         /** How many subagent transcripts may be opened on top of one another. */
         const val MAX_SUBAGENT_DEPTH = 4

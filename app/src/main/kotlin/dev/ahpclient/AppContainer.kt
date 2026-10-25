@@ -74,6 +74,8 @@ class AppContainer(context: Context) {
             scope = appScope,
             interaction = interaction,
             approvalGate = approvalGate,
+            // Debug builds only: says that a sign-in was renewed or refused, never anything of the token.
+            note = { if (debuggable) Log.i(AUTH_TAG, it) },
         )
     }
 
@@ -163,5 +165,6 @@ class AppContainer(context: Context) {
     companion object {
         const val WIRE_TAG = "AhpWire"
         const val CONN_TAG = "AhpConn"
+        const val AUTH_TAG = "AhpAuth"
     }
 }

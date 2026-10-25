@@ -121,6 +121,41 @@ class GitHubDeviceAuthTest {
     }
 
     @Test
+    fun `refresh trades the refresh token for a new pair and sends no client secret`() = withServer { server, auth ->
+        server.json("""{"access_token":"ghu_new","token_type":"bearer","refresh_token":"ghr_new","expires_in":28800,"refresh_token_expires_in":15897600}""")
+
+        val result = auth.refresh(Secret("ghr_old"))
+
+        val renewed = assertIs<RefreshResult.Renewed>(result)
+        assertEquals("ghu_new", renewed.token.access.reveal())
+        assertEquals("ghr_new", renewed.token.refresh?.reveal())
+        assertEquals(fixedNow.plusSeconds(28800), renewed.token.expiresAt)
+        val request = server.takeRequest()
+        assertEquals("/login/oauth/access_token", request.path)
+        val body = request.body.readUtf8()
+        assertTrue(body.contains("client_id=$DEV_TUNNELS_GITHUB_APP_CLIENT_ID"))
+        assertTrue(body.contains("grant_type=refresh_token"))
+        assertTrue(body.contains("refresh_token=ghr_old"))
+        assertFalse(body.contains("client_secret"), "a device-flow token is refreshed without the app's secret: this app has none")
+    }
+
+    @Test
+    fun `refresh reports a refusal with GitHub's reason`() = withServer { server, auth ->
+        server.json("""{"error":"bad_refresh_token","error_description":"The refresh token passed is incorrect or expired."}""")
+
+        val result = auth.refresh(Secret("ghr_old"))
+
+        assertEquals(RefreshResult.Rejected("bad_refresh_token"), result)
+    }
+
+    @Test
+    fun `refresh does not mistake a refusal with no reason for success`() = withServer { server, auth ->
+        server.json("""{}""")
+
+        assertEquals(RefreshResult.Rejected("unexpected response"), auth.refresh(Secret("ghr_old")))
+    }
+
+    @Test
     fun `secrets never appear in string output`() {
         val token = GitHubToken(Secret("ghu_secret"), Secret("ghr_secret"), null)
 

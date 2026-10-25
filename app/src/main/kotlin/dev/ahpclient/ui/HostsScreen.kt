@@ -101,9 +101,11 @@ fun HostsScreen(
                     }
                 }
             }
-            state.tokenExpiresAt?.let {
+            // A sign-in the app renews on its own has no end worth showing: the access token it holds lasts hours, but the sign-in does not.
+            val signedIn = if (state.renews) "Signed in. The app renews this on its own." else state.tokenExpiresAt?.let { "Signed in until ${dateTimeFormat.format(it)}." }
+            signedIn?.let {
                 Text(
-                    "Signed in until ${dateTimeFormat.format(it)}.",
+                    it,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp).testTag("token_expiry"),
