@@ -388,6 +388,38 @@ class AppControllerTest {
     }
 
     @Test
+    fun `a rejected sign in at the host list returns to sign in even when wiping the token has to wait on the disk`() = runTest {
+        withRig {
+            store.suspendOnDelete = true
+            vault.save(savedToken)
+            server.json("{}", code = 401)
+
+            controller.start()
+            val out = assertIs<AppState.SignedOut>(await { it is AppState.SignedOut })
+
+            assertTrue(out.notice!!.contains("no longer accepts"))
+            assertEquals(VaultLoad.Absent, vault.load())
+        }
+    }
+
+    @Test
+    fun `losing the sign in while connected returns to sign in even when wiping the token has to wait on the disk`() = runTest {
+        withRig(script = { HostScript(failure = DevTunnelsException.AuthExpired()) }) {
+            vault.save(savedToken)
+            server.json(fixture("list-tunnels.json"))
+            controller.start()
+            awaitHosts()
+            store.suspendOnDelete = true
+
+            controller.connect(loaded().first().tunnel)
+            val out = assertIs<AppState.SignedOut>(await { it is AppState.SignedOut })
+
+            assertTrue(out.notice!!.contains("no longer accepts"))
+            assertEquals(VaultLoad.Absent, vault.load())
+        }
+    }
+
+    @Test
     fun `a forbidden response points at SSO and refreshing recovers`() = runTest {
         withRig {
             vault.save(savedToken)

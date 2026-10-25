@@ -35,12 +35,14 @@ import java.time.Instant
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonElement
 
@@ -565,8 +567,12 @@ class AppController(
         }
     }
 
-    /** Back to the sign-in screen: stops any live session, forgets the token in memory and on disk. */
-    private suspend fun endSignIn(notice: String?, offerRevoke: Boolean = false) {
+    /**
+     * Back to the sign-in screen: stops any live session, forgets the token in memory and on disk. It is often called by the very job
+     * it cancels (the host list that was refused, the watch of a connection that lost its sign-in), so it must not be cancellable:
+     * it would stop at the first disk write, leave the screen as it was and the expired token in memory.
+     */
+    private suspend fun endSignIn(notice: String?, offerRevoke: Boolean = false) = withContext(NonCancellable) {
         cancelSignInJob()
         cancelHostsJob()
         cancelWatchJob()
