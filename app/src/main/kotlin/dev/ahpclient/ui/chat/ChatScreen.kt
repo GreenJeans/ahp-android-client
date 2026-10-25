@@ -149,7 +149,7 @@ fun ChatPane(
 private fun NotLoaded(failure: ChatNotLoadedException, onRetry: (() -> Unit)?, stale: Boolean, modifier: Modifier = Modifier) {
     val why = if (failure.interrupted) "The connection kept dropping while this chat loaded." else "The host took too long to send this chat."
     Column(modifier = modifier.fillMaxWidth().testTag("chat_not_loaded"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        ErrorText(if (stale) "$why What is shown is not being kept up to date." else "$why It may be a very long one.", Modifier.testTag("chat_not_loaded_text"))
+        ErrorText(if (stale) "$why What is shown is not being kept up to date." else "$why It may be too long for a phone: the host sends a chat whole.", Modifier.testTag("chat_not_loaded_text"))
         if (onRetry != null) FilledTonalButton(onClick = onRetry, modifier = Modifier.heightIn(min = 48.dp).testTag("chat_retry")) { Text("Try again") }
     }
 }

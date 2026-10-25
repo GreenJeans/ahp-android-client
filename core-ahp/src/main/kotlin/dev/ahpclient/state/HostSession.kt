@@ -466,6 +466,8 @@ class HostSession(
             if (e.code == AhpErrorCodes.SESSION_NOT_FOUND || e.code == AhpErrorCodes.NOT_FOUND) store.markGone() else throw e
         } catch (_: AhpException.Timeout) {
             // The connection is fine and the host is slow with this chat: say so, instead of tearing down a good connection to ask again.
+            // The host is told to stop, or it goes on building a snapshot nobody is waiting for.
+            ahp.unsubscribe(store.uri)
             store.markNotLoaded(interrupted = false)
         } catch (e: AhpException.ConnectionClosed) {
             // Lost while waiting for this chat. Once it has happened a few times in a row the chat is the problem, not the network.

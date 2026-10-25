@@ -225,6 +225,8 @@ class HostSessionChatTest {
 
         val failure = assertIs<ChatNotLoadedException>(store.error.value)
         assertFalse(failure.interrupted)
+        val unsubscribed = rig.socket.sent.filter { it["method"]?.jsonPrimitive?.content == "unsubscribe" }
+        assertEquals(listOf(CHAT_A), unsubscribed.map { it["params"]!!.jsonObject["channel"]!!.jsonPrimitive.content }, "the host is told to stop building it")
         assertEquals(ConnState.Online, rig.host.connection.value)
         assertEquals(1, rig.connector.connects.size, "the connection was not torn down to ask again")
         assertEquals(1, rig.socket.sentMethods.count { it == "subscribe" })
