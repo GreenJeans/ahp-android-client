@@ -365,7 +365,7 @@ class SessionDetailTest {
             "toolCallId":"tc","toolName":"run_in_terminal","displayName":"Run command","invocationMessage":{"markdown":"Ran **npm test**"},
             "pastTenseMessage":"Ran it","confirmed":"not-needed","success":true}}]"""
 
-        assertEquals(listOf(InputRequestView("Approval", "Run command: Ran **npm test**")), SessionDetail.from(state(request), now).inputNeeded)
+        assertEquals(listOf(InputRequestView("Approval", "Run command: Ran npm test")), SessionDetail.from(state(request), now).inputNeeded)
     }
 
     @Test

@@ -152,7 +152,7 @@ class TranscriptTest {
 
         val tools = Transcript.from(chat(listOf(withIntention, running, done, bare).joinToString(","))).items.filterIsInstance<TranscriptItem.Tool>()
 
-        assertEquals(listOf("List the files", "Running **ls**", "Ran it", null), tools.map { it.summary })
+        assertEquals(listOf("List the files", "Running ls", "Ran it", null), tools.map { it.summary })
         assertEquals("grep_search", tools.last().name)
     }
 
@@ -186,6 +186,17 @@ class TranscriptTest {
         assertTrue(items[1].answered)
         assertNull(items[1].form)
         assertNull(items[2].form, "a request with a question this app does not know is left to be answered elsewhere")
+    }
+
+    @Test
+    fun `a notice written in markdown is shown as plain words`() {
+        val notice = """{"kind":"systemNotification","content":{"markdown":"`Install deps` completed in [the log](file:///c%3A/x.log)"}}"""
+        val plainNotice = """{"kind":"systemNotification","content":"`Install deps` completed"}"""
+
+        val items = Transcript.from(chat("$notice,$plainNotice")).items.drop(1)
+
+        assertEquals(TranscriptItem.Notice("t1/#0", "Install deps completed in the log"), items[0])
+        assertEquals(TranscriptItem.Notice("t1/#1", "Install deps completed"), items[1], "the host sends markers in a plain string too")
     }
 
     @Test

@@ -1,5 +1,6 @@
 package dev.ahpclient.ui.theme
 
+import android.app.Activity
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
@@ -8,7 +9,10 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
 import dev.ahpclient.state.ThemeMode
 
 /** The app's colours: the wallpaper's (Android 12 and newer) in the light or dark the person chose, or the system's. */
@@ -31,6 +35,17 @@ fun AhpTheme(darkTheme: Boolean, content: @Composable () -> Unit) {
         }
         darkTheme -> darkColorScheme()
         else -> lightColorScheme()
+    }
+    // The system bars follow the theme the person chose, which can differ from the system's: dark icons on a light screen and the reverse.
+    val view = LocalView.current
+    if (!view.isInEditMode) {
+        SideEffect {
+            val window = (view.context as? Activity)?.window ?: return@SideEffect
+            WindowCompat.getInsetsController(window, view).apply {
+                isAppearanceLightStatusBars = !darkTheme
+                isAppearanceLightNavigationBars = !darkTheme
+            }
+        }
     }
     MaterialTheme(colorScheme = colors, content = content)
 }

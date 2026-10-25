@@ -206,8 +206,8 @@ data class SessionDetail(
         }
 
         internal fun plain(text: StringOrMarkdown?): String? = when (text) {
-            is StringOrMarkdown.Plain -> text.value
-            is StringOrMarkdown.Markdown -> text.value
+            is StringOrMarkdown.Plain -> MarkdownPlain.of(text.value)
+            is StringOrMarkdown.Markdown -> MarkdownPlain.of(text.value)
             else -> null
         }
     }
