@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
@@ -16,9 +17,12 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -53,6 +57,7 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.ahpclient.state.AnswerValue
 import dev.ahpclient.state.ApprovalChoice
@@ -66,6 +71,7 @@ import dev.ahpclient.state.ModelChoice
 import dev.ahpclient.state.ModelOption
 import dev.ahpclient.state.ModelOptions
 import dev.ahpclient.state.QuestionKind
+import dev.ahpclient.ui.AppIcons
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -166,22 +172,24 @@ private fun ModelPickerDialog(models: List<ModelOption>, current: ModelChoice?, 
 }
 
 @Composable
-private fun Notice(text: String?, tag: String) {
+private fun Notice(text: String?, tag: String, modifier: Modifier = Modifier) {
     if (text == null) return
     Text(
         text,
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.error,
-        modifier = Modifier.testTag(tag).semantics { liveRegion = LiveRegionMode.Polite },
+        modifier = modifier.testTag(tag).semantics { liveRegion = LiveRegionMode.Polite },
     )
 }
 
 /**
- * The message box, with Stop while the agent is working. The text stays until the host has confirmed the message, so a
- * failed send loses nothing, and it survives rotation.
+ * The message box, as the chat apps have it: one rounded card holding the text, and under the text a row with the model on the
+ * left and the buttons on the right. The send button is an arrow; while the agent is working a Stop button joins it, and a
+ * message typed then can steer the turn. The text stays until the host has confirmed the message, so a failed send loses
+ * nothing, and it survives rotation.
  */
 @Composable
-internal fun Composer(actions: ChatActionsUi, modifier: Modifier = Modifier, compact: Boolean = false) {
+internal fun Composer(actions: ChatActionsUi, modifier: Modifier = Modifier) {
     var text by rememberSaveable { mutableStateOf("") }
     var pick by rememberSaveable(stateSaver = ModelPickSaver) { mutableStateOf<ModelChoice?>(null) }
     var choosing by rememberSaveable { mutableStateOf(false) }
@@ -190,48 +198,76 @@ internal fun Composer(actions: ChatActionsUi, modifier: Modifier = Modifier, com
     var busy by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val canSend = text.isNotBlank() && !busy
+    val chipColors = AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest)
     Surface(
-        color = MaterialTheme.colorScheme.surfaceContainer,
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-        modifier = modifier.fillMaxWidth().imePadding(),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = RoundedCornerShape(28.dp),
+        modifier = modifier.fillMaxWidth().imePadding().padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Notice(notice, "composer_notice")
-            // In a short pane (a phone on its side) the model chip shares the message row instead of taking a row of its own.
-            val modelChip: @Composable () -> Unit = {
-                AssistChip(
-                    onClick = { choosing = true },
-                    label = { Text("Model: ${modelLabel(actions.models, chosen)}") },
-                    modifier = Modifier.testTag("model_button"),
-                )
-            }
-            if (actions.models.isNotEmpty()) {
-                if (!compact) modelChip()
-                if (choosing) ModelPickerDialog(actions.models, chosen, onDismiss = { choosing = false }, onPick = { pick = it; choosing = false })
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Bottom) {
-                if (compact && actions.models.isNotEmpty()) Box(Modifier.padding(bottom = 12.dp)) { modelChip() }
-                val field = MaterialTheme.colorScheme.surfaceContainerHigh
-                TextField(
-                    value = text,
-                    onValueChange = { text = it },
-                    label = { Text("Message") },
-                    maxLines = 5,
-                    shape = RoundedCornerShape(24.dp),
-                    colors = TextFieldDefaults.colors(
-                        focusedContainerColor = field,
-                        unfocusedContainerColor = field,
-                        focusedIndicatorColor = Color.Transparent,
-                        unfocusedIndicatorColor = Color.Transparent,
-                        disabledIndicatorColor = Color.Transparent,
-                        errorIndicatorColor = Color.Transparent,
-                    ),
-                    modifier = Modifier.weight(1f).testTag("composer_input"),
-                )
-                Button(
+        Column(modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 8.dp)) {
+            Notice(notice, "composer_notice", Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+            TextField(
+                value = text,
+                onValueChange = { text = it },
+                placeholder = { Text("Message") },
+                maxLines = 5,
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = Color.Transparent,
+                    unfocusedContainerColor = Color.Transparent,
+                    disabledContainerColor = Color.Transparent,
+                    focusedIndicatorColor = Color.Transparent,
+                    unfocusedIndicatorColor = Color.Transparent,
+                    disabledIndicatorColor = Color.Transparent,
+                    errorIndicatorColor = Color.Transparent,
+                ),
+                modifier = Modifier.fillMaxWidth().testTag("composer_input"),
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                    if (actions.models.isNotEmpty()) {
+                        AssistChip(
+                            onClick = { choosing = true },
+                            label = { Text("Model: ${modelLabel(actions.models, chosen)}", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            colors = chipColors,
+                            border = null,
+                            modifier = Modifier.testTag("model_button"),
+                        )
+                        if (choosing) ModelPickerDialog(actions.models, chosen, onDismiss = { choosing = false }, onPick = { pick = it; choosing = false })
+                    }
+                }
+                if (actions.running && text.isNotBlank()) {
+                    // Steer reaches the turn that is running now; the arrow queues the message to wait for it to end.
+                    AssistChip(
+                        onClick = {
+                            val sending = text
+                            scope.launch {
+                                busy = true
+                                val result = actions.steer(sending, chosen)
+                                notice = InteractMessages.describe(result)
+                                if (InteractMessages.succeeded(result) && text == sending) text = ""
+                                busy = false
+                            }
+                        },
+                        enabled = !busy,
+                        label = { Text("Steer now") },
+                        colors = chipColors,
+                        border = null,
+                        modifier = Modifier.testTag("composer_steer"),
+                    )
+                }
+                if (actions.running) {
+                    FilledTonalIconButton(
+                        onClick = { scope.launch { busy = true; notice = InteractMessages.describe(actions.cancel()); busy = false } },
+                        enabled = !busy,
+                        modifier = Modifier.size(48.dp).testTag("composer_stop"),
+                    ) { Icon(AppIcons.Stop, contentDescription = "Stop the agent") }
+                }
+                FilledIconButton(
                     onClick = {
                         val sending = text
                         scope.launch {
@@ -243,33 +279,9 @@ internal fun Composer(actions: ChatActionsUi, modifier: Modifier = Modifier, com
                             busy = false
                         }
                     },
-                    enabled = text.isNotBlank() && !busy,
-                    modifier = Modifier.heightIn(min = 56.dp).testTag("composer_send"),
-                ) { Text(if (actions.running) "Queue" else "Send") }
-            }
-            if (actions.running) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    // Steer reaches the turn that is running now; Queue (the main button) waits for it to end.
-                    FilledTonalButton(
-                        onClick = {
-                            val sending = text
-                            scope.launch {
-                                busy = true
-                                val result = actions.steer(sending, chosen)
-                                notice = InteractMessages.describe(result)
-                                if (InteractMessages.succeeded(result) && text == sending) text = ""
-                                busy = false
-                            }
-                        },
-                        enabled = text.isNotBlank() && !busy,
-                        modifier = Modifier.heightIn(min = 48.dp).testTag("composer_steer"),
-                    ) { Text("Steer now") }
-                    OutlinedButton(
-                        onClick = { scope.launch { busy = true; notice = InteractMessages.describe(actions.cancel()); busy = false } },
-                        enabled = !busy,
-                        modifier = Modifier.heightIn(min = 48.dp).testTag("composer_stop"),
-                    ) { Text("Stop the agent") }
-                }
+                    enabled = canSend,
+                    modifier = Modifier.size(48.dp).testTag("composer_send"),
+                ) { Icon(AppIcons.ArrowUp, contentDescription = if (actions.running) "Queue" else "Send") }
             }
         }
     }

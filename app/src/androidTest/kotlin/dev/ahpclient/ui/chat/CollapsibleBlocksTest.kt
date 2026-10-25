@@ -65,7 +65,7 @@ class CollapsibleBlocksTest {
     private fun show(transcript: Transcript, expanded: Set<String> = emptySet(), onToggle: (String) -> Unit = {}, onOpenSubagent: ((String) -> Unit)? = null, onOpenTerminal: ((String) -> Unit)? = null) =
         rule.setContent { AhpTheme { ChatScreen(transcript, null, false, null, ConnState.Online, {}, {}, {}, expanded = expanded, onToggle = onToggle, onOpenSubagent = onOpenSubagent, onOpenTerminal = onOpenTerminal) } }
 
-    private fun headerOf(text: String) = hasTestTag("block_header") and hasText(text)
+    private fun headerOf(text: String) = hasTestTag("block_header") and hasText(text, substring = true)
 
     // ---- the block itself --------------------------------------------------------------------------------------
 
@@ -346,7 +346,11 @@ class CollapsibleBlocksTest {
     fun tappingAHeaderAsksForThatRowsKeyToBeToggled() {
         val toggled = mutableListOf<String>()
         show(
-            transcript(tool("t1", completed("""{"type":"text","text":"one"}""")), TranscriptItem.Reasoning("r1", "thinking about it", live = false)),
+            transcript(
+                tool("t1", completed("""{"type":"text","text":"one"}""")),
+                TranscriptItem.Markdown("m1", "and then"),
+                TranscriptItem.Reasoning("r1", "thinking about it", live = false),
+            ),
             onToggle = toggled::add,
         )
 
@@ -396,6 +400,8 @@ class CollapsibleBlocksTest {
             }
         }
 
+        rule.onNode(hasTestTag("steps_header")).performClick()
+        rule.waitForIdle()
         rule.onNode(headerOf("Second tool")).performClick()
         rule.waitForIdle()
 

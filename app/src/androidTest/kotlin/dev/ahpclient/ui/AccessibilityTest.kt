@@ -15,6 +15,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.tryPerformAccessibilityChecks
 import androidx.compose.ui.unit.dp
 import android.os.Build
@@ -352,6 +353,31 @@ class AccessibilityTest {
             ),
         )
         rule.setContent { AhpTheme { ChatScreen(closed, null, false, null, ConnState.Online, {}, {}, {}) } }
+        rule.waitForIdle()
+
+        check()
+    }
+
+    @Test
+    fun chatScreenWithFoldedAndOpenRunsOfStepsAndAComposerWithSteer() {
+        val steps = Transcript(
+            "Fix the build", ActivityState.IN_PROGRESS, null, hasOlder = false,
+            items = listOf(
+                TranscriptItem.User("u1", "Fix it"),
+                TranscriptItem.Tool("t1", "Read file", "a.txt", ToolState.DONE),
+                TranscriptItem.Tool("t2", "Run in Terminal", "dotnet build", ToolState.FAILED),
+                TranscriptItem.Markdown("m1", "The build failed."),
+                TranscriptItem.Reasoning("r1", "Look at the log.", live = false),
+                TranscriptItem.Tool("t3", "Read file", "log.txt", ToolState.DONE),
+                TranscriptItem.Notice("n1", "Context was compacted"),
+                TranscriptItem.Tool("t4", "Edit", "b.txt", ToolState.RUNNING),
+                TranscriptItem.Tool("t5", "Run in Terminal", "dotnet build", ToolState.RUNNING),
+            ),
+        )
+        rule.setContent {
+            AhpTheme { ChatScreen(steps, null, false, null, ConnState.Online, {}, {}, {}, expanded = setOf("steps:r1"), onToggle = {}, actions = chatActions(running = true)) }
+        }
+        rule.onNodeWithTag("composer_input").performTextInput("Also lint")
         rule.waitForIdle()
 
         check()

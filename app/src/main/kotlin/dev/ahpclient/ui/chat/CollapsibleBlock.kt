@@ -65,7 +65,7 @@ fun CollapsibleBlock(
 
 /** A chevron that points down when closed and up when open. Drawn, because one glyph is not worth a whole icon library. Decorative: the header carries the meaning. */
 @Composable
-private fun Chevron(expanded: Boolean) {
+internal fun Chevron(expanded: Boolean) {
     val color = LocalContentColor.current
     Canvas(modifier = Modifier.size(24.dp).rotate(if (expanded) 180f else 0f)) {
         val stroke = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)

@@ -5,7 +5,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertWidthIsAtLeast
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.semantics.SemanticsActions
@@ -99,7 +101,7 @@ class ChatScreenTest {
             ),
         )
 
-        val order = listOf("first question", "Thought", "Run in Terminal", "Context was compacted", "second question").map(::y)
+        val order = listOf("first question", "Used 1 tool", "Context was compacted", "second question").map(::y)
         assertEquals("rows are not in reading order: $order", order.sorted(), order)
     }
 
@@ -114,15 +116,15 @@ class ChatScreenTest {
             ),
         )
 
-        rule.onNode(hasTestTag("row_tool") and hasText("Run in Terminal")).assertTextContains("Waiting for approval in VS Code", substring = true)
-        rule.onNode(hasTestTag("row_tool") and hasText("Run in Terminal")).assertTextContains("List the files", substring = true)
-        rule.onNode(hasTestTag("row_tool") and hasText("Read file")).assertTextContains("Failed", substring = true)
+        rule.onNode(hasTestTag("row_tool") and hasText("Run in Terminal", substring = true)).assertTextContains("Waiting for approval in VS Code", substring = true)
+        rule.onNode(hasTestTag("row_tool") and hasText("Run in Terminal", substring = true)).assertTextContains("List the files", substring = true)
+        rule.onNode(hasTestTag("row_tool") and hasText("Read file", substring = true)).assertTextContains("Failed", substring = true)
         rule.onAllNodesWithTag("tool_badge", useUnmergedTree = true).assertCountEquals(2)
     }
 
     @Test
     fun thinkingIsAnnouncedWhileLiveAndPastTenseAfter() {
-        show(transcript(listOf(TranscriptItem.Reasoning("r1", "x", live = true), TranscriptItem.Reasoning("r2", "y", live = false))))
+        show(transcript(listOf(TranscriptItem.Reasoning("r1", "x", live = true), TranscriptItem.Markdown("m1", "between"), TranscriptItem.Reasoning("r2", "y", live = false))))
 
         rule.onNodeWithText("Thinking…").assertIsDisplayed()
         rule.onNodeWithText("Thought").assertIsDisplayed()
@@ -474,7 +476,7 @@ class ChatScreenTest {
         rule.onNodeWithTag("transcript").performScrollToIndex(60)
         rule.waitForIdle()
         val before = y("message 60")
-        rule.onNodeWithTag("jump_latest").assertIsDisplayed()
+        rule.onNodeWithTag("jump_latest").assertIsDisplayed().assertContentDescriptionEquals("Jump to latest").assertHeightIsAtLeast(48.dp).assertWidthIsAtLeast(48.dp)
 
         rule.runOnIdle { current = transcript(rows(1..121)) }
         rule.waitForIdle()

@@ -2,6 +2,8 @@ package dev.ahpclient.ui.chat
 
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
@@ -13,6 +15,7 @@ import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.isSelectable
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.unit.dp
 import dev.ahpclient.state.ModelChoice
 import dev.ahpclient.state.ModelOption
@@ -177,21 +180,21 @@ class InteractionUiTest {
     }
 
     @Test
-    fun inATallWindowTheModelButtonHasARowAboveTheMessageBox() {
+    fun theModelButtonSitsUnderTheMessageBoxOnTheRowOfTheSendButton() {
         showInWindowOfHeight(900)
 
         val chip = rule.onNodeWithTag("model_button").fetchSemanticsNode().boundsInRoot
         val field = rule.onNodeWithTag("composer_input").fetchSemanticsNode().boundsInRoot
-        assertTrue("the chip (bottom ${chip.bottom}) is above the field (top ${field.top})", chip.bottom <= field.top)
+        val send = rule.onNodeWithTag("composer_send").fetchSemanticsNode().boundsInRoot
+        assertTrue("the chip (top ${chip.top}) is under the field (bottom ${field.bottom})", chip.top >= field.bottom - 1f)
+        assertTrue("the chip (${chip.left}..${chip.right}) is left of the send button (${send.left}..${send.right})", chip.right <= send.left)
+        assertTrue("the chip (${chip.top}..${chip.bottom}) shares a row with the send button (${send.top}..${send.bottom})", chip.top < send.bottom && chip.bottom > send.top)
     }
 
     @Test
-    fun inAShortWindowTheModelButtonSharesTheRowWithTheMessageBoxAndStillWorks() {
+    fun inAShortWindowTheModelButtonStillWorks() {
         showInWindowOfHeight(400)
 
-        val chip = rule.onNodeWithTag("model_button").fetchSemanticsNode().boundsInRoot
-        val field = rule.onNodeWithTag("composer_input").fetchSemanticsNode().boundsInRoot
-        assertTrue("the chip (${chip.left}..${chip.right}) sits beside the field (${field.left}..${field.right})", chip.right <= field.left && chip.top < field.bottom && chip.bottom > field.top)
         rule.onNodeWithTag("model_button").performClick()
         rule.onNodeWithTag("model_use").assertIsDisplayed()
     }
@@ -450,7 +453,7 @@ class InteractionUiTest {
         val idle = Calls()
         show(transcript(), actions(idle, running = false))
         rule.onNodeWithTag("composer_stop").assertDoesNotExist()
-        rule.onNodeWithText("Send").assertIsDisplayed()
+        rule.onNodeWithContentDescription("Send").assertIsDisplayed()
     }
 
     @Test
@@ -458,7 +461,7 @@ class InteractionUiTest {
         val calls = Calls()
         show(transcript(), actions(calls, running = true))
 
-        rule.onNodeWithText("Queue").assertIsDisplayed()
+        rule.onNodeWithContentDescription("Queue").assertIsDisplayed()
         rule.onNodeWithTag("composer_stop").assertIsDisplayed().performClick()
 
         rule.waitUntil(5_000) { calls.cancels == 1 }
@@ -553,9 +556,10 @@ class InteractionUiTest {
         rule.onNodeWithTag("field_n").performScrollTo().performTextInput("2.5")
         rule.onNodeWithTag("field_b").performScrollTo().performClick()
         rule.onNodeWithTag("option_s_au").performScrollTo().performClick()
-        rule.onNodeWithTag("option_m_g").performScrollTo().performClick()
-        rule.onNodeWithTag("option_m_u").performScrollTo().performClick()
-        rule.onNodeWithTag("question_submit").performScrollTo().performClick()
+        // Tapped by action, not by position: the floating jump button can sit over a row that was scrolled to the bottom edge.
+        rule.onNodeWithTag("option_m_g").performScrollTo().performSemanticsAction(SemanticsActions.OnClick)
+        rule.onNodeWithTag("option_m_u").performScrollTo().performSemanticsAction(SemanticsActions.OnClick)
+        rule.onNodeWithTag("question_submit").performScrollTo().performSemanticsAction(SemanticsActions.OnClick)
 
         rule.waitUntil(5_000) { calls.answered.isNotEmpty() }
         val (requestId, answers) = calls.answered.single()
@@ -610,11 +614,11 @@ class InteractionUiTest {
     // ---- steering -----------------------------------------------------------------------------------------------
 
     @Test
-    fun steerIsOfferedOnlyWhileTheAgentIsWorkingAndSteersInsteadOfQueueing() {
+    fun steerAppearsOnceThereIsTextAndSteersInsteadOfQueueing() {
         val calls = Calls()
         show(transcript(), actions(calls, running = true))
 
-        rule.onNodeWithTag("composer_steer").assertIsNotEnabled()
+        rule.onNodeWithTag("composer_steer").assertDoesNotExist()
         rule.onNodeWithTag("composer_input").performTextInput(" turn left ")
         rule.onNodeWithTag("composer_steer").assertIsEnabled().performClick()
 

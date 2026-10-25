@@ -8,7 +8,7 @@ import androidx.compose.ui.unit.dp
 
 /**
  * The few icons the screens use, drawn from path data (the Material icon set, Apache 2.0) instead of pulling in the icons
- * library for seven glyphs: one dependency fewer in an app that holds a sign-in token. Each is 24 by 24 and takes its colour
+ * library for a handful of glyphs: one dependency fewer in an app that holds a sign-in token. Each is 24 by 24 and takes its colour
  * from where it is drawn.
  */
 object AppIcons {
@@ -39,6 +39,27 @@ object AppIcons {
     val Refresh: ImageVector by lazy {
         icon("Refresh", "M17.65,6.35C16.2,4.9 14.21,4 12,4c-4.42,0 -7.99,3.58 -7.99,8s3.57,8 7.99,8c3.73,0 6.84,-2.55 7.73,-6h-2.08c-0.82,2.33 -3.04,4 -5.65,4 -3.31,0 -6,-2.69 -6,-6s2.69,-6 6,-6c1.66,0 3.14,0.69 4.22,1.78L13,11h7V4l-2.35,2.35z")
     }
+
+    val ArrowUp: ImageVector by lazy { icon("ArrowUp", "M4,12l1.41,1.41L11,7.83V20h2V7.83l5.58,5.59L20,12l-8,-8z") }
+
+    val ArrowDown: ImageVector by lazy { icon("ArrowDown", "M20,12l-1.41,-1.41L13,16.17V4h-2v12.17l-5.58,-5.59L4,12l8,8z") }
+
+    val Stop: ImageVector by lazy { icon("Stop", "M6,6h12v12H6z") }
+
+    val Check: ImageVector by lazy { icon("Check", "M9,16.17L4.83,12l-1.42,1.41L9,19 21,7l-1.41,-1.41z") }
+
+    val ErrorCircle: ImageVector by lazy {
+        icon("ErrorCircle", "M12,2C6.48,2 2,6.48 2,12s4.48,10 10,10 10,-4.48 10,-10S17.52,2 12,2zM13,17h-2v-2h2v2zM13,13h-2L11,7h2v6z")
+    }
+
+    val Lock: ImageVector by lazy {
+        icon(
+            "Lock",
+            "M18,8h-1V6c0,-2.76 -2.24,-5 -5,-5S7,3.24 7,6v2H6c-1.1,0 -2,0.9 -2,2v10c0,1.1 0.9,2 2,2h12c1.1,0 2,-0.9 2,-2V10c0,-1.1 -0.9,-2 -2,-2zM12,17c-1.1,0 -2,-0.9 -2,-2s0.9,-2 2,-2 2,0.9 2,2 -0.9,2 -2,2zM15.1,8H8.9V6c0,-1.71 1.39,-3.1 3.1,-3.1 1.71,0 3.1,1.39 3.1,3.1v2z",
+        )
+    }
+
+    val Remove: ImageVector by lazy { icon("Remove", "M19,13H5v-2h14v2z") }
 
     val Settings: ImageVector by lazy {
         icon(
