@@ -71,10 +71,10 @@ fun FileDiffScreen(path: String, load: DiffLoad, connection: ConnState, onBack: 
                 is DiffLoad.Loaded -> when (val result = load.result) {
                     is DiffResult.Ready -> DiffBody(result.diff)
                     DiffResult.NoSuchFile -> Text("That file is no longer in this changeset.", sideMargin.testTag("diff_gone"))
-                    DiffResult.TooLarge -> Text("This file, or what changed in it, is too big to compare on the phone.", sideMargin.testTag("diff_too_large"))
-                    DiffResult.Binary -> Text("This does not look like a text file, so its contents are not shown.", sideMargin.testTag("diff_binary"))
+                    DiffResult.TooLarge -> Text("Too big to compare on the phone.", sideMargin.testTag("diff_too_large"))
+                    DiffResult.Binary -> Text("Not a text file, so it is not shown.", sideMargin.testTag("diff_binary"))
                     DiffResult.NoEarlierVersion -> Text(
-                        "The host did not keep the earlier version of this file, so only the line counts can be shown.",
+                        "The host did not keep the earlier version: only the line counts are shown.",
                         sideMargin.testTag("diff_no_earlier"),
                     )
                     is DiffResult.Failed -> ErrorText("Could not load the file. ${result.reason}", sideMargin.testTag("diff_failed"))

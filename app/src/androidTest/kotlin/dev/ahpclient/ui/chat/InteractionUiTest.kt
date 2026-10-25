@@ -11,6 +11,8 @@ import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertContentDescriptionEquals
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.isSelectable
@@ -83,7 +85,7 @@ class InteractionUiTest {
         var result: InteractResult = InteractResult.Sent(DispatchOutcome.Accepted)
     }
 
-    private fun actions(calls: Calls, running: Boolean = false, models: List<ModelOption> = emptyList()) = ChatActionsUi(
+    private fun actions(calls: Calls, running: Boolean = false, models: List<ModelOption> = emptyList(), modelInUse: ModelChoice? = null) = ChatActionsUi(
         running = running,
         send = { text, model -> calls.sent += text; calls.sentModels += model; calls.result },
         steer = { text, model -> calls.steered += text; calls.steeredModels += model; calls.result },
@@ -97,6 +99,7 @@ class InteractionUiTest {
         decline = { calls.declined += it; calls.result },
         dismiss = { calls.dismissed += it; calls.result },
         models = models,
+        modelInUse = modelInUse,
     )
 
     private fun transcript(vararg items: TranscriptItem) = Transcript("Fix the build", ActivityState.IN_PROGRESS, null, items.toList(), hasOlder = false)
@@ -165,10 +168,56 @@ class InteractionUiTest {
     }
 
     @Test
-    fun theButtonSaysTheHostChoosesUntilOneIsPicked() {
+    fun theButtonSaysDefaultModelWhenNoneIsKnownYet() {
         show(transcript(), actions(Calls(), models = listOf(auto, sonnet)))
 
-        rule.onNodeWithTag("model_button").assertTextContains("host default", substring = true)
+        rule.onNodeWithTag("model_button").assertTextContains("Default model", substring = true)
+        rule.onNodeWithTag("model_button").assertContentDescriptionEquals("Model: Default model")
+    }
+
+    @Test
+    fun aChatShowsTheModelItIsUsingAndSendsItWithTheMessage() {
+        val calls = Calls()
+        val inUse = ModelChoice("claude-sonnet-5.5", mapOf("thinking" to "high"))
+        show(transcript(), actions(calls, models = listOf(auto, sonnet), modelInUse = inUse))
+
+        rule.onNodeWithTag("model_button").assertTextContains("Claude Sonnet 5.5 · Thorough", substring = true)
+        sendHi()
+
+        assertEquals(listOf<ModelChoice?>(inUse), calls.sentModels)
+    }
+
+    @Test
+    fun aPickWinsOverTheModelInUse() {
+        val calls = Calls()
+        show(transcript(), actions(calls, models = listOf(auto, sonnet), modelInUse = ModelChoice("claude-sonnet-5.5")))
+
+        rule.onNodeWithTag("model_button").performClick()
+        rule.onAllNodesWithTag("model_option")[0].performClick()
+        rule.onNodeWithTag("model_use").performClick()
+        rule.onNodeWithTag("model_button").assertTextContains("Auto", substring = true)
+        sendHi()
+
+        assertEquals(listOf<ModelChoice?>(ModelChoice("auto")), calls.sentModels)
+    }
+
+    @Test
+    fun thePickerMarksTheModelInUseAndOffersNoHostChoosesRow() {
+        show(transcript(), actions(Calls(), models = listOf(auto, sonnet), modelInUse = ModelChoice("claude-sonnet-5.5")))
+
+        rule.onNodeWithTag("model_button").performClick()
+
+        rule.onAllNodesWithTag("model_option")[1].assertIsSelected()
+        rule.onAllNodesWithTag("model_default").assertCountEquals(0)
+    }
+
+    @Test
+    fun withNoModelInUseThePickerOffersTheHostsChoiceAsDefault() {
+        show(transcript(), actions(Calls(), models = listOf(auto, sonnet)))
+
+        rule.onNodeWithTag("model_button").performClick()
+
+        rule.onNodeWithTag("model_default").assertIsDisplayed().assertIsSelected()
     }
 
     private fun showInWindowOfHeight(heightDp: Int) = rule.setContent {
@@ -290,7 +339,7 @@ class InteractionUiTest {
 
         models.value = listOf(auto)
         rule.waitForIdle()
-        rule.onNodeWithTag("model_button").assertTextContains("host default", substring = true)
+        rule.onNodeWithTag("model_button").assertTextContains("Default model", substring = true)
         sendHi()
 
         assertEquals(listOf<ModelChoice?>(null), calls.sentModels)

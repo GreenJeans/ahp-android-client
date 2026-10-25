@@ -11,21 +11,24 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import dev.ahpclient.state.MarkdownLinks
 import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.m3.markdownTypography
 import com.mikepenz.markdown.model.rememberMarkdownState
 
 /**
  * Agent output as formatted text. The text is untrusted, so this renders less than the library could: no image loader is
- * installed, so an image link in the text is never fetched, and every link tap goes to [onOpenLink] instead of straight to a
- * browser, so the caller can ask the user first. Parsing happens off the composition, and the last result stays on screen
+ * installed, so an image link in the text is never fetched, links that open nothing on a phone are plain text, and every link tap
+ * goes to [onOpenLink] instead of straight to a browser, so the caller can ask the user first. Parsing happens off the composition, and the last result stays on screen
  * while a streaming part is re-parsed, so growing text does not flicker.
  *
  * Headings use the title styles: the library's defaults map `#` to the display sizes, which fill a phone screen.
  */
 @Composable
 fun MarkdownPart(text: String, onOpenLink: (String) -> Unit, modifier: Modifier = Modifier) {
-    val state = rememberMarkdownState(text, retainState = true)
+    // A link to something that is not on the phone (a path on the host, say) is plain text: only what can be opened is a link.
+    val openable = remember(text) { MarkdownLinks.keepOpenable(text) }
+    val state = rememberMarkdownState(openable, retainState = true)
     val handler = remember(onOpenLink) {
         object : UriHandler {
             override fun openUri(uri: String) = onOpenLink(uri)

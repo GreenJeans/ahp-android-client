@@ -55,7 +55,9 @@ fun ScreenScaffold(
     backTag: String = "back",
     titleTag: String? = null,
     subtitle: String? = null,
-    large: Boolean = true,
+    /** When given, the bar starts with a menu button (which opens the drawer) instead of a back arrow. */
+    onMenu: (() -> Unit)? = null,
+    large: Boolean = false,
     barState: TopAppBarState = rememberTopAppBarState(),
     actions: @Composable RowScope.() -> Unit = {},
     floatingActionButton: @Composable () -> Unit = {},
@@ -96,7 +98,11 @@ fun ScreenScaffold(
         }
     }
     val back: @Composable () -> Unit = {
-        if (onBack != null) {
+        if (onMenu != null) {
+            IconButton(onClick = onMenu, modifier = Modifier.testTag("open_drawer")) {
+                Icon(AppIcons.Menu, contentDescription = "Menu")
+            }
+        } else if (onBack != null) {
             IconButton(onClick = onBack, modifier = Modifier.testTag(backTag)) {
                 Icon(AppIcons.ArrowBack, contentDescription = backLabel)
             }
@@ -129,7 +135,7 @@ object Design {
     val OuterRadius = 24.dp
     val InnerRadius = 6.dp
     val Gap = 3.dp
-    val ScreenPadding = 16.dp
+    val ScreenPadding = 12.dp
 
     /** The widest a column of content grows on a tablet or a landscape phone. */
     val ContentMaxWidth = 720.dp
@@ -184,7 +190,7 @@ fun SectionHeader(text: String, modifier: Modifier = Modifier) {
         text,
         style = MaterialTheme.typography.labelLarge,
         color = MaterialTheme.colorScheme.primary,
-        modifier = modifier.padding(start = 16.dp, end = 16.dp, top = 24.dp, bottom = 8.dp).semantics { heading() },
+        modifier = modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 6.dp).semantics { heading() },
     )
 }
 
@@ -202,6 +208,8 @@ fun TileRow(
     title: String,
     modifier: Modifier = Modifier,
     subtitle: String? = null,
+    /** When given, the bar starts with a menu button (which opens the drawer) instead of a back arrow. */
+    onMenu: (() -> Unit)? = null,
     leading: ImageVector? = null,
     trailing: @Composable (() -> Unit)? = null,
 ) {

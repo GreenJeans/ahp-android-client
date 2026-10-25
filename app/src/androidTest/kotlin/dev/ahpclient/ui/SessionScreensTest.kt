@@ -76,16 +76,19 @@ class SessionScreensTest {
         initialShowArchived: Boolean = false,
         onOpen: (String) -> Unit = {},
         onToggle: () -> Unit = {},
-        onDisconnect: () -> Unit = {},
+        onOpenHost: () -> Unit = {},
         onOpenSettings: () -> Unit = {},
         initialQuery: String = "",
+        selected: String? = null,
+        connectedHost: TunnelInfo? = host,
+        manage: ManageActionsUi? = null,
     ) = rule.setContent {
         var showArchived by androidx.compose.runtime.remember { mutableStateOf(initialShowArchived) }
         var query by androidx.compose.runtime.remember { mutableStateOf(initialQuery) }
         AhpTheme {
-            SessionsScreen(
-                host, connection, sessions, now, showArchived, rememberLazyListState(), { showArchived = !showArchived; onToggle() }, onOpen, onDisconnect,
-                onOpenSettings = onOpenSettings, query = query, onQueryChange = { query = it },
+            DrawerContent(
+                connectedHost, connection, sessions, now, selected, showArchived, { showArchived = !showArchived; onToggle() }, query, { query = it },
+                rememberLazyListState(), manage, onOpenHost, onOpen, onOpenSettings, onSessionCreated = {},
             )
         }
     }
@@ -145,39 +148,40 @@ class SessionScreensTest {
         showSessions()
 
         rule.onAllNodesWithTag("session_row").assertCountEquals(3)
-        rule.onAllNodesWithTag("session_row")[0].assertContentDescriptionEquals("Needs answer, Needs input, repo-w, 30 min ago")
-        rule.onAllNodesWithTag("session_row")[1].assertContentDescriptionEquals("Working, In progress, Running tests, 5 min ago")
-        rule.onAllNodesWithTag("session_row")[2].assertContentDescriptionEquals("Unread one, Idle, 2 h ago, unread")
+        rule.onAllNodesWithTag("session_row")[0].assertContentDescriptionEquals("Needs answer, Needs you, repo-w, 30m")
+        rule.onAllNodesWithTag("session_row")[1].assertContentDescriptionEquals("Working, Working, Running tests, 5m")
+        rule.onAllNodesWithTag("session_row")[2].assertContentDescriptionEquals("Unread one, Idle, 2h, unread")
     }
 
     @Test
     fun theSummaryLineCountsWhatIsHappening() {
         showSessions()
 
-        rule.onNodeWithTag("summary").assertTextEquals("1 needs input · 1 in progress")
+        rule.onNodeWithTag("summary").assertTextEquals("1 needs you · 1 working")
     }
 
     @Test
-    fun everyRowStatesItsStateInWords() {
+    fun everyRowHasAStateMarkAndItsSpokenDescriptionStatesTheStateInWords() {
         showSessions()
 
-        val labels = rule.onAllNodesWithText("Needs input", useUnmergedTree = true)
-        labels.assertCountEquals(1)
-        rule.onAllNodesWithText("In progress", useUnmergedTree = true).assertCountEquals(1)
-        rule.onAllNodesWithText("Idle", useUnmergedTree = true).assertCountEquals(1)
-        rule.onAllNodesWithTag("status_chip", useUnmergedTree = true).assertCountEquals(3)
+        rule.onAllNodesWithTag("state_mark", useUnmergedTree = true).assertCountEquals(3)
+        val spoken = (0 until 3).map { spokenRow(it) }
+        assertTrue(spoken.toString(), spoken[0].contains("Needs you") && spoken[1].contains("Working") && spoken[2].contains("Idle"))
     }
+
+    private fun spokenRow(index: Int): String =
+        rule.onAllNodesWithTag("session_row")[index].fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.ContentDescription].joinToString()
 
     @Test
     fun theArchivedToggleRevealsArchivedSessionsAndKeepsItsLabel() {
         var toggles = 0
         showSessions(onToggle = { toggles++ })
 
-        rule.onNodeWithTag("archived_toggle").assertTextContains("Show archived (1)").assertTouchTargetAtLeast(48.dp).performClick()
+        rule.onNodeWithTag("archived_toggle").assertTextContains("Archived (1)").assertTouchTargetAtLeast(48.dp).performClick()
 
         assertEquals(1, toggles)
         rule.onAllNodesWithTag("session_row").assertCountEquals(4)
-        rule.onNodeWithTag("archived_toggle").assertTextContains("Show archived")
+        rule.onNodeWithTag("archived_toggle").assertTextContains("Hide archived")
     }
 
     @Test
@@ -198,21 +202,59 @@ class SessionScreensTest {
     }
 
     @Test
-    fun backToHostsWorksAndIsBigEnough() {
-        var back = 0
-        showSessions(onDisconnect = { back++ })
+    fun theHostButtonNamesTheHostAndItsConnectionAndOpensTheHostScreen() {
+        var opened = 0
+        showSessions(onOpenHost = { opened++ })
 
-        rule.onNodeWithTag("disconnect").assertTouchTargetAtLeast(48.dp).performClick()
+        rule.onNodeWithTag("drawer_host_name", useUnmergedTree = true).assertTextEquals("dev-box")
+        rule.onNodeWithTag("connection_status", useUnmergedTree = true).assertTextContains("Connected", substring = true)
+        rule.onNodeWithTag("drawer_host").assertTouchTargetAtLeast(48.dp).performClick()
 
-        assertEquals(1, back)
+        assertEquals(1, opened)
     }
 
     @Test
-    fun theSettingsGearOpensSettingsAndIsBigEnough() {
+    fun withNoHostTheDrawerSaysToConnectAndHasNoList() {
+        showSessions(emptyList(), connection = ConnState.Connecting, connectedHost = null)
+
+        rule.onNodeWithTag("drawer_host_name", useUnmergedTree = true).assertTextEquals("Not connected")
+        rule.onNodeWithTag("drawer_no_host").assertIsDisplayed()
+        rule.onAllNodesWithTag("session_list").assertCountEquals(0)
+        rule.onAllNodesWithTag("new_session").assertCountEquals(0)
+        rule.onNodeWithTag("settings").assertIsDisplayed()
+    }
+
+    @Test
+    fun theOpenSessionIsMarkedInTheList() {
+        showSessions(selected = "ahp-session:/k")
+
+        val state = androidx.compose.ui.semantics.SemanticsProperties.StateDescription
+        assertEquals("Open", rule.onAllNodesWithTag("session_row")[1].fetchSemanticsNode().config[state])
+        assertTrue(rule.onAllNodesWithTag("session_row")[0].fetchSemanticsNode().config.contains(state).not())
+    }
+
+    @Test
+    fun aRowShowsWhatTheSessionChangedAndSpeaksItInWords() {
+        val changed = summary("ahp-session:/c", "Changed one", 1, "2026-10-26T10:00:00.000Z", ""","changes":{"additions":1072,"deletions":8,"files":14}""")
+        showSessions(listOf(changed, unread))
+
+        rule.onAllNodesWithTag("row_changes", useUnmergedTree = true).assertCountEquals(1)
+        rule.onNodeWithTag("row_changes", useUnmergedTree = true).assertTextEquals("(+1072, \u22128)")
+        assertTrue(spokenRow(0), spokenRow(0).contains("1072 lines added, 8 removed, in 14 files"))
+    }
+
+    @Test
+    fun newSessionIsNotOfferedWhenTheAppMayNotManageSessions() {
+        showSessions()
+        rule.onAllNodesWithTag("new_session").assertCountEquals(0)
+    }
+
+    @Test
+    fun theSettingsRowAtTheBottomOpensSettingsAndIsBigEnough() {
         var opened = 0
         showSessions(onOpenSettings = { opened++ })
 
-        rule.onNodeWithTag("settings").assertContentDescriptionEquals("Settings").assertTouchTargetAtLeast(48.dp).performClick()
+        rule.onNodeWithTag("settings").assertTextContains("Settings").assertTouchTargetAtLeast(48.dp).performClick()
 
         assertEquals(1, opened)
     }
@@ -233,7 +275,7 @@ class SessionScreensTest {
         rule.onNodeWithTag("search").performTextInput("work")
 
         rule.onAllNodesWithTag("session_row").assertCountEquals(1)
-        rule.onAllNodesWithTag("session_row")[0].assertContentDescriptionEquals("Working, In progress, Running tests, 5 min ago")
+        rule.onAllNodesWithTag("session_row")[0].assertContentDescriptionEquals("Working, Working, Running tests, 5m")
         rule.onNodeWithTag("search_clear").assertContentDescriptionEquals("Clear search").assertTouchTargetAtLeast(48.dp).performClick()
         rule.onAllNodesWithTag("session_row").assertCountEquals(3)
         rule.onNodeWithTag("search_clear").assertDoesNotExist()
@@ -244,7 +286,7 @@ class SessionScreensTest {
         showSessions(initialQuery = "zzz")
 
         rule.onNodeWithTag("empty_list").assertIsDisplayed()
-        rule.onNodeWithText("No sessions match \"zzz\"").assertIsDisplayed()
+        rule.onNodeWithText("No sessions match \"zzz\".").assertIsDisplayed()
         rule.onNodeWithTag("search").assertIsDisplayed()
     }
 
@@ -253,7 +295,7 @@ class SessionScreensTest {
         showSessions(initialQuery = "Unread")
 
         rule.onAllNodesWithTag("session_row").assertCountEquals(1)
-        rule.onNodeWithTag("summary").assertTextEquals("1 needs input · 1 in progress")
+        rule.onNodeWithTag("summary").assertTextEquals("1 needs you · 1 working")
     }
 
     @Test
@@ -272,7 +314,7 @@ class SessionScreensTest {
         rule.onNodeWithTag("monitor_toggle").assertIsDisplayed()
         rule.onNodeWithTag("interaction_toggle").assertIsDisplayed()
         rule.onNodeWithTag("management_toggle").assertExists()
-        rule.onNodeWithTag("back").assertContentDescriptionEquals("Back to sessions").assertTouchTargetAtLeast(48.dp).performClick()
+        rule.onNodeWithTag("back").assertContentDescriptionEquals("Back").assertTouchTargetAtLeast(48.dp).performClick()
 
         assertEquals(1, back)
     }
@@ -296,7 +338,7 @@ class SessionScreensTest {
         rule.onNodeWithTag("monitor_toggle").assertIsOn().performClick()
 
         assertEquals(listOf(false), changes)
-        rule.onNodeWithTag("monitor_hint").assertTextContains("notifies you when a session needs input", substring = true)
+        rule.onNodeWithTag("monitor_hint").assertTextContains("notifies you when a session needs you", substring = true)
     }
 
     @Test
@@ -311,14 +353,14 @@ class SessionScreensTest {
         showSessions(emptyList())
 
         rule.onNodeWithTag("empty_list").assertIsDisplayed()
-        rule.onNodeWithText("No sessions on this host yet.").assertIsDisplayed()
+        rule.onNodeWithText("No sessions yet.").assertIsDisplayed()
     }
 
     @Test
     fun aHostWithOnlyArchivedSessionsPointsAtTheToggle() {
         showSessions(listOf(archived))
 
-        rule.onNodeWithText("All 1 sessions are archived", substring = true).assertIsDisplayed()
+        rule.onNodeWithText("All 1 are archived.").assertIsDisplayed()
         rule.onNodeWithTag("archived_toggle").assertIsDisplayed()
     }
 
@@ -327,21 +369,21 @@ class SessionScreensTest {
         showSessions(emptyList(), connection = ConnState.Connecting)
 
         rule.onNodeWithText("Loading sessions", substring = true).assertIsDisplayed()
-        rule.onNodeWithTag("connection_status").assertTextContains("Connecting", substring = true)
+        rule.onNodeWithTag("connection_status", useUnmergedTree = true).assertTextContains("Connecting", substring = true)
     }
 
     @Test
     fun aConnectionFailureIsShownAsText() {
         showSessions(emptyList(), connection = ConnState.Failed(IllegalStateException("The tunnel lists no running agent host")))
 
-        rule.onNodeWithTag("connection_status").assertTextContains("no running agent host", substring = true)
+        rule.onNodeWithTag("connection_status", useUnmergedTree = true).assertTextContains("no running agent host", substring = true)
     }
 
     @Test
     fun aDroppedConnectionKeepsTheSessionsVisible() {
         showSessions(connection = ConnState.Reconnecting(1, null))
 
-        rule.onNodeWithTag("connection_status").assertTextContains("Reconnecting", substring = true)
+        rule.onNodeWithTag("connection_status", useUnmergedTree = true).assertTextContains("Reconnecting", substring = true)
         rule.onAllNodesWithTag("session_row").assertCountEquals(3)
     }
 
@@ -407,7 +449,7 @@ class SessionScreensTest {
         val tabs = rule.onAllNodesWithTag("chat_tab")
         tabs.assertCountEquals(2)
         tabs[0].assertContentDescriptionEquals("Main chat").assertTouchTargetAtLeast(48.dp)
-        tabs[1].assertContentDescriptionEquals("Side chat, Needs input").assertTouchTargetAtLeast(48.dp)
+        tabs[1].assertContentDescriptionEquals("Side chat, Needs you").assertTouchTargetAtLeast(48.dp)
         rule.onAllNodesWithTag("chat_tab_dot", useUnmergedTree = true).assertCountEquals(1)
     }
 
@@ -521,7 +563,7 @@ class SessionScreensTest {
 
         val chips = rule.onAllNodesWithTag("status_chip")
         chips.assertCountEquals(4)
-        listOf("Needs input", "In progress", "Error", "Idle").forEachIndexed { i, words -> chips[i].assertTextEquals(words) }
+        listOf("Needs you", "Working", "Error", "Idle").forEachIndexed { i, words -> chips[i].assertTextEquals(words) }
     }
 
     @Test
@@ -531,11 +573,11 @@ class SessionScreensTest {
             val ticking by rememberNow(periodMs = 1_000) { clockNow }
             AhpTheme { androidx.compose.material3.Text(RelativeTime.format("2026-10-26T10:29:00.000Z", ticking), Modifier.testTag("age")) }
         }
-        rule.onNodeWithTag("age").assertTextEquals("1 min ago")
+        rule.onNodeWithTag("age").assertTextEquals("1m")
 
         clockNow = Instant.parse("2026-10-26T10:33:00Z")
         rule.mainClock.advanceTimeBy(1_100)
 
-        rule.onNodeWithTag("age").assertTextEquals("4 min ago")
+        rule.onNodeWithTag("age").assertTextEquals("4m")
     }
 }

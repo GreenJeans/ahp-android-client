@@ -15,7 +15,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -115,14 +115,14 @@ fun ManagementToggle(allowed: Boolean, available: Boolean, onChange: (Boolean) -
             horizontalArrangement = Arrangement.spacedBy(16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("Let this app look after sessions", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+            Text("Look after sessions", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
             Switch(checked = allowed, onCheckedChange = null, enabled = available)
         }
         Text(
             when {
-                !available -> "Not available: turn on \"Let this app act for me\" first."
-                allowed -> "On: this app can mark sessions read, archive them, start chats and sessions, and remove them. Starting and removing ask for your fingerprint, face or screen lock first."
-                else -> "Off: this app cannot start, archive or remove anything."
+                !available -> "Turn on \"Act for me\" first."
+                allowed -> "On: mark read, archive, start and remove. Starting and removing ask for your fingerprint, face or lock."
+                else -> "Off: no starting, archiving or removing."
             },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -132,12 +132,12 @@ fun ManagementToggle(allowed: Boolean, available: Boolean, onChange: (Boolean) -
     if (asking && available) {
         AlertDialog(
             onDismissRequest = { asking = false },
-            title = { Text("Let this app look after sessions?") },
+            title = { Text("Look after sessions?") },
             text = {
                 Text(
-                    "With this on, this app can mark your sessions read or unread, archive and restore them, start new chats, start new sessions " +
-                        "(which runs an agent on your computer, in a folder you pick) and remove sessions and chats, which cannot be undone. " +
-                        "Starting and removing ask for your fingerprint, face or screen lock first. Turning off \"act for me\", or signing out, turns this off too.",
+                    "This app can mark sessions read or unread, archive and restore them, start chats and sessions " +
+                        "(which run an agent on your computer, in a folder you pick) and remove them, which cannot be undone. " +
+                        "Starting and removing ask for your fingerprint, face or screen lock first. Turning off \"Act for me\", or signing out, turns this off too.",
                     modifier = Modifier.testTag("management_dialog_text"),
                 )
             },
@@ -147,16 +147,17 @@ fun ManagementToggle(allowed: Boolean, available: Boolean, onChange: (Boolean) -
     }
 }
 
-/** The button on the session list that starts the new-session dialog. [onCreated] gets the address of the session the host took. */
+/** The button that starts the new-session dialog. [onCreated] gets the address of the session the host took. */
 @Composable
 fun NewSessionButton(manage: ManageActionsUi, onCreated: (String) -> Unit, modifier: Modifier = Modifier) {
     var open by rememberSaveable { mutableStateOf(false) }
-    ExtendedFloatingActionButton(
+    FilledTonalButton(
         onClick = { open = true },
-        icon = { Icon(AppIcons.Add, contentDescription = null) },
-        text = { Text("New session") },
         modifier = modifier.heightIn(min = 48.dp).testTag("new_session"),
-    )
+    ) {
+        Icon(AppIcons.Add, contentDescription = null, modifier = Modifier.padding(end = 8.dp))
+        Text("New session")
+    }
     if (open) NewSessionDialog(manage, onDismiss = { open = false }, onCreated = { open = false; onCreated(it) })
 }
 
@@ -247,7 +248,7 @@ private fun NewSessionDialog(manage: ManageActionsUi, onDismiss: () -> Unit, onC
                 }
                 Text("Folder", style = MaterialTheme.typography.titleSmall, modifier = Modifier.semantics { heading() })
                 if (manage.folders.isEmpty()) {
-                    Text("No folders yet. Start a session in VS Code first; this app only offers folders your sessions already use.", modifier = Modifier.testTag("no_folders"))
+                    Text("No folders yet. Start a session in VS Code first.", modifier = Modifier.testTag("no_folders"))
                 }
                 shownFolders.forEach { path ->
                     ChoiceRow(displayPath(path).take(MAX_SHOWN), folder == path, "folder_$path") {

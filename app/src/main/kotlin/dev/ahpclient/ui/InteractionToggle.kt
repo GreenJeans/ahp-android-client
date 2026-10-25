@@ -45,14 +45,14 @@ fun InteractionToggle(allowed: Boolean, onChange: (Boolean) -> Unit, modifier: M
             horizontalArrangement = Arrangement.spacedBy(16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("Let this app act for me", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+            Text("Act for me", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
             Switch(checked = allowed, onCheckedChange = null, enabled = supported)
         }
         Text(
             when {
-                !supported -> "Not available: acting for you needs Android 11 or newer, for the fingerprint, face or screen-lock check on approvals. This app only watches."
-                allowed -> "On: this app can send messages, answer questions, approve tool calls and stop the agent, as you. Approving asks for your fingerprint, face or screen lock first."
-                else -> "Off: this app only watches. Nothing you do here changes a session."
+                !supported -> "Needs Android 11 or newer, for the device-lock check on approvals. Watch only."
+                allowed -> "On: send, answer, approve and stop, as you. Approvals ask for your fingerprint, face or lock."
+                else -> "Off: watch only."
             },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -62,11 +62,11 @@ fun InteractionToggle(allowed: Boolean, onChange: (Boolean) -> Unit, modifier: M
     if (asking && supported) {
         AlertDialog(
             onDismissRequest = { asking = false },
-            title = { Text("Let this app act for you?") },
+            title = { Text("Act for you?") },
             text = {
                 Text(
-                    "With this on, this app can send messages to your agents, answer their questions, approve or deny their tool calls, and stop them, as you. " +
-                        "Approving a tool call asks for your fingerprint, face or screen lock first, but anyone who can unlock this phone could do the rest while it is on. " +
+                    "This app can send messages to your agents, answer their questions, approve or deny their tool calls and stop them, as you. " +
+                        "Approvals ask for your fingerprint, face or screen lock first, but anyone who can unlock this phone could do the rest while it is on. " +
                         "Signing out turns it off.",
                     modifier = Modifier.testTag("interaction_dialog_text"),
                 )

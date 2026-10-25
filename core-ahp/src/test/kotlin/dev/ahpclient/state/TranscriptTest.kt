@@ -56,6 +56,7 @@ class TranscriptTest {
                 TranscriptItem.Markdown("t1/m1", "first"),
                 TranscriptItem.Reasoning("t1/r1", "thinking", live = false),
                 TranscriptItem.Markdown("t1/m2", "second"),
+                TranscriptItem.TurnEnd("t1/end", TurnOutcome.DONE, null),
             ),
             t.items,
         )
@@ -90,16 +91,39 @@ class TranscriptTest {
     }
 
     @Test
-    fun `a stopped turn and a failed turn each end with a notice`() {
+    fun `every finished turn ends with a marker saying how it ended, so it is plain when the agent has stopped`() {
         val stopped = Transcript.from(chat(markdown("m1", "x"), state = "cancelled")).items.last()
         val failed = Transcript.from(chat(markdown("m1", "x"), state = "error")).items.last()
         val fine = Transcript.from(chat(markdown("m1", "x"))).items.last()
 
-        assertEquals(TranscriptItem.Notice("t1/outcome", "Stopped before it finished"), stopped)
-        assertEquals(TranscriptItem.Notice("t1/outcome", "Ended with an error", isError = true), failed)
-        assertIs<TranscriptItem.Markdown>(fine)
+        assertEquals(TranscriptItem.TurnEnd("t1/end", TurnOutcome.STOPPED, null), stopped)
+        assertEquals(TranscriptItem.TurnEnd("t1/end", TurnOutcome.FAILED, null), failed)
+        assertEquals(TranscriptItem.TurnEnd("t1/end", TurnOutcome.DONE, null), fine)
     }
 
+    @Test
+    fun `a turn that is still running has no end marker, and the transcript says it is running`() {
+        val idle = Transcript.from(chat(markdown("m1", "done")))
+        val working = Transcript.from(chat(markdown("m1", "done"), active = activeTurn(reasoning("r2", "a"))))
+
+        assertFalse(idle.running)
+        assertTrue(working.running)
+        assertIs<TranscriptItem.Reasoning>(working.items.last(), "the running turn has no end yet")
+        assertEquals(1, working.items.count { it is TranscriptItem.TurnEnd }, "only the finished turn has one")
+    }
+
+    @Test
+    fun `the end marker carries how long the turn took, and a negative duration counts as unknown`() {
+        fun withDuration(ms: Long) = Ahp.json.decodeFromString(
+            ChatState.serializer(),
+            """{"resource":"ahp-chat:/c","title":"t","status":8,"modifiedAt":"2026-10-22T10:00:00.000Z",
+                "turns":[{"id":"t1","message":{"text":"hello","origin":{"kind":"user"}},"responseParts":[],
+                  "startedAt":"2026-10-22T10:00:00.000Z","duration":$ms,"state":"complete"}]}""",
+        )
+
+        assertEquals(64_000L, (Transcript.from(withDuration(64_000)).items.last() as TranscriptItem.TurnEnd).durationMs)
+        assertNull((Transcript.from(withDuration(-5)).items.last() as TranscriptItem.TurnEnd).durationMs)
+    }
     @Test
     fun `each tool call state has its own badge`() {
         val states = mapOf(
@@ -197,17 +221,17 @@ class TranscriptTest {
     }
 
     @Test
-    fun `the live snapshot reads as one row per part, plus the user rows and the outcome notices`() {
+    fun `the live snapshot reads as one row per part, plus the user rows and an end marker for each finished turn`() {
         val state = live()
         val t = Transcript.from(state)
 
         val kinds = t.items.groupingBy { it::class.simpleName }.eachCount()
-        val unfinished = state.turns.count { it.state != TurnState.COMPLETE }
         assertEquals(state.turns.size + 1, kinds["User"], "one user row per turn, and one for the running turn")
         assertEquals(11, kinds["Markdown"])
         assertEquals(7, kinds["Reasoning"])
         assertEquals(12, kinds["Tool"])
-        assertEquals(2 + unfinished, kinds["Notice"])
+        assertEquals(2, kinds["Notice"])
+        assertEquals(state.turns.size, kinds["TurnEnd"], "one end marker for each finished turn, none for the running one")
         assertEquals(t.items.size, t.items.map { it.key }.toSet().size)
         assertTrue(t.items.none { it is TranscriptItem.Other }, "every part kind in a real chat is one this app shows: ${t.items.filterIsInstance<TranscriptItem.Other>()}")
     }
@@ -226,5 +250,49 @@ class TranscriptTest {
         val running = trace.state.activeTurn!!.responseParts
         val lastIsReasoning = Transcript.from(trace.state).items.last() is TranscriptItem.Reasoning
         assertEquals(if (lastIsReasoning) 1 else 0, after.items.filterIsInstance<TranscriptItem.Reasoning>().count { it.live }, "a reasoning row is live only when it ends the running turn (${running.size} parts)")
+    }
+
+    @Test
+    fun `a running turn with a call waiting on the person is waiting on them, and is not otherwise`() {
+        val waiting = toolCall(""""status":"pending-confirmation",$common,"invocationMessage":"Run it","toolInput":"{}","confirmationTitle":"Run?","options":[]""")
+        val running = toolCall(""""status":"running",$common,"invocationMessage":"Run it","toolInput":"{}","confirmed":"not-needed"""")
+
+        assertTrue(Transcript.from(chat(markdown("m1", "x"), active = activeTurn(waiting))).waitingOnYou)
+        assertFalse(Transcript.from(chat(markdown("m1", "x"), active = activeTurn(running))).waitingOnYou)
+        assertFalse(Transcript.from(chat(markdown("m1", "x"))).waitingOnYou, "no turn is running")
+    }
+
+    @Test
+    fun `a call that waited in an earlier turn does not count for the running one`() {
+        val waiting = toolCall(""""status":"pending-confirmation",$common,"invocationMessage":"Run it","toolInput":"{}","confirmationTitle":"Run?","options":[]""")
+
+        assertFalse(Transcript.from(chat(waiting, active = activeTurn(markdown("m2", "working")))).waitingOnYou)
+    }
+
+    @Test
+    fun `a call that is not running is not waiting when no turn is running, even if it looks like it is`() {
+        val waiting = toolCall(""""status":"pending-confirmation",$common,"invocationMessage":"Run it","toolInput":"{}","confirmationTitle":"Run?","options":[]""")
+
+        val finished = Transcript.from(chat(waiting))
+
+        assertFalse(finished.running)
+        assertFalse(finished.waitingOnYou)
+    }
+
+    @Test
+    fun `a call that needs a sign-in is waiting on the person`() {
+        val auth = """{"reason":"required","resource":{"resource":"https://mcp.example"}}"""
+        val signIn = toolCall(""""status":"auth-required",$common,"invocationMessage":"Searching","confirmed":"not-needed","auth":$auth""")
+
+        assertTrue(Transcript.from(chat(markdown("m1", "x"), active = activeTurn(signIn))).waitingOnYou)
+    }
+
+    @Test
+    fun `an unanswered question is waiting on the person and an answered one is not`() {
+        val unanswered = """{"kind":"inputRequest","request":{"id":"q1","message":"Which one?","questions":[]}}"""
+        val answered = """{"kind":"inputRequest","request":{"id":"q2","message":"Done","questions":[]},"response":"accept"}"""
+
+        assertTrue(Transcript.from(chat(markdown("m1", "x"), active = activeTurn(unanswered))).waitingOnYou)
+        assertFalse(Transcript.from(chat(markdown("m1", "x"), active = activeTurn(answered))).waitingOnYou)
     }
 }

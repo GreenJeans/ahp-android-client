@@ -976,6 +976,42 @@ class AppControllerTest {
     }
 
     @Test
+    fun `showing a session leaves the one that is open for it, and does not need the host to list it`() = runTest {
+        withRig(script = { HostScript(sessionChats = "[${chatSummaryJson(CHAT_A)}]") }) {
+            connectToFirstHost()
+            controller.openSession(SESSION_C)
+            assertIs<AppState.Connected>(state).open!!.store.state.first { it != null }
+            runCurrent()
+
+            controller.showSession("ahp-session:/just-started")
+            runCurrent()
+
+            val open = assertIs<AppState.Connected>(state).open!!
+            assertEquals("ahp-session:/just-started", open.uri)
+            assertEquals(listOf(SESSION_C), unsubscribed(), "the session left is released, and only that one")
+        }
+    }
+
+    @Test
+    fun `showing the session that is already open changes nothing, and with no host connected does nothing`() = runTest {
+        withRig(script = { HostScript(sessionChats = "[${chatSummaryJson(CHAT_A)}]") }) {
+            controller.showSession(SESSION_C)
+            assertIs<AppState.Restoring>(state)
+
+            connectToFirstHost()
+            controller.openSession(SESSION_C)
+            val first = assertIs<AppState.Connected>(state).open!!
+            runCurrent()
+
+            controller.showSession(SESSION_C)
+            runCurrent()
+
+            assertSame(first, assertIs<AppState.Connected>(state).open)
+            assertEquals(emptyList(), unsubscribed())
+        }
+    }
+
+    @Test
     fun `a chat is never swapped away from under a subagent transcript`() = runTest {
         withRig(script = { subagentScript(listOf(CHAT_A, CHAT_C)) }) {
             connectToFirstHost()

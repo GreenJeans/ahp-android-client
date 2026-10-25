@@ -65,7 +65,7 @@ fun TerminalScreen(state: TerminalState?, error: Throwable?, connection: ConnSta
             when {
                 view != null -> TerminalBody(view)
                 error is ChannelGoneException -> Text(
-                    "This terminal is no longer on the host. What it printed is in the tool's result.",
+                    "This terminal is no longer on the host. Its output is in the tool's result.",
                     sideMargin.testTag("terminal_gone"),
                 )
                 error != null -> ErrorText("The host's answer for this terminal could not be read.", sideMargin.testTag("terminal_failed"))
@@ -101,7 +101,7 @@ private fun TerminalBody(view: TerminalView) {
     Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
             Text(
-                "Read only. Shown as plain text: colours and cursor movement are left out.",
+                "Read only, as plain text.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp).testTag("terminal_note"),

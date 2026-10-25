@@ -13,6 +13,7 @@ data class SessionRow(
     val isArchived: Boolean,
     val whenText: String,
     val chatCount: Int,
+    val changes: ChangeStats? = null,
 )
 
 /** What the sessions screen shows, computed from the host's list. Pure, so it is tested without a UI. */
@@ -28,12 +29,12 @@ data class SessionListModel(
     /** The search the rows were narrowed by, trimmed; empty when none. The counts above ignore it, so the summary stays true to the host. */
     val query: String = "",
 ) {
-    /** One line for the top of the screen, for example "2 need input · 1 in progress". Empty when nothing is happening. */
+    /** One line for the top of the list, for example "2 need you · 1 working". Empty when nothing is happening. */
     val summary: String
         get() = listOfNotNull(
-            needsInput.takeIf { it > 0 }?.let { "$it need${if (it == 1) "s" else ""} input" },
-            inProgress.takeIf { it > 0 }?.let { "$it in progress" },
-            errors.takeIf { it > 0 }?.let { "$it with errors" },
+            needsInput.takeIf { it > 0 }?.let { "$it need${if (it == 1) "s" else ""} you" },
+            inProgress.takeIf { it > 0 }?.let { "$it working" },
+            errors.takeIf { it > 0 }?.let { "$it error${if (it == 1) "" else "s"}" },
         ).joinToString(" · ")
 
     companion object {
@@ -70,6 +71,7 @@ data class SessionListModel(
             isArchived = session.status.isArchived,
             whenText = RelativeTime.format(session.modifiedAt, now),
             chatCount = session.chats?.size ?: 0,
+            changes = ChangeStats.of(session.changes),
         )
     }
 }

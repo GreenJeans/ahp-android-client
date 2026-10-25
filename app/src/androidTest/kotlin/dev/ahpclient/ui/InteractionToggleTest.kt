@@ -51,7 +51,7 @@ class InteractionToggleTest {
         show(initial = false)
 
         rule.onNodeWithTag("interaction_toggle").assertIsOff()
-        rule.onNodeWithTag("interaction_hint").assertTextContains("only watches", substring = true)
+        rule.onNodeWithTag("interaction_hint").assertTextContains("watch only", substring = true)
         rule.onNodeWithTag("interaction_confirm").assertDoesNotExist()
     }
 
@@ -87,7 +87,7 @@ class InteractionToggleTest {
 
         assertEquals(listOf(true), changes)
         rule.onNodeWithTag("interaction_toggle").assertIsOn()
-        rule.onNodeWithTag("interaction_hint").assertTextContains("approve tool calls", substring = true)
+        rule.onNodeWithTag("interaction_hint").assertTextContains("approve and stop", substring = true)
     }
 
     @Test

@@ -52,6 +52,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -98,6 +99,8 @@ class ChatActionsUi(
     val dismiss: suspend (requestId: String) -> InteractResult,
     /** The models the host offers for this chat's agent. None means no picker is shown and messages go with the host's own default. */
     val models: List<ModelOption> = emptyList(),
+    /** The model the chat is using now (the one its latest turn was sent with), so the box can show it and send it. Null for a chat with no turn yet. */
+    val modelInUse: ModelChoice? = null,
 )
 
 /** The host's own words on a button or a field are untrusted display text: shown as plain text and cut to a sane length. */
@@ -112,9 +115,9 @@ private val ModelPickSaver: Saver<ModelChoice?, Any> = listSaver(
     restore = { saved -> if (saved.isEmpty()) null else ModelChoice(saved[0], saved.drop(1).chunked(2).filter { it.size == 2 }.associate { it[0] to it[1] }) },
 )
 
-/** What the model button says: the model's name and the labels of the settings picked for it, or that the host chooses. */
+/** What the model button says: the model's name and the labels of the settings picked for it, or that the host's default is used. */
 private fun modelLabel(models: List<ModelOption>, choice: ModelChoice?): String {
-    val model = choice?.let { c -> models.firstOrNull { it.id == c.id } } ?: return "host default"
+    val model = choice?.let { c -> models.firstOrNull { it.id == c.id } } ?: return "Default model"
     val settings = model.settings.mapNotNull { s -> choice.config[s.id]?.let { v -> s.values.firstOrNull { it.value == v }?.label } }
     return (listOf(model.name) + settings).joinToString(" · ")
 }
@@ -137,21 +140,21 @@ private fun PickRow(label: String, selected: Boolean, tag: String, onClick: () -
 
 /**
  * Picks the model for the next messages: one the host lists for this agent, and for it, one of each setting's listed values.
- * "Host default" sends no model at all. The names and labels are the host's words, shown as plain text.
+ * "Default" (offered only for a chat that has not used a model yet) sends no model at all. The names and labels are the host's words, shown as plain text.
  */
 @Composable
-private fun ModelPickerDialog(models: List<ModelOption>, current: ModelChoice?, onDismiss: () -> Unit, onPick: (ModelChoice?) -> Unit) {
+private fun ModelPickerDialog(models: List<ModelOption>, current: ModelChoice?, showDefault: Boolean, onDismiss: () -> Unit, onPick: (ModelChoice?) -> Unit) {
     var draft by rememberSaveable(stateSaver = ModelPickSaver) { mutableStateOf(current) }
     val model = models.firstOrNull { it.id == draft?.id }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Model for your messages") },
+        title = { Text("Model") },
         text = {
             Column(
                 modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()).testTag("model_dialog"),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                PickRow("Host default", draft == null, "model_default") { draft = null }
+                if (showDefault) PickRow("Default", draft == null, "model_default") { draft = null }
                 models.forEach { m -> PickRow(m.name, draft?.id == m.id, "model_option") { if (draft?.id != m.id) draft = ModelChoice(m.id) } }
                 model?.settings?.forEach { setting ->
                     Text(setting.title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 12.dp).semantics { heading() })
@@ -194,7 +197,7 @@ internal fun Composer(actions: ChatActionsUi, modifier: Modifier = Modifier) {
     var pick by rememberSaveable(stateSaver = ModelPickSaver) { mutableStateOf<ModelChoice?>(null) }
     var choosing by rememberSaveable { mutableStateOf(false) }
     // A pick the host no longer offers is dropped, so the box never shows or sends a model that has gone.
-    val chosen = pick?.takeIf { ModelOptions.isOffered(actions.models, it) }
+    val chosen = pick?.takeIf { ModelOptions.isOffered(actions.models, it) } ?: actions.modelInUse
     var busy by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -232,12 +235,12 @@ internal fun Composer(actions: ChatActionsUi, modifier: Modifier = Modifier) {
                     if (actions.models.isNotEmpty()) {
                         AssistChip(
                             onClick = { choosing = true },
-                            label = { Text("Model: ${modelLabel(actions.models, chosen)}", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            label = { Text(modelLabel(actions.models, chosen), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                             colors = chipColors,
                             border = null,
-                            modifier = Modifier.testTag("model_button"),
+                            modifier = Modifier.semantics { contentDescription = "Model: ${modelLabel(actions.models, chosen)}" }.testTag("model_button"),
                         )
-                        if (choosing) ModelPickerDialog(actions.models, chosen, onDismiss = { choosing = false }, onPick = { pick = it; choosing = false })
+                        if (choosing) ModelPickerDialog(actions.models, chosen, showDefault = actions.modelInUse == null, onDismiss = { choosing = false }, onPick = { pick = it; choosing = false })
                     }
                 }
                 if (actions.running && text.isNotBlank()) {

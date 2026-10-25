@@ -47,7 +47,7 @@ fun SignInScreen(
         Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
             ScreenColumn {
                 Text(
-                    "Follow your VS Code agent sessions from your phone. Out of the box this app only watches; you can let it send messages and look after sessions later, in Settings.",
+                    "Follow your VS Code agent sessions from your phone. It only watches until you allow more in Settings.",
                     style = MaterialTheme.typography.bodyLarge,
                 )
                 state.notice?.let { Notice(it, Modifier.testTag("notice")) }
@@ -57,7 +57,7 @@ fun SignInScreen(
                         if (state.offerRevoke) RevokeAccess(onOpenGitHub)
                     }
                     SignInStep.RequestingCode -> {
-                        Busy("Requesting a code from GitHub…")
+                        Busy("Asking GitHub for a code…")
                         TextButton(onClick = onCancel) { Text("Cancel") }
                     }
                     is SignInStep.AwaitingApproval -> Approval(step, onCancel, onOpenGitHub, onCopyCode)
@@ -75,7 +75,7 @@ fun SignInScreen(
 @Composable
 private fun RevokeAccess(onOpen: (String) -> Unit) {
     Notice(
-        "You are signed out of this phone. This app keeps its access on your GitHub account until you remove it there.",
+        "Signed out of this phone. The app keeps its access on your GitHub account until you remove it there.",
         Modifier.testTag("revoke_notice"),
     )
     OutlinedButton(onClick = { onOpen(GITHUB_AUTHORIZED_APPS_URL) }, modifier = Modifier.fillMaxWidth().testTag("revoke_access")) {
@@ -86,7 +86,7 @@ private fun RevokeAccess(onOpen: (String) -> Unit) {
 @Composable
 private fun StartSignIn(onSignIn: () -> Unit, label: String) {
     Text(
-        "Use the same GitHub account that Remote Tunnel Access is signed in with in VS Code. GitHub will give you a short code to enter.",
+        "Use the GitHub account Remote Tunnel Access is signed in with in VS Code.",
         style = MaterialTheme.typography.bodyMedium,
     )
     Button(onClick = onSignIn, modifier = Modifier.fillMaxWidth().testTag("sign_in_button")) { Text(label) }
@@ -109,9 +109,9 @@ private fun Approval(
     )
     Text(
         if (canOpen) {
-            "Open github.com/login/device on this phone or on any other device, enter the code, and approve “Visual Studio Tunnel Service”."
+            "Enter the code at github.com/login/device, on this phone or any device, and approve “Visual Studio Tunnel Service”."
         } else {
-            "Open ${step.verificationUri} on any device you trust, enter the code, and approve “Visual Studio Tunnel Service”."
+            "Open ${step.verificationUri} on a device you trust, enter the code, and approve “Visual Studio Tunnel Service”."
         },
         style = MaterialTheme.typography.bodyMedium,
     )

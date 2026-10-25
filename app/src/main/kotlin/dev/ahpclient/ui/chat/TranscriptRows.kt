@@ -47,6 +47,8 @@ import androidx.compose.ui.unit.dp
 import dev.ahpclient.state.PendingApproval
 import dev.ahpclient.state.SessionDetail
 import dev.ahpclient.state.ToolDetail
+import dev.ahpclient.state.TurnDuration
+import dev.ahpclient.state.TurnOutcome
 import dev.ahpclient.state.ToolState
 import dev.ahpclient.state.TranscriptItem
 import dev.ahpclient.state.TranscriptRowModel
@@ -88,10 +90,11 @@ private fun ItemRow(
 ) {
     when (item) {
         is TranscriptItem.User -> UserRow(item, modifier)
-        is TranscriptItem.Markdown -> SelectionContainer { MarkdownPart(item.text, onOpenLink, modifier.fillMaxWidth().testTag("row_markdown")) }
+        is TranscriptItem.Markdown -> AgentBubble(item, onOpenLink, modifier)
         is TranscriptItem.Reasoning -> ReasoningBlock(item, expanded, onToggle, onOpenLink, modifier)
         is TranscriptItem.Tool -> ToolCallBlock(item, expanded, onToggle, actions, onOpenSubagent, onOpenTerminal, modifier)
         is TranscriptItem.Notice -> NoticeRow(item, modifier)
+        is TranscriptItem.TurnEnd -> TurnEndRow(item, modifier)
         is TranscriptItem.Question -> Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
             InputRequestCard(item.request)
             val form = item.form
@@ -119,20 +122,60 @@ private fun ItemRow(
 @Composable
 private fun UserRow(item: TranscriptItem.User, modifier: Modifier) {
     Row(modifier = modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-        Spacer(Modifier.weight(0.14f))
+        Spacer(Modifier.weight(0.1f))
         Surface(
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-            contentColor = MaterialTheme.colorScheme.onSurface,
-            shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp, bottomEnd = 6.dp, bottomStart = 22.dp),
+            color = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+            shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomEnd = 4.dp, bottomStart = 20.dp),
             modifier = Modifier
-                .weight(0.86f, fill = false)
+                .weight(0.9f, fill = false)
                 .semantics(mergeDescendants = true) { stateDescription = "You" }
                 .testTag("row_user"),
         ) {
             SelectionContainer {
-                Text(item.text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
+                Text(item.text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
             }
         }
+    }
+}
+/**
+ * What the agent wrote, in a bubble of its own, so one message is told from the next and a long turn is plain to see. The text is
+ * selectable and its links are the phone's to open, nothing else.
+ */
+@Composable
+private fun AgentBubble(item: TranscriptItem.Markdown, onOpenLink: (String) -> Unit, modifier: Modifier) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = RoundedCornerShape(topStart = 4.dp, topEnd = 20.dp, bottomEnd = 20.dp, bottomStart = 20.dp),
+        modifier = modifier.fillMaxWidth().testTag("row_markdown"),
+    ) {
+        SelectionContainer { MarkdownPart(item.text, onOpenLink, Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) }
+    }
+}
+
+/** The line that ends a turn: that the agent has stopped, how it ended, and how long it worked. */
+@Composable
+private fun TurnEndRow(item: TranscriptItem.TurnEnd, modifier: Modifier) {
+    val colors = MaterialTheme.colorScheme
+    val (glyph, word) = when (item.outcome) {
+        TurnOutcome.DONE -> Glyph.DONE to "Done"
+        TurnOutcome.STOPPED -> Glyph.QUIET to "Stopped"
+        TurnOutcome.FAILED -> Glyph.FAILED to "Failed"
+    }
+    val text = listOfNotNull(word, TurnDuration.format(item.durationMs)).joinToString(" \u00b7 ")
+    Row(
+        modifier = modifier.fillMaxWidth().semantics(mergeDescendants = true) {}.testTag("row_turn_end"),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        GlyphIcon(glyph, Modifier.size(14.dp))
+        Text(
+            text,
+            style = MaterialTheme.typography.labelMedium,
+            color = if (item.outcome == TurnOutcome.FAILED) colors.error else colors.onSurfaceVariant,
+            modifier = Modifier.padding(start = 6.dp).testTag("turn_end_text"),
+        )
     }
 }
 

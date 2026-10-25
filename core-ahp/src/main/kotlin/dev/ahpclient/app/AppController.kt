@@ -243,6 +243,18 @@ class AppController(
         openSession(uri)
     }
 
+    /**
+     * Opens [uri], leaving the session that is open, if any, so the side menu can go from one session to another. Unlike [focusSession]
+     * it does not need the host to list the session yet: one just started is not listed until the host says so.
+     */
+    @Synchronized
+    fun showSession(uri: String) {
+        val current = _state.value as? AppState.Connected ?: return
+        if (current.open?.uri == uri) return
+        if (current.open != null) closeSession()
+        openSession(uri)
+    }
+
     /** Leaves the open detail and stays connected. */
     @Synchronized
     fun closeSession() {

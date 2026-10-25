@@ -12,45 +12,36 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
-import dev.ahpclient.app.SafeLinks
+import dev.ahpclient.state.LinkTarget
 
 /**
- * Asks before a link in agent output is opened, and says where it goes. Link text can say one thing and point at another,
- * so the real host is shown on its own line. A link this app would never launch gets an explanation and no Open button.
+ * Asks before a link in agent output is opened, and says where it goes. Link text can say one thing and point at another, so the
+ * real site, address or number is shown on its own line. Only a [LinkTarget] gets here: a link that goes nowhere on a phone is never
+ * made tappable, so there is no dialog for one.
  */
 @Composable
-fun LinkConfirmDialog(url: String, onOpen: () -> Unit, onDismiss: () -> Unit) {
-    val safe = SafeLinks.isSafeWebLink(url)
+fun LinkConfirmDialog(target: LinkTarget, onOpen: () -> Unit, onDismiss: () -> Unit) {
+    val (title, full) = when (target) {
+        is LinkTarget.Web -> "Open link?" to target.url
+        is LinkTarget.Mail -> "Write to?" to null
+        is LinkTarget.Phone -> "Dial?" to null
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         modifier = Modifier.testTag("link_dialog"),
-        title = { Text(if (safe) "Open this link?" else "This link can't be opened") },
+        title = { Text(title) },
         text = {
             Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (safe) {
-                    Text(hostOf(url), style = MaterialTheme.typography.titleMedium, modifier = Modifier.testTag("link_host"))
-                } else {
-                    Text("This app only opens https links to a named site.", style = MaterialTheme.typography.bodyMedium)
-                }
-                Text(shown(url), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("link_url"))
+                Text(target.shown, style = MaterialTheme.typography.titleMedium, modifier = Modifier.testTag("link_host"))
+                full?.let { Text(shown(it), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("link_url")) }
             }
         },
-        confirmButton = {
-            if (safe) TextButton(onClick = onOpen, modifier = Modifier.testTag("link_open")) { Text("Open") }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss, modifier = Modifier.testTag("link_cancel")) { Text(if (safe) "Cancel" else "OK") }
-        },
+        confirmButton = { TextButton(onClick = onOpen, modifier = Modifier.testTag("link_open")) { Text("Open") } },
+        dismissButton = { TextButton(onClick = onDismiss, modifier = Modifier.testTag("link_cancel")) { Text("Cancel") } },
     )
 }
 
 private const val MAX_SHOWN = 400
-
-private fun hostOf(url: String): String = try {
-    java.net.URI(url).host.orEmpty()
-} catch (_: java.net.URISyntaxException) {
-    ""
-}
 
 /** The link as written, cut short if it is enormous, so the dialog stays readable. */
 private fun shown(url: String): String = if (url.length > MAX_SHOWN) url.take(MAX_SHOWN) + "…" else url

@@ -63,7 +63,7 @@ class SessionListModelTest {
         assertEquals(1, m.needsInput)
         assertEquals(1, m.inProgress)
         assertEquals(1, m.errors)
-        assertEquals("1 needs input · 1 in progress · 1 with errors", m.summary)
+        assertEquals("1 needs you · 1 working · 1 error", m.summary)
     }
 
     @Test
@@ -71,7 +71,7 @@ class SessionListModelTest {
         val idle = sessions.filter { it.title == "Session B" || it.title == "Session D" }
 
         assertEquals("", model(list = idle).summary)
-        assertEquals("2 need input", SessionListModel(emptyList(), needsInput = 2, inProgress = 0, errors = 0, hiddenArchived = 0, total = 2).summary)
+        assertEquals("2 need you", SessionListModel(emptyList(), needsInput = 2, inProgress = 0, errors = 0, hiddenArchived = 0, total = 2).summary)
     }
 
     @Test
@@ -148,27 +148,27 @@ class RelativeTimeTest {
     private fun at(iso: String) = RelativeTime.format(iso, now, utc, Locale.US)
 
     @Test
-    fun `under a minute is just now, and so is a timestamp slightly in the future`() {
-        assertEquals("just now", at("2026-10-26T14:59:30.000Z"))
-        assertEquals("just now", at("2026-10-26T15:00:20.000Z"))
+    fun `under a minute is now, and so is a timestamp slightly in the future`() {
+        assertEquals("now", at("2026-10-26T14:59:30.000Z"))
+        assertEquals("now", at("2026-10-26T15:00:20.000Z"))
     }
 
     @Test
     fun `minutes and hours`() {
-        assertEquals("1 min ago", at("2026-10-26T14:59:00.000Z"))
-        assertEquals("59 min ago", at("2026-10-26T14:01:00.000Z"))
-        assertEquals("1 h ago", at("2026-10-26T14:00:00.000Z"))
-        assertEquals("23 h ago", at("2026-10-25T16:00:00.000Z"))
+        assertEquals("1m", at("2026-10-26T14:59:00.000Z"))
+        assertEquals("59m", at("2026-10-26T14:01:00.000Z"))
+        assertEquals("1h", at("2026-10-26T14:00:00.000Z"))
+        assertEquals("23h", at("2026-10-25T16:00:00.000Z"))
     }
 
     @Test
-    fun `yesterday is calendar-based, so 20 hours ago across midnight is yesterday`() {
-        assertEquals("yesterday", at("2026-10-25T09:00:00.000Z"))
+    fun `a day ago is calendar-based, so 20 hours ago across midnight is 1d`() {
+        assertEquals("1d", at("2026-10-25T09:00:00.000Z"))
     }
 
     @Test
     fun `days within the week, then a date`() {
-        assertEquals("3 days ago", at("2026-10-23T09:00:00.000Z"))
+        assertEquals("3d", at("2026-10-23T09:00:00.000Z"))
         assertEquals("Oct 10, 2026", at("2026-10-10T09:00:00.000Z"))
     }
 
@@ -199,7 +199,7 @@ class SessionDetailTest {
         assertEquals("copilotcli", d.provider)
         assertEquals("repo", d.project)
         assertEquals(listOf("file:///work/repo").map(::displayPath), d.workingDirectories)
-        assertEquals(listOf(ChatRow("ahp-chat://default/x", "Main", ActivityState.NEEDS_INPUT, null, "1 min ago", removable = false)), d.chats, "a lone chat is the main one")
+        assertEquals(listOf(ChatRow("ahp-chat://default/x", "Main", ActivityState.NEEDS_INPUT, null, "1m", removable = false)), d.chats, "a lone chat is the main one")
         assertEquals(emptyList(), d.inputNeeded)
     }
 
@@ -432,7 +432,7 @@ class SessionDetailTest {
     @Test
     fun `the state labels are the words the screens show`() {
         assertEquals(
-            listOf("Needs input", "In progress", "Error", "Idle"),
+            listOf("Needs you", "Working", "Error", "Idle"),
             listOf(ActivityState.NEEDS_INPUT, ActivityState.IN_PROGRESS, ActivityState.ERROR, ActivityState.IDLE).map { it.label },
         )
     }

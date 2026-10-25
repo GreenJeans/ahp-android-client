@@ -12,6 +12,7 @@ import dev.ahpclient.app.MonitorCoordinator
 import dev.ahpclient.auth.GitHubDeviceAuth
 import dev.ahpclient.data.PrefsInteractionSettings
 import dev.ahpclient.data.PrefsLastHostStore
+import dev.ahpclient.data.UiSettings
 import dev.ahpclient.data.PrefsMonitorSettings
 import dev.ahpclient.monitor.AndroidMonitorService
 import dev.ahpclient.monitor.NotificationInputNeededSink
@@ -53,6 +54,9 @@ class AppContainer(context: Context) {
     private val http = OkHttpClient.Builder().pingInterval(30, TimeUnit.SECONDS).build()
     private val versionName: String = appContext.packageManager.getPackageInfo(appContext.packageName, 0).versionName ?: "0"
     private val prefs by lazy { PrefsLastHostStore.dataStoreFor(appContext.preferencesDataStoreFile("ahp_prefs"), ioScope) }
+
+    /** How the app looks, and the browser links open in. */
+    val ui: UiSettings by lazy { UiSettings(appContext.getSharedPreferences("ahp_ui", Context.MODE_PRIVATE)) }
 
     /** The phone's own prompt in front of every tool approval. Attached to the activity while it is on screen. */
     val approvalGate = BiometricApprovalGate()

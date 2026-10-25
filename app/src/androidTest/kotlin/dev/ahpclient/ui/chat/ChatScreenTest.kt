@@ -21,7 +21,14 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.junit4.StateRestorationTester
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.pinch
+import androidx.compose.ui.test.center
+import androidx.compose.ui.test.swipeDown
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -30,9 +37,11 @@ import dev.ahpclient.state.ChatGoneException
 import dev.ahpclient.state.ChatNotLoadedException
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.InputRequestView
+import dev.ahpclient.state.TextScale
 import dev.ahpclient.state.ToolState
 import dev.ahpclient.state.Transcript
 import dev.ahpclient.state.TranscriptItem
+import dev.ahpclient.state.TurnOutcome
 import dev.ahpclient.ui.theme.AhpTheme
 import java.io.IOException
 import org.junit.Assert.assertEquals
@@ -51,8 +60,8 @@ class ChatScreenTest {
 
     private fun rows(range: IntRange) = range.map { user(it) }
 
-    private fun transcript(items: List<TranscriptItem>, hasOlder: Boolean = false, activity: String? = null) =
-        Transcript("Fix the build", ActivityState.IN_PROGRESS, activity, items, hasOlder)
+    private fun transcript(items: List<TranscriptItem>, hasOlder: Boolean = false, activity: String? = null, running: Boolean = false) =
+        Transcript("Fix the build", ActivityState.IN_PROGRESS, activity, items, hasOlder, running)
 
     private fun show(
         transcript: Transcript?,
@@ -74,6 +83,19 @@ class ChatScreenTest {
         return layouts.first().layoutInput.style.fontSize.value
     }
 
+    /** The font scale the first line of the node's text was laid out with: what the person's text size multiplies. */
+    private fun fontScaleOf(text: String): Float {
+        val layouts = mutableListOf<TextLayoutResult>()
+        rule.onNodeWithText(text).fetchSemanticsNode().config[SemanticsActions.GetTextLayoutResult].action!!.invoke(layouts)
+        return layouts.first().layoutInput.density.fontScale
+    }
+
+    /** How many parts of the node's text are drawn and handled as links. */
+    private fun linksIn(text: String): Int {
+        val annotated = rule.onNodeWithText(text, substring = true).fetchSemanticsNode().config[SemanticsProperties.Text].single()
+        return annotated.getLinkAnnotations(0, annotated.length).size
+    }
+
     private fun awaitText(text: String) = rule.waitUntil(timeoutMillis = 10_000) { rule.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty() }
 
     // ---- what is shown -----------------------------------------------------------------------------------------
@@ -84,7 +106,7 @@ class ChatScreenTest {
 
         rule.onNodeWithTag("chat_title").assertTextEquals("Fix the build")
         rule.onNodeWithTag("subtitle").assertIsDisplayed()
-        rule.onNodeWithTag("chat_activity").assertTextEquals("Running tests")
+        rule.onAllNodesWithTag("chat_activity").assertCountEquals(0)
     }
 
     @Test
@@ -374,23 +396,211 @@ class ChatScreenTest {
     }
 
     @Test
-    fun linksThatAreNotPlainHttpsAreExplainedAndCanNeverBeOpened() {
-        val targets = listOf("javascript:alert(1)", "http://example.com/x", "intent://x#Intent;scheme=https;end", "file:///sdcard/a.txt", "https://user:pw@example.com/")
+    fun linksThatCannotBeOpenedOnAPhoneAreShownAsPlainTextAndNeverAskToOpen() {
+        val targets = listOf("javascript:alert(1)", "http://example.com/x", "intent://x#Intent;scheme=https;end", "file:///sdcard/a.txt", "/home/me/repo/Main.kt", "src/Main.kt", "vscode://file/x", "******example.com/")
         val opened = mutableListOf<String>()
-        show(transcript(targets.mapIndexed { i, target -> TranscriptItem.Markdown("m$i", "[bad$i]($target)") }), onOpenLink = opened::add)
+        show(transcript(targets.mapIndexed { i, target -> TranscriptItem.Markdown("m$i", "See [bad$i]($target) here") }), onOpenLink = opened::add)
 
         targets.indices.forEach { i ->
-            awaitText("bad$i")
-            rule.onNodeWithText("bad$i").performClick()
-
-            rule.onNodeWithTag("link_dialog").assertIsDisplayed()
-            rule.onAllNodesWithTag("link_open").assertCountEquals(0)
-            rule.onAllNodesWithTag("link_host").assertCountEquals(0)
-            rule.onNodeWithTag("link_cancel").assertTextEquals("OK").performClick()
+            rule.waitUntil(timeoutMillis = 10_000) { rule.onAllNodesWithText("See bad$i here", substring = true).fetchSemanticsNodes().isNotEmpty() }
+            assertEquals("bad$i is drawn as a link", 0, linksIn("See bad$i here"))
+            rule.onNodeWithText("See bad$i here", substring = true).performClick()
             rule.waitForIdle()
+
+            rule.onAllNodesWithTag("link_dialog").assertCountEquals(0)
         }
 
+        rule.onAllNodesWithText("](", substring = true).assertCountEquals(0)
         assertTrue("opened: $opened", opened.isEmpty())
+    }
+
+    @Test
+    fun linksThatOpenAreStillDrawnAsLinks() {
+        show(transcript(listOf(TranscriptItem.Markdown("m1", "A [web](https://example.com/a), a [mail](mailto:a@example.com) and a [call](tel:+15550100) link"))))
+        awaitText("A web, a mail and a call link")
+
+        assertEquals(3, linksIn("A web, a mail and a call link"))
+    }
+
+    @Test
+    fun aMailLinkAsksWhoItWritesToAndOpensOnlyTheAddress() {
+        val opened = mutableListOf<String>()
+        showLink("[docs](mailto:a@example.com?subject=hi&body=secret)", opened::add)
+
+        rule.onNodeWithText("Write to?").assertIsDisplayed()
+        rule.onNodeWithTag("link_host").assertTextEquals("a@example.com")
+        rule.onAllNodesWithTag("link_url").assertCountEquals(0)
+        rule.onNodeWithTag("link_open").performClick()
+
+        assertEquals(listOf("mailto:a@example.com"), opened)
+    }
+
+    @Test
+    fun aPhoneLinkAsksWhichNumberItDialsAndHandsOverThatNumber() {
+        val opened = mutableListOf<String>()
+        showLink("[docs](tel:+15550100)", opened::add)
+
+        rule.onNodeWithText("Dial?").assertIsDisplayed()
+        rule.onNodeWithTag("link_host").assertTextEquals("+15550100")
+        rule.onNodeWithTag("link_open").performClick()
+
+        assertEquals(listOf("tel:+15550100"), opened)
+    }
+
+    @Test
+    fun aLinkDialogSurvivesTheAppBeingRecreated() {
+        val restorer = StateRestorationTester(rule)
+        restorer.setContent { AhpTheme { ChatScreen(transcript(listOf(TranscriptItem.Markdown("m1", "[docs](https://example.com/docs)"))), null, false, null, ConnState.Online, {}, {}, {}) } }
+        awaitText("docs")
+        rule.onNodeWithText("docs").performClick()
+        rule.onNodeWithTag("link_dialog").assertIsDisplayed()
+
+        restorer.emulateSavedInstanceStateRestore()
+
+        rule.onNodeWithTag("link_dialog").assertIsDisplayed()
+        rule.onNodeWithTag("link_host").assertTextEquals("example.com")
+    }
+
+    // ---- bubbles, working, stopped -----------------------------------------------------------------------------
+
+    @Test
+    fun eachThingTheAgentWroteIsABubbleOfItsOwn() {
+        show(transcript(listOf(TranscriptItem.Markdown("m1", "first answer"), TranscriptItem.Markdown("m2", "second answer"))))
+        awaitText("second answer")
+
+        rule.onAllNodesWithTag("row_markdown").assertCountEquals(2)
+    }
+
+    @Test
+    fun aFinishedTurnEndsWithHowItEndedAndHowLongItTook() {
+        show(
+            transcript(
+                listOf(
+                    TranscriptItem.TurnEnd("e1", TurnOutcome.DONE, 64_000),
+                    TranscriptItem.TurnEnd("e2", TurnOutcome.STOPPED, null),
+                    TranscriptItem.TurnEnd("e3", TurnOutcome.FAILED, 4_000),
+                ),
+            ),
+        )
+
+        val words = rule.onAllNodesWithTag("turn_end_text", useUnmergedTree = true).fetchSemanticsNodes().map { it.config[SemanticsProperties.Text].single().text }
+        assertEquals(setOf("Done \u00b7 1m 4s", "Stopped", "Failed \u00b7 4s"), words.toSet())
+        rule.onAllNodesWithTag("row_working").assertCountEquals(0)
+    }
+
+    @Test
+    fun whileATurnRunsTheEndOfTheChatPulsesWithWhatTheAgentIsDoing() {
+        show(transcript(rows(1..2), activity = "Running tests", running = true))
+
+        rule.onNodeWithTag("working_text", useUnmergedTree = true).assertTextEquals("Running tests")
+        rule.onAllNodesWithTag("working_dots", useUnmergedTree = true).assertCountEquals(1)
+        rule.onAllNodesWithTag("chat_progress", useUnmergedTree = true).assertCountEquals(1)
+        assertTrue("the working row is below the newest message", rule.onNodeWithTag("row_working").fetchSemanticsNode().positionInRoot.y > y("message 2"))
+    }
+
+    @Test
+    fun withNoActivityTheWorkingRowStillSaysWorking() {
+        show(transcript(rows(1..2), running = true))
+
+        rule.onNodeWithTag("working_text", useUnmergedTree = true).assertTextEquals("Working\u2026")
+    }
+
+    @Test
+    fun whenTheTurnIsHeldUpOnThePersonItStopsPulsingAndSaysSo() {
+        val waiting = TranscriptItem.Tool("t1", "Run in Terminal", "List the files", ToolState.WAITING_FOR_APPROVAL)
+        show(transcript(listOf(user(1), waiting), activity = "Running tests", running = true))
+
+        rule.onNodeWithTag("working_text", useUnmergedTree = true).assertTextEquals("Waiting for you")
+        rule.onAllNodesWithTag("working_dots", useUnmergedTree = true).assertCountEquals(0)
+        rule.onAllNodesWithTag("chat_progress", useUnmergedTree = true).assertCountEquals(0)
+    }
+
+    @Test
+    fun whenNoTurnIsRunningThereIsNoWorkingRowAndNoBar() {
+        show(transcript(listOf(user(1), TranscriptItem.TurnEnd("e1", TurnOutcome.DONE, 1_000)), activity = "Running tests"))
+
+        rule.onAllNodesWithTag("row_working").assertCountEquals(0)
+        rule.onAllNodesWithTag("chat_progress", useUnmergedTree = true).assertCountEquals(0)
+    }
+
+    // ---- text size ---------------------------------------------------------------------------------------------
+
+    private fun showPinchable(initial: Float = 1f, onScale: (Float) -> Unit = {}) = rule.setContent {
+        var scale by androidx.compose.runtime.remember { mutableStateOf(initial) }
+        AhpTheme {
+            ChatPane(transcript(rows(1..30)), null, false, null, ConnState.Online, {}, {}, textScale = scale, onTextScale = { scale = it; onScale(it) })
+        }
+    }
+
+    private fun pinch(fromGap: Float, toGap: Float) = rule.onRoot().performTouchInput {
+        val c = center
+        pinch(Offset(c.x - fromGap / 2, c.y), Offset(c.x - toGap / 2, c.y), Offset(c.x + fromGap / 2, c.y), Offset(c.x + toGap / 2, c.y))
+    }
+
+    @Test
+    fun spreadingTwoFingersMakesTheTextBigger() {
+        val seen = mutableListOf<Float>()
+        showPinchable(onScale = { seen += it })
+
+        pinch(fromGap = 200f, toGap = 300f)
+        rule.waitForIdle()
+
+        assertTrue("scales: $seen", seen.isNotEmpty())
+        assertEquals(1.5f, seen.last(), 0.001f)
+        assertTrue("every step is a whole step: $seen", seen.all { Math.abs(it / TextScale.STEP - Math.round(it / TextScale.STEP)) < 0.001f })
+    }
+
+    @Test
+    fun pinchingTwoFingersTogetherMakesItSmallerButNotBelowTheLeastSize() {
+        val seen = mutableListOf<Float>()
+        showPinchable(onScale = { seen += it })
+
+        pinch(fromGap = 400f, toGap = 40f)
+        rule.waitForIdle()
+
+        assertEquals(TextScale.MIN, seen.last(), 0.001f)
+        assertTrue("never below the least: $seen", seen.all { it >= TextScale.MIN - 0.001f })
+    }
+
+    @Test
+    fun spreadingFarNeverGoesPastTheLargestSize() {
+        val seen = mutableListOf<Float>()
+        showPinchable(onScale = { seen += it })
+
+        pinch(fromGap = 100f, toGap = 900f)
+        rule.waitForIdle()
+
+        assertEquals(TextScale.MAX, seen.last(), 0.001f)
+        assertTrue("never above the largest: $seen", seen.all { it <= TextScale.MAX + 0.001f })
+    }
+
+    @Test
+    fun aOneFingerSwipeScrollsAndDoesNotChangeTheTextSize() {
+        val seen = mutableListOf<Float>()
+        showPinchable(onScale = { seen += it })
+
+        val before = y("message 30")
+        rule.onRoot().performTouchInput { swipeDown() }
+        rule.waitForIdle()
+
+        assertTrue("scales: $seen", seen.isEmpty())
+        val after = rule.onAllNodesWithText("message 30").fetchSemanticsNodes().firstOrNull()?.positionInRoot?.y
+        assertTrue("the list scrolled: message 30 went from $before to $after", after == null || after > before)
+    }
+
+    @Test
+    fun theChatTextFollowsTheSizeAndTheBarsAroundItDoNot() {
+        var scale by mutableStateOf(1f)
+        rule.setContent { AhpTheme { ChatScreen(transcript(rows(1..2)), null, false, null, ConnState.Online, {}, {}, {}, textScale = scale) } }
+        awaitText("message 1")
+        val chatBefore = fontScaleOf("message 1")
+        val titleBefore = fontScaleOf("Fix the build")
+
+        scale = 1.5f
+        rule.waitForIdle()
+
+        assertEquals(chatBefore * 1.5f, fontScaleOf("message 1"), 0.01f)
+        assertEquals(titleBefore, fontScaleOf("Fix the build"), 0.01f)
     }
 
     // ---- older turns -------------------------------------------------------------------------------------------

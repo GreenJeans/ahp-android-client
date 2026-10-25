@@ -35,6 +35,7 @@ import dev.ahpclient.state.ModelOption
 import dev.ahpclient.state.ToolState
 import dev.ahpclient.state.Transcript
 import dev.ahpclient.state.TranscriptItem
+import dev.ahpclient.state.TurnOutcome
 import dev.ahpclient.tunnel.TunnelInfo
 import dev.ahpclient.ui.chat.ChatActionsUi
 import dev.ahpclient.ui.chat.ChatPane
@@ -109,30 +110,61 @@ class AccessibilityTest {
         checkEach(*states.map { state -> @Composable { SignInScreen(state, {}, {}, {}, {}) } }.toTypedArray())
     }
 
+    private val browsers = listOf(BrowserOption("com.android.chrome", "Chrome"), BrowserOption("org.mozilla.firefox", "Firefox"))
+
+    @Composable
+    private fun HostScreenFor(list: HostList? = null, connected: TunnelInfo? = null, connection: ConnState? = null, browser: String? = null, renews: Boolean = false) =
+        HostScreen(
+            list, connected, connection, onBack = {}, onRefresh = {}, onConnect = {}, onDisconnect = {}, onSignOut = {},
+            browsers = browsers, browser = browser, onBrowser = {}, tokenExpiresAt = now.plusSeconds(3600), renews = renews,
+        )
+
+    @Composable
+    private fun DrawerFor(
+        connected: TunnelInfo? = host,
+        connection: ConnState? = ConnState.Online,
+        list: List<SessionSummary> = sessions,
+        showArchived: Boolean = false,
+        query: String = "",
+        manage: ManageActionsUi? = null,
+    ) = DrawerContent(
+        connected, connection, list, now, selected = null, showArchived = showArchived, onToggleArchived = {}, query = query, onQueryChange = {},
+        listState = rememberLazyListState(), manage = manage, onOpenHost = {}, onOpenSession = {}, onOpenSettings = {}, onSessionCreated = {},
+    )
+
     @Test
     fun hostScreens() {
         val entries = listOf(HostEntry(host, isLastUsed = true), HostEntry(TunnelInfo("t-off", "usw2", "old-laptop", 5, 0, listOf(31546)), isLastUsed = false))
         val lists = listOf(HostList.Loading, HostList.Loaded(entries), HostList.Empty, HostList.Failed("Could not reach the Dev Tunnels service."))
-        checkEach(*lists.map { list -> @Composable { HostsScreen(AppState.Hosts(list, now.plusSeconds(3600)), {}, {}, {}) } }.toTypedArray())
+        checkEach(
+            *lists.map { list -> @Composable { HostScreenFor(list) } }.toTypedArray(),
+            { HostScreenFor(connected = host, connection = ConnState.Online, browser = "org.mozilla.firefox", renews = true) },
+            { HostScreenFor(connected = host, connection = ConnState.Reconnecting(2, null)) },
+        )
+    }
+
+    @Test
+    fun emptyMainPage() {
+        checkEach(
+            { MainEmpty(connected = false, connection = null, manage = null, onConnect = {}, onOpenSessions = {}, onSessionCreated = {}) },
+            { MainEmpty(connected = true, connection = ConnState.Online, manage = null, onConnect = {}, onOpenSessions = {}, onSessionCreated = {}) },
+            { MainEmpty(connected = true, connection = ConnState.Online, manage = manageActions(), onConnect = {}, onOpenSessions = {}, onSessionCreated = {}) },
+        )
     }
 
     @Test
     fun sessionListInEveryConnectionState() {
         val states = listOf(ConnState.Online, ConnState.Connecting, ConnState.Reconnecting(2, null), ConnState.Failed(IllegalStateException("no running agent host")))
-        checkEach(
-            *states.map { connection ->
-                @Composable {
-                    SessionsScreen(host, connection, sessions, now, true, rememberLazyListState(), {}, {}, {})
-                }
-            }.toTypedArray(),
-        )
+        checkEach(*states.map { connection -> @Composable { DrawerFor(connection = connection, showArchived = true) } }.toTypedArray())
     }
 
     @Test
     fun sessionListSearchedAndEmpty() {
         checkEach(
-            { SessionsScreen(host, ConnState.Online, sessions, now, false, rememberLazyListState(), {}, {}, {}, query = "no such session") },
-            { SessionsScreen(host, ConnState.Online, emptyList(), now, false, rememberLazyListState(), {}, {}, {}) },
+            { DrawerFor(query = "no such session") },
+            { DrawerFor(list = emptyList()) },
+            { DrawerFor(connected = null, connection = null, list = emptyList()) },
+            { DrawerFor(manage = manageActions()) },
         )
     }
 
@@ -237,10 +269,10 @@ class AccessibilityTest {
     }
 
     @Test
-    fun hostsScreenWithItsMenuOpen() {
-        val lists = HostList.Loaded(listOf(HostEntry(host, isLastUsed = true)))
-        rule.setContent { AhpTheme { HostsScreen(AppState.Hosts(lists, now.plusSeconds(3600)), {}, {}, {}) } }
-        rule.onNodeWithTag("hosts_menu").performClick()
+    fun hostScreenWithTheBrowserPickerOpen() {
+        val list = HostList.Loaded(listOf(HostEntry(host, isLastUsed = true)))
+        rule.setContent { AhpTheme { HostScreenFor(list) } }
+        rule.onNodeWithTag("browser_row").performClick()
         rule.waitForIdle()
 
         check()
@@ -262,6 +294,7 @@ class AccessibilityTest {
         state = ActivityState.NEEDS_INPUT,
         activity = "Waiting on you",
         hasOlder = true,
+        running = true,
         items = listOf(
             TranscriptItem.User("u1", "Please fix the failing build."),
             TranscriptItem.Reasoning("r1", "thinking", live = true),
@@ -273,6 +306,10 @@ class AccessibilityTest {
             TranscriptItem.Tool("t5", "Fetch page", null, ToolState.SIGN_IN_REQUIRED),
             TranscriptItem.Notice("n1", "Context was compacted"),
             TranscriptItem.Notice("n2", "Ended with an error", isError = true),
+            TranscriptItem.Markdown("m0", "All **done**. The build now passes."),
+            TranscriptItem.TurnEnd("e1", TurnOutcome.DONE, 64_000),
+            TranscriptItem.TurnEnd("e2", TurnOutcome.STOPPED, null),
+            TranscriptItem.TurnEnd("e3", TurnOutcome.FAILED, 4_000),
             TranscriptItem.Question("q1", InputRequestView("Question", "Which branch?", emptyList()), answered = false),
             TranscriptItem.Other("o1", "Content this app cannot show"),
         ),

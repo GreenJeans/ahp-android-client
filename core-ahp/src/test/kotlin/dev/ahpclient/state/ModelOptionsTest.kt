@@ -5,6 +5,7 @@ import com.microsoft.agenthostprotocol.generated.AgentInfo
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class ModelOptionsTest {
@@ -150,5 +151,69 @@ class ModelOptionsTest {
         assertFalse(ModelOptions.isOffered(options, ModelChoice("claude", mapOf("thinking" to "high", "extra" to "x"))))
         assertFalse(ModelOptions.isOffered(emptyList(), ModelChoice("auto")))
         assertFalse(ModelOptions.isOffered(options, ModelChoice("")))
+    }
+
+    // ---- the model a chat is using -------------------------------------------------------------------------------
+
+    private val sonnetJson = model("sonnet", "Claude Sonnet", schema = schema(thinking))
+    private val autoJson = model("auto", "Auto")
+    private val offered get() = ModelOptions.of(agent(autoJson, sonnetJson))
+
+    private fun chatWith(turns: String = "", active: String? = null, draft: String? = null) = Ahp.json.decodeFromString(
+        com.microsoft.agenthostprotocol.generated.ChatState.serializer(),
+        """{"resource":"ahp-chat:/c","title":"t","status":1,"modifiedAt":"2026-10-22T10:00:00.000Z","turns":[$turns]
+            ${active?.let { ""","activeTurn":$it""" }.orEmpty()}${draft?.let { ""","draft":$it""" }.orEmpty()}}""",
+    )
+
+    private fun turn(id: String, model: String? = null, usage: String? = null) =
+        """{"id":"$id","message":{"text":"x","origin":{"kind":"user"}${model?.let { ""","model":$it""" }.orEmpty()}},"responseParts":[],"state":"complete"${usage?.let { ""","usage":{"model":"$it"}""" }.orEmpty()}}"""
+
+    @Test
+    fun `a chat is using the model its latest turn was sent with, settings and all`() {
+        val chat = chatWith(turn("t1", """{"id":"auto"}""") + "," + turn("t2", """{"id":"sonnet","config":{"thinking":"high"}}"""))
+
+        assertEquals(ModelChoice("sonnet", mapOf("thinking" to "high")), ModelOptions.inUse(chat, offered))
+    }
+
+    @Test
+    fun `the running turn counts before the finished ones`() {
+        val chat = chatWith(turn("t1", """{"id":"auto"}"""), active = """{"id":"t2","startedAt":"2026-10-22T10:05:00.000Z","message":{"text":"x","origin":{"kind":"user"},"model":{"id":"sonnet"}},"responseParts":[]}""")
+
+        assertEquals(ModelChoice("sonnet"), ModelOptions.inUse(chat, offered))
+    }
+
+    @Test
+    fun `with no model on the message, the model the turn reports using is found by its id or its name`() {
+        assertEquals(ModelChoice("sonnet"), ModelOptions.inUse(chatWith(turn("t1", usage = "sonnet")), offered))
+        assertEquals(ModelChoice("sonnet"), ModelOptions.inUse(chatWith(turn("t1", usage = "claude sonnet")), offered))
+        assertNull(ModelOptions.inUse(chatWith(turn("t1", usage = "something-else")), offered))
+    }
+
+    @Test
+    fun `a model the host no longer offers is not used, and one setting it no longer lists is dropped`() {
+        assertNull(ModelOptions.inUse(chatWith(turn("t1", """{"id":"retired"}""")), offered))
+        assertEquals(ModelChoice("sonnet", mapOf("thinking" to "high")), ModelOptions.inUse(chatWith(turn("t1", """{"id":"sonnet","config":{"thinking":"high","old":"x"}}""")), offered))
+        assertEquals(ModelChoice("sonnet"), ModelOptions.inUse(chatWith(turn("t1", """{"id":"sonnet","config":{"thinking":"ludicrous"}}""")), offered))
+    }
+
+    @Test
+    fun `a chat with no turns uses the model in its draft, and with no draft none is known`() {
+        assertEquals(ModelChoice("auto"), ModelOptions.inUse(chatWith(draft = """{"text":"","origin":{"kind":"user"},"model":{"id":"auto"}}"""), offered))
+        assertNull(ModelOptions.inUse(chatWith(), offered))
+        assertNull(ModelOptions.inUse(null, offered))
+    }
+
+    @Test
+    fun `the latest turn wins over the draft`() {
+        val chat = chatWith(turn("t1", """{"id":"sonnet"}"""), draft = """{"text":"","origin":{"kind":"user"},"model":{"id":"auto"}}""")
+
+        assertEquals(ModelChoice("sonnet"), ModelOptions.inUse(chat, offered))
+    }
+
+    @Test
+    fun `whatever is found is always something the host offers`() {
+        val chat = chatWith(turn("t1", """{"id":"sonnet","config":{"thinking":"low"}}"""))
+
+        assertTrue(ModelOptions.isOffered(offered, ModelOptions.inUse(chat, offered)!!))
     }
 }

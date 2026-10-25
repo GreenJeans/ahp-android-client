@@ -3,6 +3,8 @@ package dev.ahpclient.ui
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertHeightIsAtLeast
+import androidx.compose.ui.test.assertHasClickAction
+import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -23,6 +25,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.assertCountEquals
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import dev.ahpclient.state.ChangeStats
 import dev.ahpclient.state.ChannelGoneException
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.ui.theme.AhpTheme
@@ -287,33 +290,68 @@ class ChangesetUiTest {
         """{"provider":"copilotcli","title":"Fix the build","status":1,"lifecycle":"ready","activeClients":[],"chats":[],"changesets":$changesets}""",
     )
 
-    @Test
-    fun aPlainChangesetCanBeOpenedAndOneThatNeedsValuesIsOnlyMentioned() {
-        val opened = mutableListOf<Pair<String, String>>()
-        val state = session(
-            """[{"label":"Uncommitted","uriTemplate":"ahp-changeset:/c1","changeKind":"uncommitted"},{"label":"Per turn","uriTemplate":"ahp-changeset:/t/{turnId}","changeKind":"turn"}]""",
-        )
-        rule.setContent {
-            AhpTheme { SessionScreen(state, null, ConnState.Online, Instant.parse("2026-10-26T10:30:00Z"), {}, onOpenChangeset = { u, l -> opened += u to l }) }
-        }
-        rule.onNodeWithTag("session_menu").performClick()
-        rule.onNodeWithTag("menu_details").performClick()
-        rule.waitForIdle()
+    private val clock = Instant.parse("2026-10-26T10:30:00Z")
+    private val plain = """{"label":"Uncommitted","uriTemplate":"ahp-changeset:/c1","changeKind":"uncommitted"}"""
+    private val second = """{"label":"Last commit","uriTemplate":"ahp-changeset:/c2","changeKind":"commit"}"""
+    private val needsValues = """{"label":"Per turn","uriTemplate":"ahp-changeset:/t/{turnId}","changeKind":"turn"}"""
 
-        rule.onNodeWithTag("changeset_unsupported").performScrollTo().assertTextContains("Per turn", substring = true)
-        assertEquals(1, rule.onAllNodes(hasTestTag("open_changeset")).fetchSemanticsNodes().size)
-        rule.onNodeWithTag("open_changeset").performScrollTo().performClick()
+    private fun showBar(changesets: String, changes: ChangeStats?, opened: MutableList<Pair<String, String>> = mutableListOf()) = rule.setContent {
+        AhpTheme { SessionScreen(session(changesets), null, ConnState.Online, clock, {}, changes = changes, onOpenChangeset = { u, l -> opened += u to l }) }
+    }
+
+    @Test
+    fun theChangesInTheBarAreAButtonToTheFilesWhenThereIsOneSetToOpen() {
+        val opened = mutableListOf<Pair<String, String>>()
+        showBar("[$plain, $needsValues]", ChangeStats(1072, 8, 14), opened)
+
+        rule.onNodeWithTag("changes_chip").assertTextEquals("(+1072, \u22128)").assertContentDescriptionEquals("1072 lines added, 8 removed, in 14 files. Show the files")
+        rule.onNodeWithTag("changes_chip").performClick()
 
         assertEquals(listOf("ahp-changeset:/c1" to "Uncommitted"), opened)
     }
 
     @Test
-    fun aSessionWithNoChangesetsHasNoChangesSection() {
-        rule.setContent { AhpTheme { SessionScreen(session("[]"), null, ConnState.Online, Instant.parse("2026-10-26T10:30:00Z"), {}) } }
+    fun severalSetsOfChangesOpenAMenuToChooseFrom() {
+        val opened = mutableListOf<Pair<String, String>>()
+        showBar("[$plain, $second, $needsValues]", ChangeStats(5, 1), opened)
+
+        rule.onNodeWithTag("changes_chip").performClick()
+        assertEquals(emptyList<Pair<String, String>>(), opened)
+        rule.onAllNodesWithTag("open_changeset").assertCountEquals(2)
+        rule.onAllNodesWithTag("open_changeset")[1].performClick()
+
+        assertEquals(listOf("ahp-changeset:/c2" to "Last commit"), opened)
+    }
+
+    @Test
+    fun withNoTotalsButASetToOpenTheBarSaysChanges() {
+        showBar("[$plain]", null)
+
+        rule.onNodeWithTag("changes_chip").assertTextEquals("Changes").assertHasClickAction()
+    }
+
+    @Test
+    fun totalsWithNothingToOpenAreShownAsPlainText() {
+        showBar("[$needsValues]", ChangeStats(3, 0))
+
+        rule.onNodeWithTag("changes_chip").assertTextEquals("(+3, \u22120)").assertHasNoClickAction()
+    }
+
+    @Test
+    fun withNeitherTotalsNorASetToOpenThereIsNoChangesChip() {
+        showBar("[$needsValues]", null)
+        rule.onAllNodesWithTag("changes_chip").assertCountEquals(0)
+    }
+
+    @Test
+    fun theDetailsSheetNoLongerListsTheChanges() {
+        showBar("[$plain]", ChangeStats(3, 1))
         rule.onNodeWithTag("session_menu").performClick()
         rule.onNodeWithTag("menu_details").performClick()
         rule.waitForIdle()
 
-        rule.onNodeWithTag("changesets").assertDoesNotExist()
+        rule.onNodeWithTag("details_sheet").assertIsDisplayed()
+        rule.onAllNodesWithTag("changesets").assertCountEquals(0)
+        rule.onAllNodesWithTag("changeset_unsupported").assertCountEquals(0)
     }
 }

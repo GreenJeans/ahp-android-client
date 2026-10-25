@@ -57,14 +57,26 @@ class ScreensTest {
         onCopy: (String) -> Unit = {},
     ) = rule.setContent { AhpTheme { SignInScreen(state, onSignIn, onCancel, onOpen, onCopy) } }
 
+    private val browsers = listOf(BrowserOption("com.android.chrome", "Chrome"), BrowserOption("org.mozilla.firefox", "Firefox"))
+
     private fun showHosts(
-        list: HostList,
+        list: HostList?,
         expiresAt: Instant? = null,
         onRefresh: () -> Unit = {},
         onConnect: (TunnelInfo) -> Unit = {},
         onSignOut: () -> Unit = {},
         renews: Boolean = false,
-    ) = rule.setContent { AhpTheme { HostsScreen(AppState.Hosts(list, expiresAt, renews), onRefresh, onConnect, onSignOut) } }
+        connected: TunnelInfo? = null,
+        connection: ConnState? = null,
+        onDisconnect: () -> Unit = {},
+        browser: String? = null,
+        onBrowser: (String?) -> Unit = {},
+        onBack: () -> Unit = {},
+    ) = rule.setContent {
+        AhpTheme {
+            HostScreen(list, connected, connection, onBack, onRefresh, onConnect, onDisconnect, onSignOut, browsers, browser, onBrowser, tokenExpiresAt = expiresAt, renews = renews)
+        }
+    }
 
     // ---- sign in ----------------------------------------------------------------------------------------------
 
@@ -76,7 +88,7 @@ class ScreensTest {
         rule.onNodeWithTag("sign_in_button").assertIsDisplayed().assertHasClickAction().assertTouchTargetAtLeast(48.dp).performClick()
 
         assertEquals(1, taps)
-        rule.onNodeWithText("Use the same GitHub account", substring = true).assertIsDisplayed()
+        rule.onNodeWithText("Use the GitHub account", substring = true).assertIsDisplayed()
     }
 
     @Test
@@ -159,7 +171,7 @@ class ScreensTest {
     fun requestingACodeShowsProgressWithAWordLabel() {
         showSignIn(signedOut(SignInStep.RequestingCode))
 
-        rule.onNodeWithText("Requesting a code from GitHub", substring = true).assertIsDisplayed()
+        rule.onNodeWithText("Asking GitHub for a code", substring = true).assertIsDisplayed()
     }
 
     // ---- hosts ------------------------------------------------------------------------------------------------
@@ -169,9 +181,9 @@ class ScreensTest {
         showHosts(HostList.Loaded(listOf(HostEntry(online, isLastUsed = true), HostEntry(offline, isLastUsed = false))))
 
         rule.onNodeWithText("dev-box").assertIsDisplayed()
-        rule.onNodeWithText("Online · protocol v6 · last used").assertIsDisplayed()
+        rule.onNodeWithText("Online · v6 · last used").assertIsDisplayed()
         rule.onNodeWithText("old-laptop").assertIsDisplayed()
-        rule.onNodeWithText("Offline · protocol v5").assertIsDisplayed()
+        rule.onNodeWithText("Offline · v5").assertIsDisplayed()
         rule.onNodeWithText("VS Code is not connected", substring = true).assertIsDisplayed()
     }
 
@@ -180,7 +192,7 @@ class ScreensTest {
         var connected: TunnelInfo? = null
         showHosts(HostList.Loaded(listOf(HostEntry(online, false), HostEntry(offline, false))), onConnect = { connected = it })
 
-        rule.onNodeWithTag("host_t-offline").assertHasClickAction().assertTouchTargetAtLeast(72.dp).performClick()
+        rule.onNodeWithTag("host_t-offline").assertHasClickAction().assertTouchTargetAtLeast(56.dp).performClick()
 
         assertEquals(offline, connected)
     }
@@ -196,7 +208,7 @@ class ScreensTest {
     fun aSignInThatRenewsItselfSaysSoInsteadOfNamingTheHourItsTokenRunsOut() {
         showHosts(HostList.Loaded(listOf(HostEntry(online, false))), expiresAt = Instant.parse("2026-10-23T04:00:00Z"), renews = true)
 
-        rule.onNodeWithTag("token_expiry").assertIsDisplayed().assertTextContains("renews this on its own", substring = true)
+        rule.onNodeWithTag("token_expiry").assertIsDisplayed().assertTextContains("Renews itself", substring = true)
         rule.onAllNodesWithText("Signed in until", substring = true).assertCountEquals(0)
     }
 
@@ -229,25 +241,107 @@ class ScreensTest {
         showHosts(HostList.Loading)
 
         rule.onNodeWithTag("hosts_loading").assertIsDisplayed()
-        rule.onNodeWithText("Looking for your hosts", substring = true).assertIsDisplayed()
+        rule.onNodeWithText("Looking for hosts", substring = true).assertIsDisplayed()
     }
 
     @Test
-    fun signOutIsAlwaysAvailableInTheMenu() {
+    fun signOutIsAlwaysAvailableAndAsksFirstSoItIsNotPressedByAccident() {
         var signedOut = 0
         showHosts(HostList.Loading, onSignOut = { signedOut++ })
 
-        rule.onNodeWithTag("hosts_menu").assertContentDescriptionEquals("More options").assertTouchTargetAtLeast(48.dp).performClick()
-        rule.onNodeWithTag("sign_out").assertTouchTargetAtLeast(48.dp).performClick()
+        rule.onNodeWithTag("sign_out").assertIsDisplayed().assertTouchTargetAtLeast(48.dp).performClick()
+        assertEquals(0, signedOut)
+        rule.onNodeWithTag("sign_out_cancel").performClick()
+        rule.onNodeWithTag("sign_out_dialog").assertDoesNotExist()
+        assertEquals(0, signedOut)
 
+        rule.onNodeWithTag("sign_out").performClick()
+        rule.onNodeWithTag("sign_out_confirm").assertTouchTargetAtLeast(48.dp).performClick()
         assertEquals(1, signedOut)
     }
 
     @Test
-    fun signOutIsNotOneTapFromTheListSoItIsNotPressedByAccident() {
+    fun whileConnectedTheHostIsShownWithItsStatusAndAWayToSwitch() {
+        var switched = 0
+        showHosts(null, connected = online, connection = ConnState.Online, onDisconnect = { switched++ })
+
+        rule.onNodeWithTag("connected_host").assertIsDisplayed()
+        rule.onNodeWithText("dev-box").assertIsDisplayed()
+        rule.onNodeWithTag("disconnect").assertTouchTargetAtLeast(48.dp).performClick()
+        assertEquals(1, switched)
+        rule.onAllNodesWithTag("refresh_hosts").assertCountEquals(0)
+        rule.onAllNodesWithTag("host_t-online").assertCountEquals(0)
+    }
+
+    @Test
+    fun theBackArrowLeavesTheHostScreen() {
+        var backs = 0
+        showHosts(HostList.Loading, onBack = { backs++ })
+
+        rule.onNodeWithTag("back").performClick()
+
+        assertEquals(1, backs)
+    }
+
+    // ---- browser ----------------------------------------------------------------------------------------------
+
+    @Test
+    fun theBrowserRowNamesTheSystemDefaultUntilOneIsChosen() {
         showHosts(HostList.Loading)
 
-        rule.onNodeWithTag("sign_out").assertDoesNotExist()
+        rule.onNodeWithTag("browser_label", useUnmergedTree = true).assertTextContains("System default")
+    }
+
+    @Test
+    fun theBrowserRowNamesTheChosenBrowser() {
+        showHosts(HostList.Loading, browser = "org.mozilla.firefox")
+
+        rule.onNodeWithTag("browser_label", useUnmergedTree = true).assertTextContains("Firefox")
+    }
+
+    @Test
+    fun aChosenBrowserThatIsNoLongerInstalledFallsBackToTheSystemDefaultInTheRow() {
+        showHosts(HostList.Loading, browser = "org.removed.browser")
+
+        rule.onNodeWithTag("browser_label", useUnmergedTree = true).assertTextContains("System default")
+    }
+
+    @Test
+    fun thePickerOffersTheSystemDefaultAndEachInstalledBrowserAndReportsThePick() {
+        val picks = mutableListOf<String?>()
+        showHosts(HostList.Loading, onBrowser = { picks += it })
+
+        rule.onNodeWithTag("browser_row").performClick()
+        rule.onNodeWithTag("browser_dialog").assertIsDisplayed()
+        rule.onNodeWithTag("browser_default").assertIsDisplayed()
+        rule.onAllNodesWithTag("browser_option").assertCountEquals(2)
+        rule.onNodeWithText("Firefox").assertTouchTargetAtLeast(48.dp).performClick()
+
+        assertEquals(listOf<String?>("org.mozilla.firefox"), picks)
+        rule.onNodeWithTag("browser_dialog").assertDoesNotExist()
+    }
+
+    @Test
+    fun choosingTheSystemDefaultReportsNull() {
+        val picks = mutableListOf<String?>("sentinel")
+        showHosts(HostList.Loading, browser = "com.android.chrome", onBrowser = { picks += it })
+
+        rule.onNodeWithTag("browser_row").performClick()
+        rule.onNodeWithTag("browser_default").performClick()
+
+        assertEquals(listOf<String?>("sentinel", null), picks)
+    }
+
+    @Test
+    fun cancellingThePickerChangesNothing() {
+        val picks = mutableListOf<String?>()
+        showHosts(HostList.Loading, onBrowser = { picks += it })
+
+        rule.onNodeWithTag("browser_row").performClick()
+        rule.onNodeWithTag("browser_cancel").performClick()
+
+        assertTrue(picks.isEmpty())
+        rule.onNodeWithTag("browser_dialog").assertDoesNotExist()
     }
 
     // ---- connected --------------------------------------------------------------------------------------------

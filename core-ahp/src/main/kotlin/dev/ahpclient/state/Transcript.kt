@@ -33,6 +33,9 @@ enum class ToolState(val label: String) {
     UNKNOWN("Unknown"),
 }
 
+/** How a finished turn ended. */
+enum class TurnOutcome { DONE, STOPPED, FAILED }
+
 /** One row of the transcript. [key] is unique within a transcript and stable while the chat grows, so a list can key on it. */
 sealed interface TranscriptItem {
     val key: String
@@ -48,6 +51,9 @@ sealed interface TranscriptItem {
     data class Tool(override val key: String, val name: String, val summary: String?, val state: ToolState, val source: ToolCallState? = null) : TranscriptItem
 
     data class Notice(override val key: String, val text: String, val isError: Boolean = false) : TranscriptItem
+
+    /** The end of a finished turn, so it is plain when the agent has stopped, and for how long it worked. */
+    data class TurnEnd(override val key: String, val outcome: TurnOutcome, val durationMs: Long?) : TranscriptItem
 
     data class Question(override val key: String, val request: InputRequestView, val answered: Boolean, val form: InputForm? = null) : TranscriptItem
 
@@ -66,7 +72,16 @@ data class Transcript(
     val items: List<TranscriptItem>,
     /** True when the host holds turns older than the first one loaded, so `ChatStore.loadOlder` can ask for them. */
     val hasOlder: Boolean,
+    /** A turn is in progress: the agent is working, or waiting on the person. */
+    val running: Boolean = false,
 ) {
+    /** The turn that is running has stopped for the person: a call waiting to be approved or signed in, or a question to answer. Nothing is being worked on then. */
+    val waitingOnYou: Boolean
+        get() = running && items.takeLastWhile { it !is TranscriptItem.User }.any {
+            (it is TranscriptItem.Tool && (it.state == ToolState.WAITING_FOR_APPROVAL || it.state == ToolState.SIGN_IN_REQUIRED)) ||
+                (it is TranscriptItem.Question && !it.answered)
+        }
+
     companion object {
         const val UNTITLED_CHAT = "Chat"
 
@@ -75,11 +90,12 @@ data class Transcript(
             val items = ArrayList<TranscriptItem>()
             for (turn in chat.turns) {
                 addTurn(items, keys, turn.id, turn.message, turn.responseParts, live = false)
-                when (turn.state) {
-                    TurnState.CANCELLED -> items += TranscriptItem.Notice(keys.unique("${turn.id}/outcome"), "Stopped before it finished")
-                    TurnState.ERROR -> items += TranscriptItem.Notice(keys.unique("${turn.id}/outcome"), "Ended with an error", isError = true)
-                    else -> Unit
+                val outcome = when (turn.state) {
+                    TurnState.CANCELLED -> TurnOutcome.STOPPED
+                    TurnState.ERROR -> TurnOutcome.FAILED
+                    else -> TurnOutcome.DONE
                 }
+                items += TranscriptItem.TurnEnd(keys.unique("${turn.id}/end"), outcome, turn.duration?.takeIf { it >= 0 })
             }
             chat.activeTurn?.let { addTurn(items, keys, it.id, it.message, it.responseParts, live = true) }
             return Transcript(
@@ -88,6 +104,7 @@ data class Transcript(
                 activity = chat.activity?.takeIf { it.isNotBlank() },
                 items = items,
                 hasOlder = chat.turnsNextCursor != null,
+                running = chat.activeTurn != null,
             )
         }
 

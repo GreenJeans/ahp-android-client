@@ -25,6 +25,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -32,12 +33,15 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import dev.ahpclient.state.ChatGoneException
 import dev.ahpclient.state.ChatNotLoadedException
 import dev.ahpclient.state.ConnState
+import dev.ahpclient.state.LinkTarget
 import dev.ahpclient.state.Transcript
 import dev.ahpclient.state.TranscriptItem
 import dev.ahpclient.state.TranscriptRowModel
@@ -81,6 +85,8 @@ fun ChatScreen(
     onOpenTerminal: ((String) -> Unit)? = null,
     backLabel: String = "Back to session",
     onRetry: (() -> Unit)? = null,
+    textScale: Float = 1f,
+    onTextScale: ((Float) -> Unit)? = null,
 ) {
     ScreenScaffold(
         title = transcript?.title ?: "Chat",
@@ -91,7 +97,7 @@ fun ChatScreen(
         large = false,
         modifier = modifier,
     ) {
-        ChatPane(transcript, error, loadingOlder, olderError, connection, onLoadOlder, onOpenLink, Modifier, expanded, onToggle, actions, onOpenSubagent, onOpenTerminal, onRetry)
+        ChatPane(transcript, error, loadingOlder, olderError, connection, onLoadOlder, onOpenLink, Modifier, expanded, onToggle, actions, onOpenSubagent, onOpenTerminal, onRetry, textScale, onTextScale)
     }
 }
 
@@ -116,34 +122,50 @@ fun ChatPane(
     onOpenSubagent: ((String) -> Unit)? = null,
     onOpenTerminal: ((String) -> Unit)? = null,
     onRetry: (() -> Unit)? = null,
+    /** The size of the text, as a multiple of the system's; [onTextScale], when given, is asked to change it as the person pinches the chat. */
+    textScale: Float = 1f,
+    onTextScale: ((Float) -> Unit)? = null,
 ) {
-    var pendingLink by rememberSaveable { mutableStateOf<String?>(null) }
+    // Kept as the text it came from: that survives the app being recreated, and a target is made from it again.
+    var pendingRaw by rememberSaveable { mutableStateOf<String?>(null) }
+    val pendingLink = pendingRaw?.let(LinkTarget::of)
     val notLoaded = error as? ChatNotLoadedException
-    Column(modifier = modifier.fillMaxSize()) {
-        if (connection != ConnState.Online || transcript?.activity != null) {
-            Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                if (connection != ConnState.Online) ConnectionLine(connection)
-                transcript?.activity?.let { Text(it, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("chat_activity")) }
+    // The text of the chat, and the box under it, follow the person's size; the bars around them keep the system's.
+    val base = LocalDensity.current
+    val scaled = remember(base, textScale) { Density(base.density, base.fontScale * textScale) }
+    CompositionLocalProvider(LocalDensity provides scaled) {
+        Column(modifier = modifier.fillMaxSize().let { if (onTextScale != null) it.pinchToScale(textScale, onTextScale) else it }) {
+            if (connection != ConnState.Online) ConnectionLine(connection, Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+            if (transcript?.running == true && !transcript.waitingOnYou) WorkingBar()
+            when {
+                error is ChatGoneException -> ErrorText("This chat is no longer on the host.", Modifier.padding(horizontal = 16.dp).testTag("chat_gone"))
+                notLoaded != null && transcript == null ->
+                    NotLoaded(notLoaded, onRetry, stale = false, Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                transcript != null -> {
+                    if (notLoaded != null) NotLoaded(notLoaded, onRetry, stale = true, Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                    TranscriptList(
+                        transcript, loadingOlder, olderError, onLoadOlder,
+                        { link -> if (LinkTarget.of(link) != null) pendingRaw = link },
+                        expanded, onToggle, actions, onOpenSubagent, onOpenTerminal, Modifier.weight(1f),
+                    )
+                }
+                error != null -> ErrorText("Could not load this chat (${error.javaClass.simpleName}).", Modifier.padding(horizontal = 16.dp).testTag("chat_error"))
+                else -> LoadingChat(Modifier.padding(horizontal = 16.dp))
             }
+            if (actions != null && transcript != null) Composer(actions)
         }
-        when {
-            error is ChatGoneException -> ErrorText("This chat is no longer on the host.", Modifier.padding(horizontal = 24.dp).testTag("chat_gone"))
-            notLoaded != null && transcript == null ->
-                NotLoaded(notLoaded, onRetry, stale = false, Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
-            transcript != null -> {
-                if (notLoaded != null) NotLoaded(notLoaded, onRetry, stale = true, Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
-                TranscriptList(transcript, loadingOlder, olderError, onLoadOlder, { pendingLink = it }, expanded, onToggle, actions, onOpenSubagent, onOpenTerminal, Modifier.weight(1f))
-            }
-            error != null -> ErrorText("Could not load this chat (${error.javaClass.simpleName}).", Modifier.padding(horizontal = 24.dp).testTag("chat_error"))
-            else -> LoadingChat(Modifier.padding(horizontal = 24.dp))
+        pendingLink?.let { target ->
+            LinkConfirmDialog(target = target, onOpen = { pendingRaw = null; onOpenLink(rawOf(target)) }, onDismiss = { pendingRaw = null })
         }
-        if (actions != null && transcript != null) Composer(actions)
-    }
-    pendingLink?.let { link ->
-        LinkConfirmDialog(url = link, onOpen = { pendingLink = null; onOpenLink(link) }, onDismiss = { pendingLink = null })
     }
 }
 
+/** What to hand the phone to open: the address a target was made from. */
+private fun rawOf(target: LinkTarget): String = when (target) {
+    is LinkTarget.Web -> target.url
+    is LinkTarget.Mail -> "mailto:${target.address}"
+    is LinkTarget.Phone -> "tel:${target.number}"
+}
 /** Why a chat is not there (or not up to date) and the way to ask for it again. A long chat is the usual reason. */
 @Composable
 private fun NotLoaded(failure: ChatNotLoadedException, onRetry: (() -> Unit)?, stale: Boolean, modifier: Modifier = Modifier) {
@@ -232,8 +254,12 @@ private fun TranscriptList(
             state = listState,
             reverseLayout = true,
             modifier = Modifier.fillMaxSize().testTag("transcript"),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
         ) {
+            // The newest row, at the bottom: for as long as the turn runs, the sign that it does (or that it is held up on the person).
+            if (transcript.running) {
+                item(key = WORKING_KEY, contentType = WORKING_KEY) { WorkingRow(transcript.activity, transcript.waitingOnYou, Modifier.padding(top = 8.dp)) }
+            }
             itemsIndexed(newestFirst, key = { _, row -> row.key }, contentType = { _, row -> row::class }) { index, row ->
                 TranscriptRow(
                     row,
@@ -265,14 +291,16 @@ private fun TranscriptList(
  */
 private fun rowGap(row: TranscriptRowModel, before: TranscriptRowModel?): Dp = when {
     before == null -> 0.dp
-    row.isUser() -> 28.dp
-    before.isUser() -> 16.dp
-    else -> 10.dp
+    row.isUser() -> 20.dp
+    before.isUser() -> 10.dp
+    else -> 8.dp
 }
 
 private fun TranscriptRowModel.isUser(): Boolean = this is TranscriptRowModel.Single && item is TranscriptItem.User
 
 private const val OLDER_KEY = "older"
+
+private const val WORKING_KEY = "working"
 
 private fun LazyListState.atNewest(): Boolean = firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset == 0
 

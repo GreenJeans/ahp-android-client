@@ -18,6 +18,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.BottomSheetDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -26,6 +28,7 @@ import androidx.compose.material3.PrimaryScrollableTabRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -46,6 +49,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.ahpclient.state.ActivityState
+import dev.ahpclient.state.ChangeStats
+import dev.ahpclient.state.ChangesetEntry
 import dev.ahpclient.state.ChatRow
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.SessionDetail
@@ -72,6 +77,10 @@ fun SessionScreen(
     now: Instant,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Opens the side menu; the bar starts with its button when given. */
+    onMenu: (() -> Unit)? = null,
+    /** The totals of what the session has changed, for the bar. */
+    changes: ChangeStats? = null,
     shownChat: String? = null,
     onSelectChat: (String) -> Unit = {},
     manage: ManageActionsUi? = null,
@@ -103,12 +112,14 @@ fun SessionScreen(
         title = detail?.title ?: "Session",
         subtitle = detail?.let { listOfNotNull(it.state.label, it.project).joinToString(" · ") },
         onBack = onBack,
-        backLabel = "Back to sessions",
+        onMenu = onMenu,
+        backLabel = "Back",
         titleTag = "detail_title",
         large = false,
         modifier = modifier,
         actions = {
             if (detail != null) {
+                ChangesChip(changes, detail.changesets, onOpenChangeset)
                 SessionMenu(
                     detail = detail,
                     sessionUri = sessionUri,
@@ -123,7 +134,7 @@ fun SessionScreen(
         },
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            if (connection != ConnState.Online) ConnectionLine(connection, Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
+            if (connection != ConnState.Online) ConnectionLine(connection, Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
             when {
                 error is SessionGoneException -> ErrorText("This session is no longer on the host.", Modifier.padding(24.dp).testTag("session_gone"))
                 detail != null -> {
@@ -144,24 +155,54 @@ fun SessionScreen(
         }
     }
     if (showDetails && detail != null) {
-        DetailsSheet(detail, onDismiss = { showDetails = false }, onOpenChangeset = { uri, label -> showDetails = false; onOpenChangeset(uri, label) })
+        DetailsSheet(detail, onDismiss = { showDetails = false })
     }
 }
 
+/**
+ * What the session has changed, as the host totals it, "(+1072, −8)": a button to the files when there is one set of changes to open, a
+ * menu of them when there are several, and plain text when the host lists none this app can show.
+ */
+@Composable
+private fun ChangesChip(stats: ChangeStats?, changesets: List<ChangesetEntry>, onOpenChangeset: (uri: String, label: String) -> Unit) {
+    val openable = changesets.filter { it.uri != null }
+    val text = stats?.text ?: if (openable.isNotEmpty()) "Changes" else return
+    val spoken = stats?.spoken ?: "Changes"
+    var menu by remember { mutableStateOf(false) }
+    when {
+        openable.isEmpty() -> Text(
+            text,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 8.dp).semantics { contentDescription = spoken }.testTag("changes_chip"),
+        )
+        else -> Box {
+            TextButton(
+                onClick = { if (openable.size == 1) onOpenChangeset(openable[0].uri!!, openable[0].label) else menu = true },
+                modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "$spoken. Show the files" }.testTag("changes_chip"),
+            ) { Text(text, style = MaterialTheme.typography.labelLarge, maxLines = 1) }
+            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                openable.forEach { entry ->
+                    DropdownMenuItem(text = { Text(entry.label) }, onClick = { menu = false; onOpenChangeset(entry.uri!!, entry.label) }, modifier = Modifier.testTag("open_changeset"))
+                }
+            }
+        }
+    }
+}
 /** What the person needs to know before the chat: the session is archived, is still starting, failed to start, or an action went wrong. */
 @Composable
 private fun SessionBanners(detail: SessionDetail, notice: String?) {
-    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        if (detail.isArchived) Text("Archived", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp).testTag("detail_archived"))
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        if (detail.isArchived) Text("Archived", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 4.dp).testTag("detail_archived"))
         when (detail.phase) {
             // A new session's chat is held back by the host until the first message is sent, so this can stay for as long as it takes to write one.
             SessionPhase.CREATING -> Text(
-                "Starting on the host. A new session may wait for your first message: send one in the chat below.",
+                "Starting. The host may wait for your first message: send one below.",
                 style = MaterialTheme.typography.bodyLarge,
                 modifier = Modifier.padding(vertical = 8.dp).testTag("session_starting").semantics { liveRegion = LiveRegionMode.Polite },
             )
             SessionPhase.FAILED -> ErrorText(
-                "The host could not start this session." + (detail.creationError?.let { " $it" }.orEmpty()),
+                "Could not start this session." + (detail.creationError?.let { " $it" }.orEmpty()),
                 Modifier.padding(vertical = 8.dp).testTag("session_failed"),
             )
             SessionPhase.READY, SessionPhase.OTHER -> Unit
@@ -210,7 +251,7 @@ private fun ChatTabs(chats: List<ChatRow>, shownChat: String?, onSelect: (String
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DetailsSheet(detail: SessionDetail, onDismiss: () -> Unit, onOpenChangeset: (uri: String, label: String) -> Unit) {
+private fun DetailsSheet(detail: SessionDetail, onDismiss: () -> Unit) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -244,30 +285,6 @@ private fun DetailsSheet(detail: SessionDetail, onDismiss: () -> Unit, onOpenCha
             }
 
             Facts(detail)
-
-            if (detail.changesets.isNotEmpty()) {
-                Column(modifier = Modifier.testTag("changesets")) {
-                    SectionHeader("Changes", Modifier.padding(horizontal = 0.dp))
-                    detail.changesets.forEachIndexed { index, entry ->
-                        val uri = entry.uri
-                        val shape = connectedShape(index, detail.changesets.size)
-                        if (index > 0) Spacer(Modifier.height(Design.Gap))
-                        if (uri != null) {
-                            TileCard(
-                                shape = shape,
-                                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                                onClick = { onOpenChangeset(uri, entry.label) },
-                                onClickLabel = "Open changes",
-                                modifier = Modifier.semantics(mergeDescendants = true) {}.testTag("open_changeset"),
-                            ) { TileRow(entry.label, subtitle = "See the files it changed") }
-                        } else {
-                            TileCard(shape = shape, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
-                                TileRow(entry.label, subtitle = "Not shown here yet", modifier = Modifier.semantics(mergeDescendants = true) {}.testTag("changeset_unsupported"))
-                            }
-                        }
-                    }
-                }
-            }
         }
     }
 }

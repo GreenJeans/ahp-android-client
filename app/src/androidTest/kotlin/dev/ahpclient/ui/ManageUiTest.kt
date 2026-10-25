@@ -112,7 +112,7 @@ class ManageUiTest {
         showToggle(initial = false)
 
         rule.onNodeWithTag("management_toggle").assertIsOff()
-        rule.onNodeWithTag("management_hint").assertTextContains("cannot start, archive or remove", substring = true)
+        rule.onNodeWithTag("management_hint").assertTextContains("no starting, archiving or removing", substring = true)
     }
 
     @Test
@@ -148,7 +148,7 @@ class ManageUiTest {
         showToggle(initial = false, available = false)
 
         rule.onNodeWithTag("management_toggle").assertIsNotEnabled()
-        rule.onNodeWithTag("management_hint").assertTextContains("act for me", substring = true)
+        rule.onNodeWithTag("management_hint").assertTextContains("Act for me", substring = true)
         rule.onNodeWithTag("management_toggle").performClick()
 
         rule.onNodeWithTag("management_dialog_text").assertDoesNotExist()
@@ -905,16 +905,16 @@ class ManageUiTest {
     fun aSessionThatFailedToStartSaysSoWithTheHostsReason() {
         showDetail(state("failed", ""","creationError":{"errorType":"E","message":"no licence"}"""), manage = null)
 
-        rule.onNodeWithTag("session_failed").assertTextContains("The host could not start this session.", substring = true).assertTextContains("no licence", substring = true)
+        rule.onNodeWithTag("session_failed").assertTextContains("Could not start this session.", substring = true).assertTextContains("no licence", substring = true)
     }
 
     @Test
-    fun theListOffersANewSessionOnlyWhenItMayBeManaged() {
+    fun theDrawerOffersANewSessionOnlyWhenItMayBeManaged() {
         val host = TunnelInfo("t-online", "usw2", "dev-box", 6, 1, listOf(31546))
         var manage by mutableStateOf<ManageActionsUi?>(null)
         rule.setContent {
             AhpTheme {
-                SessionsScreen(host, ConnState.Online, emptyList(), now, false, rememberLazyListState(), {}, {}, {}, manage = manage)
+                Drawer(host, emptyList(), manage)
             }
         }
 
@@ -923,6 +923,14 @@ class ManageUiTest {
         manage = actions(Calls())
         rule.waitForIdle()
         rule.onNodeWithTag("new_session").assertIsDisplayed()
+    }
+
+    @Test
+    fun theDrawerOffersNoNewSessionWhileNotConnectedEvenWhenManaging() {
+        rule.setContent { AhpTheme { Drawer(null, emptyList(), actions(Calls())) } }
+
+        rule.onNodeWithTag("drawer_no_host").assertIsDisplayed()
+        rule.onNodeWithTag("new_session").assertDoesNotExist()
     }
 
     @Test
@@ -937,6 +945,12 @@ class ManageUiTest {
         rule.waitForIdle()
         rule.onNodeWithTag("management_toggle").assertIsEnabled()
     }
+
+    @androidx.compose.runtime.Composable
+    private fun Drawer(host: TunnelInfo?, sessions: List<SessionSummary>, manage: ManageActionsUi?) = DrawerContent(
+        host, ConnState.Online, sessions, now, selected = null, showArchived = false, onToggleArchived = {}, query = "", onQueryChange = {},
+        listState = rememberLazyListState(), manage = manage, onOpenHost = {}, onOpenSession = {}, onOpenSettings = {}, onSessionCreated = {},
+    )
 
     private fun androidx.compose.ui.test.junit4.ComposeContentTestRule.onAllNodesCount(tag: String) =
         onAllNodes(androidx.compose.ui.test.hasTestTag(tag)).fetchSemanticsNodes().size
@@ -953,7 +967,7 @@ class ManageUiTest {
         rule.setContent {
             AhpTheme {
                 androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.size(width, height)) {
-                    SessionsScreen(host, ConnState.Online, sessions, now, false, rememberLazyListState(), {}, {}, {}, manage = actions(Calls()))
+                    Drawer(host, sessions, actions(Calls()))
                 }
             }
         }
