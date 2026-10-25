@@ -36,6 +36,8 @@ import dev.ahpclient.data.UiSettings
 import dev.ahpclient.state.ChangeStats
 import dev.ahpclient.state.ChatInteractor
 import dev.ahpclient.state.ConnState
+import com.microsoft.agenthostprotocol.generated.SessionState
+import dev.ahpclient.state.CustomAgents
 import dev.ahpclient.state.HostSession
 import dev.ahpclient.state.ModelOptions
 import dev.ahpclient.tunnel.TunnelInfo
@@ -250,6 +252,7 @@ private fun SessionPage(
     onMenu: () -> Unit,
 ) {
     val chat = open.chat
+    val sessionState by open.store.state.collectAsStateWithLifecycle()
     val changeset = open.changeset
     val terminal = open.terminal
     if (terminal != null) {
@@ -276,9 +279,8 @@ private fun SessionPage(
         }
     } else if (chat != null && chat.parent != null) {
         // A subagent's transcript is a screen of its own over the session.
-        OpenChatView(chat, connected.session, connection, rootState, controller, ui, screen = true, modifier = Modifier)
+        OpenChatView(chat, connected.session, connection, rootState, sessionState, controller, ui, screen = true, modifier = Modifier)
     } else {
-        val sessionState by open.store.state.collectAsStateWithLifecycle()
         val error by open.store.error.collectAsStateWithLifecycle()
         val now by rememberNow()
         val changes = remember(listed, open.uri) { ChangeStats.of(listed.firstOrNull { it.resource == open.uri }?.changes) }
@@ -297,7 +299,7 @@ private fun SessionPage(
             onRemoved = controller::closeSession,
             onOpenChangeset = { uri, label -> onChangesetTitle(label); controller.openChangeset(uri) },
         ) {
-            if (chat != null) OpenChatView(chat, connected.session, connection, rootState, controller, ui, screen = false, modifier = Modifier)
+            if (chat != null) OpenChatView(chat, connected.session, connection, rootState, sessionState, controller, ui, screen = false, modifier = Modifier)
         }
     }
 }
@@ -309,6 +311,7 @@ private fun OpenChatView(
     session: HostSession,
     connection: ConnState,
     rootState: Any?,
+    sessionState: SessionState?,
     controller: AppController,
     ui: UiSettings,
     screen: Boolean,
@@ -334,9 +337,11 @@ private fun OpenChatView(
     }
     val models = remember(chat.interactor, rootState) { chat.interactor.modelOptions() }
     val inUse = ModelOptions.inUse(chatState, models)
+    val agents = remember(sessionState) { CustomAgents.of(sessionState) }
+    val agentInUse = CustomAgents.inUse(chatState)
     // Nothing to act with unless the connection allows it and the host shows this chat as interactive.
     val actions = if (ChatInteractor.available(chatState, canInteract)) {
-        remember(chat.interactor, running, models, inUse) {
+        remember(chat.interactor, running, models, inUse, agents, agentInUse) {
             ChatActionsUi(
                 running = running,
                 send = chat.interactor::send,
@@ -352,6 +357,8 @@ private fun OpenChatView(
                 dismiss = chat.interactor::dismissInput,
                 models = models,
                 modelInUse = inUse,
+                agents = agents,
+                agentInUse = agentInUse,
             )
         }
     } else {

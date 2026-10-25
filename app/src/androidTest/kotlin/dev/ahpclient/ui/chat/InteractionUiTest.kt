@@ -38,6 +38,8 @@ import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.ahpclient.state.ActivityState
 import dev.ahpclient.state.AnswerValue
+import dev.ahpclient.state.AgentChoice
+import dev.ahpclient.state.AgentPick
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.DispatchOutcome
 import dev.ahpclient.state.FormOption
@@ -71,6 +73,8 @@ class InteractionUiTest {
     private class Calls {
         val sent = mutableListOf<String>()
         val sentModels = mutableListOf<ModelChoice?>()
+        val sentAgents = mutableListOf<AgentPick>()
+        val steeredAgents = mutableListOf<AgentPick>()
         val steeredModels = mutableListOf<ModelChoice?>()
         val steered = mutableListOf<String>()
         var cancels = 0
@@ -85,10 +89,10 @@ class InteractionUiTest {
         var result: InteractResult = InteractResult.Sent(DispatchOutcome.Accepted)
     }
 
-    private fun actions(calls: Calls, running: Boolean = false, models: List<ModelOption> = emptyList(), modelInUse: ModelChoice? = null) = ChatActionsUi(
+    private fun actions(calls: Calls, running: Boolean = false, models: List<ModelOption> = emptyList(), modelInUse: ModelChoice? = null, agents: List<AgentChoice> = emptyList(), agentInUse: String? = null) = ChatActionsUi(
         running = running,
-        send = { text, model -> calls.sent += text; calls.sentModels += model; calls.result },
-        steer = { text, model -> calls.steered += text; calls.steeredModels += model; calls.result },
+        send = { text, model, agent -> calls.sent += text; calls.sentModels += model; calls.sentAgents += agent; calls.result },
+        steer = { text, model, agent -> calls.steered += text; calls.steeredModels += model; calls.steeredAgents += agent; calls.result },
         cancel = { calls.cancels++; calls.result },
         approve = { id, option -> calls.approved += id to option; calls.result },
         deny = { id, option -> calls.denied += id to option; calls.result },
@@ -100,6 +104,8 @@ class InteractionUiTest {
         dismiss = { calls.dismissed += it; calls.result },
         models = models,
         modelInUse = modelInUse,
+        agents = agents,
+        agentInUse = agentInUse,
     )
 
     private fun transcript(vararg items: TranscriptItem) = Transcript("Fix the build", ActivityState.IN_PROGRESS, null, items.toList(), hasOlder = false)
@@ -220,10 +226,10 @@ class InteractionUiTest {
         rule.onNodeWithTag("model_default").assertIsDisplayed().assertIsSelected()
     }
 
-    private fun showInWindowOfHeight(heightDp: Int) = rule.setContent {
+    private fun showInWindowOfHeight(heightDp: Int, agents: List<AgentChoice> = emptyList(), agentInUse: String? = null) = rule.setContent {
         AhpTheme {
             androidx.compose.foundation.layout.Box(Modifier.size(360.dp, heightDp.dp)) {
-                ChatScreen(transcript(), null, false, null, ConnState.Online, {}, {}, {}, actions = actions(Calls(), models = listOf(auto, sonnet)))
+                ChatScreen(transcript(), null, false, null, ConnState.Online, {}, {}, {}, actions = actions(Calls(), models = listOf(auto, sonnet), agents = agents, agentInUse = agentInUse))
             }
         }
     }
@@ -414,6 +420,194 @@ class InteractionUiTest {
         rule.onNodeWithTag("model_button").assertTextContains("Claude Sonnet 5.5 · Thorough", substring = true)
         sendHi()
         assertEquals(listOf<ModelChoice?>(ModelChoice("claude-sonnet-5.5", mapOf("thinking" to "high"))), calls.sentModels)
+    }
+
+    // ---- the custom agent ---------------------------------------------------------------------------------------
+
+    private val plan = AgentChoice("file:///a/plan.agent.md", "plan", "Plan first, then act")
+    private val review = AgentChoice("file:///a/review.agent.md", "review", null)
+
+    @Test
+    fun withNoAgentsOfferedAndNoneInUseThereIsNoAgentChip() {
+        show(transcript(), actions(Calls(), models = listOf(auto)))
+
+        rule.onNodeWithTag("agent_button").assertDoesNotExist()
+    }
+
+    @Test
+    fun theChipSaysDefaultAgentForAChatOnNoCustomAgent() {
+        show(transcript(), actions(Calls(), agents = listOf(plan, review)))
+
+        rule.onNodeWithTag("agent_button").assertTextContains("Default agent").assertContentDescriptionEquals("Agent: Default agent")
+    }
+
+    @Test
+    fun theChipNamesTheAgentTheChatIsOn_byItsOfferedName_else_byItsFile() {
+        show(transcript(), actions(Calls(), agents = listOf(plan, review), agentInUse = plan.uri))
+        rule.onNodeWithTag("agent_button").assertTextContains("plan")
+    }
+
+    @Test
+    fun anAgentTheHostNoLongerListsIsStillNamedByItsFile() {
+        show(transcript(), actions(Calls(), agents = listOf(review), agentInUse = "file:///a/gone.agent.md"))
+
+        rule.onNodeWithTag("agent_button").assertTextContains("gone")
+    }
+
+    @Test
+    fun sendingKeepsTheAgentTheChatIsOnWhenNothingWasPicked() {
+        val calls = Calls()
+        show(transcript(), actions(calls, agents = listOf(plan, review), agentInUse = plan.uri))
+
+        sendHi()
+
+        assertEquals(listOf<AgentPick>(AgentPick.Keep), calls.sentAgents)
+    }
+
+    @Test
+    fun theDialogListsDefaultAndEachAgentWithItsDescriptionAndMarksTheOneInUse() {
+        show(transcript(), actions(Calls(), agents = listOf(plan, review), agentInUse = plan.uri))
+
+        rule.onNodeWithTag("agent_button").performClick()
+
+        rule.onNodeWithTag("agent_dialog").assertIsDisplayed()
+        rule.onNodeWithTag("agent_default").assert(isSelectable()).assertIsNotSelected().assertHeightIsAtLeast(48.dp)
+        rule.onAllNodesWithTag("agent_option").assertCountEquals(2)
+        rule.onAllNodesWithTag("agent_option")[0].assertIsSelected().assertTextContains("Plan first, then act", substring = true)
+        rule.onAllNodesWithTag("agent_option")[1].assertIsNotSelected().assertHeightIsAtLeast(48.dp)
+    }
+
+    @Test
+    fun anAgentPickedIsShownAndSentWithEveryMessageUntilChanged() {
+        val calls = Calls()
+        show(transcript(), actions(calls, agents = listOf(plan, review), agentInUse = null))
+
+        rule.onNodeWithTag("agent_button").performClick()
+        rule.onAllNodesWithTag("agent_option")[1].performClick()
+        rule.onNodeWithTag("agent_use").performClick()
+        rule.onNodeWithTag("agent_button").assertTextContains("review")
+        sendHi()
+        sendHi()
+
+        assertEquals(listOf<AgentPick>(AgentPick.Use(review.uri), AgentPick.Use(review.uri)), calls.sentAgents)
+        rule.onNodeWithTag("agent_button").assertTextContains("review")
+    }
+
+    @Test
+    fun anAgentPickedGoesWithASteeringMessageToo() {
+        val calls = Calls()
+        show(transcript(), actions(calls, running = true, agents = listOf(plan, review)))
+
+        rule.onNodeWithTag("agent_button").performClick()
+        rule.onAllNodesWithTag("agent_option")[0].performClick()
+        rule.onNodeWithTag("agent_use").performClick()
+        rule.onNodeWithTag("composer_input").performTextInput("now")
+        rule.onNodeWithTag("composer_steer").performClick()
+        rule.waitForIdle()
+
+        assertEquals(listOf<AgentPick>(AgentPick.Use(plan.uri)), calls.steeredAgents)
+    }
+
+    @Test
+    fun choosingDefaultAgentOnAChatThatIsOnOneSendsNone() {
+        val calls = Calls()
+        show(transcript(), actions(calls, agents = listOf(plan, review), agentInUse = plan.uri))
+
+        rule.onNodeWithTag("agent_button").performClick()
+        rule.onNodeWithTag("agent_default").performClick()
+        rule.onNodeWithTag("agent_use").performClick()
+        rule.onNodeWithTag("agent_button").assertTextContains("Default agent")
+        sendHi()
+
+        assertEquals(listOf<AgentPick>(AgentPick.None), calls.sentAgents)
+    }
+
+    @Test
+    fun choosingTheAgentTheChatIsAlreadyOnIsKeepSoALaterChangeElsewhereIsNotUndone() {
+        val calls = Calls()
+        show(transcript(), actions(calls, agents = listOf(plan, review), agentInUse = plan.uri))
+
+        rule.onNodeWithTag("agent_button").performClick()
+        rule.onAllNodesWithTag("agent_option")[1].performClick()
+        rule.onAllNodesWithTag("agent_option")[0].performClick()
+        rule.onNodeWithTag("agent_use").performClick()
+        sendHi()
+
+        assertEquals(listOf<AgentPick>(AgentPick.Keep), calls.sentAgents)
+    }
+
+    @Test
+    fun cancellingTheAgentDialogChangesNothing() {
+        val calls = Calls()
+        show(transcript(), actions(calls, agents = listOf(plan, review), agentInUse = plan.uri))
+
+        rule.onNodeWithTag("agent_button").performClick()
+        rule.onAllNodesWithTag("agent_option")[1].performClick()
+        rule.onNodeWithTag("agent_cancel").performClick()
+
+        rule.onNodeWithTag("agent_dialog").assertDoesNotExist()
+        rule.onNodeWithTag("agent_button").assertTextContains("plan")
+        sendHi()
+        assertEquals(listOf<AgentPick>(AgentPick.Keep), calls.sentAgents)
+    }
+
+    @Test
+    fun anAgentTheChatIsOnButTheHostNoLongerListsIsShownInTheDialogAndCanBeLeft() {
+        show(transcript(), actions(Calls(), agents = listOf(review), agentInUse = "file:///a/gone.agent.md"))
+
+        rule.onNodeWithTag("agent_button").performClick()
+
+        rule.onAllNodesWithTag("agent_option").assertCountEquals(2)
+        rule.onAllNodesWithTag("agent_option")[0].assertIsSelected().assertTextContains("Not offered now", substring = true)
+    }
+
+    @Test
+    fun aPickedAgentTheHostStopsOfferingIsDroppedAndTheChatsOwnIsKept() {
+        val calls = Calls()
+        val offered = mutableStateOf(listOf(plan, review))
+        rule.setContent {
+            AhpTheme { ChatScreen(transcript(), null, false, null, ConnState.Online, {}, {}, {}, actions = actions(calls, agents = offered.value, agentInUse = plan.uri)) }
+        }
+        rule.onNodeWithTag("agent_button").performClick()
+        rule.onAllNodesWithTag("agent_option")[1].performClick()
+        rule.onNodeWithTag("agent_use").performClick()
+        rule.onNodeWithTag("agent_button").assertTextContains("review")
+
+        offered.value = listOf(plan)
+        rule.waitForIdle()
+        rule.onNodeWithTag("agent_button").assertTextContains("plan")
+        sendHi()
+
+        assertEquals(listOf<AgentPick>(AgentPick.Keep), calls.sentAgents)
+    }
+
+    @Test
+    fun anAgentPickSurvivesRotation() {
+        val calls = Calls()
+        val restoration = StateRestorationTester(rule)
+        restoration.setContent {
+            AhpTheme { ChatScreen(transcript(), null, false, null, ConnState.Online, {}, {}, {}, actions = actions(calls, agents = listOf(plan, review))) }
+        }
+        rule.onNodeWithTag("agent_button").performClick()
+        rule.onAllNodesWithTag("agent_option")[1].performClick()
+        rule.onNodeWithTag("agent_use").performClick()
+
+        restoration.emulateSavedInstanceStateRestore()
+
+        rule.onNodeWithTag("agent_button").assertTextContains("review")
+        sendHi()
+        assertEquals(listOf<AgentPick>(AgentPick.Use(review.uri)), calls.sentAgents)
+    }
+
+    @Test
+    fun theAgentAndModelChipsShareTheRowWithoutPushingTheButtonsOff() {
+        showInWindowOfHeight(900, agents = listOf(plan, review), agentInUse = "file:///a/a-long-agent-name-that-would-not-fit.agent.md")
+
+        val agent = rule.onNodeWithTag("agent_button").fetchSemanticsNode().boundsInRoot
+        val model = rule.onNodeWithTag("model_button").fetchSemanticsNode().boundsInRoot
+        val send = rule.onNodeWithTag("composer_send").fetchSemanticsNode().boundsInRoot
+        assertTrue("the chips overlap: agent $agent, model $model", agent.right <= model.left + 1f)
+        assertTrue("the model chip (${model.right}) runs into the send button (${send.left})", model.right <= send.left)
     }
 
     // ---- a read only chat has nothing to act with ---------------------------------------------------------------

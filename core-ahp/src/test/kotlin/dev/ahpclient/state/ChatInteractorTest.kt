@@ -42,6 +42,7 @@ class ChatInteractorTest {
     private class Rig(var chat: ChatState?, uri: String, at: Instant) {
         var canInteract = true
         var models: List<ModelOption> = emptyList()
+        var agents: List<AgentChoice> = emptyList()
         var gateAnswer = true
         var gateThrows = false
         var outcome: DispatchOutcome = DispatchOutcome.Accepted
@@ -72,6 +73,7 @@ class ChatInteractorTest {
             newId = { "id-${++ids}" },
             now = { at },
             models = { models },
+            agents = { agents },
         )
 
         fun types() = sent.map { (_, action) -> Ahp.json.encodeToJsonElement(StateAction.serializer(), action).jsonObject["type"]!!.jsonPrimitive.content }
@@ -130,6 +132,95 @@ class ChatInteractorTest {
         val busy = rig(chat(active = activeTurn())).apply { models = listOf(sonnet) }
         assertEquals(InteractResult.InvalidModel, busy.interactor.steer("now", ModelChoice("nope")))
         assertTrue(busy.sent.isEmpty())
+    }
+
+    // ---- the custom agent ----------------------------------------------------------------------------------------
+
+    private val plan = AgentChoice("file:///a/plan.agent.md", "plan", null)
+    private val review = AgentChoice("file:///a/review.agent.md", "review", null)
+
+    private fun chatOnAgent(agent: String?, active: Boolean = false): ChatState = Ahp.json.decodeFromString(
+        ChatState.serializer(),
+        """{"resource":"$uri","title":"Chat","status":8,"modifiedAt":"2026-10-22T10:00:00.000Z",
+            "turns":[{"id":"t1","message":{"text":"x","origin":{"kind":"user"}${agent?.let { ""","agent":{"uri":"$it"}""" }.orEmpty()}},"responseParts":[],"startedAt":"2026-10-22T10:00:00.000Z","state":"complete"}]
+            ${if (active) ""","activeTurn":{"id":"t2","message":{"text":"now","origin":{"kind":"user"}${agent?.let { ""","agent":{"uri":"$it"}""" }.orEmpty()}},"responseParts":[],"startedAt":"2026-10-22T10:05:00.000Z"}""" else ""}}""",
+    )
+
+    private fun Rig.agentOf(index: Int = 0) = wire(index)["message"]!!.jsonObject["agent"]?.toString()
+
+    @Test
+    fun `a message that says nothing about the agent keeps the one the chat is on`() = runTest {
+        val rig = rig(chatOnAgent(plan.uri)).apply { agents = listOf(plan, review) }
+
+        rig.interactor.send("go on")
+
+        assertEquals("""{"uri":"file:///a/plan.agent.md"}""", rig.agentOf())
+    }
+
+    @Test
+    fun `a chat on no agent stays on none, and the agent is kept even when the host no longer lists it`() = runTest {
+        val none = rig(chatOnAgent(null)).apply { agents = listOf(plan) }
+        none.interactor.send("go on")
+        assertNull(none.agentOf())
+
+        val unlisted = rig(chatOnAgent("file:///gone.agent.md")).apply { agents = listOf(plan) }
+        unlisted.interactor.send("go on")
+        assertEquals("""{"uri":"file:///gone.agent.md"}""", unlisted.agentOf(), "what the chat is on is sent back as it was")
+    }
+
+    @Test
+    fun `a picked agent goes out with the message, whether it starts a turn, queues or steers`() = runTest {
+        val idle = rig(chatOnAgent(null)).apply { agents = listOf(plan, review) }
+        idle.interactor.send("hi", agent = AgentPick.Use(review.uri))
+        assertEquals("""{"uri":"file:///a/review.agent.md"}""", idle.agentOf())
+
+        val busy = rig(chatOnAgent(plan.uri, active = true)).apply { agents = listOf(plan, review) }
+        busy.interactor.send("later", agent = AgentPick.Use(review.uri))
+        busy.interactor.steer("now", agent = AgentPick.Use(review.uri))
+        assertEquals(listOf("queued", "steering"), listOf(busy.wire(0)["kind"], busy.wire(1)["kind"]).map { it!!.jsonPrimitive.content })
+        assertEquals("""{"uri":"file:///a/review.agent.md"}""", busy.agentOf(0))
+        assertEquals("""{"uri":"file:///a/review.agent.md"}""", busy.agentOf(1))
+    }
+
+    @Test
+    fun `choosing no agent sends none, which takes the chat off the one it was on`() = runTest {
+        val rig = rig(chatOnAgent(plan.uri)).apply { agents = listOf(plan) }
+
+        rig.interactor.send("hi", agent = AgentPick.None)
+
+        assertNull(rig.agentOf())
+        assertEquals("chat/turnStarted", rig.types().single())
+    }
+
+    @Test
+    fun `a kept agent rides on a queued and a steering message too`() = runTest {
+        val busy = rig(chatOnAgent(plan.uri, active = true)).apply { agents = listOf(plan) }
+
+        busy.interactor.send("later")
+        busy.interactor.steer("now")
+
+        assertEquals("""{"uri":"file:///a/plan.agent.md"}""", busy.agentOf(0))
+        assertEquals("""{"uri":"file:///a/plan.agent.md"}""", busy.agentOf(1))
+    }
+
+    @Test
+    fun `an agent the host does not offer is never sent, by a new message or a steering one`() = runTest {
+        val rig = rig(chatOnAgent(null)).apply { agents = listOf(plan) }
+
+        assertEquals(InteractResult.InvalidAgent, rig.interactor.send("hi", agent = AgentPick.Use("file:///made-up.agent.md")))
+        assertTrue(rig.sent.isEmpty())
+
+        val busy = rig(chatOnAgent(null, active = true)).apply { agents = listOf(plan) }
+        assertEquals(InteractResult.InvalidAgent, busy.interactor.steer("now", agent = AgentPick.Use("file:///made-up.agent.md")))
+        assertTrue(busy.sent.isEmpty())
+    }
+
+    @Test
+    fun `a bad agent is told apart from a blank message, and from a bad model`() = runTest {
+        val rig = rig(chatOnAgent(null)).apply { agents = listOf(plan); models = listOf(sonnet) }
+
+        assertEquals(InteractResult.Blank, rig.interactor.send("  ", agent = AgentPick.Use("file:///x")))
+        assertEquals(InteractResult.InvalidModel, rig.interactor.send("hi", ModelChoice("nope"), AgentPick.Use("file:///x")))
     }
 
     @Test

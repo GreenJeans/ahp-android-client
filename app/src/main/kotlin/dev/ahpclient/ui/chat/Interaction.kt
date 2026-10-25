@@ -61,6 +61,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.ahpclient.state.AnswerValue
+import dev.ahpclient.state.AgentChoice
+import dev.ahpclient.state.AgentPick
+import dev.ahpclient.state.CustomAgents
 import dev.ahpclient.state.ApprovalChoice
 import dev.ahpclient.state.FormCheck
 import dev.ahpclient.state.FormQuestion
@@ -86,8 +89,8 @@ import kotlinx.coroutines.launch
 class ChatActionsUi(
     /** True while the agent is working: a message sent now waits its turn, can steer the turn, and there is something to stop. */
     val running: Boolean,
-    val send: suspend (text: String, model: ModelChoice?) -> InteractResult,
-    val steer: suspend (text: String, model: ModelChoice?) -> InteractResult,
+    val send: suspend (text: String, model: ModelChoice?, agent: AgentPick) -> InteractResult,
+    val steer: suspend (text: String, model: ModelChoice?, agent: AgentPick) -> InteractResult,
     val cancel: suspend () -> InteractResult,
     val approve: suspend (toolCallId: String, optionId: String?) -> InteractResult,
     val deny: suspend (toolCallId: String, optionId: String?) -> InteractResult,
@@ -101,6 +104,10 @@ class ChatActionsUi(
     val models: List<ModelOption> = emptyList(),
     /** The model the chat is using now (the one its latest turn was sent with), so the box can show it and send it. Null for a chat with no turn yet. */
     val modelInUse: ModelChoice? = null,
+    /** The custom agents the host offers for this chat. None offered and none in use means no agent chip is shown. */
+    val agents: List<AgentChoice> = emptyList(),
+    /** The custom agent the chat is on now (its latest message's), so the box can show it and a message keeps it. Null is no custom agent. */
+    val agentInUse: String? = null,
 )
 
 /** The host's own words on a button or a field are untrusted display text: shown as plain text and cut to a sane length. */
@@ -174,6 +181,74 @@ private fun ModelPickerDialog(models: List<ModelOption>, current: ModelChoice?, 
     )
 }
 
+/** Keeps a picked agent across rotation. */
+private val AgentPickSaver: Saver<AgentPick, Any> = listSaver(
+    save = { pick ->
+        when (pick) {
+            AgentPick.Keep -> listOf("keep")
+            AgentPick.None -> listOf("none")
+            is AgentPick.Use -> listOf("use", pick.uri)
+        }
+    },
+    restore = { saved ->
+        when (saved.firstOrNull()) {
+            "none" -> AgentPick.None
+            "use" -> saved.getOrNull(1)?.let { AgentPick.Use(it) } ?: AgentPick.Keep
+            else -> AgentPick.Keep
+        }
+    },
+)
+
+/** What the agent button says: the agent's name, or that none is in use. */
+private fun agentLabel(agents: List<AgentChoice>, uri: String?): String = CustomAgents.nameOf(uri, agents) ?: "Default agent"
+
+@Composable
+private fun AgentRow(name: String, description: String?, selected: Boolean, tag: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
+            .testTag(tag),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected = selected, onClick = null)
+        Column(modifier = Modifier.padding(vertical = 6.dp)) {
+            Text(name, style = MaterialTheme.typography.bodyLarge)
+            if (description != null) Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+/**
+ * Picks the custom agent for the next messages: none (the provider's own behaviour), or one the host lists. The one the chat is on
+ * stays picked unless this is used to change it, so sending never switches it by accident. The names and descriptions are the host's
+ * words, shown as plain text.
+ */
+@Composable
+private fun AgentPickerDialog(agents: List<AgentChoice>, current: String?, onDismiss: () -> Unit, onPick: (String?) -> Unit) {
+    var draft by rememberSaveable { mutableStateOf(current) }
+    // An agent the chat is on that the host no longer lists is still shown, so the dialog says what is true.
+    val unlisted = current?.takeIf { uri -> agents.none { it.uri == uri } }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Agent") },
+        text = {
+            Column(
+                modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()).testTag("agent_dialog"),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                AgentRow("Default agent", "No custom agent", draft == null, "agent_default") { draft = null }
+                if (unlisted != null) AgentRow(CustomAgents.nameOf(unlisted, agents).orEmpty(), "Not offered now", draft == unlisted, "agent_option") { draft = unlisted }
+                agents.forEach { a -> AgentRow(a.name, a.description, draft == a.uri, "agent_option") { draft = a.uri } }
+            }
+        },
+        confirmButton = { TextButton(onClick = { onPick(draft) }, modifier = Modifier.testTag("agent_use")) { Text("Use") } },
+        dismissButton = { TextButton(onClick = onDismiss, modifier = Modifier.testTag("agent_cancel")) { Text("Cancel") } },
+    )
+}
+
 @Composable
 private fun Notice(text: String?, tag: String, modifier: Modifier = Modifier) {
     if (text == null) return
@@ -196,8 +271,17 @@ internal fun Composer(actions: ChatActionsUi, modifier: Modifier = Modifier) {
     var text by rememberSaveable { mutableStateOf("") }
     var pick by rememberSaveable(stateSaver = ModelPickSaver) { mutableStateOf<ModelChoice?>(null) }
     var choosing by rememberSaveable { mutableStateOf(false) }
+    var agentPick by rememberSaveable(stateSaver = AgentPickSaver) { mutableStateOf<AgentPick>(AgentPick.Keep) }
+    var choosingAgent by rememberSaveable { mutableStateOf(false) }
     // A pick the host no longer offers is dropped, so the box never shows or sends a model that has gone.
     val chosen = pick?.takeIf { ModelOptions.isOffered(actions.models, it) } ?: actions.modelInUse
+    // The same for an agent: a pick that is gone becomes "keep what the chat is on". What is shown is what a message is sent with.
+    val agentChosen: AgentPick = agentPick.takeIf { it !is AgentPick.Use || actions.agents.any { a -> a.uri == it.uri } } ?: AgentPick.Keep
+    val agentUri: String? = when (val p = agentChosen) {
+        AgentPick.Keep -> actions.agentInUse
+        AgentPick.None -> null
+        is AgentPick.Use -> p.uri
+    }
     var busy by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -231,14 +315,39 @@ internal fun Composer(actions: ChatActionsUi, modifier: Modifier = Modifier) {
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (actions.agents.isNotEmpty() || actions.agentInUse != null) {
+                        AssistChip(
+                            onClick = { choosingAgent = true },
+                            label = { Text(agentLabel(actions.agents, agentUri), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            colors = chipColors,
+                            border = null,
+                            modifier = Modifier.weight(1f, fill = false).semantics { contentDescription = "Agent: ${agentLabel(actions.agents, agentUri)}" }.testTag("agent_button"),
+                        )
+                        if (choosingAgent) {
+                            AgentPickerDialog(
+                                actions.agents,
+                                agentUri,
+                                onDismiss = { choosingAgent = false },
+                                onPick = { uri ->
+                                    // Choosing what the chat is on is "keep", so a change made elsewhere is not undone by the next message.
+                                    agentPick = when (uri) {
+                                        actions.agentInUse -> AgentPick.Keep
+                                        null -> AgentPick.None
+                                        else -> AgentPick.Use(uri)
+                                    }
+                                    choosingAgent = false
+                                },
+                            )
+                        }
+                    }
                     if (actions.models.isNotEmpty()) {
                         AssistChip(
                             onClick = { choosing = true },
                             label = { Text(modelLabel(actions.models, chosen), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                             colors = chipColors,
                             border = null,
-                            modifier = Modifier.semantics { contentDescription = "Model: ${modelLabel(actions.models, chosen)}" }.testTag("model_button"),
+                            modifier = Modifier.weight(1f, fill = false).semantics { contentDescription = "Model: ${modelLabel(actions.models, chosen)}" }.testTag("model_button"),
                         )
                         if (choosing) ModelPickerDialog(actions.models, chosen, showDefault = actions.modelInUse == null, onDismiss = { choosing = false }, onPick = { pick = it; choosing = false })
                     }
@@ -250,7 +359,7 @@ internal fun Composer(actions: ChatActionsUi, modifier: Modifier = Modifier) {
                             val sending = text
                             scope.launch {
                                 busy = true
-                                val result = actions.steer(sending, chosen)
+                                val result = actions.steer(sending, chosen, agentChosen)
                                 notice = InteractMessages.describe(result)
                                 if (InteractMessages.succeeded(result) && text == sending) text = ""
                                 busy = false
@@ -275,7 +384,7 @@ internal fun Composer(actions: ChatActionsUi, modifier: Modifier = Modifier) {
                         val sending = text
                         scope.launch {
                             busy = true
-                            val result = actions.send(sending, chosen)
+                            val result = actions.send(sending, chosen, agentChosen)
                             notice = InteractMessages.describe(result)
                             // Only a message the host has taken is cleared, and only if the box still holds what was sent.
                             if (InteractMessages.succeeded(result) && text == sending) text = ""

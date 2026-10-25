@@ -10,6 +10,7 @@ import dev.ahpclient.security.TokenVault
 import dev.ahpclient.security.VaultCryptoException
 import dev.ahpclient.security.VaultLoad
 import dev.ahpclient.state.ConnState
+import dev.ahpclient.state.CustomAgents
 import dev.ahpclient.state.ApprovalGate
 import dev.ahpclient.state.ApprovalTarget
 import dev.ahpclient.state.ChannelStore
@@ -397,6 +398,7 @@ class AppController(
         dispatch = session::dispatch,
         gate = approvalGate,
         models = { modelsFor(session) },
+        agents = { CustomAgents.of((_state.value as? AppState.Connected)?.open?.store?.state?.value) },
     )
 
     /** The models the host offers for the agent of the session on screen; none when no session is open or the agent is not listed. */

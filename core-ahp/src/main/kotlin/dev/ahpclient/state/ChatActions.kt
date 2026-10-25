@@ -41,28 +41,28 @@ enum class InputResponse(val wire: String) {
  */
 object ChatActions {
     /** A new user message that starts a turn. A client may only send user messages. */
-    fun startTurn(turnId: String, startedAt: Instant, text: String, queuedMessageId: String? = null, model: ModelChoice? = null): StateAction =
+    fun startTurn(turnId: String, startedAt: Instant, text: String, queuedMessageId: String? = null, model: ModelChoice? = null, agent: String? = null): StateAction =
         action("chat/turnStarted") {
             put("turnId", turnId)
             put("startedAt", startedAt.toString())
-            put("message", userMessage(text, model))
+            put("message", userMessage(text, model, agent))
             queuedMessageId?.let { put("queuedMessageId", it) }
         }
 
     /** A user message to run after the current turn. If the chat is idle the host starts a turn from it at once. */
-    fun queueMessage(messageId: String, text: String, model: ModelChoice? = null): StateAction =
+    fun queueMessage(messageId: String, text: String, model: ModelChoice? = null, agent: String? = null): StateAction =
         action("chat/pendingMessageSet") {
             put("kind", "queued")
             put("id", messageId)
-            put("message", userMessage(text, model))
+            put("message", userMessage(text, model, agent))
         }
 
     /** A user message that steers the turn running now, instead of waiting for it to end. Only meaningful while a turn runs. */
-    fun steerTurn(messageId: String, text: String, model: ModelChoice? = null): StateAction =
+    fun steerTurn(messageId: String, text: String, model: ModelChoice? = null, agent: String? = null): StateAction =
         action("chat/pendingMessageSet") {
             put("kind", "steering")
             put("id", messageId)
-            put("message", userMessage(text, model))
+            put("message", userMessage(text, model, agent))
         }
 
     /** Takes back a queued message that has not been consumed yet. */
@@ -128,9 +128,11 @@ object ChatActions {
             put("approved", approved)
         }
 
-    private fun userMessage(text: String, model: ModelChoice? = null): JsonObject = buildJsonObject {
+    /** [agent] is the custom agent's address. Leaving it out tells the host to use none, so a caller that means "unchanged" passes the chat's own. */
+    private fun userMessage(text: String, model: ModelChoice? = null, agent: String? = null): JsonObject = buildJsonObject {
         put("text", text)
         put("origin", buildJsonObject { put("kind", "user") })
+        if (agent != null) put("agent", buildJsonObject { put("uri", agent) })
         if (model != null) {
             put(
                 "model",

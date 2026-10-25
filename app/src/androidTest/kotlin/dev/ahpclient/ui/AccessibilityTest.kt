@@ -25,6 +25,7 @@ import dev.ahpclient.app.HostEntry
 import dev.ahpclient.app.HostList
 import dev.ahpclient.app.SignInStep
 import dev.ahpclient.state.ActivityState
+import dev.ahpclient.state.AgentChoice
 import dev.ahpclient.state.ChatGoneException
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.DispatchOutcome
@@ -196,10 +197,12 @@ class AccessibilityTest {
                      {"resource":"ahp-chat://default/y","title":"Side chat waiting","status":56,"modifiedAt":"2026-10-26T10:28:00.000Z"}]}""",
     )
 
-    private fun chatActions(running: Boolean = false) = ChatActionsUi(
+    private val planAgent = AgentChoice("file:///a/plan.agent.md", "plan", "Plan first, then act")
+
+    private fun chatActions(running: Boolean = false, agents: List<AgentChoice> = emptyList(), agentInUse: String? = null) = ChatActionsUi(
         running = running,
-        send = { _, _ -> InteractResult.Sent(DispatchOutcome.Accepted) },
-        steer = { _, _ -> InteractResult.Sent(DispatchOutcome.Accepted) },
+        send = { _, _, _ -> InteractResult.Sent(DispatchOutcome.Accepted) },
+        steer = { _, _, _ -> InteractResult.Sent(DispatchOutcome.Accepted) },
         cancel = { InteractResult.Sent(DispatchOutcome.Accepted) },
         approve = { _, _ -> InteractResult.Sent(DispatchOutcome.Accepted) },
         deny = { _, _ -> InteractResult.Sent(DispatchOutcome.Accepted) },
@@ -210,7 +213,19 @@ class AccessibilityTest {
         decline = { InteractResult.Sent(DispatchOutcome.Accepted) },
         dismiss = { InteractResult.Sent(DispatchOutcome.Accepted) },
         models = listOf(ModelOption("auto", "Auto", emptyList())),
+        agents = agents,
+        agentInUse = agentInUse,
     )
+
+    @Test
+    fun theAgentChipAndItsPickerAreAccessible() {
+        rule.setContent { AhpTheme { ChatPane(everyRow, null, false, null, ConnState.Online, {}, {}, actions = chatActions(agents = listOf(planAgent), agentInUse = planAgent.uri)) } }
+        check()
+
+        rule.onNodeWithTag("agent_button").performClick()
+        rule.waitForIdle()
+        check()
+    }
 
     @Test
     fun sessionScreenWithTabsAndAChat() {

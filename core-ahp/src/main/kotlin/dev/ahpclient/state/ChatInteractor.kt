@@ -139,6 +139,9 @@ sealed interface InteractResult {
     /** The model the person picked is not one the host offers (any more), so nothing was sent. */
     data object InvalidModel : InteractResult
 
+    /** The custom agent the person picked is not one the host offers (any more), so nothing was sent. */
+    data object InvalidAgent : InteractResult
+
     /** Sending failed before anything left the phone (offline, or the connection was just lost). Safe to try again. */
     data class NotSent(val cause: Throwable) : InteractResult
 }
@@ -161,17 +164,37 @@ class ChatInteractor(
     private val now: () -> Instant = Instant::now,
     /** The models the host offers for this chat's agent. A message names a model only if it is one of these. */
     private val models: () -> List<ModelOption> = { emptyList() },
+    /** The custom agents the host offers for this chat's session. A message names an agent only if it is one of these, or the one the chat is already on. */
+    private val agents: () -> List<AgentChoice> = { emptyList() },
 ) {
     /** The models a message in this chat may be sent with, as the host offers them now. */
     fun modelOptions(): List<ModelOption> = models()
 
-    suspend fun send(text: String, model: ModelChoice? = null): InteractResult {
+    /** The custom agents a message in this chat may be sent with, as the host offers them now. */
+    fun agentChoices(): List<AgentChoice> = agents()
+
+    suspend fun send(text: String, model: ModelChoice? = null, agent: AgentPick = AgentPick.Keep): InteractResult {
         val state = usable() ?: return InteractResult.NotAllowed
         if (text.isBlank()) return InteractResult.Blank
         if (model != null && !ModelOptions.isOffered(models(), model)) return InteractResult.InvalidModel
+        val resolved = resolveAgent(agent, state) ?: return InteractResult.InvalidAgent
         // A turn already running cannot take a second one: the message waits in the queue and starts when it ends.
-        val action = if (state.activeTurn == null) ChatActions.startTurn(newId(), now(), text, model = model) else ChatActions.queueMessage(newId(), text, model)
+        val action = if (state.activeTurn == null) {
+            ChatActions.startTurn(newId(), now(), text, model = model, agent = resolved.uri)
+        } else {
+            ChatActions.queueMessage(newId(), text, model, resolved.uri)
+        }
         return deliver(action)
+    }
+
+    /** The agent address a message carries; [uri] is null for none. */
+    private class ResolvedAgent(val uri: String?)
+
+    /** [AgentPick.Keep] is the chat's own agent, so sending never changes it by accident; a pick must be one the host offers, else null. */
+    private fun resolveAgent(pick: AgentPick, state: ChatState): ResolvedAgent? = when (pick) {
+        AgentPick.Keep -> ResolvedAgent(CustomAgents.inUse(state))
+        AgentPick.None -> ResolvedAgent(null)
+        is AgentPick.Use -> if (agents().any { it.uri == pick.uri }) ResolvedAgent(pick.uri) else null
     }
 
     suspend fun cancel(): InteractResult {
@@ -190,12 +213,13 @@ class ChatInteractor(
         usable()?.let { deliver(ChatActions.completeInput(requestId, InputResponse.CANCEL)) } ?: InteractResult.NotAllowed
 
     /** A message that steers the turn running now. Needs a running turn: with none, a new message is [send], not a steer. */
-    suspend fun steer(text: String, model: ModelChoice? = null): InteractResult {
+    suspend fun steer(text: String, model: ModelChoice? = null, agent: AgentPick = AgentPick.Keep): InteractResult {
         val state = usable() ?: return InteractResult.NotAllowed
         if (text.isBlank()) return InteractResult.Blank
         if (state.activeTurn == null) return InteractResult.NoActiveTurn
         if (model != null && !ModelOptions.isOffered(models(), model)) return InteractResult.InvalidModel
-        return deliver(ChatActions.steerTurn(newId(), text, model))
+        val resolved = resolveAgent(agent, state) ?: return InteractResult.InvalidAgent
+        return deliver(ChatActions.steerTurn(newId(), text, model, resolved.uri))
     }
 
     /**
