@@ -6,6 +6,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -235,13 +239,22 @@ private fun AgentPickerDialog(agents: List<AgentChoice>, current: String?, onDis
         onDismissRequest = onDismiss,
         title = { Text("Agent") },
         text = {
-            Column(
-                modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()).testTag("agent_dialog"),
+            // A long list opens at the agent the chat is on, so the pop-up shows what is true without a scroll to find it.
+            val position = when {
+                current == null -> 0
+                unlisted != null -> 1
+                else -> 1 + agents.indexOfFirst { it.uri == current }.coerceAtLeast(0)
+            }
+            LazyColumn(
+                state = rememberLazyListState(initialFirstVisibleItemIndex = (position - 1).coerceAtLeast(0)),
+                modifier = Modifier.heightIn(max = 420.dp).testTag("agent_dialog"),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                AgentRow("Default agent", "No custom agent", draft == null, "agent_default") { draft = null }
-                if (unlisted != null) AgentRow(CustomAgents.nameOf(unlisted, agents).orEmpty(), "Not offered now", draft == unlisted, "agent_option") { draft = unlisted }
-                agents.forEach { a -> AgentRow(a.name, a.description, draft == a.uri, "agent_option") { draft = a.uri } }
+                item(key = "default") { AgentRow("Default agent", "No custom agent", draft == null, "agent_default") { draft = null } }
+                if (unlisted != null) {
+                    item(key = "unlisted") { AgentRow(CustomAgents.nameOf(unlisted, agents).orEmpty(), "Not offered now", draft == unlisted, "agent_option") { draft = unlisted } }
+                }
+                items(agents, key = { it.uri }) { a -> AgentRow(a.name, a.description, draft == a.uri, "agent_option") { draft = a.uri } }
             }
         },
         confirmButton = { TextButton(onClick = { onPick(draft) }, modifier = Modifier.testTag("agent_use")) { Text("Use") } },
@@ -319,10 +332,11 @@ internal fun Composer(actions: ChatActionsUi, modifier: Modifier = Modifier) {
                     if (actions.agents.isNotEmpty() || actions.agentInUse != null) {
                         AssistChip(
                             onClick = { choosingAgent = true },
-                            label = { Text(agentLabel(actions.agents, agentUri), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            label = { Text(agentLabel(actions.agents, agentUri), style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                             colors = chipColors,
                             border = null,
-                            modifier = Modifier.weight(1f, fill = false).semantics { contentDescription = "Agent: ${agentLabel(actions.agents, agentUri)}" }.testTag("agent_button"),
+                            // Capped, so a long name cannot take the model's room; the model button gets the rest.
+                            modifier = Modifier.widthIn(max = 150.dp).semantics { contentDescription = "Agent: ${agentLabel(actions.agents, agentUri)}" }.testTag("agent_button"),
                         )
                         if (choosingAgent) {
                             AgentPickerDialog(
@@ -344,7 +358,7 @@ internal fun Composer(actions: ChatActionsUi, modifier: Modifier = Modifier) {
                     if (actions.models.isNotEmpty()) {
                         AssistChip(
                             onClick = { choosing = true },
-                            label = { Text(modelLabel(actions.models, chosen), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            label = { Text(modelLabel(actions.models, chosen), style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                             colors = chipColors,
                             border = null,
                             modifier = Modifier.weight(1f, fill = false).semantics { contentDescription = "Model: ${modelLabel(actions.models, chosen)}" }.testTag("model_button"),

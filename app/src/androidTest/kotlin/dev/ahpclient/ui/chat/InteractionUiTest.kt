@@ -14,6 +14,7 @@ import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.isSelected
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.isSelectable
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -475,6 +476,17 @@ class InteractionUiTest {
         rule.onAllNodesWithTag("agent_option").assertCountEquals(2)
         rule.onAllNodesWithTag("agent_option")[0].assertIsSelected().assertTextContains("Plan first, then act", substring = true)
         rule.onAllNodesWithTag("agent_option")[1].assertIsNotSelected().assertHeightIsAtLeast(48.dp)
+    }
+
+    @Test
+    fun aLongListOpensAtTheAgentTheChatIsOnSoItIsInViewAndSelected() {
+        val many = (1..15).map { AgentChoice("file:///a/agent$it.agent.md", "agent$it", "Does thing $it") }
+        show(transcript(), actions(Calls(), agents = many, agentInUse = many.last().uri))
+
+        rule.onNodeWithTag("agent_button").performClick()
+
+        rule.onNode(hasTestTag("agent_option") and isSelected()).assertIsDisplayed().assertTextContains("agent15", substring = true)
+        rule.onNodeWithTag("agent_default").assertDoesNotExist()
     }
 
     @Test
