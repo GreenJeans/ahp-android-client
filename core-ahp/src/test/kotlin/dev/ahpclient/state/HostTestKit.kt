@@ -3,6 +3,7 @@ package dev.ahpclient.state
 import dev.ahpclient.ahp.AhpConnection
 import dev.ahpclient.ahp.CapabilityPolicy
 import dev.ahpclient.ahp.FakeSocket
+import dev.ahpclient.ahp.MAX_QUEUED_NOTIFICATIONS
 import dev.ahpclient.ahp.error
 import dev.ahpclient.ahp.result
 import java.io.IOException
@@ -176,6 +177,8 @@ internal class ScriptedConnector(
     vararg scripts: HostScript,
     /** The tier the next connection is made under; a test may change it between connections. */
     var policy: CapabilityPolicy = CapabilityPolicy.READ,
+    /** How many notifications each connection holds before it ends with an overload; a small number lets a test fill it. */
+    private val maxQueuedNotifications: Int = MAX_QUEUED_NOTIFICATIONS,
 ) : dev.ahpclient.state.HostConnector {
     private val queue = ArrayDeque(scripts.toList())
     val connects = mutableListOf<Pair<String, Long>>()
@@ -187,6 +190,6 @@ internal class ScriptedConnector(
         script.failure?.let { throw it }
         val socket = FakeSocket(script::reply)
         sockets += socket
-        return AhpConnection(socket, scope, policy, clientId, initialServerSeq, requestTimeoutMs = 5_000)
+        return AhpConnection(socket, scope, policy, clientId, initialServerSeq, requestTimeoutMs = 5_000, maxQueuedNotifications = maxQueuedNotifications)
     }
 }

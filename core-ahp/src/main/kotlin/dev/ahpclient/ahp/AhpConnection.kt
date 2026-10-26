@@ -1,5 +1,6 @@
 package dev.ahpclient.ahp
 
+import dev.ahpclient.tunnel.ClientOverloadedException
 import dev.ahpclient.tunnel.SocketClosedException
 import dev.ahpclient.tunnel.TextSocket
 import com.microsoft.agenthostprotocol.Ahp
@@ -65,6 +66,9 @@ const val ROOT_CHANNEL = "ahp-root://"
 /** More channels than the app ever has open; a bound, so a host that names endless ones cannot grow the connection's memory. */
 private const val MAX_CONFIG_FACTS = 256
 
+/** Notifications that may wait for the collector. More than any burst a working agent sends, so a connection that reaches it has a consumer that is not keeping up. */
+internal const val MAX_QUEUED_NOTIFICATIONS = 20_000
+
 /** What the host pushes without being asked. */
 sealed interface ServerNotification {
     /** A state action with its server sequence number: the unit the reducers consume. */
@@ -97,8 +101,10 @@ sealed class AhpException(message: String, cause: Throwable? = null) : Exception
  * there is no other way to send. The one deliberate exception is the `-32601 Method not found` reply to a request the
  * host sends us: an error response changes no state and is not a call this client makes.
  *
- * Notifications are delivered on a single-collector [notifications] flow backed by an unbounded buffer, so nothing that
- * arrives between `subscribe` returning and the collector starting is lost.
+ * Notifications are delivered on a single-collector [notifications] flow backed by a buffer of [maxQueuedNotifications], so
+ * nothing that arrives between `subscribe` returning and the collector starting is lost. A notification is never dropped to
+ * make room: when the buffer is full the connection ends with [ClientOverloadedException] as the cause of the
+ * [AhpException.ConnectionClosed], and the next one resumes with `reconnect`, which replays what was missed.
  */
 class AhpConnection(
     private val socket: TextSocket,
@@ -108,13 +114,14 @@ class AhpConnection(
     initialServerSeq: Long = 0,
     private val requestTimeoutMs: Long = 30_000,
     private val json: Json = Ahp.json,
+    private val maxQueuedNotifications: Int = MAX_QUEUED_NOTIFICATIONS,
 ) {
     private val nextId = AtomicLong(1)
     private val pending = ConcurrentHashMap<Long, CompletableDeferred<JsonElement>>()
 
     /** What each snapshot this connection received held that the library's types drop (see [ConfigFacts]), by channel; a stored snapshot's facts are read once it is stored. */
     private val configFacts = ConcurrentHashMap<String, ConfigFacts>()
-    private val inbox = Channel<ServerNotification>(Channel.UNLIMITED)
+    private val inbox = Channel<ServerNotification>(maxQueuedNotifications)
     private val closedBy = AtomicReference<AhpException.ConnectionClosed?>(null)
 
     @Volatile
@@ -364,11 +371,17 @@ class AhpConnection(
         }
     }
 
+    /** Queues [note] for the collector. A full buffer ends the read loop (and so the connection) rather than lose one. */
+    private fun enqueue(note: ServerNotification) {
+        val sent = inbox.trySend(note)
+        if (sent.isFailure && !sent.isClosed) throw ClientOverloadedException("More than $maxQueuedNotifications notifications are waiting to be applied")
+    }
+
     private fun handle(text: String) {
         val frame = try {
             json.parseToJsonElement(text).jsonObject
         } catch (e: IllegalArgumentException) {
-            inbox.trySend(ServerNotification.Undecodable(null, e))
+            enqueue(ServerNotification.Undecodable(null, e))
             return
         }
         val method = (frame["method"] as? JsonPrimitive)?.contentOrNull
@@ -377,24 +390,25 @@ class AhpConnection(
             method != null && frame["id"] == null -> handleNotification(method, frame["params"] as? JsonObject ?: JsonObject(emptyMap()))
             method != null && id != null -> replyMethodNotFound(id)
             id != null -> handleResponse(id, frame)
-            else -> inbox.trySend(ServerNotification.Undecodable(method, AhpException.Protocol("frame has neither a method nor an id")))
+            else -> enqueue(ServerNotification.Undecodable(method, AhpException.Protocol("frame has neither a method nor an id")))
         }
     }
 
     private fun handleNotification(method: String, params: JsonObject) {
         if (method != "action") {
-            inbox.trySend(ServerNotification.Named(method, params))
+            enqueue(ServerNotification.Named(method, params))
             return
         }
         try {
             val envelope = json.decodeFromJsonElement(ActionEnvelope.serializer(), params)
+            // The resume point moves only once the action is queued: if the buffer is full the action is lost, and the resume must ask for it again.
+            enqueue(ServerNotification.Action(envelope))
             // A rejected action changed nothing, so it must not move the resume point: the host may reuse its number.
             if (envelope.rejectionReason == null && envelope.serverSeq > lastServerSeq) lastServerSeq = envelope.serverSeq
-            inbox.trySend(ServerNotification.Action(envelope))
         } catch (e: SerializationException) {
-            inbox.trySend(ServerNotification.Undecodable(method, e))
+            enqueue(ServerNotification.Undecodable(method, e))
         } catch (e: IllegalArgumentException) {
-            inbox.trySend(ServerNotification.Undecodable(method, e))
+            enqueue(ServerNotification.Undecodable(method, e))
         }
     }
 

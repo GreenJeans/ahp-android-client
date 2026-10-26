@@ -1,6 +1,7 @@
 package dev.ahpclient.security
 
 import java.io.IOException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.yield
 
 /** A reversible stand-in for Keystore AES-GCM that can lose its key or reject a blob, so vault rules can be tested on the JVM. */
@@ -44,6 +45,8 @@ internal class FakeStore : BlobStore {
     var deletes = 0
     /** Makes [delete] suspend first, as a real disk write does, so a caller that has been cancelled finds out at that point. */
     var suspendOnDelete = false
+    /** When set, [delete] waits for it first: holds a wipe half done while a test does something else. */
+    var deleteGate: CompletableDeferred<Unit>? = null
 
     override suspend fun read(): ByteArray? = readFailure?.let { throw it } ?: blob
 
@@ -53,6 +56,7 @@ internal class FakeStore : BlobStore {
 
     override suspend fun delete() {
         if (suspendOnDelete) yield()
+        deleteGate?.await()
         deleteFailure?.let { throw it }
         blob = null
         deletes++

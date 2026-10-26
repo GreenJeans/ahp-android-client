@@ -46,6 +46,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -224,12 +225,26 @@ class AppController(
         if (_state.value is AppState.Hosts) showHosts()
     }
 
+    /**
+     * Connects to [tunnel] from the host list. The switch to the live session happens only if the screen is still the host list at
+     * that moment: a sign-out that landed while the session was being made wins, and the session is stopped. The list may be
+     * replaced by another list meanwhile (loaded, token renewed), which is no reason to refuse a tap, so the swap is retried
+     * against whatever list is showing.
+     */
+    @Synchronized
     fun connect(tunnel: TunnelInfo) {
         if (_state.value !is AppState.Hosts) return
         cancelHostsJob()
         val session = sessions.create(tunnel) { freshToken().access }
         session.start()
-        _state.value = AppState.Connected(tunnel, session)
+        while (true) {
+            val current = _state.value
+            if (current !is AppState.Hosts) {
+                session.stop()
+                return
+            }
+            if (_state.compareAndSet(current, AppState.Connected(tunnel, session))) break
+        }
         // The app may have gone out of sight before this session existed: it starts parked rather than waiting for another trip away.
         parking.ifParked(session::park)
         scope.launch {
@@ -503,14 +518,15 @@ class AppController(
         }
     }
 
-    /** Leaves the live host and returns to the host list. */
+    /** Leaves the live host and returns to the host list, unless a sign-out took the screen first: then that stands. */
+    @Synchronized
     fun disconnect() {
         val connected = _state.value as? AppState.Connected ?: return
         cancelWatchJob()
         forgetExpansions()
         cancelDiffJob()
         connected.session.stop()
-        showHosts()
+        showHosts(from = connected)
     }
 
     fun signOut() {
@@ -639,14 +655,18 @@ class AppController(
         _state.update { if (it is AppState.Hosts) it.copy(tokenExpiresAt = renewed.expiresAt, renews = renewed.refresh != null) else it }
         return renewed
     }
+
+    /** Shows the host list and loads it. With [from], only that state is replaced; if the screen has moved on, the change that moved it stands. */
     @Synchronized
-    private fun showHosts() {
+    private fun showHosts(from: AppState? = null) {
         val signedIn = token
-        if (signedIn == null) {
-            _state.value = AppState.SignedOut(SignInStep.Idle, null)
-            return
+        val next = if (signedIn == null) {
+            AppState.SignedOut(SignInStep.Idle, null)
+        } else {
+            AppState.Hosts(HostList.Loading, signedIn.expiresAt, renews = signedIn.refresh != null)
         }
-        _state.value = AppState.Hosts(HostList.Loading, signedIn.expiresAt, renews = signedIn.refresh != null)
+        if (from == null) _state.value = next else if (!_state.compareAndSet(from, next)) return
+        if (signedIn == null) return
         hostsJob?.cancel()
         hostsJob = scope.launch { loadHosts() }
     }
@@ -710,7 +730,10 @@ class AppController(
         token = null
         refusedRefresh = null
         safeClear()
-        _state.value = AppState.SignedOut(SignInStep.Idle, notice, offerRevoke)
+        // The host list stayed tappable while the disk was written, so a connection may have been made meanwhile: it is displaced, and stopped.
+        val displaced = _state.getAndUpdate { AppState.SignedOut(SignInStep.Idle, notice, offerRevoke) }
+        (displaced as? AppState.Connected)?.session?.stop()
+        cancelWatchJob()
     }
 
     @Synchronized

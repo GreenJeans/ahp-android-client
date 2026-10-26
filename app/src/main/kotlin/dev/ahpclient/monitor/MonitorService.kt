@@ -1,5 +1,6 @@
 package dev.ahpclient.monitor
 
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -9,9 +10,11 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import androidx.core.app.ServiceCompat
 import dev.ahpclient.AhpApp
 import dev.ahpclient.MainActivity
 import dev.ahpclient.R
+import dev.ahpclient.app.ForegroundKind
 import dev.ahpclient.app.MonitorService as MonitorServiceControl
 import dev.ahpclient.state.MonitorStatus
 import kotlinx.coroutines.CoroutineScope
@@ -69,7 +72,7 @@ class MonitorService : Service() {
         return START_NOT_STICKY
     }
 
-    /** Android 15 limits a data-sync service to about six hours; it must stop when told to, so say why and turn monitoring off. */
+    /** The platform can still time a foreground service out (Android 15 limits data sync to about six hours); it must stop when told to, so say why and turn monitoring off. */
     override fun onTimeout(startId: Int, fgsType: Int) {
         container.setMonitoring(false)
         MonitorChannels.ensure(this)
@@ -92,13 +95,17 @@ class MonitorService : Service() {
         super.onDestroy()
     }
 
+    // The constants are copied into this class at build time, and [ForegroundKind] only picks one the running Android has.
+    @SuppressLint("InlinedApi")
     private fun enterForeground(status: MonitorStatus) {
         val notification = notification(status)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-        } else {
-            startForeground(ID, notification)
+        val type = when (ForegroundKind.forSdk(Build.VERSION.SDK_INT)) {
+            ForegroundKind.SPECIAL_USE -> ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            ForegroundKind.DATA_SYNC -> ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            ForegroundKind.NONE -> 0
         }
+        // ServiceCompat leaves the type out below Android 10, where startForeground does not take one.
+        ServiceCompat.startForeground(this, ID, notification, type)
     }
 
     private fun notification(status: MonitorStatus): Notification {

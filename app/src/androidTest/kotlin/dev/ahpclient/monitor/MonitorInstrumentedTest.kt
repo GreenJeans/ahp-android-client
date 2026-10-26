@@ -164,11 +164,15 @@ class MonitorInstrumentedTest {
     }
 
     @Test
-    fun theManifestDeclaresTheServiceAsDataSyncWithItsPermissions() {
+    fun theManifestDeclaresTheServiceAsDataSyncAndSpecialUseWithItsPermissions() {
         val service = context.packageManager.getServiceInfo(ComponentName(context, MonitorService::class.java), 0)
         // Foreground-service types were introduced in API 29; older systems do not record one.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             assertTrue(service.foregroundServiceType and ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC != 0)
+        }
+        // specialUse arrived with API 34; the service starts as it on Android 14 and later.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            assertTrue(service.foregroundServiceType and ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE != 0)
         }
         assertFalse("nothing outside the app may start it", service.exported)
 
@@ -179,6 +183,7 @@ class MonitorInstrumentedTest {
                     Manifest.permission.INTERNET,
                     Manifest.permission.FOREGROUND_SERVICE,
                     Manifest.permission.FOREGROUND_SERVICE_DATA_SYNC,
+                    Manifest.permission.FOREGROUND_SERVICE_SPECIAL_USE,
                     Manifest.permission.POST_NOTIFICATIONS,
                 ),
             ),

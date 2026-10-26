@@ -459,6 +459,7 @@ class HostSession(
             val parent = currentCoroutineContext()
             val connectionScope = CoroutineScope(parent + SupervisorJob(parent[Job]))
             var ahp: AhpConnection? = null
+            var routing = false
             try {
                 ahp = connector.connect(clientId, lastSeq, connectionScope)
                 attach(ahp, resume)
@@ -473,6 +474,7 @@ class HostSession(
                 _connection.value = ConnState.Online
                 restoreChats()
                 settleChannels()
+                routing = true
                 routeWhileOnNetwork(ahp, usedNetwork)
             } catch (e: CancellationException) {
                 throw e
@@ -487,7 +489,9 @@ class HostSession(
                 _canInteract.value = false
                 _canManage.value = false
                 ahp?.let {
-                    lastSeq = maxOf(lastSeq, it.lastServerSeq)
+                    // The connection counts every action it queued, but until the collector runs none is applied: a connection that ended
+                    // before then (an overload while attaching, say) must not move the resume point past actions nobody has seen.
+                    if (routing) lastSeq = maxOf(lastSeq, it.lastServerSeq)
                     it.close()
                 }
                 // Whatever was sent and not yet answered can no longer be answered on this connection.

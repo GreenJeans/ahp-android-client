@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalForInheritanceCoroutinesApi::class)
+
 package dev.ahpclient.app
 
 import dev.ahpclient.auth.GitHubDeviceAuth
@@ -58,8 +60,11 @@ import kotlin.test.assertNotSame
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
@@ -88,6 +93,27 @@ private class FakeLastHost(var id: String? = null) : LastHostStore {
     override suspend fun set(tunnelId: String) {
         if (failWrites) throw IOException("disk full")
         id = tunnelId
+    }
+}
+
+/**
+ * The controller's state with one thing added: the first swap attempt is preceded by [beforeFirstSwap], which changes the state the
+ * way a host list loading on another thread would. That moment sits between `connect()` reading the state and writing to it, where no
+ * ordinary test can reach, so [raced] also tells a test the seam was in the path.
+ */
+private class RacingState(
+    private val inner: MutableStateFlow<AppState>,
+    private val beforeFirstSwap: () -> Unit,
+) : MutableStateFlow<AppState> by inner {
+    var raced = false
+        private set
+
+    override fun compareAndSet(expect: AppState, update: AppState): Boolean {
+        if (!raced) {
+            raced = true
+            beforeFirstSwap()
+        }
+        return inner.compareAndSet(expect, update)
     }
 }
 
@@ -125,6 +151,8 @@ class AppControllerTest {
         githubUrl: ((MockWebServer) -> String)? = null,
         interaction: InteractionConsent = InteractionConsent(),
         approvalGate: ApprovalGate? = null,
+        /** Runs inside the factory, before a session is returned: for changing the controller's state at the point a connect is half done. */
+        onCreate: Rig.() -> Unit = {},
         block: suspend Rig.() -> Unit,
     ) = MockWebServer().use { server ->
         server.start()
@@ -135,6 +163,7 @@ class AppControllerTest {
         val seen = mutableListOf<String>()
         val created = mutableListOf<HostSession>()
         val connectors = mutableListOf<ScriptedConnector>()
+        var rig: Rig? = null
         val factory = HostSessionFactory { tunnel: TunnelInfo, accessToken ->
             // Enough scripts for a reconnect or two, which tests of the interaction setting cause on purpose.
             val scripted = ScriptedConnector(script(), script(), script()).also { connectors += it }
@@ -143,7 +172,10 @@ class AppControllerTest {
                 scripted.policy = interaction.policy()
                 scripted.connect(clientId, seq, scope)
             }
-            HostSession(connector, backgroundScope, clientInfo, Backoff(), clientId = "client-${tunnel.tunnelId}").also { created += it }
+            HostSession(connector, backgroundScope, clientInfo, Backoff(), clientId = "client-${tunnel.tunnelId}").also {
+                created += it
+                rig?.onCreate()
+            }
         }
         val auth = GitHubDeviceAuth(baseUrl = githubUrl?.invoke(server) ?: server.url("/").toString(), now = now)
         val tunnels = DevTunnelsClient(serviceUrl = devTunnelsUrl?.invoke(server) ?: server.url("/").toString())
@@ -153,7 +185,9 @@ class AppControllerTest {
         } else {
             AppController(auth, vault, tunnels, lastHost, factory, backgroundScope, now, interaction, approvalGate)
         }
-        Rig(server, controller, vault, box, store, lastHost, seen, created, connectors, interaction).block()
+        val built = Rig(server, controller, vault, box, store, lastHost, seen, created, connectors, interaction)
+        rig = built
+        built.block()
     }
 
     private suspend fun Rig.await(match: (AppState) -> Boolean): AppState = controller.state.first(match)
@@ -640,6 +674,100 @@ class AppControllerTest {
 
             assertTrue(created.isEmpty())
             assertIs<AppState.SignedOut>(state)
+        }
+    }
+
+    @Test
+    fun `a sign-out that lands while a connection is being made wins, and the session made for it is stopped`() = runTest {
+        withRig(onCreate = {
+            controller.signOut()
+            runCurrent()
+        }) {
+            vault.save(savedToken)
+            server.json(fixture("list-tunnels.json"))
+            controller.start()
+            awaitHosts()
+
+            controller.connect(loaded().first().tunnel)
+            runCurrent()
+
+            assertEquals(AppState.SignedOut(SignInStep.Idle, null, offerRevoke = true), state)
+            assertEquals(VaultLoad.Absent, vault.load())
+            assertEquals(ConnState.Stopped, created.single().connection.value)
+            assertTrue(tokensSeenByHost.isEmpty(), "the session never reached the host")
+            assertNull(lastHost.id)
+        }
+    }
+
+    @Test
+    fun `a connection made while a sign-out is wiping the token is stopped when the sign-out lands`() = runTest {
+        withRig {
+            vault.save(savedToken)
+            server.json(fixture("list-tunnels.json"))
+            controller.start()
+            awaitHosts()
+            val host = loaded().first().tunnel
+            val wipe = CompletableDeferred<Unit>()
+            store.deleteGate = wipe
+
+            controller.signOut()
+            runCurrent()
+            // The wipe is released first but resumes only at the next runCurrent, by which time the connection has been made.
+            wipe.complete(Unit)
+            controller.connect(host)
+            assertIs<AppState.Connected>(state)
+            runCurrent()
+
+            assertIs<AppState.SignedOut>(state)
+            assertEquals(VaultLoad.Absent, vault.load())
+            assertEquals(ConnState.Stopped, created.single().connection.value)
+        }
+    }
+
+    @Test
+    fun `the host list being replaced while a connection is being made does not stop the connection`() = runTest {
+        withRig(onCreate = { controller.refreshHosts() }) {
+            vault.save(savedToken)
+            server.json(fixture("list-tunnels.json"))
+            server.json(fixture("list-tunnels.json"))
+            controller.start()
+            awaitHosts()
+            val host = loaded().first().tunnel
+
+            controller.connect(host)
+            val connected = assertIs<AppState.Connected>(state)
+            connected.session.connection.first { it == ConnState.Online }
+            runCurrent()
+
+            assertEquals(host, connected.host)
+            assertSame(created.single(), connected.session)
+            assertEquals("test-tunnel-1", lastHost.id)
+        }
+    }
+
+    @Test
+    fun `a host list replaced between reading the state and the swap to the live session is retried, not taken as a refusal`() = runTest {
+        withRig {
+            vault.save(savedToken)
+            server.json(fixture("list-tunnels.json"))
+            controller.start()
+            awaitHosts()
+            val host = loaded().first().tunnel
+            // The state is private and nothing else runs between the read and the swap, so the field is replaced by a wrapper that races it.
+            val field = AppController::class.java.getDeclaredField("_state").apply { isAccessible = true }
+            @Suppress("UNCHECKED_CAST")
+            val live = field.get(controller) as MutableStateFlow<AppState>
+            val racing = RacingState(live) { live.value = (live.value as AppState.Hosts).let { it.copy(renews = !it.renews) } }
+            field.set(controller, racing)
+
+            controller.connect(host)
+            val connected = assertIs<AppState.Connected>(state)
+            connected.session.connection.first { it == ConnState.Online }
+            runCurrent()
+
+            assertTrue(racing.raced, "the list was replaced under the first swap")
+            assertSame(created.single(), connected.session)
+            assertEquals("test-tunnel-1", lastHost.id)
         }
     }
 

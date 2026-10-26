@@ -1,5 +1,6 @@
 package dev.ahpclient.tunnel
 
+import dev.ahpclient.ahp.AhpException
 import dev.ahpclient.ahp.FakeSocket
 import java.io.IOException
 import java.net.SocketTimeoutException
@@ -100,5 +101,33 @@ class MethodLoggingSocketTest {
         assertEquals("SocketClosedException code=1011", describeFailure(SocketClosedException(1011, "private reason")))
         val other = describeFailure(IllegalStateException("wss://secret-host.example/?tkn=abc", IOException("Authorization: tunnel secret-token")))
         assertEquals("IllegalStateException <- IOException", other)
+    }
+
+    @Test
+    fun `an overload is named with the limit it hit, wherever it sits in the chain`() {
+        val overload = ClientOverloadedException("More than 20000 notifications are waiting to be applied")
+
+        assertEquals("ClientOverloadedException \"More than 20000 notifications are waiting to be applied\"", describeFailure(overload))
+        assertEquals(
+            "ConnectionClosed <- ClientOverloadedException \"More than 20000 notifications are waiting to be applied\"",
+            describeFailure(AhpException.ConnectionClosed(overload)),
+        )
+    }
+
+    @Test
+    fun `an overloaded socket is logged as it ends`() = runTest {
+        val lines = mutableListOf<String>()
+        val inner = object : TextSocket {
+            override suspend fun receive(): String = throw ClientOverloadedException("a frame of 11 characters is over the limit of 10")
+
+            override fun send(text: String) = false
+
+            override fun close(code: Int, reason: String) = Unit
+        }
+        val wrapped = MethodLoggingSocketOpener({ _, _ -> inner }, lines::add).open("wss://x", emptyMap())
+
+        assertFailsWith<ClientOverloadedException> { wrapped.receive() }
+
+        assertEquals(listOf("socket ended: ClientOverloadedException \"a frame of 11 characters is over the limit of 10\""), lines)
     }
 }

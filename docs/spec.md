@@ -711,7 +711,7 @@ You asked for one place that shows where you are needed. Opened from the side me
 1. Terms of use for Microsoft's GitHub App client ID in a third-party app (Step 0.1). Personal use proceeds meanwhile; wider distribution waits on the answer.
 2. ~~Repo name~~ Decided: `ahp-android-client`.
 3. ~~Does the Kotlin AHP artifact cover the chat channel?~~ Yes — resolved in Step 1.1 (Assumption 3).
-4. Play policy for a long-running `dataSync` foreground service — acceptable for internal distribution; re-check before any store release.
+4. Play policy for the long-running foreground service — since 2026-10-26 the service runs as `specialUse` from Android 14 (API 34), to avoid the six-hour cut on `dataSync` (still used on Android 10 to 13). That is fine for sideloading. A Play Store release needs the written `specialUse` justification (the subtype text in the manifest) reviewed first. See H8 in [`docs/hardening-spec.md`](hardening-spec.md).
 5. ~~Do GitHub App user tokens for this app expire (refresh flow) or not?~~ Yes: eight hours, with a refresh token (6 months). The app renews them itself since 2026-10-25 (see the last Progress Log row).
 6. Multi-host (several hosts at once, or watching them read-only for notifications): **deferred by decision, 2026-10-24.**
 

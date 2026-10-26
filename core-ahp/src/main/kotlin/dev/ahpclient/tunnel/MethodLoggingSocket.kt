@@ -50,15 +50,16 @@ internal class MethodLoggingSocket(private val inner: TextSocket, private val lo
 
 /**
  * Why something failed, for a log read on a developer's own phone: the class of each cause in the chain, the close code of a
- * socket, and the words of a timeout (which name only the ping interval). Never the message of anything else, because a message
- * can carry an address or a header.
+ * socket, the words of a timeout (which name only the ping interval) and of an overload (which name only a limit and a count).
+ * Never the message of anything else, because a message can carry an address or a header.
  */
 fun describeFailure(failure: Throwable): String {
     val chain = generateSequence(failure) { it.cause?.takeIf { cause -> cause !== it } }.take(6).toList()
     val names = chain.joinToString(" <- ") { it.javaClass.simpleName.ifEmpty { "(anonymous)" } }
     val code = chain.filterIsInstance<SocketClosedException>().firstOrNull()?.code?.let { " code=$it" }.orEmpty()
     val timeout = chain.filterIsInstance<SocketTimeoutException>().firstOrNull()?.message?.take(120)?.let { " \"$it\"" }.orEmpty()
-    return names + code + timeout
+    val overload = chain.filterIsInstance<ClientOverloadedException>().firstOrNull()?.message?.take(120)?.let { " \"$it\"" }.orEmpty()
+    return names + code + timeout + overload
 }
 
 /** The log line for one outbound frame. Public so a test can state exactly what may appear. */

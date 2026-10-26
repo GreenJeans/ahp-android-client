@@ -1,6 +1,6 @@
 # Hardening: battery, network, memory and recovery
 
-> **Status:** In progress. H1 and H2 are built and covered by JVM tests; their on-phone checks (AC-H1.5, AC-H1.6, AC-H2.6) are still to do. H3 to H8, F1 and F2 are not started.
+> **Status:** In progress. H1, H2, H4 and H5 are built and covered by JVM tests; the on-phone checks for H1 and H2 (AC-H1.5, AC-H1.6, AC-H2.6) are still to do. H8 is built and assembled, with its on-phone checks (AC-H8.1 to AC-H8.3) open. H3, H6, H7, F1 and F2 are not started.
 > **Date:** 2026-10-26
 > **Parent:** [`docs/spec.md`](spec.md). That spec holds the product phases; this one holds the work that makes the app behave well over a long day in a pocket. Tick boxes here as work lands and add a row to the Progress Log at the bottom; note the commit in the row.
 > **Source:** a review of the code at commit `a8bb8ed` (concurrency, state, persistence, battery), 2026-10-26.
@@ -166,21 +166,38 @@ Two buffers have no limit. `OkHttpTextSocket.frames` ([OkHttpSocketOpener.kt](..
 
 ### Design
 
-- `OkHttpTextSocket` tracks queued characters in an `AtomicLong`: added on `deliver`, taken off on `receive`. Above `MAX_QUEUED_CHARS` (64 M, which is 64 MB for ASCII on compact strings), it fails the socket with a new `ClientOverloadedException` (an `IOException`) and closes with code 1008. A single frame larger than `MAX_FRAME_CHARS` (48 M) does the same before it is queued.
-- `AhpConnection.inbox` becomes `Channel(MAX_QUEUED_NOTIFICATIONS = 20_000)`. If `trySend` fails because the channel is full, the read loop ends with `ClientOverloadedException`. That closes the connection, and `HostSession` reconnects and resumes, which replays what was missed. This is the existing path for any dropped socket.
-- `ClientOverloadedException` is not terminal in `HostSession.isTerminal`. Three in a row while subscribing the same chat counts toward that chat's `noteInterrupted()`, so a chat too large for the phone ends as "not loaded" instead of looping.
-- The debug `describeFailure` names the cause.
+**Socket** ([OkHttpSocketOpener.kt](../core-ahp/src/main/kotlin/dev/ahpclient/tunnel/OkHttpSocketOpener.kt))
+
+- `OkHttpTextSocket` keeps its frame channel unbounded, because dropping a frame would corrupt the state mirror, and bounds it by counting instead. `queued` is an `AtomicLong` of characters: added in `deliver`, taken off in `receive`. Above `MAX_QUEUED_CHARS` (64 M, which is about 64 MB for ASCII, since Java keeps such text one byte to a character) the socket is overloaded. A single frame over `MAX_FRAME_CHARS` (48 M) is refused the same way before it is counted or queued.
+- Overloading is one step (`overloaded()`): the failure is recorded once, the frame channel is closed and drained, `queued` goes to 0, the peer is closed with code 1008 (`TextSocket.POLICY_VIOLATION`, new) and anything delivered afterwards is ignored. `receive()` then throws the `ClientOverloadedException` even if frames were still waiting, so the failure is not held up behind what was already queued.
+- `OkHttpSocketOpener` and `OkHttpTextSocket` take the two limits as constructor parameters, defaulting to the constants, so a test can use small ones.
+
+**Connection** ([AhpConnection.kt](../core-ahp/src/main/kotlin/dev/ahpclient/ahp/AhpConnection.kt))
+
+- `inbox` becomes `Channel(maxQueuedNotifications)`, a constructor parameter defaulting to `MAX_QUEUED_NOTIFICATIONS` (20 000, `internal`). Every path that queues a notification (actions, named notifications, undecodable frames) goes through `enqueue()`. If `trySend` fails because the buffer is full, `enqueue()` throws `ClientOverloadedException`, which ends the read loop. The collector still receives what was queued before it sees the failure, as `ConnectionClosed` with the overload as its cause, and a request waiting at the time fails with `ConnectionClosed` too.
+- The limit counts notifications, not bytes. The byte bound is the socket's.
+- An action advances `lastServerSeq` only **after** it is queued. An action lost to a full buffer therefore does not move the resume point, and the next `reconnect` asks for it again.
+- **Not in the original design:** `HostSession.supervise()` copies the connection's `lastServerSeq` into its own `lastSeq` only if the connection reached the point where notifications are collected (`routing`). Until then `lastServerSeq` counts actions that were queued but never applied, and an overload while attaching (a burst of replayed actions arriving beside the `reconnect` reply) would otherwise skip them.
+
+**Session**
+
+- `ClientOverloadedException` (an `IOException`, in `tunnel/TextSocket.kt`) needs no change to `HostSession.isTerminal`: it falls to the `else` branch, so the session goes to `Reconnecting` and resumes, the existing path for any dropped socket.
+- The chat rule is the existing one. `subscribeIfNeeded` for a chat already calls `noteInterrupted()` when the connection is lost while it waits for that chat's snapshot, and the overload arrives there as `ConnectionClosed`. Three in a row mark the chat "not loaded" (`interrupted = true`) and it is not subscribed again until the person retries. An overload while no chat is waiting for a snapshot counts against no chat.
+- `describeFailure` (`tunnel/MethodLoggingSocket.kt`) adds the overload's message, which names only a limit and a count, to the debug line.
 
 ### Acceptance criteria
 
-- [ ] **AC-H4.1** Pushing more than the limit through a fake socket ends the connection with `ClientOverloadedException`, and `HostSession` goes to `Reconnecting`, not `Failed`.
-- [ ] **AC-H4.2** A single oversized frame is refused before it is queued.
-- [ ] **AC-H4.3** Normal traffic, including the 275 KB `listSessions` reply in the fixtures, is unaffected.
-- [ ] **AC-H4.4** A chat that overloads the connection three times in a row is marked not loaded and is not subscribed again until the person asks.
+- [x] **AC-H4.1** Pushing more than the limit through a fake socket ends the connection with `ClientOverloadedException`, and `HostSession` goes to `Reconnecting`, not `Failed`. (For the notification buffer, `HostSessionOverloadTest` floods a `FakeSocket` and checks `Reconnecting` with the overload as the cause, then that the next connection resumes with `reconnect`. For the character count, `OkHttpTextSocketTest` checks the socket fails with the exception.)
+- [x] **AC-H4.2** A single oversized frame is refused before it is queued.
+- [x] **AC-H4.3** Normal traffic is unaffected. (`OkHttpTextSocketTest` sends a 300 000-character reply, larger than the 275 KB `listSessions` reply seen on the Pixel, and the chat snapshot fixture through the real opener at the default limits. The `listSessions` fixture itself is only 7 KB, and the rest of the suite runs with the default notification buffer.)
+- [x] **AC-H4.4** A chat that overloads the connection three times in a row is marked not loaded and is not subscribed again until the person asks.
 
 ### Tests
 
-`OkHttpTextSocketTest` (with `MockWebServer`) for the character accounting; `AhpConnectionRobustnessTest` gains overflow cases; `HostSessionTest` for the reconnect and the not-loaded outcome.
+- `OkHttpTextSocketTest` (JVM): the character accounting directly on `OkHttpTextSocket` with small limits (counted on queueing and given back on reading, so only what is waiting counts; over the limit drops what was queued; an oversized frame refused before queueing; a frame exactly at the limits accepted; a reader already waiting is woken; once overloaded it keeps failing and queues nothing), plus one `MockWebServer` case for normal traffic through `OkHttpSocketOpener` at the default limits.
+- `AhpConnectionRobustnessTest`: a full buffer ends the connection with the overload as the cause; a request waiting at the time fails with `ConnectionClosed`; what was queued is still delivered before the collector sees the failure; an action lost to a full buffer does not move `lastServerSeq`; an undecodable frame is refused too; a burst that fits is not an overload.
+- `HostSessionOverloadTest` (new, JVM, with `ScriptedConnector` taking a small `maxQueuedNotifications`): `Reconnecting` not `Failed`, and the next connection resumes; a burst that fits leaves the connection alone; three overloads in a row while a chat is subscribing give "not loaded" and no further subscribe; `retry()` subscribes again; an overload with no chat loading counts against none; actions queued while attaching are asked for again when the overload ends the connection before they are applied.
+- `MethodLoggingSocketTest`: `describeFailure` names the overload and its limit anywhere in the chain, and an overloaded socket is logged as it ends.
 
 ---
 
@@ -192,18 +209,25 @@ Two buffers have no limit. `OkHttpTextSocket.frames` ([OkHttpSocketOpener.kt](..
 
 ### Design
 
-- Make `connect()` `@Synchronized`, and replace the assignment with `compareAndSet(current, Connected(...))`, where `current` is the `Hosts` value read at the top. If the swap fails, `session.stop()` and return.
-- Make `disconnect()` `@Synchronized` and use compare-and-set the same way.
-- Leave `endSignIn` unconditional: signing out must always win.
+All in `AppController.kt`.
+
+- `connect()` is `@Synchronized`. After it creates and starts the session, it swaps `Hosts` for `Connected` with `compareAndSet`. If the state is no longer a `Hosts`, it calls `session.stop()` and returns. **Deviation from the first design:** the swap is a loop that re-reads the state and retries, not a single compare against the `Hosts` value read at the top. A `Hosts` value is replaced by a copy whenever the list loads or the token is renewed (`_state.update { it.copy(...) }`), and refusing the connection because of that would drop a legitimate tap. Only a state that is not `Hosts` at all (a sign-out) ends the loop with a refusal.
+- `disconnect()` is `@Synchronized`, and `showHosts` takes `from: AppState? = null`. With `from`, the host list replaces only that state (`compareAndSet`) and the list is not loaded if the screen has moved on. `disconnect()` passes the `Connected` it is leaving, so a sign-out that landed first stands.
+- `endSignIn` stays unconditional, because signing out must always win. **Not in the first design:** it now swaps the state with `getAndUpdate`, stops the session of the `Connected` it displaced and cancels the watch job. The host list stays tappable while the disk wipe is awaited, so a `connect()` can complete inside that window and would otherwise leave a live session running under `SignedOut`.
 
 ### Acceptance criteria
 
-- [ ] **AC-H5.1** If the state leaves `Hosts` between the check and the write, the end state is the one that won (for example `SignedOut`), and the session that was created is stopped.
-- [ ] **AC-H5.2** All existing `AppControllerTest` cases pass unchanged.
+- [x] **AC-H5.1** If the state leaves `Hosts` between the check and the write, the end state is the one that won (for example `SignedOut`), and the session that was created is stopped. (Two cases: a sign-out inside the factory's `create()`, and a connect made while the sign-out's wipe is still pending. Both end `SignedOut` with the session in `ConnState.Stopped`.)
+- [x] **AC-H5.2** All existing `AppControllerTest` cases pass unchanged. (The shared `withRig` helper gained one defaulted parameter, `onCreate`; no existing case was edited. The whole `:core-ahp:test` run is green.)
 
 ### Tests
 
-An `AppControllerTest` case with a `HostSessionFactory` whose `create()` first drives the controller to `SignedOut` (through the existing 401 path on the fake Dev Tunnels server, run on an unconfined dispatcher), then returns a session. Assert the final state and that `stop()` was called.
+Four `AppControllerTest` cases:
+
+- A sign-out that lands while the session is being made wins, and that session is stopped, never reaches the host, and `lastHost` is not saved. The sign-out runs from a new `onCreate` hook in the test factory (`controller.signOut()` then `runCurrent()`), not through the 401 path on the fake Dev Tunnels server as the first design suggested.
+- A connection made while a sign-out is wiping the token (`FakeStore.deleteGate` in `VaultTestKit` holds the wipe half done) is stopped when the sign-out lands, and the state ends `SignedOut`.
+- The host list being replaced while a connection is made (`controller.refreshHosts()` from `onCreate`) does not stop the connection.
+- The same, forced between the read and the swap: the controller's private state is replaced by a `RacingState` wrapper that changes the state before the first `compareAndSet`, and the swap is retried to success.
 
 ---
 
@@ -275,15 +299,23 @@ On Android 15 and newer, a `dataSync` foreground service may run about six hours
 
 ### Design
 
-- On API 34 and above, run as `FOREGROUND_SERVICE_TYPE_SPECIAL_USE`, with the `<property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="Live connection to the user's own coding-agent host, to alert when a session needs them" />` and the `FOREGROUND_SERVICE_SPECIAL_USE` permission. Below 34, keep `dataSync`, which has no limit there.
-- Keep `onTimeout` for any timeout the platform still applies.
-- Update the parent spec's open question 4: `specialUse` is fine for sideloading. Distribution through the Play Store needs its written justification reviewed first.
+- **Manifest** (`app/src/main/AndroidManifest.xml`): the service declares `android:foregroundServiceType="dataSync|specialUse"`, with `<property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="Live connection to the user's own coding-agent host, to alert when a session needs them" />`, and the app requests `FOREGROUND_SERVICE_SPECIAL_USE` beside the existing `FOREGROUND_SERVICE_DATA_SYNC`. Both types are declared because the type passed at run time must be one of them and the run-time choice depends on the Android version.
+- **Choice of type** (`core-ahp/.../app/ForegroundKind.kt`, plain Kotlin so a JVM test can pin it): `ForegroundKind.forSdk(sdkInt)` gives `SPECIAL_USE` from API 34, `DATA_SYNC` from API 29 to 33 (no time limit there) and `NONE` below 29.
+- **Start** (`MonitorService.enterForeground`): maps the kind to the matching `ServiceInfo.FOREGROUND_SERVICE_TYPE_*` constant and calls `ServiceCompat.startForeground`, which leaves the type out below API 29, where `startForeground` does not take one. The constants are copied in at build time and `ForegroundKind` only picks one the running Android has, hence `@SuppressLint("InlinedApi")`.
+- **Deviations from the first design:** the first design said to keep `dataSync` below API 34. As built, `dataSync` is for API 29 to 33 and API 26 to 28 start with no type, as before this change, since those versions have no foreground-service types. The `specialUse` branch is chosen by `Build.VERSION.SDK_INT >= 34` through `ForegroundKind`, not by a check in the service.
+- `MonitorService.onTimeout` is kept for any timeout the platform still applies, and its comment now says so. It still turns monitoring off and posts "Background monitoring paused".
+- The parent spec's open question 4 now says `specialUse` is fine for sideloading, and a Play Store release needs the written justification reviewed first.
 
 ### Acceptance criteria
 
 - [ ] **AC-H8.1** On the Pixel (Android 17), `dumpsys activity services dev.ahpclient` shows the service type as `specialUse`.
 - [ ] **AC-H8.2** Monitoring runs for more than seven hours without `onTimeout` (an overnight run on charge).
-- [ ] **AC-H8.3** On the API 26 emulator the service still starts as `dataSync`.
+- [ ] **AC-H8.3** On the API 26 emulator the service still starts as `dataSync`. (As built, API 26 has no foreground-service types, so the service starts without one there; the `dataSync` branch applies from API 29, so seeing `dataSync` needs an API 29 to 33 device or emulator. Decide which of the two this criterion means when it is run.)
+
+### Tests
+
+- `ForegroundKindTest` (JVM): API 25, 26 and 28 give `NONE`; 29 and 33 give `DATA_SYNC`; 34 and 35 give `SPECIAL_USE`. This pins the choice at the version boundaries, not that Android accepts the start; that is what the three criteria above check on a device.
+- `MonitorInstrumentedTest.theManifestDeclaresTheServiceAsDataSyncAndSpecialUseWithItsPermissions` (instrumented, so it needs a device or emulator): the manifest carries the `dataSync` bit from API 29 and the `specialUse` bit from API 34, the service is not exported, and `FOREGROUND_SERVICE_SPECIAL_USE` is among the requested permissions.
 
 ---
 
@@ -347,3 +379,4 @@ For each item that has an on-phone criterion, record the run in `docs/verificati
 |---|---|
 | 2026-10-26 | Spec drafted from the code review at `a8bb8ed`. Nothing started. |
 | 2026-10-26 | H1 and H2 built on `95af56d`, in the commit that adds this row, with `BackoffTest`, `HostSessionNetworkTest`, `HostSessionParkTest`, `ParkSchedulerTest` and additions to `ChatStoreTest` and `AppControllerTest`. AC-H1.1 to H1.4 and AC-H2.1 to H2.5 ticked. AC-H1.5, AC-H1.6 and AC-H2.6 need the phone and are still open. The H1 and H2 designs above describe what was built, including that the network monitor does not require `NET_CAPABILITY_VALIDATED`. |
+| 2026-10-26 | H5, H4 and H8 built on `1e917e1`, in the commit that adds this row. **H5:** `connect()` and `disconnect()` are `@Synchronized` and swap state with compare-and-set (a retry loop for `connect()`, so a host list replaced meanwhile is not a refusal); `endSignIn` also stops a session that a connect made during the wipe; four new `AppControllerTest` cases. **H4:** `OkHttpTextSocket` counts queued characters (64 M, one frame 48 M, close code 1008) and `AhpConnection`'s inbox holds 20 000 notifications; past either, `ClientOverloadedException` drops the connection and the next one resumes. `HostSession` no longer moves its resume point past actions queued but not yet applied. New `OkHttpTextSocketTest` and `HostSessionOverloadTest`, additions to `AhpConnectionRobustnessTest` and `MethodLoggingSocketTest`. **H8:** the service declares `dataSync\|specialUse` and starts as `specialUse` from API 34 (`ForegroundKind`, `ForegroundKindTest`), `dataSync` on API 29 to 33 and untyped below; `docs/spec.md` open question 4 updated. `:core-ahp:test` ran green (1083 tests, no failures). AC-H4.1 to H4.4 and AC-H5.1 and H5.2 ticked. AC-H8.1 to H8.3 need the phone and are still open, as are AC-H1.5, AC-H1.6 and AC-H2.6. The H4, H5 and H8 designs above describe what was built, including where it departs from the first design. |
