@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- An agent's spark inside a tunnel's arch: the agent, reached through the Dev Tunnel. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M34,80L34,52A20,20 0,0 1,74 52L74,80"
+        android:strokeWidth="7"
+        android:strokeColor="#FFFFFF"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:fillColor="#FFC857"
+        android:pathData="M54,50Q55.9,60.1 66,62Q55.9,63.9 54,74Q52.1,63.9 42,62Q52.1,60.1 54,50Z" />
+</vector>
