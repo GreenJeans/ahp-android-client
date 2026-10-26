@@ -26,7 +26,7 @@ class UiSettings(private val prefs: SharedPreferences) {
     val browser: StateFlow<String?> = _browser.asStateFlow()
 
     fun setTextScale(scale: Float) {
-        val clamped = TextScale.snap(scale)
+        val clamped = TextScale.round(scale)
         _textScale.value = clamped
         prefs.edit { putFloat(TEXT_SCALE, clamped) }
     }

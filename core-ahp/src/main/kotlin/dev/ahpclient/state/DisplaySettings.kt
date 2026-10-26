@@ -12,8 +12,11 @@ object TextScale {
     /** Keeps [scale] inside the range the screens are laid out for; a value that is not a number is the default. */
     fun clamp(scale: Float): Float = if (scale.isNaN()) DEFAULT else scale.coerceIn(MIN, MAX)
 
-    /** Rounds to the nearest step, so a pinch changes the text in even steps and does not redraw the chat for every pixel of it. */
+    /** Rounds to the nearest step: what the slider in Settings offers. */
     fun snap(scale: Float): Float = clamp((clamp(scale) / STEP).roundToInt() * STEP)
+
+    /** Rounds to a whole percent, so a pinch that follows the fingers is smooth but what is kept is tidy. */
+    fun round(scale: Float): Float = clamp(kotlin.math.round(clamp(scale) * 100f) / 100f)
 
     /** "110%". */
     fun percent(scale: Float): String = "${(clamp(scale) * 100).roundToInt()}%"

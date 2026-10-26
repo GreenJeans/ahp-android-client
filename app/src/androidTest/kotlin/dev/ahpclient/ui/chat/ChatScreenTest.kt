@@ -545,9 +545,103 @@ class ChatScreenTest {
         pinch(fromGap = 200f, toGap = 300f)
         rule.waitForIdle()
 
-        assertTrue("scales: $seen", seen.isNotEmpty())
-        assertEquals(1.5f, seen.last(), 0.001f)
-        assertTrue("every step is a whole step: $seen", seen.all { Math.abs(it / TextScale.STEP - Math.round(it / TextScale.STEP)) < 0.001f })
+        assertEquals("the size is kept once, when the fingers lift: $seen", 1, seen.size)
+        assertEquals(1.5f, seen.single(), 0.001f)
+    }
+
+    @Test
+    fun aSizeThatIsKeptIsAWholePercent() {
+        val seen = mutableListOf<Float>()
+        showPinchable(onScale = { seen += it })
+
+        pinch(fromGap = 300f, toGap = 371f)
+        rule.waitForIdle()
+
+        assertEquals(1.24f, seen.single(), 0.0001f)
+    }
+
+    private fun fingersDown(gap: Float) = rule.onRoot().performTouchInput {
+        val c = center
+        down(0, Offset(c.x - gap / 2, c.y))
+        down(1, Offset(c.x + gap / 2, c.y))
+    }
+
+    private fun fingersTo(gap: Float) = rule.onRoot().performTouchInput {
+        val c = center
+        updatePointerTo(0, Offset(c.x - gap / 2, c.y))
+        updatePointerTo(1, Offset(c.x + gap / 2, c.y))
+        move()
+    }
+
+    private fun fingersUp() = rule.onRoot().performTouchInput {
+        up(0)
+        up(1)
+    }
+
+    @Test
+    fun theTextFollowsTheFingersWhileTheyAreStillDown() {
+        val seen = mutableListOf<Float>()
+        showPinchable(onScale = { seen += it })
+        awaitText("message 30")
+        val before = fontScaleOf("message 30")
+
+        fingersDown(200f)
+        // Each step must reach the screen with the fingers still down: a change of density must not end the pinch after the first.
+        for ((gap, want) in listOf(220f to 1.1f, 260f to 1.3f, 300f to 1.5f, 240f to 1.2f)) {
+            fingersTo(gap)
+            rule.waitForIdle()
+            assertEquals("gap $gap", before * want, fontScaleOf("message 30"), 0.01f)
+        }
+        assertTrue("nothing is kept while the fingers are down: $seen", seen.isEmpty())
+
+        fingersUp()
+        rule.waitForIdle()
+
+        assertEquals(listOf(1.2f), seen)
+        assertEquals(before * 1.2f, fontScaleOf("message 30"), 0.01f)
+    }
+
+    @Test
+    fun aSecondPinchStartsFromTheSizeTheFirstLeft() {
+        val seen = mutableListOf<Float>()
+        showPinchable(onScale = { seen += it })
+
+        pinch(fromGap = 200f, toGap = 300f)
+        rule.waitForIdle()
+        pinch(fromGap = 300f, toGap = 270f)
+        rule.waitForIdle()
+
+        assertEquals(2, seen.size)
+        assertEquals(1.5f, seen[0], 0.001f)
+        assertEquals(1.35f, seen[1], 0.001f)
+    }
+
+    @Test
+    fun aPinchStartsFromTheSizeAlreadyChosen() {
+        val seen = mutableListOf<Float>()
+        showPinchable(initial = 1.2f, onScale = { seen += it })
+
+        pinch(fromGap = 200f, toGap = 250f)
+        rule.waitForIdle()
+
+        assertEquals(1.5f, seen.single(), 0.001f)
+    }
+
+    @Test
+    fun aSizeChosenElsewhereReplacesWhatAPinchLeft() {
+        var scale by mutableStateOf(1f)
+        rule.setContent { AhpTheme { ChatPane(transcript(rows(1..3)), null, false, null, ConnState.Online, {}, {}, textScale = scale, onTextScale = {}) } }
+        awaitText("message 1")
+        val before = fontScaleOf("message 1")
+
+        pinch(fromGap = 200f, toGap = 300f)
+        rule.waitForIdle()
+        assertEquals(before * 1.5f, fontScaleOf("message 1"), 0.01f)
+
+        scale = 1.2f
+        rule.waitForIdle()
+
+        assertEquals(before * 1.2f, fontScaleOf("message 1"), 0.01f)
     }
 
     @Test

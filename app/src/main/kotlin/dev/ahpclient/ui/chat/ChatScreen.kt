@@ -132,9 +132,15 @@ fun ChatPane(
     val notLoaded = error as? ChatNotLoadedException
     // The text of the chat, and the box under it, follow the person's size; the bars around them keep the system's.
     val base = LocalDensity.current
-    val scaled = remember(base, textScale) { Density(base.density, base.fontScale * textScale) }
+    // While the fingers are down the size follows them here, and is only handed on (and kept) when they lift.
+    var live by remember { mutableStateOf<Float?>(null) }
+    LaunchedEffect(textScale) { live = null }
+    val shown = live ?: textScale
+    val scaled = remember(base, shown) { Density(base.density, base.fontScale * shown) }
+    // The pinch sits outside the density it changes: a change of density would restart the gesture after its first step.
+    Box(modifier = modifier.fillMaxSize().let { if (onTextScale != null) it.pinchToScale(shown, { s -> live = s }, { s -> live = s; onTextScale(s) }) else it }) {
     CompositionLocalProvider(LocalDensity provides scaled) {
-        Column(modifier = modifier.fillMaxSize().let { if (onTextScale != null) it.pinchToScale(textScale, onTextScale) else it }) {
+        Column(modifier = Modifier.fillMaxSize()) {
             if (connection != ConnState.Online) ConnectionLine(connection, Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
             if (transcript?.running == true && !transcript.waitingOnYou) WorkingBar()
             when {
@@ -157,6 +163,7 @@ fun ChatPane(
         pendingLink?.let { target ->
             LinkConfirmDialog(target = target, onOpen = { pendingRaw = null; onOpenLink(rawOf(target)) }, onDismiss = { pendingRaw = null })
         }
+    }
     }
 }
 

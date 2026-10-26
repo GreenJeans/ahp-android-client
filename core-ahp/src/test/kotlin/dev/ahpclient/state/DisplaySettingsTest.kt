@@ -14,7 +14,16 @@ class DisplaySettingsTest {
     }
 
     @Test
-    fun `a pinch is rounded to even steps`() {
+    fun `a pinch follows the fingers and is kept to a whole percent`() {
+        assertEquals(1.23f, TextScale.round(1.234f), 0.0001f)
+        assertEquals(1.24f, TextScale.round(1.236f), 0.0001f)
+        assertEquals(TextScale.MIN, TextScale.round(0.5f))
+        assertEquals(TextScale.MAX, TextScale.round(3f))
+        assertEquals(TextScale.DEFAULT, TextScale.round(Float.NaN))
+    }
+
+    @Test
+    fun `the slider is rounded to even steps`() {
         assertEquals(1.1f, TextScale.snap(1.12f), 0.0001f)
         assertEquals(1.15f, TextScale.snap(1.13f), 0.0001f)
         assertEquals(TextScale.MIN, TextScale.snap(0.5f))
