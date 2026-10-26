@@ -6,15 +6,19 @@ import android.os.Build
 import android.util.Log
 import androidx.datastore.preferences.preferencesDataStoreFile
 import dev.ahpclient.app.AppController
+import dev.ahpclient.app.FinishedAlerts
 import dev.ahpclient.app.HostSessionFactory
 import dev.ahpclient.app.InteractionConsent
 import dev.ahpclient.app.MonitorCoordinator
+import dev.ahpclient.app.OnScreen
 import dev.ahpclient.auth.GitHubDeviceAuth
+import dev.ahpclient.data.PrefsFinishedWatch
 import dev.ahpclient.data.PrefsInteractionSettings
 import dev.ahpclient.data.PrefsLastHostStore
 import dev.ahpclient.data.UiSettings
 import dev.ahpclient.data.PrefsMonitorSettings
 import dev.ahpclient.monitor.AndroidMonitorService
+import dev.ahpclient.monitor.NotificationFinishedSink
 import dev.ahpclient.monitor.NotificationInputNeededSink
 import dev.ahpclient.security.AndroidTokenVault
 import dev.ahpclient.security.BiometricApprovalGate
@@ -104,7 +108,21 @@ class AppContainer(context: Context) {
             // Buttons on a notification are offered only while the user has let the app act for them.
             sink = NotificationInputNeededSink(appContext, canDecide = { controller.interactionAllowed.value }),
             scope = appScope,
+            // The session on screen is never alerted about, but only while the app is in front: pressing Home with it open is not looking.
+            finished = FinishedAlerts(PrefsFinishedWatch(prefs), NotificationFinishedSink(appContext), viewing = { OnScreen.session(inForeground, controller.state.value) }),
         )
+    }
+
+    /** Set by the activity as it comes to the front and leaves it. */
+    @Volatile
+    var inForeground = false
+
+    fun setWatchAll(on: Boolean) {
+        appScope.launch { monitor.setWatchAll(on) }
+    }
+
+    fun setWatched(resource: String, on: Boolean) {
+        appScope.launch { monitor.setWatched(resource, on) }
     }
 
     /**

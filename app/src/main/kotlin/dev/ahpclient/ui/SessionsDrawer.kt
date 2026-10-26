@@ -81,6 +81,8 @@ fun DrawerContent(
     onOpenSettings: () -> Unit,
     onSessionCreated: (String) -> Unit,
     modifier: Modifier = Modifier,
+    /** The sessions the user chose to be alerted about, each marked with a bell in the list. */
+    watched: Set<String> = emptySet(),
 ) {
     ModalDrawerSheet(modifier = modifier.testTag("drawer")) {
         Column(Modifier.fillMaxSize()) {
@@ -97,7 +99,7 @@ fun DrawerContent(
                     modifier = Modifier.weight(1f).padding(16.dp).testTag("drawer_no_host"),
                 )
             } else {
-                SessionList(sessions, connection, now, selected, showArchived, onToggleArchived, query, onQueryChange, listState, onOpenSession, Modifier.weight(1f))
+                SessionList(sessions, connection, now, selected, showArchived, onToggleArchived, query, onQueryChange, listState, watched, onOpenSession, Modifier.weight(1f))
             }
             HorizontalDivider()
             Row(
@@ -156,6 +158,7 @@ private fun SessionList(
     query: String,
     onQueryChange: (String) -> Unit,
     listState: LazyListState,
+    watched: Set<String>,
     onOpen: (String) -> Unit,
     modifier: Modifier,
 ) {
@@ -187,7 +190,7 @@ private fun SessionList(
         if (model.rows.isEmpty()) {
             item(key = "empty") { EmptyList(model, connection) }
         } else {
-            items(model.rows, key = { it.resource }) { row -> SessionRowItem(row, row.resource == selected, onOpen) }
+            items(model.rows, key = { it.resource }) { row -> SessionRowItem(row, row.resource == selected, row.resource in watched, onOpen) }
         }
         item(key = "end") { Spacer(Modifier.height(8.dp)) }
     }
@@ -241,7 +244,7 @@ private fun EmptyList(model: SessionListModel, connection: ConnState?) {
 
 /** One session on one or two lines. Its spoken description joins every part, so TalkBack reads the title, state, changes and age as a single item. */
 @Composable
-private fun SessionRowItem(row: SessionRow, selected: Boolean, onOpen: (String) -> Unit) {
+private fun SessionRowItem(row: SessionRow, selected: Boolean, watched: Boolean, onOpen: (String) -> Unit) {
     val description = listOfNotNull(
         row.title,
         row.state.label,
@@ -250,6 +253,7 @@ private fun SessionRowItem(row: SessionRow, selected: Boolean, onOpen: (String) 
         row.whenText.ifEmpty { null },
         if (row.isRead) null else "unread",
         if (row.isArchived) "archived" else null,
+        if (watched) "alert when done is on" else null,
     ).joinToString(", ")
     val shape = RoundedCornerShape(16.dp)
     Row(
@@ -290,6 +294,9 @@ private fun SessionRowItem(row: SessionRow, selected: Boolean, onOpen: (String) 
                     }
                 }
             }
+        }
+        if (watched) {
+            Icon(AppIcons.Bell, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(14.dp).testTag("row_alert"))
         }
         if (row.whenText.isNotEmpty()) {
             Text(row.whenText, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

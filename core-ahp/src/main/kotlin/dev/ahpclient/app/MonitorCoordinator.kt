@@ -2,6 +2,9 @@ package dev.ahpclient.app
 
 import dev.ahpclient.state.ApprovalTarget
 import dev.ahpclient.state.ConnState
+import dev.ahpclient.state.FinishedNotifier
+import dev.ahpclient.state.FinishedSession
+import dev.ahpclient.state.FinishedWatch
 import dev.ahpclient.state.HostSession
 import dev.ahpclient.state.InputNeeded
 import dev.ahpclient.state.InputNeededNotifier
@@ -18,6 +21,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 
 /** The one saved choice: keep watching in the background, or only while the app is open. */
@@ -41,10 +45,45 @@ interface InputNeededSink {
     fun clear(resource: String)
 }
 
+/** Which sessions to tell the user about when they finish, kept between runs. */
+interface FinishedWatchSettings {
+    val watch: Flow<FinishedWatch>
+
+    suspend fun setAll(on: Boolean)
+
+    suspend fun setSession(resource: String, on: Boolean)
+}
+
+/** Where "a session finished" goes: a notification on the phone, taken away again if the session starts working. */
+interface FinishedSink {
+    fun post(finished: FinishedSession)
+
+    fun clear(resource: String)
+}
+
+/**
+ * The session the person is looking at: the open one, and only while the app is in front. With the app in the background (the
+ * phone locked, another app on top) nothing is being looked at, even though the session is still "open" in the app.
+ */
+object OnScreen {
+    fun session(inForeground: Boolean, state: AppState): String? = if (inForeground) (state as? AppState.Connected)?.open?.uri else null
+}
+
+/**
+ * What "tell me when it finishes" needs besides the session list: the user's choice of sessions, where the alert goes, and which
+ * session is on screen right now (null when none is, or the app is not in front), which never gets an alert.
+ */
+class FinishedAlerts(
+    val settings: FinishedWatchSettings,
+    val sink: FinishedSink,
+    val viewing: () -> String? = { null },
+)
+
 /**
  * Decides when background monitoring runs and feeds it. Monitoring is on exactly while the user has turned it on and
  * is connected to a host: signing out, leaving the host or turning it off stops it, with nothing left running. While
- * it runs, [status] is the persistent notification's text and sessions that start waiting on the user go to [sink].
+ * it runs, [status] is the persistent notification's text and sessions that start waiting on the user go to [sink]. With [finished]
+ * set, sessions the user chose to watch (or all of them) also go to its sink when they stop working.
  */
 class MonitorCoordinator(
     private val state: StateFlow<AppState>,
@@ -53,6 +92,8 @@ class MonitorCoordinator(
     private val sink: InputNeededSink,
     private val scope: CoroutineScope,
     private val debounceMs: Long = InputNeededNotifier.DEFAULT_DEBOUNCE_MS,
+    private val finished: FinishedAlerts? = null,
+    private val finishedDebounceMs: Long = FinishedNotifier.DEFAULT_DEBOUNCE_MS,
 ) {
     private val _status = MutableStateFlow<MonitorStatus?>(null)
 
@@ -62,6 +103,17 @@ class MonitorCoordinator(
     val enabled: Flow<Boolean> get() = settings.enabled
 
     suspend fun setEnabled(on: Boolean) = settings.setEnabled(on)
+
+    /** The sessions the user wants a "finished" alert for. Kept whether or not monitoring is on; the alerts need it on. */
+    val finishedWatch: Flow<FinishedWatch> get() = finished?.settings?.watch ?: flowOf(FinishedWatch())
+
+    suspend fun setWatchAll(on: Boolean) {
+        finished?.settings?.setAll(on)
+    }
+
+    suspend fun setWatched(resource: String, on: Boolean) {
+        finished?.settings?.setSession(resource, on)
+    }
 
     fun start() {
         scope.launch { run() }
@@ -99,6 +151,19 @@ class MonitorCoordinator(
                 debounceMs = debounceMs,
                 readDetail = { resource -> readRequest(session, resource) },
             ).run()
+        }
+        finished?.let { alerts ->
+            launch {
+                session.connection.first { it == ConnState.Online }
+                FinishedNotifier(
+                    sessions = session.root.sessions,
+                    watch = alerts.settings.watch,
+                    notify = alerts.sink::post,
+                    cleared = alerts.sink::clear,
+                    viewing = alerts.viewing,
+                    debounceMs = finishedDebounceMs,
+                ).run()
+            }
         }
     }
 

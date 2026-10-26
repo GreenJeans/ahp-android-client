@@ -45,6 +45,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import dev.ahpclient.state.ConfigField
 import dev.ahpclient.state.ConfigOffer
@@ -353,7 +354,9 @@ private fun ChoiceRow(label: String, selected: Boolean, tag: String, onSelect: (
 }
 
 /**
- * The session's menu. Its first item shows the session's details. When the app has been allowed to look after sessions it
+ * The session's menu. Its first item shows the session's details, and the next, when [alerts] is given and the session is not archived,
+ * says whether to be alerted when it finishes ("Alert when done"; checked when it is, and always when every session is). When the app
+ * has been allowed to look after sessions it
  * also marks the session read or unread, archives or restores it, starts a chat (once it is ready) and removes the chat on
  * screen or the whole session. Archiving and removing ask first (archiving may take the host's working copy of the project
  * with it), and removing then asks for the device check. What happened is passed to [onNotice] in plain terms, for the
@@ -370,6 +373,7 @@ fun SessionMenu(
     onChatCreated: (String) -> Unit,
     onRemoved: () -> Unit,
     modifier: Modifier = Modifier,
+    alerts: FinishedAlertsUi? = null,
 ) {
     var open by rememberSaveable { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
@@ -393,6 +397,23 @@ fun SessionMenu(
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }, modifier = Modifier.testTag("session_menu_items")) {
             DropdownMenuItem(text = { Text("Details") }, onClick = { open = false; onShowDetails() }, modifier = Modifier.testTag("menu_details"))
+            if (alerts != null && sessionUri.isNotEmpty() && !detail.isArchived) {
+                val everySession = alerts.watch.all
+                val on = everySession || sessionUri in alerts.watch.sessions
+                DropdownMenuItem(
+                    text = { Text("Alert when done") },
+                    leadingIcon = { Icon(AppIcons.Bell, contentDescription = null) },
+                    trailingIcon = if (on) ({ Icon(AppIcons.Check, contentDescription = null) }) else null,
+                    enabled = !everySession,
+                    onClick = {
+                        open = false
+                        alerts.onSession(sessionUri, !on)
+                        // The alert comes from the background service, so with it off a choice made here would never be heard.
+                        if (!on && !alerts.monitoring) onNotice("Alerts need Monitor in background. Turn it on in Settings.")
+                    },
+                    modifier = Modifier.semantics { stateDescription = if (everySession) "On for every session" else if (on) "On" else "Off" }.testTag("toggle_alert"),
+                )
+            }
             if (manage != null && manageable) {
                 HorizontalDivider()
                 DropdownMenuItem(

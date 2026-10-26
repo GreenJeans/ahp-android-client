@@ -59,6 +59,7 @@ fun AppRoot(
     monitorEnabled: Boolean = false,
     notificationsAllowed: Boolean = true,
     onMonitorChange: (Boolean) -> Unit = {},
+    alerts: FinishedAlertsUi = FinishedAlertsUi(),
 ) {
     val state by controller.state.collectAsStateWithLifecycle()
     val theme by ui.theme.collectAsStateWithLifecycle()
@@ -69,8 +70,8 @@ fun AppRoot(
             when (val current = state) {
                 AppState.Restoring -> Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars).testTag("restoring"), contentAlignment = Alignment.Center) { Busy("Loading…") }
                 is AppState.SignedOut -> SignInScreen(current, controller::signIn, controller::cancelSignIn, onOpenGitHub, onCopyCode)
-                is AppState.Hosts -> Shell(controller, ui, current, null, monitorEnabled, notificationsAllowed, onMonitorChange)
-                is AppState.Connected -> Shell(controller, ui, null, current, monitorEnabled, notificationsAllowed, onMonitorChange)
+                is AppState.Hosts -> Shell(controller, ui, current, null, monitorEnabled, notificationsAllowed, onMonitorChange, alerts)
+                is AppState.Connected -> Shell(controller, ui, null, current, monitorEnabled, notificationsAllowed, onMonitorChange, alerts)
             }
         }
     }
@@ -92,6 +93,7 @@ private fun Shell(
     monitorEnabled: Boolean,
     notificationsAllowed: Boolean,
     onMonitorChange: (Boolean) -> Unit,
+    alerts: FinishedAlertsUi,
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -170,6 +172,7 @@ private fun Shell(
                 onQueryChange = { query = it },
                 listState = listState,
                 manage = manageActions,
+                watched = alerts.watch.sessions,
                 onOpenHost = { closeDrawer(); page = Page.HOST },
                 onOpenSession = showSession,
                 onOpenSettings = { closeDrawer(); page = Page.SETTINGS },
@@ -201,6 +204,8 @@ private fun Shell(
                 monitorEnabled = monitorEnabled,
                 notificationsAllowed = notificationsAllowed,
                 onMonitorChange = onMonitorChange,
+                finishedAll = alerts.watch.all,
+                onFinishedAll = alerts.onAll,
                 interactionAllowed = interactionAllowed,
                 interactionSupported = controller.interactionSupported,
                 onInteractionChange = { on ->
@@ -228,7 +233,7 @@ private fun Shell(
             } else {
                 SessionPage(
                     controller, ui, connected, open, connection, rootState, canManage, manageActions, listed, changesetTitle,
-                    onChangesetTitle = { changesetTitle = it }, onMenu = { openDrawer() },
+                    onChangesetTitle = { changesetTitle = it }, onMenu = { openDrawer() }, alerts = alerts,
                 )
             }
         }
@@ -250,6 +255,7 @@ private fun SessionPage(
     changesetTitle: String?,
     onChangesetTitle: (String?) -> Unit,
     onMenu: () -> Unit,
+    alerts: FinishedAlertsUi,
 ) {
     val chat = open.chat
     val sessionState by open.store.state.collectAsStateWithLifecycle()
@@ -298,6 +304,7 @@ private fun SessionPage(
             sessionUri = open.uri,
             onRemoved = controller::closeSession,
             onOpenChangeset = { uri, label -> onChangesetTitle(label); controller.openChangeset(uri) },
+            alerts = alerts,
         ) {
             if (chat != null) OpenChatView(chat, connected.session, connection, rootState, sessionState, controller, ui, screen = false, modifier = Modifier)
         }

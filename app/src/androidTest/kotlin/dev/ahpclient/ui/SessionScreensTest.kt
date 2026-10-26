@@ -6,7 +6,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertContentDescriptionEquals
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.filter
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsOff
@@ -19,8 +24,10 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -62,6 +69,10 @@ class SessionScreensTest {
     private val archived = summary("ahp-session:/a", "Old one", 97, "2026-10-26T09:30:00.000Z")
     private val all = listOf(unread, archived, working, waiting)
 
+    private fun hasContentDescriptionContaining(text: String) = SemanticsMatcher("content description contains $text") { node ->
+        node.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.ContentDescription)?.any { it.contains(text) } == true
+    }
+
     // Material 3 controls draw smaller than they touch, so the guideline is checked on touch bounds.
     private fun SemanticsNodeInteraction.assertTouchTargetAtLeast(minimum: Dp): SemanticsNodeInteraction {
         val bounds = fetchSemanticsNode().touchBoundsInRoot
@@ -82,13 +93,14 @@ class SessionScreensTest {
         selected: String? = null,
         connectedHost: TunnelInfo? = host,
         manage: ManageActionsUi? = null,
+        watched: Set<String> = emptySet(),
     ) = rule.setContent {
         var showArchived by androidx.compose.runtime.remember { mutableStateOf(initialShowArchived) }
         var query by androidx.compose.runtime.remember { mutableStateOf(initialQuery) }
         AhpTheme {
             DrawerContent(
                 connectedHost, connection, sessions, now, selected, showArchived, { showArchived = !showArchived; onToggle() }, query, { query = it },
-                rememberLazyListState(), manage, onOpenHost, onOpen, onOpenSettings, onSessionCreated = {},
+                rememberLazyListState(), manage, onOpenHost, onOpen, onOpenSettings, onSessionCreated = {}, watched = watched,
             )
         }
     }
@@ -98,8 +110,15 @@ class SessionScreensTest {
         notificationsAllowed: Boolean = true,
         onMonitorChange: (Boolean) -> Unit = {},
         onBack: () -> Unit = {},
+        finishedAll: Boolean = false,
+        onFinishedAll: (Boolean) -> Unit = {},
     ) = rule.setContent {
-        AhpTheme { SettingsScreen(onBack, monitorEnabled = monitorEnabled, notificationsAllowed = notificationsAllowed, onMonitorChange = onMonitorChange) }
+        AhpTheme {
+            SettingsScreen(
+                onBack, monitorEnabled = monitorEnabled, notificationsAllowed = notificationsAllowed, onMonitorChange = onMonitorChange,
+                finishedAll = finishedAll, onFinishedAll = onFinishedAll,
+            )
+        }
     }
 
     private val mainChatUri = "ahp-chat://default/x"
@@ -299,6 +318,59 @@ class SessionScreensTest {
     }
 
     @Test
+    fun theFinishedAlertSwitchIsOffByDefaultAndTurnsOnWithAFullWidthTouchTarget() {
+        val changes = mutableListOf<Boolean>()
+        showSettings(monitorEnabled = true, onFinishedAll = { changes += it })
+
+        rule.onNodeWithTag("finished_all_toggle").assertIsOff().assertTouchTargetAtLeast(48.dp).performClick()
+
+        assertEquals(listOf(true), changes)
+        rule.onNodeWithTag("finished_all_hint").assertTextContains("Off", substring = true)
+    }
+
+    @Test
+    fun anOnFinishedAlertTurnsOffAndSaysWhatItDoes() {
+        val changes = mutableListOf<Boolean>()
+        showSettings(monitorEnabled = true, finishedAll = true, onFinishedAll = { changes += it })
+
+        rule.onNodeWithTag("finished_all_toggle").assertIsOn().performClick()
+
+        assertEquals(listOf(false), changes)
+        rule.onNodeWithTag("finished_all_hint").assertTextContains("told when a session stops", substring = true)
+    }
+
+    @Test
+    fun theFinishedAlertSaysItNeedsMonitoringWhenThatIsOff() {
+        showSettings(monitorEnabled = false, finishedAll = true)
+
+        rule.onNodeWithTag("finished_all_hint").assertTextContains("needs Monitor in background", substring = true)
+    }
+
+    @Test
+    fun theFinishedAlertSwitchSitsWithTheMonitorSwitch() {
+        showSettings()
+
+        rule.onNodeWithTag("finished_all_toggle").assertIsDisplayed()
+        rule.onNodeWithTag("monitor_toggle").assertIsDisplayed()
+    }
+
+    @Test
+    fun aSessionChosenForAlertsHasABellInTheListAndSaysSo() {
+        showSessions(watched = setOf("ahp-session:/k"))
+
+        rule.onAllNodesWithTag("row_alert", useUnmergedTree = true).assertCountEquals(1)
+        rule.onAllNodesWithTag("session_row").filter(hasText("Working")).onFirst().assert(hasContentDescriptionContaining("alert when done is on"))
+        rule.onAllNodesWithTag("session_row").filter(hasText("Unread one")).onFirst().assert(!hasContentDescriptionContaining("alert when done"))
+    }
+
+    @Test
+    fun withNoSessionChosenThereAreNoBells() {
+        showSessions()
+
+        rule.onAllNodesWithTag("row_alert", useUnmergedTree = true).assertCountEquals(0)
+    }
+
+    @Test
     fun anEmptyHostHasNoSearchField() {
         showSessions(emptyList())
 
@@ -312,7 +384,8 @@ class SessionScreensTest {
 
         rule.onNodeWithTag("settings_title").assertTextEquals("Settings")
         rule.onNodeWithTag("monitor_toggle").assertIsDisplayed()
-        rule.onNodeWithTag("interaction_toggle").assertIsDisplayed()
+        // The screen scrolls; on a small phone the permissions are below the first screenful.
+        rule.onNodeWithTag("interaction_toggle").performScrollTo().assertIsDisplayed()
         rule.onNodeWithTag("management_toggle").assertExists()
         rule.onNodeWithTag("back").assertContentDescriptionEquals("Back").assertTouchTargetAtLeast(48.dp).performClick()
 

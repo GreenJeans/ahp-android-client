@@ -5,6 +5,9 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertCountEquals
@@ -38,6 +41,7 @@ import dev.ahpclient.state.SessionConfigForm
 import dev.ahpclient.state.SessionDetail
 import dev.ahpclient.state.SessionPhase
 import dev.ahpclient.tunnel.TunnelInfo
+import dev.ahpclient.state.FinishedWatch
 import dev.ahpclient.ui.theme.AhpTheme
 import com.microsoft.agenthostprotocol.Ahp
 import com.microsoft.agenthostprotocol.generated.SessionState
@@ -645,6 +649,106 @@ class ManageUiTest {
     private fun openMenu() {
         rule.onNodeWithTag("session_menu").performClick()
         rule.waitForIdle()
+    }
+
+    // ---- alert when done ---------------------------------------------------------------------------------------
+
+    private fun showAlertMenu(alerts: FinishedAlertsUi?, detail: SessionDetail = detail(), manage: ManageActionsUi? = null) {
+        rule.setContent {
+            var notice by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
+            AhpTheme {
+                androidx.compose.foundation.layout.Column {
+                    SessionMenu(detail, uri, manage, null, onShowDetails = {}, onNotice = { notice = it }, onChatCreated = {}, onRemoved = {}, alerts = alerts)
+                    ManageNotice(notice, "manage_notice")
+                }
+            }
+        }
+    }
+
+    private fun hasState(text: String) = SemanticsMatcher("state description is $text") { node ->
+        node.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.StateDescription) == text
+    }
+
+    @Test
+    fun theMenuOffersAlertWhenDoneEvenWhenTheAppMayNotManageSessions() {
+        showAlertMenu(FinishedAlertsUi(), manage = null)
+        openMenu()
+
+        rule.onNodeWithTag("toggle_alert").assertIsDisplayed().assertIsEnabled().assertTextEquals("Alert when done").assert(hasState("Off"))
+        rule.onNodeWithTag("toggle_read").assertDoesNotExist()
+    }
+
+    @Test
+    fun withoutTheChoiceGivenThereIsNoAlertItem() {
+        showAlertMenu(null, manage = actions(Calls()))
+        openMenu()
+
+        rule.onNodeWithTag("menu_details").assertIsDisplayed()
+        rule.onNodeWithTag("toggle_alert").assertDoesNotExist()
+    }
+
+    @Test
+    fun choosingItAsksForTheSessionAndWarnsWhenMonitoringIsOff() {
+        val chosen = mutableListOf<Pair<String, Boolean>>()
+        showAlertMenu(FinishedAlertsUi(monitoring = false, onSession = { s, on -> chosen += s to on }))
+        openMenu()
+
+        rule.onNodeWithTag("toggle_alert").performClick()
+
+        assertEquals(listOf(uri to true), chosen)
+        rule.onNodeWithTag("manage_notice").assertTextContains("Monitor in background", substring = true)
+    }
+
+    @Test
+    fun choosingItWithMonitoringOnSaysNothingMore() {
+        val chosen = mutableListOf<Pair<String, Boolean>>()
+        showAlertMenu(FinishedAlertsUi(monitoring = true, onSession = { s, on -> chosen += s to on }))
+        openMenu()
+
+        rule.onNodeWithTag("toggle_alert").performClick()
+
+        assertEquals(listOf(uri to true), chosen)
+        rule.onNodeWithTag("manage_notice").assertDoesNotExist()
+    }
+
+    @Test
+    fun aSessionAlreadyChosenIsOnAndTheItemTurnsItOffWithoutAWarning() {
+        val chosen = mutableListOf<Pair<String, Boolean>>()
+        showAlertMenu(FinishedAlertsUi(FinishedWatch(sessions = setOf(uri)), monitoring = false, onSession = { s, on -> chosen += s to on }))
+        openMenu()
+
+        rule.onNodeWithTag("toggle_alert").assert(hasState("On")).performClick()
+
+        assertEquals(listOf(uri to false), chosen)
+        rule.onNodeWithTag("manage_notice").assertDoesNotExist()
+    }
+
+    @Test
+    fun anotherSessionBeingChosenDoesNotMakeThisOneOn() {
+        showAlertMenu(FinishedAlertsUi(FinishedWatch(sessions = setOf("ahp-session:/other"))))
+        openMenu()
+
+        rule.onNodeWithTag("toggle_alert").assert(hasState("Off"))
+    }
+
+    @Test
+    fun whenEverySessionIsWatchedTheItemIsOnAndCannotBeChanged() {
+        val chosen = mutableListOf<Pair<String, Boolean>>()
+        showAlertMenu(FinishedAlertsUi(FinishedWatch(all = true), onSession = { s, on -> chosen += s to on }))
+        openMenu()
+
+        rule.onNodeWithTag("toggle_alert").assertIsNotEnabled().assert(hasState("On for every session")).performClick()
+
+        assertEquals(emptyList<Pair<String, Boolean>>(), chosen)
+    }
+
+    @Test
+    fun anArchivedSessionHasNoAlertItem() {
+        showAlertMenu(FinishedAlertsUi(), detail = detail(archived = true))
+        openMenu()
+
+        rule.onNodeWithTag("menu_details").assertIsDisplayed()
+        rule.onNodeWithTag("toggle_alert").assertDoesNotExist()
     }
 
     @Test

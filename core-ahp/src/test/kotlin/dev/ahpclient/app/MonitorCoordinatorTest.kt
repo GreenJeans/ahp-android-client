@@ -4,6 +4,8 @@ import dev.ahpclient.state.ApprovalTarget
 import dev.ahpclient.state.Backoff
 import dev.ahpclient.state.CHAT_A
 import dev.ahpclient.state.ConnState
+import dev.ahpclient.state.FinishedSession
+import dev.ahpclient.state.FinishedWatch
 import dev.ahpclient.state.HostScript
 import dev.ahpclient.state.HostSession
 import dev.ahpclient.state.InputNeeded
@@ -63,6 +65,32 @@ private class FakeSink : InputNeededSink {
     }
 }
 
+private class FakeWatch(initial: FinishedWatch = FinishedWatch()) : FinishedWatchSettings {
+    val flow = MutableStateFlow(initial)
+    override val watch = flow
+
+    override suspend fun setAll(on: Boolean) {
+        flow.value = flow.value.copy(all = on)
+    }
+
+    override suspend fun setSession(resource: String, on: Boolean) {
+        flow.value = flow.value.copy(sessions = if (on) flow.value.sessions + resource else flow.value.sessions - resource)
+    }
+}
+
+private class FakeFinishedSink : FinishedSink {
+    val posted = mutableListOf<FinishedSession>()
+    val cleared = mutableListOf<String>()
+
+    override fun post(finished: FinishedSession) {
+        posted += finished
+    }
+
+    override fun clear(resource: String) {
+        cleared += resource
+    }
+}
+
 @OptIn(ExperimentalCoroutinesApi::class)
 class MonitorCoordinatorTest {
     private val tunnel = TunnelInfo("t", "usw2", "dev-box", 6, 1, emptyList())
@@ -79,12 +107,12 @@ class MonitorCoordinatorTest {
         var connector: ScriptedConnector? = null
     }
 
-    private fun TestScope.rig(enabled: Boolean = true): Rig {
+    private fun TestScope.rig(enabled: Boolean = true, finished: FinishedAlerts? = null): Rig {
         val state = MutableStateFlow<AppState>(AppState.Hosts(HostList.Loading, null))
         val settings = FakeSettings(enabled)
         val service = FakeService()
         val sink = FakeSink()
-        val coordinator = MonitorCoordinator(state, settings, service, sink, backgroundScope, debounceMs = 3_000)
+        val coordinator = MonitorCoordinator(state, settings, service, sink, backgroundScope, debounceMs = 3_000, finished = finished, finishedDebounceMs = 5_000)
         coordinator.start()
         runCurrent()
         return Rig(state, settings, service, sink, coordinator)
@@ -348,5 +376,137 @@ class MonitorCoordinatorTest {
 
         assertTrue(before.contains("need"), before)
         assertEquals("6 active sessions", rig.coordinator.status.value!!.text)
+    }
+    private fun working(host: HostSession, title: String, status: SessionStatus) {
+        host.root.replaceCatalog(host.root.sessions.value.map { if (it.title == title) it.copy(status = status) else it })
+    }
+
+    @Test
+    fun `a watched session that stops working alerts once after the debounce`() = runTest {
+        val watch = FakeWatch(FinishedWatch(all = true))
+        val sink = FakeFinishedSink()
+        val rig = rig(finished = FinishedAlerts(watch, sink))
+        val host = connect(rig)
+        advanceTimeBy(10_000)
+        assertEquals(emptyList(), sink.posted, "nothing has stopped yet")
+
+        working(host, "Session D", SessionStatus.IN_PROGRESS)
+        runCurrent()
+        working(host, "Session D", SessionStatus.IDLE)
+        runCurrent()
+        advanceTimeBy(4_900)
+        assertEquals(emptyList(), sink.posted)
+        advanceTimeBy(200)
+
+        assertEquals(listOf("Session D"), sink.posted.map { it.title })
+        assertEquals(false, sink.posted.single().failed)
+    }
+
+    @Test
+    fun `a session left running when the app connected alerts when it stops`() = runTest {
+        val sink = FakeFinishedSink()
+        val rig = rig(finished = FinishedAlerts(FakeWatch(FinishedWatch(all = true)), sink))
+        val host = connect(rig)
+        advanceTimeBy(10_000)
+        assertEquals(emptyList(), sink.posted, "Session C was working when the list arrived: that is the baseline, not a stop")
+        working(host, "Session C", SessionStatus.IDLE)
+        runCurrent()
+        advanceTimeBy(6_000)
+
+        assertEquals(listOf("Session C"), sink.posted.map { it.title })
+        assertNull(sink.posted.single().tookMs, "when it started is not known")
+    }
+
+    @Test
+    fun `nothing alerts for a session that is not watched, and the choice can be changed through the coordinator`() = runTest {
+        val watch = FakeWatch()
+        val sink = FakeFinishedSink()
+        val rig = rig(finished = FinishedAlerts(watch, sink))
+        val host = connect(rig)
+        working(host, "Session D", SessionStatus.IN_PROGRESS)
+        runCurrent()
+        working(host, "Session D", SessionStatus.IDLE)
+        runCurrent()
+        advanceTimeBy(10_000)
+        assertEquals(emptyList(), sink.posted)
+
+        val uri = host.root.sessions.value.first { it.title == "Session D" }.resource
+        rig.coordinator.setWatched(uri, true)
+        assertEquals(FinishedWatch(sessions = setOf(uri)), rig.coordinator.finishedWatch.first())
+        working(host, "Session D", SessionStatus.IN_PROGRESS)
+        runCurrent()
+        working(host, "Session D", SessionStatus.IDLE)
+        runCurrent()
+        advanceTimeBy(6_000)
+        assertEquals(listOf("Session D"), sink.posted.map { it.title })
+
+        rig.coordinator.setWatched(uri, false)
+        rig.coordinator.setWatchAll(true)
+        assertEquals(FinishedWatch(all = true), rig.coordinator.finishedWatch.first())
+    }
+
+    @Test
+    fun `with monitoring off nothing alerts, but the choice is still kept`() = runTest {
+        val watch = FakeWatch(FinishedWatch(all = true))
+        val sink = FakeFinishedSink()
+        val rig = rig(enabled = false, finished = FinishedAlerts(watch, sink))
+        val host = connect(rig)
+        working(host, "Session D", SessionStatus.IN_PROGRESS)
+        runCurrent()
+        working(host, "Session D", SessionStatus.IDLE)
+        runCurrent()
+        advanceTimeBy(10_000)
+        assertEquals(emptyList(), sink.posted)
+
+        rig.coordinator.setWatchAll(false)
+        assertEquals(FinishedWatch(), rig.coordinator.finishedWatch.first())
+    }
+
+    @Test
+    fun `the session on screen is not alerted, and turning monitoring off stops the alerts`() = runTest {
+        val sink = FakeFinishedSink()
+        var onScreen: String? = null
+        val rig = rig(finished = FinishedAlerts(FakeWatch(FinishedWatch(all = true)), sink, viewing = { onScreen }))
+        val host = connect(rig)
+        onScreen = host.root.sessions.value.first { it.title == "Session D" }.resource
+        working(host, "Session D", SessionStatus.IN_PROGRESS)
+        runCurrent()
+        working(host, "Session D", SessionStatus.IDLE)
+        runCurrent()
+        advanceTimeBy(10_000)
+        assertEquals(emptyList(), sink.posted)
+
+        onScreen = null
+        working(host, "Session D", SessionStatus.IN_PROGRESS)
+        runCurrent()
+        working(host, "Session D", SessionStatus.IDLE)
+        runCurrent()
+        rig.settings.setEnabled(false)
+        runCurrent()
+        advanceTimeBy(10_000)
+        assertEquals(emptyList(), sink.posted, "monitoring was turned off before the alert was due")
+    }
+
+    @Test
+    fun `without finished alerts configured the choice is off and setting it does nothing`() = runTest {
+        val rig = rig()
+
+        rig.coordinator.setWatchAll(true)
+        rig.coordinator.setWatched("ahp-session:/x", true)
+
+        assertEquals(FinishedWatch(), rig.coordinator.finishedWatch.first())
+    }
+
+    @Test
+    fun `the session on screen is the open one, and only while the app is in front`() = runTest {
+        val rig = rig()
+        val host = connect(rig)
+        val connected = rig.state.value as AppState.Connected
+        val open = connected.copy(open = OpenSession("ahp-session:/x", host.openSession("ahp-session:/x")))
+
+        assertEquals("ahp-session:/x", OnScreen.session(inForeground = true, state = open))
+        assertNull(OnScreen.session(inForeground = false, state = open), "pressing Home with a session open is not looking at it")
+        assertNull(OnScreen.session(inForeground = true, state = connected), "no session is open")
+        assertNull(OnScreen.session(inForeground = true, state = AppState.Hosts(HostList.Loading, null)))
     }
 }

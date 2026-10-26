@@ -87,6 +87,8 @@ fun SessionScreen(
     sessionUri: String = "",
     onRemoved: () -> Unit = {},
     onOpenChangeset: (uri: String, label: String) -> Unit = { _, _ -> },
+    /** The choice of sessions to be alerted about when they finish; the menu has no such item without it. */
+    alerts: FinishedAlertsUi? = null,
     chat: @Composable () -> Unit = {},
 ) {
     val detail = remember(state, now) { state?.let { SessionDetail.from(it, now) } }
@@ -129,6 +131,7 @@ fun SessionScreen(
                     onNotice = { notice = it },
                     onChatCreated = { pendingChat = it },
                     onRemoved = onRemoved,
+                    alerts = alerts,
                 )
             }
         },

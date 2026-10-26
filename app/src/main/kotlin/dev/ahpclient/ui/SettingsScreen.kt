@@ -41,6 +41,8 @@ fun SettingsScreen(
     monitorEnabled: Boolean = false,
     notificationsAllowed: Boolean = true,
     onMonitorChange: (Boolean) -> Unit = {},
+    finishedAll: Boolean = false,
+    onFinishedAll: (Boolean) -> Unit = {},
     interactionAllowed: Boolean = false,
     interactionSupported: Boolean = true,
     onInteractionChange: (Boolean) -> Unit = {},
@@ -69,8 +71,12 @@ fun SettingsScreen(
             Spacer(Modifier.height(Design.Gap))
             TileCard(shape = connectedShape(2, 3)) { TilePadding { KeepAwakeToggle(keepAwake, onKeepAwake) } }
             SectionHeader("Background")
-            TileCard(shape = connectedShape(0, 1)) {
+            TileCard(shape = connectedShape(0, 2)) {
                 TilePadding { MonitorToggle(monitorEnabled, notificationsAllowed, onMonitorChange) }
+            }
+            Spacer(Modifier.height(Design.Gap))
+            TileCard(shape = connectedShape(1, 2)) {
+                TilePadding { FinishedAllToggle(finishedAll, monitorEnabled, onFinishedAll) }
             }
             SectionHeader("Permissions")
             TileCard(shape = connectedShape(0, 2)) {
@@ -173,6 +179,38 @@ internal fun MonitorToggle(enabled: Boolean, notificationsAllowed: Boolean, onCh
             style = MaterialTheme.typography.bodyMedium,
             color = if (enabled && !notificationsAllowed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.testTag("monitor_hint"),
+        )
+    }
+}
+
+/**
+ * Whether to be told when any session finishes, not only the ones picked with the bell in a session's menu. The alerts come only
+ * while background monitoring is on, and the words under the switch say so when it is not.
+ */
+@Composable
+internal fun FinishedAllToggle(on: Boolean, monitoring: Boolean, onChange: (Boolean) -> Unit) {
+    Column(modifier = Modifier.fillMaxWidth().testTag("finished_all_section")) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp)
+                .toggleable(value = on, role = Role.Switch, onValueChange = onChange)
+                .testTag("finished_all_toggle"),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Alert when any session finishes", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+            Switch(checked = on, onCheckedChange = null)
+        }
+        Text(
+            when {
+                on && monitoring -> "On: you are told when a session stops working."
+                on -> "On, but it needs Monitor in background to be on."
+                else -> "Off: choose sessions from their menu."
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (on && !monitoring) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.testTag("finished_all_hint"),
         )
     }
 }

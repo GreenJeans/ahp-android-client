@@ -17,6 +17,8 @@ import androidx.compose.runtime.setValue
 import androidx.fragment.app.FragmentActivity
 import dev.ahpclient.monitor.EXTRA_SESSION_URI
 import dev.ahpclient.app.MonitorToggle
+import dev.ahpclient.state.FinishedWatch
+import dev.ahpclient.ui.FinishedAlertsUi
 import dev.ahpclient.ui.AppRoot
 import dev.ahpclient.ui.copyToClipboard
 import dev.ahpclient.ui.openInBrowser
@@ -58,6 +60,7 @@ class MainActivity : FragmentActivity() {
         if (savedInstanceState == null) openRequestedSession(intent)
         setContent {
             val monitorEnabled by container.monitor.enabled.collectAsState(initial = false)
+            val finishedWatch by container.monitor.finishedWatch.collectAsState(initial = FinishedWatch())
             AppRoot(
                 controller = container.controller,
                 ui = container.ui,
@@ -68,17 +71,20 @@ class MainActivity : FragmentActivity() {
                 monitorEnabled = monitorEnabled,
                 notificationsAllowed = notificationsAllowed,
                 onMonitorChange = ::setMonitoring,
+                alerts = FinishedAlertsUi(finishedWatch, monitorEnabled, container::setWatchAll, container::setWatched),
             )
         }
     }
 
     override fun onStart() {
         super.onStart()
+        container.inForeground = true
         container.approvalGate.attach(this)
     }
 
     override fun onStop() {
         container.approvalGate.detach(this)
+        container.inForeground = false
         super.onStop()
     }
 

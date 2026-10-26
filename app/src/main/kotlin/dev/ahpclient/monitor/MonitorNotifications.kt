@@ -10,8 +10,11 @@ import android.graphics.drawable.Icon
 import android.net.Uri
 import dev.ahpclient.MainActivity
 import dev.ahpclient.R
+import dev.ahpclient.app.FinishedSink
 import dev.ahpclient.app.InputNeededSink
 import dev.ahpclient.state.ApprovalTarget
+import dev.ahpclient.state.FinishedSession
+import dev.ahpclient.state.FinishedText
 import dev.ahpclient.state.InputNeeded
 
 /** The extra that carries the session a notification points at. The app only opens it if the host lists that session. */
@@ -20,6 +23,7 @@ const val EXTRA_SESSION_URI = "dev.ahpclient.extra.SESSION_URI"
 object MonitorChannels {
     const val MONITOR = "monitor"
     const val INPUT_NEEDED = "input_needed"
+    const val FINISHED = "finished"
 
     fun ensure(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java)
@@ -31,6 +35,11 @@ object MonitorChannels {
         manager.createNotificationChannel(
             NotificationChannel(INPUT_NEEDED, "Sessions that need input", NotificationManager.IMPORTANCE_HIGH).apply {
                 description = "A session is waiting for your answer or approval in VS Code."
+            },
+        )
+        manager.createNotificationChannel(
+            NotificationChannel(FINISHED, "Finished sessions", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                description = "A session you chose to watch has stopped working."
             },
         )
     }
@@ -145,5 +154,55 @@ class NotificationInputNeededSink(
 
     private companion object {
         const val NOTIFICATION_ID = 1
+    }
+}
+
+/**
+ * One notification per session that has stopped working, posted by tag so it is replaced if the session finishes again and can
+ * be taken away when it starts working. The title is the session's and the text says the result and how long it took; both can be
+ * sensitive, so the lock-screen version says only that a session finished. Tapping it opens the session. There are no buttons:
+ * nothing here is waiting on a decision.
+ */
+class NotificationFinishedSink(private val context: Context) : FinishedSink {
+    private val manager = context.getSystemService(NotificationManager::class.java)
+
+    override fun post(finished: FinishedSession) {
+        MonitorChannels.ensure(context)
+        val open = PendingIntent.getActivity(
+            context,
+            finished.resource.hashCode(),
+            Intent(context, MainActivity::class.java)
+                .putExtra(EXTRA_SESSION_URI, finished.resource)
+                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val lockScreen = Notification.Builder(context, MonitorChannels.FINISHED)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(FinishedText.PUBLIC_TITLE)
+            .build()
+        manager.notify(
+            finished.resource,
+            NOTIFICATION_ID,
+            Notification.Builder(context, MonitorChannels.FINISHED)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle(finished.title.take(MAX_TITLE))
+                .setContentText(FinishedText.detail(finished))
+                .setContentIntent(open)
+                .setAutoCancel(true)
+                .setCategory(Notification.CATEGORY_STATUS)
+                .setVisibility(Notification.VISIBILITY_PRIVATE)
+                .setPublicVersion(lockScreen)
+                .build(),
+        )
+    }
+
+    override fun clear(resource: String) {
+        manager.cancel(resource, NOTIFICATION_ID)
+    }
+
+    private companion object {
+        /** Not the id of the "needs input" notification of the same session, so the two live side by side. */
+        const val NOTIFICATION_ID = 2
+        const val MAX_TITLE = 120
     }
 }

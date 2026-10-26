@@ -41,6 +41,7 @@ import dev.ahpclient.tunnel.TunnelInfo
 import dev.ahpclient.ui.chat.ChatActionsUi
 import dev.ahpclient.ui.chat.ChatPane
 import dev.ahpclient.ui.chat.ChatScreen
+import dev.ahpclient.state.FinishedWatch
 import dev.ahpclient.ui.theme.AhpTheme
 import com.microsoft.agenthostprotocol.Ahp
 import com.microsoft.agenthostprotocol.generated.SessionState
@@ -128,9 +129,10 @@ class AccessibilityTest {
         showArchived: Boolean = false,
         query: String = "",
         manage: ManageActionsUi? = null,
+        watched: Set<String> = emptySet(),
     ) = DrawerContent(
         connected, connection, list, now, selected = null, showArchived = showArchived, onToggleArchived = {}, query = query, onQueryChange = {},
-        listState = rememberLazyListState(), manage = manage, onOpenHost = {}, onOpenSession = {}, onOpenSettings = {}, onSessionCreated = {},
+        listState = rememberLazyListState(), manage = manage, onOpenHost = {}, onOpenSession = {}, onOpenSettings = {}, onSessionCreated = {}, watched = watched,
     )
 
     @Test
@@ -166,6 +168,7 @@ class AccessibilityTest {
             { DrawerFor(list = emptyList()) },
             { DrawerFor(connected = null, connection = null, list = emptyList()) },
             { DrawerFor(manage = manageActions()) },
+            { DrawerFor(watched = setOf("ahp-session:/k", "ahp-session:/u")) },
         )
     }
 
@@ -176,6 +179,8 @@ class AccessibilityTest {
             { SettingsScreen({}, monitorEnabled = true, notificationsAllowed = false) },
             { SettingsScreen({}, monitorEnabled = true, interactionAllowed = true, managementAllowed = true) },
             { SettingsScreen({}, interactionSupported = false) },
+            { SettingsScreen({}, monitorEnabled = true, finishedAll = true) },
+            { SettingsScreen({}, monitorEnabled = false, finishedAll = true) },
         )
     }
 
@@ -255,6 +260,26 @@ class AccessibilityTest {
         rule.waitForIdle()
 
         check()
+    }
+
+    @Test
+    fun sessionScreenWithItsMenuOpenAndTheAlertItemInEveryState() {
+        var watch by mutableStateOf(FinishedWatch())
+        rule.setContent {
+            AhpTheme {
+                SessionScreen(
+                    twoChatSession, null, ConnState.Online, now, {}, shownChat = "ahp-chat://default/y", sessionUri = "ahp-session:/s",
+                    alerts = FinishedAlertsUi(watch, monitoring = true),
+                ) {}
+            }
+        }
+        rule.onNodeWithTag("session_menu").performClick()
+        // The menu stays open while only the choice changes, so each way the alert item can look is checked.
+        listOf(FinishedWatch(), FinishedWatch(sessions = setOf("ahp-session:/s")), FinishedWatch(all = true)).forEach {
+            watch = it
+            rule.waitForIdle()
+            check()
+        }
     }
 
     @Test
