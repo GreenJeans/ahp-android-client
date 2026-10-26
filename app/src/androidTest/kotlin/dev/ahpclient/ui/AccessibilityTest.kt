@@ -26,6 +26,17 @@ import dev.ahpclient.app.HostList
 import dev.ahpclient.app.SignInStep
 import dev.ahpclient.state.ActivityState
 import dev.ahpclient.state.AgentChoice
+import dev.ahpclient.state.ApprovalTarget
+import dev.ahpclient.state.ChangeStats
+import dev.ahpclient.state.DecisionOption
+import dev.ahpclient.state.Inbox
+import dev.ahpclient.state.InboxItem
+import dev.ahpclient.state.RequestRead
+import dev.ahpclient.state.SessionRow
+import dev.ahpclient.state.ChatConfigView
+import dev.ahpclient.state.ConfigChoice
+import dev.ahpclient.state.ConfigControl
+import dev.ahpclient.state.ConfigKind
 import dev.ahpclient.state.ChatGoneException
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.DispatchOutcome
@@ -130,10 +141,38 @@ class AccessibilityTest {
         query: String = "",
         manage: ManageActionsUi? = null,
         watched: Set<String> = emptySet(),
+        inboxCount: Int? = null,
     ) = DrawerContent(
         connected, connection, list, now, selected = null, showArchived = showArchived, onToggleArchived = {}, query = query, onQueryChange = {},
-        listState = rememberLazyListState(), manage = manage, onOpenHost = {}, onOpenSession = {}, onOpenSettings = {}, onSessionCreated = {}, watched = watched,
+        listState = rememberLazyListState(), manage = manage, onOpenHost = {}, onOpenSession = {}, onOpenSettings = {}, onSessionCreated = {}, watched = watched, inboxCount = inboxCount,
     )
+
+    @Test
+    fun theInboxInEveryState() {
+        fun row(n: Int, state: ActivityState, changes: ChangeStats? = null) =
+            SessionRow("ahp-session:/s$n", "Session $n", "repo-$n", state, isRead = false, isArchived = false, whenText = "${n}h", chatCount = 1, changes = changes)
+        val tool = ApprovalTarget("ahp-chat:/c1", "call-1")
+        val options = ApprovalTarget("ahp-chat:/c2", "call-2", listOf(DecisionOption("no", "Not now", false), DecisionOption("once", "Allow once", true)))
+        val waiting = listOf(InboxItem(row(1, ActivityState.NEEDS_INPUT), "a"), InboxItem(row(2, ActivityState.NEEDS_INPUT), "b"), InboxItem(row(3, ActivityState.NEEDS_INPUT), "c"))
+        val finished = listOf(InboxItem(row(4, ActivityState.IDLE, ChangeStats(1072, 8, 3)), "d"), InboxItem(row(5, ActivityState.ERROR), "e"))
+        val details = mapOf("ahp-session:/s1" to RequestRead("Run in Terminal: ls", tool), "ahp-session:/s2" to RequestRead("Which season?", null), "ahp-session:/s3" to RequestRead("Run it", options))
+        val manage = manageActions()
+        checkEach(
+            { InboxScreen(Inbox(emptyList(), emptyList()), emptyMap(), {}, {}, canDecide = true, onDecide = { _, _, _, _ -> InteractResult.Sent(DispatchOutcome.Accepted) }, manage = null) },
+            { InboxScreen(Inbox(waiting, finished), details, {}, {}, canDecide = true, onDecide = { _, _, _, _ -> InteractResult.Sent(DispatchOutcome.Accepted) }, manage = manage) },
+            { InboxScreen(Inbox(waiting, finished), details, {}, {}, canDecide = false, onDecide = { _, _, _, _ -> InteractResult.Sent(DispatchOutcome.Accepted) }, manage = null) },
+            { InboxScreen(Inbox(waiting, emptyList()), emptyMap(), {}, {}, canDecide = true, onDecide = { _, _, _, _ -> InteractResult.Sent(DispatchOutcome.Accepted) }, manage = manage) },
+        )
+    }
+
+    @Test
+    fun theInboxEntryAndTheMainPageButton() {
+        checkEach(
+            { DrawerFor(inboxCount = 2) },
+            { DrawerFor(inboxCount = 0) },
+            { MainEmpty(connected = true, connection = ConnState.Online, manage = null, onConnect = {}, onOpenSessions = {}, onSessionCreated = {}, needYou = 2, onOpenInbox = {}) },
+        )
+    }
 
     @Test
     fun hostScreens() {
@@ -204,7 +243,7 @@ class AccessibilityTest {
 
     private val planAgent = AgentChoice("file:///a/plan.agent.md", "plan", "Plan first, then act")
 
-    private fun chatActions(running: Boolean = false, agents: List<AgentChoice> = emptyList(), agentInUse: String? = null) = ChatActionsUi(
+    private fun chatActions(running: Boolean = false, agents: List<AgentChoice> = emptyList(), agentInUse: String? = null, config: ChatConfigView = ChatConfigView.NONE) = ChatActionsUi(
         running = running,
         send = { _, _, _ -> InteractResult.Sent(DispatchOutcome.Accepted) },
         steer = { _, _, _ -> InteractResult.Sent(DispatchOutcome.Accepted) },
@@ -220,7 +259,55 @@ class AccessibilityTest {
         models = listOf(ModelOption("auto", "Auto", emptyList())),
         agents = agents,
         agentInUse = agentInUse,
+        config = config,
     )
+
+    private fun configView(mode: String, approvals: String, writable: Boolean = true, withheld: Set<String> = emptySet()) = ChatConfigView(
+        ConfigControl(
+            ConfigKind.MODE, "mode",
+            listOf(ConfigChoice("interactive", "Interactive", "Step-by-step collaboration", true), ConfigChoice("plan", "Plan", null, true), ConfigChoice("autopilot", "Autopilot", null, true)),
+            mode, writable,
+        ),
+        ConfigControl(
+            ConfigKind.APPROVALS, "autoApprove",
+            listOf(
+                ConfigChoice("default", "Manual", null, true), ConfigChoice("assisted", "Assisted", null, "assisted" !in withheld),
+                ConfigChoice("autoApprove", "Allow all", "Runs tool calls without asking", "autoApprove" !in withheld),
+            ),
+            approvals, writable,
+        ),
+    )
+
+    @Test
+    fun theModeAndApprovalsChipsAreAccessible() {
+        checkEach(
+            { ChatPane(everyRow, null, false, null, ConnState.Online, {}, {}, actions = chatActions(config = configView("plan", "default"))) },
+            { ChatPane(everyRow, null, false, null, ConnState.Online, {}, {}, actions = chatActions(config = configView("interactive", "autoApprove"))) },
+            { ChatPane(everyRow, null, false, null, ConnState.Online, {}, {}, actions = chatActions(agents = listOf(planAgent), agentInUse = planAgent.uri, config = configView("autopilot", "autoApprove"))) },
+        )
+    }
+
+    @Test
+    fun theOptionsPopUpIsAccessibleInEveryState() {
+        val states = mutableStateOf(configView("interactive", "default"))
+        rule.setContent { AhpTheme { ChatPane(everyRow, null, false, null, ConnState.Online, {}, {}, actions = chatActions(agents = listOf(planAgent), config = states.value)) } }
+        rule.onNodeWithTag("agent_button").performClick()
+        rule.waitForIdle()
+        check()
+
+        rule.onNodeWithTag("config_approvals_autoApprove").performClick()
+        rule.onNodeWithTag("config_mode_autopilot").performClick()
+        rule.waitForIdle()
+        check()
+
+        // The host withholds a level, and a chat whose settings this app may not change: both are disabled, and still readable.
+        states.value = configView("plan", "assisted", withheld = setOf("autoApprove"))
+        rule.waitForIdle()
+        check()
+        states.value = configView("plan", "autoApprove", writable = false)
+        rule.waitForIdle()
+        check()
+    }
 
     @Test
     fun theAgentChipAndItsPickerAreAccessible() {

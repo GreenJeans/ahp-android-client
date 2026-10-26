@@ -62,6 +62,9 @@ import kotlinx.serialization.json.put
 
 const val ROOT_CHANNEL = "ahp-root://"
 
+/** More channels than the app ever has open; a bound, so a host that names endless ones cannot grow the connection's memory. */
+private const val MAX_CONFIG_FACTS = 256
+
 /** What the host pushes without being asked. */
 sealed interface ServerNotification {
     /** A state action with its server sequence number: the unit the reducers consume. */
@@ -108,6 +111,9 @@ class AhpConnection(
 ) {
     private val nextId = AtomicLong(1)
     private val pending = ConcurrentHashMap<Long, CompletableDeferred<JsonElement>>()
+
+    /** What each snapshot this connection received held that the library's types drop (see [ConfigFacts]), by channel; a stored snapshot's facts are read once it is stored. */
+    private val configFacts = ConcurrentHashMap<String, ConfigFacts>()
     private val inbox = Channel<ServerNotification>(Channel.UNLIMITED)
     private val closedBy = AtomicReference<AhpException.ConnectionClosed?>(null)
 
@@ -238,9 +244,13 @@ class AhpConnection(
         requestRaw("disposeChat", json.encodeToJsonElement(DisposeChatParams.serializer(), DisposeChatParams(channel = uri)).jsonObject)
     }
 
+    /** The raw-reply facts of the last snapshot received for [channel] on this connection, or null. Read straight after the `subscribe` or `initialize` that brought it. */
+    fun configFacts(channel: String): ConfigFacts? = configFacts[channel]
+
     /** `unsubscribe` is a notification in AHP 1.0: fire and forget. */
     fun unsubscribe(channel: String) {
         policy.check("unsubscribe")
+        configFacts.remove(channel)
         val frame = buildJsonObject {
             put("jsonrpc", "2.0")
             put("method", "unsubscribe")
@@ -258,7 +268,11 @@ class AhpConnection(
      * @throws AhpException.ConnectionClosed when the socket is gone, so an action that never left the device is never reported as sent.
      */
     fun dispatchAction(channel: String, action: StateAction, clientSeq: Long) {
-        policy.check(CapabilityPolicy.DISPATCH_ACTION, actionTypeOf(action))
+        val encoded = encodeAction(action)
+        val type = (encoded?.get("type") as? JsonPrimitive)?.contentOrNull
+        policy.check(CapabilityPolicy.DISPATCH_ACTION, type)
+        // An action that cannot be written out cannot be checked, so it is refused rather than sent.
+        policy.checkContent(type, encoded ?: throw CapabilityDeniedException(CapabilityPolicy.DISPATCH_ACTION, type))
         closedBy.get()?.let { throw it }
         val frame = buildJsonObject {
             put("jsonrpc", "2.0")
@@ -268,9 +282,9 @@ class AhpConnection(
         if (!socket.send(frame.toString())) throw closedBy.get() ?: AhpException.ConnectionClosed(null)
     }
 
-    private fun actionTypeOf(action: StateAction): String? =
+    private fun encodeAction(action: StateAction): JsonObject? =
         try {
-            (json.encodeToJsonElement(StateAction.serializer(), action).jsonObject["type"] as? JsonPrimitive)?.contentOrNull
+            json.encodeToJsonElement(StateAction.serializer(), action).jsonObject
         } catch (_: SerializationException) {
             null
         }
@@ -388,6 +402,8 @@ class AhpConnection(
         val waiting = pending[id] ?: return
         val error = frame["error"] as? JsonObject
         if (error == null) {
+            // Recorded before the waiting caller is released, so it can read them as soon as it has its reply.
+            ConfigFacts.fromResult(frame["result"]).forEach { (channel, facts) -> if (configFacts.size < MAX_CONFIG_FACTS || configFacts.containsKey(channel)) configFacts[channel] = facts }
             waiting.complete(frame["result"] ?: JsonNull)
             return
         }

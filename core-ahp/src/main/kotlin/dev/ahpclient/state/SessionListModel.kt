@@ -62,7 +62,7 @@ data class SessionListModel(
             )
         }
 
-        private fun row(session: SessionSummary, now: Instant) = SessionRow(
+        internal fun row(session: SessionSummary, now: Instant) = SessionRow(
             resource = session.resource,
             title = session.title.ifBlank { UNTITLED },
             subtitle = session.activity?.takeIf { it.isNotBlank() } ?: session.project?.displayName?.takeIf { it.isNotBlank() },

@@ -370,7 +370,7 @@ class HostSession(
         synchronized(chats) { chats.values.toList() }.forEach { it.invalidate() }
         if (resume) {
             try {
-                applyReconnect(ahp.reconnect(listOf(ROOT_CHANNEL) + open), open)
+                applyReconnect(ahp.reconnect(listOf(ROOT_CHANNEL) + open), open, ahp)
             } catch (e: AhpException.Rpc) {
                 // The host does not know this client (for example it restarted): start over on the same socket.
                 initialize(ahp, open)
@@ -388,10 +388,10 @@ class HostSession(
     }
 
     private suspend fun initialize(ahp: AhpConnection, open: List<String>) {
-        applySnapshots(ahp.initialize(clientInfo, listOf(ROOT_CHANNEL) + open).snapshots)
+        applySnapshots(ahp.initialize(clientInfo, listOf(ROOT_CHANNEL) + open).snapshots, ahp)
     }
 
-    private fun applyReconnect(result: ReconnectResult, open: List<String>) {
+    private fun applyReconnect(result: ReconnectResult, open: List<String>, ahp: AhpConnection) {
         when (result) {
             is ReconnectResultReplay -> {
                 result.value.actions.forEach { route(ServerNotification.Action(it)) }
@@ -402,7 +402,7 @@ class HostSession(
                 }
             }
             is ReconnectResultSnapshot -> {
-                applySnapshots(result.value.snapshots)
+                applySnapshots(result.value.snapshots, ahp)
                 val covered = result.value.snapshots.map { it.resource }.toSet()
                 open.filter { it !in covered }.forEach {
                     storeFor(it)?.invalidate()
@@ -413,12 +413,12 @@ class HostSession(
         }
     }
 
-    private fun applySnapshots(snapshots: List<Snapshot>) {
+    private fun applySnapshots(snapshots: List<Snapshot>, ahp: AhpConnection) {
         snapshots.forEach { snapshot ->
             when (val state = snapshot.state) {
                 is SnapshotState.Root -> root.seedRoot(state.value)
-                is SnapshotState.Session -> storeFor(snapshot.resource)?.seed(snapshot)
-                is SnapshotState.Chat -> chatFor(snapshot.resource)?.seed(snapshot)
+                is SnapshotState.Session -> storeFor(snapshot.resource)?.seed(snapshot, ahp.configFacts(snapshot.resource))
+                is SnapshotState.Chat -> chatFor(snapshot.resource)?.seed(snapshot, ahp.configFacts(snapshot.resource))
                 else -> auxFor(snapshot.resource)?.seed(snapshot)
             }
         }
@@ -461,7 +461,7 @@ class HostSession(
     private suspend fun subscribeIfNeeded(ahp: AhpConnection, store: ChatStore) {
         if (!store.needsSubscribe) return
         try {
-            ahp.subscribe(store.uri, SubscribeView(turns = CHAT_SNAPSHOT_TURNS)).snapshot?.let(store::seed)
+            ahp.subscribe(store.uri, SubscribeView(turns = CHAT_SNAPSHOT_TURNS)).snapshot?.let { store.seed(it, ahp.configFacts(store.uri)) }
         } catch (e: AhpException.Rpc) {
             if (e.code == AhpErrorCodes.SESSION_NOT_FOUND || e.code == AhpErrorCodes.NOT_FOUND) store.markGone() else throw e
         } catch (_: AhpException.Timeout) {
@@ -479,7 +479,7 @@ class HostSession(
     private suspend fun subscribeIfNeeded(ahp: AhpConnection, store: SessionStore) {
         if (!store.needsSubscribe) return
         try {
-            ahp.subscribe(store.uri).snapshot?.let(store::seed)
+            ahp.subscribe(store.uri).snapshot?.let { store.seed(it, ahp.configFacts(store.uri)) }
         } catch (e: AhpException.Rpc) {
             if (e.code == AhpErrorCodes.SESSION_NOT_FOUND) store.markGone() else throw e
         }

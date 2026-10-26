@@ -1,5 +1,6 @@
 package dev.ahpclient.state
 
+import dev.ahpclient.ahp.ConfigFacts
 import com.microsoft.agenthostprotocol.generated.ActionEnvelope
 import com.microsoft.agenthostprotocol.generated.SessionState
 import com.microsoft.agenthostprotocol.generated.Snapshot
@@ -26,6 +27,14 @@ class SessionStore internal constructor(val uri: String) {
     private val _error = MutableStateFlow<Throwable?>(null)
     val error: StateFlow<Throwable?> = _error.asStateFlow()
 
+    private val _chatMutableKeys = MutableStateFlow<Set<String>>(emptySet())
+
+    /**
+     * Which of the per-chat settings this app reads (mode, approvals) the host's schema lets a chat set for itself. The 1.0.0 library has
+     * no field for it, so it is read from the raw reply (see [ConfigFacts]). Empty until the snapshot arrives, and for a host without any.
+     */
+    val chatMutableKeys: StateFlow<Set<String>> = _chatMutableKeys.asStateFlow()
+
     private val early = ArrayList<ActionEnvelope>()
     private var lastApplied = -1L
 
@@ -38,9 +47,10 @@ class SessionStore internal constructor(val uri: String) {
 
     /** @return false when [snapshot] holds no session state, so nothing was seeded. */
     @Synchronized
-    internal fun seed(snapshot: Snapshot): Boolean {
+    internal fun seed(snapshot: Snapshot, facts: ConfigFacts? = null): Boolean {
         val session = (snapshot.state as? SnapshotState.Session)?.value ?: return false
         _state.value = session
+        facts?.chatMutableKeys?.let { _chatMutableKeys.value = it }
         _error.value = null
         lastApplied = snapshot.fromSeq
         needsSubscribe = false

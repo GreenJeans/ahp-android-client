@@ -16,11 +16,11 @@ internal fun chatSummaryJson(uri: String, title: String = "Main chat") =
 internal fun turnJson(id: String, text: String = "question $id", parts: String = "") =
     """{"id":"$id","message":{"text":"$text","origin":{"kind":"user"}},"responseParts":[$parts],"startedAt":"2026-10-22T10:00:00.000Z","state":"complete"}"""
 
-internal fun chatStateJson(uri: String, turns: List<String> = emptyList(), cursor: String? = null, activeTurn: String? = null) =
-    """{"resource":"$uri","title":"Chat","status":1,"modifiedAt":"2026-10-22T10:00:00.000Z","turns":[${turns.joinToString(",")}]${cursor?.let { ""","turnsNextCursor":"$it"""" }.orEmpty()}${activeTurn?.let { ""","activeTurn":$it""" }.orEmpty()}}"""
+internal fun chatStateJson(uri: String, turns: List<String> = emptyList(), cursor: String? = null, activeTurn: String? = null, config: String? = null) =
+    """{"resource":"$uri","title":"Chat","status":1,"modifiedAt":"2026-10-22T10:00:00.000Z","turns":[${turns.joinToString(",")}]${cursor?.let { ""","turnsNextCursor":"$it"""" }.orEmpty()}${activeTurn?.let { ""","activeTurn":$it""" }.orEmpty()}${config?.let { ""","config":$it""" }.orEmpty()}}"""
 
-internal fun chatSnapshotJson(uri: String, fromSeq: Long, turns: List<String> = emptyList(), cursor: String? = null, activeTurn: String? = null) =
-    """{"resource":"$uri","fromSeq":$fromSeq,"state":${chatStateJson(uri, turns, cursor, activeTurn)}}"""
+internal fun chatSnapshotJson(uri: String, fromSeq: Long, turns: List<String> = emptyList(), cursor: String? = null, activeTurn: String? = null, config: String? = null) =
+    """{"resource":"$uri","fromSeq":$fromSeq,"state":${chatStateJson(uri, turns, cursor, activeTurn, config)}}"""
 
 internal fun chatSnapshot(uri: String, fromSeq: Long, turns: List<String> = emptyList(), cursor: String? = null): Snapshot =
     Ahp.json.decodeFromString(Snapshot.serializer(), chatSnapshotJson(uri, fromSeq, turns, cursor))

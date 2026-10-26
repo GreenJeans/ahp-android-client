@@ -1,16 +1,12 @@
 package dev.ahpclient.app
 
-import dev.ahpclient.state.ApprovalTarget
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.FinishedNotifier
 import dev.ahpclient.state.FinishedSession
 import dev.ahpclient.state.FinishedWatch
-import dev.ahpclient.state.HostSession
 import dev.ahpclient.state.InputNeeded
 import dev.ahpclient.state.InputNeededNotifier
 import dev.ahpclient.state.MonitorStatus
-import dev.ahpclient.state.RequestRead
-import dev.ahpclient.state.WaitingText
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -149,7 +145,7 @@ class MonitorCoordinator(
                 notify = sink::post,
                 resolved = sink::clear,
                 debounceMs = debounceMs,
-                readDetail = { resource -> readRequest(session, resource) },
+                readDetail = { resource -> WaitingRequests.read(session, resource) },
             ).run()
         }
         finished?.let { alerts ->
@@ -164,24 +160,6 @@ class MonitorCoordinator(
                     debounceMs = finishedDebounceMs,
                 ).run()
             }
-        }
-    }
-
-    /**
-     * What a session is waiting for, in words, and the tool call a notification may offer buttons for. The session list does
-     * not carry it, so this opens the session read-only, takes what is pending from its snapshot and closes it again: one
-     * `subscribe` and one `unsubscribe`, both in the read tier. Null when the session is gone or has nothing pending.
-     */
-    private suspend fun readRequest(session: HostSession, resource: String): RequestRead? {
-        val store = session.openSession(resource)
-        try {
-            val state = combine(store.state, store.error) { loaded, error -> loaded to error }
-                .first { (loaded, error) -> loaded != null || error != null }
-                .first ?: return null
-            val text = WaitingText.of(state.inputNeeded.orEmpty())
-            return RequestRead(text, ApprovalTarget.from(state))
-        } finally {
-            session.closeSession(resource)
         }
     }
 }

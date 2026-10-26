@@ -3,6 +3,7 @@ package dev.ahpclient.ui
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
@@ -30,6 +31,9 @@ fun MainEmpty(
     onOpenSessions: () -> Unit,
     onSessionCreated: (String) -> Unit,
     modifier: Modifier = Modifier,
+    /** How many sessions wait on the user. When above zero (and [onOpenInbox] is given) the page leads with a button to them. */
+    needYou: Int = 0,
+    onOpenInbox: (() -> Unit)? = null,
 ) {
     Column(
         modifier = modifier.fillMaxSize().padding(32.dp).testTag("main_empty"),
@@ -45,6 +49,9 @@ fun MainEmpty(
             Text("Pick one, or start a new one.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
             if (connection != null && connection != ConnState.Online) ConnectionLine(connection, Modifier.testTag("empty_connection"))
             Column(verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                if (needYou > 0 && onOpenInbox != null) {
+                    Button(onClick = onOpenInbox, modifier = Modifier.heightIn(min = 48.dp).testTag("open_inbox")) { Text("$needYou need${if (needYou == 1) "s" else ""} you") }
+                }
                 OutlinedButton(onClick = onOpenSessions, modifier = Modifier.testTag("open_sessions")) { Text("Sessions") }
                 if (manage != null) NewSessionButton(manage, onSessionCreated)
             }

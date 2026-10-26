@@ -34,11 +34,14 @@ import dev.ahpclient.app.OpenChat
 import dev.ahpclient.app.SignInStep
 import dev.ahpclient.data.UiSettings
 import dev.ahpclient.state.ChangeStats
+import dev.ahpclient.state.ChatConfig
 import dev.ahpclient.state.ChatInteractor
 import dev.ahpclient.state.ConnState
 import com.microsoft.agenthostprotocol.generated.SessionState
 import dev.ahpclient.state.CustomAgents
 import dev.ahpclient.state.HostSession
+import dev.ahpclient.state.Inbox
+import dev.ahpclient.state.InboxReader
 import dev.ahpclient.state.ModelOptions
 import dev.ahpclient.tunnel.TunnelInfo
 import dev.ahpclient.ui.chat.ChatActionsUi
@@ -78,7 +81,7 @@ fun AppRoot(
 }
 
 /** The screens a signed-in person moves between: the main page (an empty one, or a session) with the side menu, the host, and settings. */
-private enum class Page { MAIN, HOST, SETTINGS }
+private enum class Page { MAIN, HOST, SETTINGS, INBOX }
 
 /**
  * Everything once signed in: a side menu (the host, a new session, the sessions, Settings) over the main page, which is the open
@@ -128,12 +131,16 @@ private fun Shell(
     BackHandler(enabled = drawerState.isOpen) { scope.launch { drawerState.close() } }
     // Connecting from the host screen brings the main page back.
     LaunchedEffect(connected != null) { if (connected != null) page = Page.MAIN }
+    // The inbox is of the host that is connected: leaving it (or losing it) leaves the inbox.
+    LaunchedEffect(connected == null) { if (connected == null && page == Page.INBOX) page = Page.MAIN }
 
     val connection = connected?.let { it.session.connection.collectAsStateWithLifecycle().value }
     val canManage = connected?.let { it.session.canManage.collectAsStateWithLifecycle().value } == true
     val rootState = connected?.let { it.session.root.root.collectAsStateWithLifecycle().value }
     val listed: List<SessionSummary> = connected?.let { it.session.root.sessions.collectAsStateWithLifecycle().value }.orEmpty()
     val now by rememberNow()
+    // Where the person is needed, from the same list as the side menu: what waits on them, and what finished unread.
+    val inbox = remember(listed, now) { Inbox.from(listed, now) }
     // Nothing to look after sessions with unless the connection is on the manage tier: no controls, not disabled ones.
     val manageActions = if (canManage) {
         remember(controller.manager, rootState, listed) {
@@ -177,6 +184,8 @@ private fun Shell(
                 onOpenSession = showSession,
                 onOpenSettings = { closeDrawer(); page = Page.SETTINGS },
                 onSessionCreated = showSession,
+                inboxCount = if (connected != null) inbox.waiting.size else null,
+                onOpenInbox = { closeDrawer(); page = Page.INBOX },
             )
         },
     ) {
@@ -222,13 +231,28 @@ private fun Shell(
                 keepAwake = keepAwake,
                 onKeepAwake = ui::setKeepAwake,
             )
+            Page.INBOX -> {
+                val reader = remember(controller) { InboxReader(controller::readWaiting) }
+                val details by reader.details.collectAsStateWithLifecycle()
+                // Read again whenever a session starts waiting, stops waiting, or changes: what a card says it waits for must be what it waits for.
+                LaunchedEffect(inbox.waiting.map { it.row.resource to it.stamp }) { reader.refresh(inbox.waiting) }
+                InboxScreen(
+                    inbox = inbox,
+                    details = details,
+                    onBack = { page = Page.MAIN },
+                    onOpen = { uri -> page = Page.MAIN; controller.showSession(uri) },
+                    canDecide = interactionAllowed,
+                    onDecide = { chat, call, approve, option -> controller.decideToolCall(chat, call, approve, option) },
+                    manage = manageActions,
+                )
+            }
             Page.MAIN -> if (connected == null || connection == null) {
                 ScreenScaffold(title = "AHP Client", onMenu = { openDrawer() }) {
                     MainEmpty(connected = false, connection = null, manage = null, onConnect = { page = Page.HOST }, onOpenSessions = { openDrawer() }, onSessionCreated = {})
                 }
             } else if (open == null) {
                 ScreenScaffold(title = connected.host.name, onMenu = { openDrawer() }) {
-                    MainEmpty(connected = true, connection = connection, manage = manageActions, onConnect = { page = Page.HOST }, onOpenSessions = { openDrawer() }, onSessionCreated = showSession)
+                    MainEmpty(connected = true, connection = connection, manage = manageActions, onConnect = { page = Page.HOST }, onOpenSessions = { openDrawer() }, onSessionCreated = showSession, needYou = inbox.waiting.size, onOpenInbox = { page = Page.INBOX })
                 }
             } else {
                 SessionPage(
@@ -259,6 +283,7 @@ private fun SessionPage(
 ) {
     val chat = open.chat
     val sessionState by open.store.state.collectAsStateWithLifecycle()
+    val chatMutable by open.store.chatMutableKeys.collectAsStateWithLifecycle()
     val changeset = open.changeset
     val terminal = open.terminal
     if (terminal != null) {
@@ -285,10 +310,12 @@ private fun SessionPage(
         }
     } else if (chat != null && chat.parent != null) {
         // A subagent's transcript is a screen of its own over the session.
-        OpenChatView(chat, connected.session, connection, rootState, sessionState, controller, ui, screen = true, modifier = Modifier)
+        OpenChatView(chat, connected.session, connection, rootState, sessionState, chatMutable, controller, ui, screen = true, modifier = Modifier)
     } else {
         val error by open.store.error.collectAsStateWithLifecycle()
         val now by rememberNow()
+    // Where the person is needed, from the same list as the side menu: what waits on them, and what finished unread.
+    val inbox = remember(listed, now) { Inbox.from(listed, now) }
         val changes = remember(listed, open.uri) { ChangeStats.of(listed.firstOrNull { it.resource == open.uri }?.changes) }
         SessionScreen(
             state = sessionState,
@@ -306,7 +333,7 @@ private fun SessionPage(
             onOpenChangeset = { uri, label -> onChangesetTitle(label); controller.openChangeset(uri) },
             alerts = alerts,
         ) {
-            if (chat != null) OpenChatView(chat, connected.session, connection, rootState, sessionState, controller, ui, screen = false, modifier = Modifier)
+            if (chat != null) OpenChatView(chat, connected.session, connection, rootState, sessionState, chatMutable, controller, ui, screen = false, modifier = Modifier)
         }
     }
 }
@@ -319,6 +346,7 @@ private fun OpenChatView(
     connection: ConnState,
     rootState: Any?,
     sessionState: SessionState?,
+    chatMutable: Set<String>,
     controller: AppController,
     ui: UiSettings,
     screen: Boolean,
@@ -346,9 +374,12 @@ private fun OpenChatView(
     val inUse = ModelOptions.inUse(chatState, models)
     val agents = remember(sessionState) { CustomAgents.of(sessionState) }
     val agentInUse = CustomAgents.inUse(chatState)
+    // The chat's own settings sit over the session's, so what is shown is what the host has in force for this chat.
+    val ownConfig by chat.store.ownConfig.collectAsStateWithLifecycle()
+    val config = remember(sessionState, chat.uri, chatMutable, ownConfig) { ChatConfig.view(sessionState, chat.uri, chatMutable, ownConfig) }
     // Nothing to act with unless the connection allows it and the host shows this chat as interactive.
     val actions = if (ChatInteractor.available(chatState, canInteract)) {
-        remember(chat.interactor, running, models, inUse, agents, agentInUse) {
+        remember(chat.interactor, running, models, inUse, agents, agentInUse, config) {
             ChatActionsUi(
                 running = running,
                 send = chat.interactor::send,
@@ -366,6 +397,8 @@ private fun OpenChatView(
                 modelInUse = inUse,
                 agents = agents,
                 agentInUse = agentInUse,
+                config = config,
+                setConfig = chat.interactor::setConfig,
             )
         }
     } else {

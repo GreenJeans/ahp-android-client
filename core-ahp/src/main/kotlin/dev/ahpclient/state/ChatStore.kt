@@ -1,11 +1,14 @@
 package dev.ahpclient.state
 
+import dev.ahpclient.ahp.ChatConfigKeys
+import dev.ahpclient.ahp.ConfigFacts
 import com.microsoft.agenthostprotocol.chatReducer
 import com.microsoft.agenthostprotocol.generated.ActionEnvelope
 import com.microsoft.agenthostprotocol.generated.ChatState
 import com.microsoft.agenthostprotocol.generated.Snapshot
 import com.microsoft.agenthostprotocol.generated.SnapshotState
 import com.microsoft.agenthostprotocol.generated.StateActionChatTurnsLoaded
+import com.microsoft.agenthostprotocol.generated.StateActionUnknown
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -17,6 +20,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
 
 /** The host reported that this chat no longer exists. */
 class ChatGoneException(val uri: String) : Exception("Chat $uri is gone")
@@ -54,6 +63,15 @@ class ChatStore internal constructor(
     private val _error = MutableStateFlow<Throwable?>(null)
     val error: StateFlow<Throwable?> = _error.asStateFlow()
 
+    private val _ownConfig = MutableStateFlow<Map<String, JsonElement>>(emptyMap())
+
+    /**
+     * The settings this chat has set for itself (its mode, its approvals), from the snapshot and then from `chat/configChanged` actions.
+     * The 1.0.0 library has no field for them, so they are read from the raw reply (see [ConfigFacts]). What a chat shows is these over
+     * the session's own values. Only the keys in [ChatConfigKeys.READ] are kept.
+     */
+    val ownConfig: StateFlow<Map<String, JsonElement>> = _ownConfig.asStateFlow()
+
     private val _loadingOlder = MutableStateFlow(false)
     val loadingOlder: StateFlow<Boolean> = _loadingOlder.asStateFlow()
 
@@ -83,7 +101,7 @@ class ChatStore internal constructor(
     private var interrupted = 0
 
     /** @return false when [snapshot] holds no chat state, so nothing was seeded. */
-    internal fun seed(snapshot: Snapshot): Boolean {
+    internal fun seed(snapshot: Snapshot, facts: ConfigFacts? = null): Boolean {
         val chat = (snapshot.state as? SnapshotState.Chat)?.value ?: return false
         synchronized(lock) {
             latest = chat
@@ -91,6 +109,8 @@ class ChatStore internal constructor(
             interrupted = 0
             lastApplied = snapshot.fromSeq
             needsSubscribe = false
+            // The snapshot's own values come first: the held actions are later than it and are applied over them.
+            facts?.chatValues?.let { _ownConfig.value = it }
             val held = early.sortedBy { it.serverSeq }
             early.clear()
             held.forEach(::reduce)
@@ -192,6 +212,16 @@ class ChatStore internal constructor(
         lastApplied = envelope.serverSeq
         latest = latest?.let { chatReducer(it, envelope.action) }
         if (envelope.action is StateActionChatTurnsLoaded) olderArrived?.complete(Unit)
+        (envelope.action as? StateActionUnknown)?.let { noteConfig(it.raw) }
+    }
+
+    /** A `chat/configChanged` the library cannot decode: merges (or, with `replace`, swaps) the chat's own values. A null value takes a setting away. */
+    private fun noteConfig(raw: JsonObject) {
+        if ((raw["type"] as? JsonPrimitive)?.contentOrNull != "chat/configChanged") return
+        val sent = (raw["config"] as? JsonObject)?.filterKeys { it in ChatConfigKeys.READ } ?: return
+        val replace = ((raw["replace"] as? JsonPrimitive)?.takeIf { !it.isString })?.booleanOrNull == true
+        val base = if (replace) emptyMap() else _ownConfig.value
+        _ownConfig.value = (base + sent).filterValues { it !is JsonNull }
     }
 
     private fun publishNow() {

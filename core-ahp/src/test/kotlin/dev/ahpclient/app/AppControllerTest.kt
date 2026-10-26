@@ -1813,6 +1813,55 @@ class AppControllerTest {
         }
     }
 
+    // ---- reading what a waiting session waits for, for the inbox -----------------------------------------------------
+
+    private val question = """[{"kind":"chatInput","id":"r1","chat":"c","request":{"id":"q","message":"Which season do you prefer?"}}]"""
+
+    @Test
+    fun `what a waiting session waits for is read with one subscribe and one unsubscribe, and nothing is sent`() = runTest {
+        withRig(script = { HostScript(inputNeeded = question) }) {
+            connectToFirstHost()
+
+            val read = controller.readWaiting(SESSION_C)
+
+            assertEquals("Which season do you prefer?", read?.text)
+            assertEquals(1, channelsSent("subscribe").count { it == SESSION_C })
+            assertEquals(1, channelsSent("unsubscribe").count { it == SESSION_C })
+            assertTrue(dispatches().isEmpty(), "reading changes nothing")
+        }
+    }
+
+    @Test
+    fun `nothing is read when no host is connected`() = runTest {
+        withRig {
+            assertNull(controller.readWaiting(SESSION_C))
+            assertTrue(connectors.isEmpty())
+        }
+    }
+
+    @Test
+    fun `an address that is blank or absurdly long is never subscribed to`() = runTest {
+        withRig(script = { HostScript(inputNeeded = question) }) {
+            connectToFirstHost()
+            val before = channelsSent("subscribe").size
+
+            assertNull(controller.readWaiting(""))
+            assertNull(controller.readWaiting("  "))
+            assertNull(controller.readWaiting("ahp-session:/" + "x".repeat(600)))
+
+            assertEquals(before, channelsSent("subscribe").size)
+        }
+    }
+
+    @Test
+    fun `a session that is not waiting has nothing to read`() = runTest {
+        withRig {
+            connectToFirstHost()
+
+            assertNull(controller.readWaiting(SESSION_C)?.text)
+        }
+    }
+
     @Test
     fun `a call that is no longer waiting is not decided, whatever the notification said`() = runTest {
         var clientId = ""

@@ -26,9 +26,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.Surface
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.TextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -83,6 +87,9 @@ fun DrawerContent(
     modifier: Modifier = Modifier,
     /** The sessions the user chose to be alerted about, each marked with a bell in the list. */
     watched: Set<String> = emptySet(),
+    /** How many sessions wait on the user; null when there is no host, and the inbox entry is not shown. */
+    inboxCount: Int? = null,
+    onOpenInbox: () -> Unit = {},
 ) {
     ModalDrawerSheet(modifier = modifier.testTag("drawer")) {
         Column(Modifier.fillMaxSize()) {
@@ -90,6 +97,7 @@ fun DrawerContent(
             if (manage != null && host != null) {
                 NewSessionButton(manage, onSessionCreated, Modifier.padding(horizontal = 12.dp, vertical = 4.dp).fillMaxWidth())
             }
+            if (inboxCount != null && host != null) InboxButton(inboxCount, onOpenInbox)
             HorizontalDivider(Modifier.padding(top = 8.dp))
             if (host == null) {
                 Text(
@@ -114,6 +122,31 @@ fun DrawerContent(
             ) {
                 Icon(AppIcons.Settings, contentDescription = null)
                 Text("Settings", style = MaterialTheme.typography.titleSmall)
+            }
+        }
+    }
+}
+
+/** The way to the inbox, with how many sessions wait on you. Said as one item: "Inbox, 2 need you". */
+@Composable
+private fun InboxButton(count: Int, onOpenInbox: () -> Unit) {
+    val spoken = if (count > 0) "Inbox, $count ${if (count == 1) "needs" else "need"} you" else "Inbox"
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 52.dp)
+            .clickable(onClickLabel = "Open inbox", role = Role.Button, onClick = onOpenInbox)
+            .padding(horizontal = 16.dp)
+            .semantics(mergeDescendants = true) { contentDescription = spoken }
+            .testTag("drawer_inbox"),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(AppIcons.Inbox, contentDescription = null)
+        Text("Inbox", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+        if (count > 0) {
+            Surface(shape = CircleShape, color = MaterialTheme.colorScheme.tertiary, contentColor = MaterialTheme.colorScheme.onTertiary) {
+                Text("$count", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp).testTag("inbox_badge"))
             }
         }
     }

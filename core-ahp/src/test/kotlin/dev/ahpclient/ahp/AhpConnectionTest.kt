@@ -143,6 +143,50 @@ class AhpConnectionTest {
         assertEquals(42L, socket.sent[1]["params"]!!.jsonObject["clientSeq"]!!.jsonPrimitive.long)
     }
 
+    private fun configChange(json: String) = stateAction(json)
+
+    @Test
+    fun `a chat's setting is sent as one allowed property and word, and only then`() = runTest {
+        val socket = FakeSocket()
+        val connection = connection(socket, policy = CapabilityPolicy.INTERACT)
+
+        connection.dispatchAction("ahp-chat:/a", configChange("""{"type":"chat/configChanged","config":{"mode":"plan"}}"""), clientSeq = 7)
+
+        val action = socket.sent.single()["params"]!!.jsonObject["action"]!!.jsonObject
+        assertEquals("chat/configChanged", action["type"]!!.jsonPrimitive.content)
+        assertEquals("plan", action["config"]!!.jsonObject["mode"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `a chat's setting outside the allowed properties and words is refused before anything is sent`() = runTest {
+        val socket = FakeSocket()
+        val connection = connection(socket, policy = CapabilityPolicy.INTERACT)
+
+        listOf(
+            """{"type":"chat/configChanged","config":{"permissions":{"allow":["rm -rf"]}}}""",
+            """{"type":"chat/configChanged","config":{"sandboxEnabled":"off"}}""",
+            """{"type":"chat/configChanged","config":{"mode":"plan","autoApprove":"autoApprove"}}""",
+            """{"type":"chat/configChanged","config":{"autoApprove":"bypass"}}""",
+            """{"type":"chat/configChanged","config":{"mode":"plan"},"replace":true}""",
+            """{"type":"chat/configChanged","config":{}}""",
+        ).forEach { json ->
+            val error = assertFailsWith<CapabilityDeniedException>(json) { connection.dispatchAction("ahp-chat:/a", configChange(json), clientSeq = 1) }
+            assertEquals("chat/configChanged", error.actionType)
+        }
+        assertTrue(socket.sent.isEmpty(), "nothing left the device")
+    }
+
+    @Test
+    fun `the READ tier refuses a chat's setting too`() = runTest {
+        val socket = FakeSocket()
+
+        assertFailsWith<CapabilityDeniedException> {
+            connection(socket).dispatchAction("ahp-chat:/a", configChange("""{"type":"chat/configChanged","config":{"mode":"plan"}}"""), clientSeq = 1)
+        }
+
+        assertTrue(socket.sent.isEmpty())
+    }
+
     @Test
     fun `the READ tier refuses to dispatch and sends nothing`() = runTest {
         val socket = FakeSocket()

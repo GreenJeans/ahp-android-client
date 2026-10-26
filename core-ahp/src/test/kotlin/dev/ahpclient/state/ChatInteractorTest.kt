@@ -43,6 +43,7 @@ class ChatInteractorTest {
         var canInteract = true
         var models: List<ModelOption> = emptyList()
         var agents: List<AgentChoice> = emptyList()
+        var config: ChatConfigView = ChatConfigView.NONE
         var gateAnswer = true
         var gateThrows = false
         var outcome: DispatchOutcome = DispatchOutcome.Accepted
@@ -74,6 +75,7 @@ class ChatInteractorTest {
             now = { at },
             models = { models },
             agents = { agents },
+            config = { config },
         )
 
         fun types() = sent.map { (_, action) -> Ahp.json.encodeToJsonElement(StateAction.serializer(), action).jsonObject["type"]!!.jsonPrimitive.content }
@@ -82,6 +84,181 @@ class ChatInteractorTest {
     }
 
     private fun rig(chat: ChatState? = chat()) = Rig(chat, uri, at)
+
+    // ---- mode and approvals ------------------------------------------------------------------------------------
+
+    private fun view(
+        mode: String = "interactive",
+        approvals: String = "default",
+        mutable: Set<String> = ALL_CHAT_MUTABLE,
+        available: List<String>? = null,
+    ): ChatConfigView {
+        val props = properties(
+            "autoApprove" to AUTO_APPROVE_PROPERTY, "mode" to MODE_PROPERTY,
+            "availableApprovalModes" to AVAILABLE_APPROVAL_PROPERTY,
+        )
+        val values = """"autoApprove":"$approvals","mode":"$mode"${available?.let { ""","availableApprovalModes":[${it.joinToString(",") { v -> "\"$v\"" }}]""" }.orEmpty()}"""
+        val chats = """[{"resource":"$uri","title":"Main","status":1,"modifiedAt":"2026-10-22T10:00:00.000Z"}]"""
+        return ChatConfig.view(configSession(props, values, chats), uri, mutable, emptyMap())
+    }
+
+    private fun Rig.configOf(index: Int = 0) = wire(index)["config"]!!.jsonObject
+
+    @Test
+    fun `taking freedom away is sent with no device check`() = runTest {
+        val rig = rig().apply { config = view(mode = "autopilot", approvals = "autoApprove") }
+
+        assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), rig.interactor.setConfig("autoApprove", "default"))
+        assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), rig.interactor.setConfig("mode", "plan"))
+
+        assertEquals(listOf("dispatch", "dispatch"), rig.order)
+        assertEquals(listOf("chat/configChanged", "chat/configChanged"), rig.types())
+        assertEquals("""{"autoApprove":"default"}""", rig.configOf(0).toString())
+        assertEquals("""{"mode":"plan"}""", rig.configOf(1).toString())
+        assertEquals(uri, rig.sent.first().first)
+    }
+
+    @Test
+    fun `giving the agent more freedom goes through the device check, in this app's words, before anything is sent`() = runTest {
+        val rig = rig().apply { config = view() }
+
+        val result = rig.interactor.setConfig("autoApprove", "autoApprove")
+
+        assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), result)
+        assertEquals(listOf("gate", "dispatch"), rig.order)
+        val prompt = rig.prompts.single()
+        assertEquals(ChatConfigPrompt.TITLE, prompt.title)
+        assertEquals("Allow all: tool calls run without asking", prompt.toolName)
+        assertEquals(ChatConfigPrompt.SUMMARY, prompt.summary)
+        assertEquals("""{"autoApprove":"autoApprove"}""", rig.configOf().toString())
+    }
+
+    @Test
+    fun `assisted and autopilot are loosening too, and plan is not`() = runTest {
+        val rig = rig().apply { config = view() }
+
+        rig.interactor.setConfig("autoApprove", "assisted")
+        rig.interactor.setConfig("mode", "autopilot")
+        rig.interactor.setConfig("mode", "plan")
+
+        assertEquals(listOf("gate", "dispatch", "gate", "dispatch", "dispatch"), rig.order)
+        assertEquals(
+            listOf("Assisted: the host decides which tool calls need you", "Autopilot: the agent works on its own"),
+            rig.prompts.map { it.toolName },
+        )
+    }
+
+    @Test
+    fun `a device check that is not passed sends nothing`() = runTest {
+        val rig = rig().apply { config = view(); gateAnswer = false }
+
+        assertEquals(InteractResult.NotConfirmed, rig.interactor.setConfig("autoApprove", "autoApprove"))
+
+        assertTrue(rig.sent.isEmpty())
+    }
+
+    @Test
+    fun `a device check that errors sends nothing`() = runTest {
+        val rig = rig().apply { config = view(); gateThrows = true }
+
+        assertEquals(InteractResult.NotConfirmed, rig.interactor.setConfig("mode", "autopilot"))
+
+        assertTrue(rig.sent.isEmpty())
+    }
+
+    @Test
+    fun `a setting the host withdrew while the person was at the device check is not sent`() = runTest {
+        val rig = rig().apply {
+            config = view()
+            onGate = { config = view(available = listOf("default", "assisted")) }
+        }
+
+        assertEquals(InteractResult.InvalidConfig, rig.interactor.setConfig("autoApprove", "autoApprove"))
+
+        assertTrue(rig.sent.isEmpty())
+    }
+
+    @Test
+    fun `a chat that stopped being interactive while the person was at the device check is not sent to`() = runTest {
+        val rig = rig().apply {
+            config = view()
+            onGate = { canInteract = false }
+        }
+
+        assertEquals(InteractResult.NotAllowed, rig.interactor.setConfig("autoApprove", "autoApprove"))
+
+        assertTrue(rig.sent.isEmpty())
+    }
+
+    @Test
+    fun `the same value is nothing to send`() = runTest {
+        val rig = rig().apply { config = view(approvals = "assisted") }
+
+        assertEquals(InteractResult.Blank, rig.interactor.setConfig("autoApprove", "assisted"))
+
+        assertTrue(rig.sent.isEmpty())
+        assertTrue(rig.prompts.isEmpty())
+    }
+
+    @Test
+    fun `a setting the host does not offer, or does not let this chat change, is never sent`() = runTest {
+        val rig = rig().apply { config = view(mutable = setOf("mode")) }
+
+        assertEquals(InteractResult.InvalidConfig, rig.interactor.setConfig("autoApprove", "default"), "not chat-mutable")
+        assertEquals(InteractResult.InvalidConfig, rig.interactor.setConfig("mode", "yolo"), "not a value")
+        assertEquals(InteractResult.InvalidConfig, rig.interactor.setConfig("permissions", "x"), "not a setting")
+        assertEquals(InteractResult.InvalidConfig, rig.interactor.setConfig("sandboxEnabled", "off"), "not a setting")
+        assertEquals(InteractResult.InvalidConfig, rig.interactor.setConfig("effectiveApprovalMode", "autoApprove"), "not a setting")
+
+        assertTrue(rig.sent.isEmpty())
+        assertTrue(rig.prompts.isEmpty())
+    }
+
+    @Test
+    fun `a level the host withholds is never sent`() = runTest {
+        val rig = rig().apply { config = view(available = listOf("default", "assisted")) }
+
+        assertEquals(InteractResult.InvalidConfig, rig.interactor.setConfig("autoApprove", "autoApprove"))
+        assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), rig.interactor.setConfig("autoApprove", "assisted"))
+
+        assertEquals(listOf("assisted"), rig.sent.map { (_, a) -> Ahp.json.encodeToJsonElement(StateAction.serializer(), a).jsonObject["config"]!!.jsonObject["autoApprove"]!!.jsonPrimitive.content })
+    }
+
+    @Test
+    fun `with no settings offered nothing can be set`() = runTest {
+        val rig = rig()
+
+        assertEquals(InteractResult.InvalidConfig, rig.interactor.setConfig("mode", "plan"))
+        assertTrue(rig.sent.isEmpty())
+    }
+
+    @Test
+    fun `a chat the person may not act in cannot have its settings changed`() = runTest {
+        val readOnly = rig(chat(interactivity = "read-only")).apply { config = view() }
+        val offline = rig().apply { config = view(); canInteract = false }
+        val gone = rig(null).apply { config = view() }
+
+        assertEquals(InteractResult.NotAllowed, readOnly.interactor.setConfig("mode", "plan"))
+        assertEquals(InteractResult.NotAllowed, offline.interactor.setConfig("mode", "plan"))
+        assertEquals(InteractResult.NotAllowed, gone.interactor.setConfig("mode", "plan"))
+        listOf(readOnly, offline, gone).forEach { assertTrue(it.sent.isEmpty()) }
+    }
+
+    @Test
+    fun `a refusal by the host and a failed send are reported, not hidden`() = runTest {
+        val refused = rig().apply { config = view(); outcome = DispatchOutcome.Rejected("not allowed by policy") }
+        val failed = rig().apply { config = view(); dispatchFails = IOException("offline") }
+
+        assertEquals(InteractResult.Sent(DispatchOutcome.Rejected("not allowed by policy")), refused.interactor.setConfig("mode", "plan"))
+        assertIs<InteractResult.NotSent>(failed.interactor.setConfig("mode", "plan"))
+    }
+
+    @Test
+    fun `the view the screen shows is the one the interactor checks against`() = runTest {
+        val rig = rig().apply { config = view(mode = "plan") }
+
+        assertEquals("plan", rig.interactor.configView().mode!!.current)
+    }
 
     @Test
     fun `a message to an idle chat starts a turn`() = runTest {

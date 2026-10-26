@@ -12,6 +12,8 @@ import dev.ahpclient.security.VaultLoad
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.CustomAgents
 import dev.ahpclient.state.ApprovalGate
+import dev.ahpclient.state.ChatConfig
+import dev.ahpclient.state.RequestRead
 import dev.ahpclient.state.ApprovalTarget
 import dev.ahpclient.state.ChannelStore
 import dev.ahpclient.state.ChangesetDiffs
@@ -399,6 +401,10 @@ class AppController(
         gate = approvalGate,
         models = { modelsFor(session) },
         agents = { CustomAgents.of((_state.value as? AppState.Connected)?.open?.store?.state?.value) },
+        config = {
+            val open = (_state.value as? AppState.Connected)?.open
+            ChatConfig.view(open?.store?.state?.value, uri, open?.store?.chatMutableKeys?.value.orEmpty(), store.ownConfig.value)
+        },
     )
 
     /** The models the host offers for the agent of the session on screen; none when no session is open or the agent is not listed. */
@@ -428,6 +434,13 @@ class AppController(
         } finally {
             session.closeChat(chatUri)
         }
+    }
+
+    /** What a session that needs the person is waiting for, read once and closed again; null when not connected, gone, or nothing is pending. */
+    suspend fun readWaiting(resource: String): RequestRead? {
+        val session = (_state.value as? AppState.Connected)?.session ?: return null
+        if (resource.isBlank() || resource.length > ApprovalTarget.MAX_CHAT_URI) return null
+        return WaitingRequests.read(session, resource)
     }
 
     /**

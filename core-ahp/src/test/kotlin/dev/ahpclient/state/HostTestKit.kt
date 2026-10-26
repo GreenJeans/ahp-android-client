@@ -28,8 +28,8 @@ internal const val SESSION_E = "ahp-session:/00000000-0000-4000-8000-0000000000e
 internal const val INITIAL_SEQ = 126_551L
 internal const val SNAPSHOT_SEQ = 126_560L
 
-internal fun sessionSnapshot(uri: String, fromSeq: Long, title: String = "Session C", status: Int = 8, inputNeeded: String? = null, chats: String = "[]", changesets: String? = null) =
-    """{"resource":"$uri","fromSeq":$fromSeq,"state":{"provider":"copilotcli","title":"$title","status":$status,"lifecycle":"ready","activeClients":[],"chats":$chats${inputNeeded?.let { ""","inputNeeded":$it""" }.orEmpty()}${changesets?.let { ""","changesets":$it""" }.orEmpty()}}}"""
+internal fun sessionSnapshot(uri: String, fromSeq: Long, title: String = "Session C", status: Int = 8, inputNeeded: String? = null, chats: String = "[]", changesets: String? = null, config: String? = null) =
+    """{"resource":"$uri","fromSeq":$fromSeq,"state":{"provider":"copilotcli","title":"$title","status":$status,"lifecycle":"ready","activeClients":[],"chats":$chats${inputNeeded?.let { ""","inputNeeded":$it""" }.orEmpty()}${changesets?.let { ""","changesets":$it""" }.orEmpty()}${config?.let { ""","config":$it""" }.orEmpty()}}}"""
 
 internal const val CHANGESET_A = "ahp-changeset:/c1"
 
@@ -110,6 +110,10 @@ internal class HostScript(
     val terminalState: String = terminalStateJson(),
     /** Replaces the whole reply to a terminal `subscribe` (for a host that answers badly); null is the scripted snapshot. */
     val onTerminalSubscribe: ((id: Long?, channel: String) -> String)? = null,
+    /** The `config` a subscribed session reports (its schema and values), as JSON; null for a session without any. */
+    val sessionConfig: String? = null,
+    /** The `config` a subscribed chat reports (its own values), as JSON; null for a chat with none of its own. */
+    val chatConfig: String? = null,
     /** Replaces the reply to a chat `subscribe`, given its params; returning null is a host that never answers. */
     val onChatSubscribe: ((id: Long?, params: JsonObject) -> String?)? = null,
 ) {
@@ -134,7 +138,7 @@ internal class HostScript(
         val sessionSnapshots = params["initialSubscriptions"]!!.jsonArray
             .map { it.jsonPrimitive.content }
             .filter { it.startsWith("ahp-session:/") }
-            .map { Json.parseToJsonElement(sessionSnapshot(it, INITIAL_SEQ, changesets = sessionChangesets)) }
+            .map { Json.parseToJsonElement(sessionSnapshot(it, INITIAL_SEQ, changesets = sessionChangesets, config = sessionConfig)) }
         val snapshots = base["snapshots"]!!.jsonArray.map { snapshot -> withTerminals(snapshot.jsonObject) }
         // A real host answers a named terminal with its snapshot, which the library cannot decode: so naming one here breaks the connection.
         val terminalSnapshots = params["initialSubscriptions"]!!.jsonArray
@@ -158,11 +162,11 @@ internal class HostScript(
             onTerminalSubscribe?.invoke(id, channel)
                 ?: if (channel in missingSessions) error(id, -32008, "no such terminal") else result(id, """{"snapshot":${terminalSnapshotJson(channel, SNAPSHOT_SEQ, terminalState)}}""")
         channel.startsWith("ahp-chat:/") ->
-            if (channel in missingSessions) error(id, -32008, "no such chat") else result(id, """{"snapshot":${chatSnapshotJson(channel, SNAPSHOT_SEQ, turns = chatTurns, cursor = chatCursor, activeTurn = chatActiveTurn)}}""")
+            if (channel in missingSessions) error(id, -32008, "no such chat") else result(id, """{"snapshot":${chatSnapshotJson(channel, SNAPSHOT_SEQ, turns = chatTurns, cursor = chatCursor, activeTurn = chatActiveTurn, config = chatConfig)}}""")
         channel.startsWith("ahp-changeset:/") ->
             if (channel in missingSessions) error(id, -32008, "no such changeset") else result(id, """{"snapshot":${changesetSnapshotJson(channel, SNAPSHOT_SEQ, changesetState)}}""")
         channel in missingSessions -> error(id, -32001, "no such session")
-        else -> result(id, """{"snapshot":${sessionSnapshot(channel, SNAPSHOT_SEQ, inputNeeded = inputNeeded, chats = sessionChats, changesets = sessionChangesets)}}""")
+        else -> result(id, """{"snapshot":${sessionSnapshot(channel, SNAPSHOT_SEQ, inputNeeded = inputNeeded, chats = sessionChats, changesets = sessionChangesets, config = sessionConfig)}}""")
     }
 }
 

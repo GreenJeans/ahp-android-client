@@ -142,6 +142,9 @@ sealed interface InteractResult {
     /** The custom agent the person picked is not one the host offers (any more), so nothing was sent. */
     data object InvalidAgent : InteractResult
 
+    /** The mode or approvals the person picked is not one the host offers or lets this chat change (any more), so nothing was sent. */
+    data object InvalidConfig : InteractResult
+
     /** Sending failed before anything left the phone (offline, or the connection was just lost). Safe to try again. */
     data class NotSent(val cause: Throwable) : InteractResult
 }
@@ -166,12 +169,40 @@ class ChatInteractor(
     private val models: () -> List<ModelOption> = { emptyList() },
     /** The custom agents the host offers for this chat's session. A message names an agent only if it is one of these, or the one the chat is already on. */
     private val agents: () -> List<AgentChoice> = { emptyList() },
+    /** This chat's mode and approvals as the host reports them now, and which of them this app may change. */
+    private val config: () -> ChatConfigView = { ChatConfigView.NONE },
 ) {
     /** The models a message in this chat may be sent with, as the host offers them now. */
     fun modelOptions(): List<ModelOption> = models()
 
     /** The custom agents a message in this chat may be sent with, as the host offers them now. */
     fun agentChoices(): List<AgentChoice> = agents()
+
+    /** This chat's mode and approvals now. */
+    fun configView(): ChatConfigView = config()
+
+    /**
+     * Sets this chat's mode or approvals. Only a setting the host shows for this chat, lets the chat change for itself and offers that value
+     * for (and allows now) is sent, and only when it differs from what is in force. Giving the agent more freedom (Allow all, Assisted,
+     * Autopilot) goes through the device check first, in this app's own words, and is looked up again after it; taking freedom away never
+     * does, like denying a tool call. Nothing counts as done until the host echoes it, so what the screen shows afterwards is what the host holds.
+     */
+    suspend fun setConfig(key: String, value: String): InteractResult {
+        usable() ?: return InteractResult.NotAllowed
+        val control = config().control(key) ?: return InteractResult.InvalidConfig
+        if (!control.writable || !control.offers(value)) return InteractResult.InvalidConfig
+        if (control.current == value) return InteractResult.Blank
+        if (control.loosens(value)) {
+            if (!confirmed(ApprovalRequest(toolName = ChatConfigPrompt.name(control, value), summary = ChatConfigPrompt.SUMMARY, title = ChatConfigPrompt.TITLE))) {
+                return InteractResult.NotConfirmed
+            }
+            // The person took their time: look again, so a setting the host withdrew meanwhile is not sent blind.
+            if (usable() == null) return InteractResult.NotAllowed
+            val now = config().control(key) ?: return InteractResult.InvalidConfig
+            if (!now.writable || !now.offers(value)) return InteractResult.InvalidConfig
+        }
+        return deliver(ChatConfigActions.set(key, value))
+    }
 
     suspend fun send(text: String, model: ModelChoice? = null, agent: AgentPick = AgentPick.Keep): InteractResult {
         val state = usable() ?: return InteractResult.NotAllowed

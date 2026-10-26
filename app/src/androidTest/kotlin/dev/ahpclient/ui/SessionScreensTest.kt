@@ -94,13 +94,15 @@ class SessionScreensTest {
         connectedHost: TunnelInfo? = host,
         manage: ManageActionsUi? = null,
         watched: Set<String> = emptySet(),
+        inboxCount: Int? = null,
+        onOpenInbox: () -> Unit = {},
     ) = rule.setContent {
         var showArchived by androidx.compose.runtime.remember { mutableStateOf(initialShowArchived) }
         var query by androidx.compose.runtime.remember { mutableStateOf(initialQuery) }
         AhpTheme {
             DrawerContent(
                 connectedHost, connection, sessions, now, selected, showArchived, { showArchived = !showArchived; onToggle() }, query, { query = it },
-                rememberLazyListState(), manage, onOpenHost, onOpen, onOpenSettings, onSessionCreated = {}, watched = watched,
+                rememberLazyListState(), manage, onOpenHost, onOpen, onOpenSettings, onSessionCreated = {}, watched = watched, inboxCount = inboxCount, onOpenInbox = onOpenInbox,
             )
         }
     }
@@ -361,6 +363,40 @@ class SessionScreensTest {
         rule.onAllNodesWithTag("row_alert", useUnmergedTree = true).assertCountEquals(1)
         rule.onAllNodesWithTag("session_row").filter(hasText("Working")).onFirst().assert(hasContentDescriptionContaining("alert when done is on"))
         rule.onAllNodesWithTag("session_row").filter(hasText("Unread one")).onFirst().assert(!hasContentDescriptionContaining("alert when done"))
+    }
+
+    @Test
+    fun theInboxEntryShowsHowManyWaitAndOpensTheInbox() {
+        var opened = 0
+        showSessions(inboxCount = 3, onOpenInbox = { opened++ })
+
+        rule.onNodeWithTag("drawer_inbox").assertContentDescriptionEquals("Inbox, 3 need you").assertTouchTargetAtLeast(48.dp)
+        rule.onNodeWithTag("inbox_badge", useUnmergedTree = true).assertTextEquals("3")
+        rule.onNodeWithTag("drawer_inbox").performClick()
+
+        assertEquals(1, opened)
+    }
+
+    @Test
+    fun theInboxEntrySaysNeedsForOne() {
+        showSessions(inboxCount = 1)
+
+        rule.onNodeWithTag("drawer_inbox").assertContentDescriptionEquals("Inbox, 1 needs you")
+    }
+
+    @Test
+    fun withNobodyWaitingTheInboxEntryHasNoBadge() {
+        showSessions(inboxCount = 0)
+
+        rule.onNodeWithTag("drawer_inbox").assertContentDescriptionEquals("Inbox")
+        rule.onAllNodesWithTag("inbox_badge", useUnmergedTree = true).assertCountEquals(0)
+    }
+
+    @Test
+    fun withNoHostThereIsNoInboxEntry() {
+        showSessions(connectedHost = null, inboxCount = null)
+
+        rule.onAllNodesWithTag("drawer_inbox").assertCountEquals(0)
     }
 
     @Test

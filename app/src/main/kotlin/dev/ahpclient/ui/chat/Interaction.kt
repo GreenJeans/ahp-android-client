@@ -3,6 +3,8 @@ package dev.ahpclient.ui.chat
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -24,6 +26,8 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
@@ -65,6 +69,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.ahpclient.state.AnswerValue
+import dev.ahpclient.state.ChatConfigPrompt
+import dev.ahpclient.state.ChatConfigView
+import dev.ahpclient.state.ConfigControl
+import dev.ahpclient.state.ConfigKind
 import dev.ahpclient.state.AgentChoice
 import dev.ahpclient.state.AgentPick
 import dev.ahpclient.state.CustomAgents
@@ -112,6 +120,10 @@ class ChatActionsUi(
     val agents: List<AgentChoice> = emptyList(),
     /** The custom agent the chat is on now (its latest message's), so the box can show it and a message keeps it. Null is no custom agent. */
     val agentInUse: String? = null,
+    /** The chat's mode and approvals as the host reports them. No controls means none are shown. */
+    val config: ChatConfigView = ChatConfigView.NONE,
+    /** Sets one of them. The device check for giving the agent more freedom is inside it, so a screen only reports the result. */
+    val setConfig: suspend (key: String, value: String) -> InteractResult = { _, _ -> InteractResult.NotAllowed },
 )
 
 /** The host's own words on a button or a field are untrusted display text: shown as plain text and cut to a sane length. */
@@ -226,42 +238,138 @@ private fun AgentRow(name: String, description: String?, selected: Boolean, tag:
 }
 
 /**
- * Picks the custom agent for the next messages: none (the provider's own behaviour), or one the host lists. The one the chat is on
- * stays picked unless this is used to change it, so sending never switches it by accident. The names and descriptions are the host's
- * words, shown as plain text.
+ * One setting of the chat, as a row of choices: its title, then each value the host offers as a chip. A value the host withholds, or any
+ * value of a setting this app may not change, is shown but cannot be chosen. Under the choices a line says what a choice that gives the
+ * agent more freedom will ask of the person (the device check), or why nothing can be chosen. The words are this app's own.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ConfigSection(control: ConfigControl, selected: String?, onSelect: (String) -> Unit) {
+    val kind = if (control.kind == ConfigKind.MODE) "mode" else "approvals"
+    Column(modifier = Modifier.fillMaxWidth().testTag("config_section_$kind"), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(control.title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 4.dp).semantics { heading() })
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            control.choices.forEach { choice ->
+                FilterChip(
+                    selected = selected == choice.value,
+                    onClick = { onSelect(choice.value) },
+                    enabled = control.writable && choice.available,
+                    label = { Text(choice.label) },
+                    modifier = Modifier.heightIn(min = 48.dp).testTag("config_${kind}_${choice.value}"),
+                )
+            }
+        }
+        val hint = when {
+            !control.writable -> "Can't be changed from here."
+            selected != null && selected != control.current && control.loosens(selected) ->
+                "${ChatConfigPrompt.name(control, selected)}. You will be asked for your fingerprint, face or screen lock."
+            control.choices.any { !it.available } -> "A greyed-out choice is not allowed by the host right now."
+            else -> control.choices.firstOrNull { it.value == selected }?.description
+        }
+        if (hint != null) Text(hint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("config_hint_$kind"))
+    }
+}
+
+/**
+ * The options for the next messages in this chat: how the agent works (mode) and how freely its tool calls run (approvals), when the host
+ * offers them, pinned at the top, and under them the custom agent: none (the provider's own behaviour), or one the host lists. The agent the
+ * chat is on stays picked unless this is used to change it, so sending never switches it by accident. The mode and approvals are the chat's own
+ * on the host, not a pick kept here, so they always show what is in force. The names and descriptions are the host's words, shown as plain text.
+ * [onPick] is told the agent and the settings that were changed, as pairs of property and value; the caller sends them.
  */
 @Composable
-private fun AgentPickerDialog(agents: List<AgentChoice>, current: String?, onDismiss: () -> Unit, onPick: (String?) -> Unit) {
-    var draft by rememberSaveable { mutableStateOf(current) }
+private fun ChatOptionsDialog(
+    agents: List<AgentChoice>,
+    currentAgent: String?,
+    showAgents: Boolean,
+    config: ChatConfigView,
+    onDismiss: () -> Unit,
+    onPick: (agent: String?, changes: List<Pair<String, String>>) -> Unit,
+) {
+    var draft by rememberSaveable { mutableStateOf(currentAgent) }
+    var draftMode by rememberSaveable { mutableStateOf(config.mode?.current) }
+    var draftApprovals by rememberSaveable { mutableStateOf(config.approvals?.current) }
     // An agent the chat is on that the host no longer lists is still shown, so the dialog says what is true.
-    val unlisted = current?.takeIf { uri -> agents.none { it.uri == uri } }
+    val unlisted = currentAgent?.takeIf { uri -> agents.none { it.uri == uri } }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Agent") },
+        title = { Text(if (config.controls.isEmpty()) "Agent" else "Options") },
         text = {
-            // A long list opens at the agent the chat is on, so the pop-up shows what is true without a scroll to find it.
-            val position = when {
-                current == null -> 0
-                unlisted != null -> 1
-                else -> 1 + agents.indexOfFirst { it.uri == current }.coerceAtLeast(0)
-            }
-            LazyColumn(
-                state = rememberLazyListState(initialFirstVisibleItemIndex = (position - 1).coerceAtLeast(0)),
-                modifier = Modifier.heightIn(max = 420.dp).testTag("agent_dialog"),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                item(key = "default") { AgentRow("Default agent", "No custom agent", draft == null, "agent_default") { draft = null } }
-                if (unlisted != null) {
-                    item(key = "unlisted") { AgentRow(CustomAgents.nameOf(unlisted, agents).orEmpty(), "Not offered now", draft == unlisted, "agent_option") { draft = unlisted } }
+            Column(modifier = Modifier.testTag("options_dialog"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                config.mode?.let { ConfigSection(it, draftMode) { value -> draftMode = value } }
+                config.approvals?.let { ConfigSection(it, draftApprovals) { value -> draftApprovals = value } }
+                if (config.controls.isNotEmpty() && showAgents) HorizontalDivider()
+                if (showAgents) {
+                    if (config.controls.isNotEmpty()) Text("Agent", style = MaterialTheme.typography.titleSmall, modifier = Modifier.semantics { heading() })
+                    // A long list opens at the agent the chat is on, so the pop-up shows what is true without a scroll to find it.
+                    val position = when {
+                        currentAgent == null -> 0
+                        unlisted != null -> 1
+                        else -> 1 + agents.indexOfFirst { it.uri == currentAgent }.coerceAtLeast(0)
+                    }
+                    LazyColumn(
+                        state = rememberLazyListState(initialFirstVisibleItemIndex = (position - 1).coerceAtLeast(0)),
+                        modifier = Modifier.heightIn(max = if (config.controls.isEmpty()) 420.dp else 280.dp).testTag("agent_dialog"),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        item(key = "default") { AgentRow("Default agent", "No custom agent", draft == null, "agent_default") { draft = null } }
+                        if (unlisted != null) {
+                            item(key = "unlisted") { AgentRow(CustomAgents.nameOf(unlisted, agents).orEmpty(), "Not offered now", draft == unlisted, "agent_option") { draft = unlisted } }
+                        }
+                        items(agents, key = { it.uri }) { a -> AgentRow(a.name, a.description, draft == a.uri, "agent_option") { draft = a.uri } }
+                    }
                 }
-                items(agents, key = { it.uri }) { a -> AgentRow(a.name, a.description, draft == a.uri, "agent_option") { draft = a.uri } }
             }
         },
-        confirmButton = { TextButton(onClick = { onPick(draft) }, modifier = Modifier.testTag("agent_use")) { Text("Use") } },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val changes = listOfNotNull(
+                        config.mode?.takeIf { it.writable }?.let { c -> draftMode?.takeIf { it != c.current }?.let { c.key to it } },
+                        config.approvals?.takeIf { it.writable }?.let { c -> draftApprovals?.takeIf { it != c.current }?.let { c.key to it } },
+                    )
+                    onPick(draft, changes)
+                },
+                modifier = Modifier.testTag("agent_use"),
+            ) { Text("Use") }
+        },
         dismissButton = { TextButton(onClick = onDismiss, modifier = Modifier.testTag("agent_cancel")) { Text("Cancel") } },
     )
 }
 
+/**
+ * What is not at its quiet default, above the message box: Plan, Autopilot, Assisted and, in the warning colour, Allow all. Nothing when
+ * mode and approvals are as they start, so the box stays quiet. A tap opens the options. Allow all is the one that must never be a surprise.
+ */
+@Composable
+private fun ConfigStateRow(config: ChatConfigView, onClick: () -> Unit, chipColors: androidx.compose.material3.ChipColors, modifier: Modifier = Modifier) {
+    val notable = config.notable
+    if (notable.isEmpty()) return
+    Row(modifier = modifier.fillMaxWidth().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        notable.forEach { control ->
+            val label = control.currentLabel.orEmpty()
+            val warn = control.isAllowAll
+            AssistChip(
+                onClick = onClick,
+                label = { Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1) },
+                leadingIcon = if (warn) ({ Icon(AppIcons.ErrorCircle, contentDescription = null, modifier = Modifier.size(16.dp)) }) else null,
+                colors = if (warn) {
+                    AssistChipDefaults.assistChipColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                        labelColor = MaterialTheme.colorScheme.onErrorContainer,
+                        leadingIconContentColor = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                } else {
+                    chipColors
+                },
+                border = null,
+                modifier = Modifier
+                    .semantics { contentDescription = "${control.title}: $label" + if (warn) ". Tool calls run without asking. Opens the options" else ". Opens the options" }
+                    .testTag(if (control.kind == ConfigKind.MODE) "config_state_mode" else "config_state_approvals"),
+            )
+        }
+    }
+}
 @Composable
 private fun Notice(text: String?, tag: String, modifier: Modifier = Modifier) {
     if (text == null) return
@@ -306,6 +414,7 @@ internal fun Composer(actions: ChatActionsUi, modifier: Modifier = Modifier) {
         modifier = modifier.fillMaxWidth().imePadding().padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 8.dp)) {
+            ConfigStateRow(actions.config, onClick = { choosingAgent = true }, chipColors = chipColors, modifier = Modifier.padding(top = 4.dp))
             Notice(notice, "composer_notice", Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
             TextField(
                 value = text,
@@ -329,7 +438,7 @@ internal fun Composer(actions: ChatActionsUi, modifier: Modifier = Modifier) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    if (actions.agents.isNotEmpty() || actions.agentInUse != null) {
+                    if (actions.agents.isNotEmpty() || actions.agentInUse != null || actions.config.controls.isNotEmpty()) {
                         AssistChip(
                             onClick = { choosingAgent = true },
                             label = { Text(agentLabel(actions.agents, agentUri), style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis) },
@@ -339,11 +448,13 @@ internal fun Composer(actions: ChatActionsUi, modifier: Modifier = Modifier) {
                             modifier = Modifier.widthIn(max = 150.dp).semantics { contentDescription = "Agent: ${agentLabel(actions.agents, agentUri)}" }.testTag("agent_button"),
                         )
                         if (choosingAgent) {
-                            AgentPickerDialog(
+                            ChatOptionsDialog(
                                 actions.agents,
                                 agentUri,
+                                showAgents = actions.agents.isNotEmpty() || actions.agentInUse != null,
+                                config = actions.config,
                                 onDismiss = { choosingAgent = false },
-                                onPick = { uri ->
+                                onPick = { uri, changes ->
                                     // Choosing what the chat is on is "keep", so a change made elsewhere is not undone by the next message.
                                     agentPick = when (uri) {
                                         actions.agentInUse -> AgentPick.Keep
@@ -351,6 +462,18 @@ internal fun Composer(actions: ChatActionsUi, modifier: Modifier = Modifier) {
                                         else -> AgentPick.Use(uri)
                                     }
                                     choosingAgent = false
+                                    if (changes.isNotEmpty()) {
+                                        scope.launch {
+                                            busy = true
+                                            // One after the other: a setting that is refused (or a device check that is not passed) stops the rest.
+                                            for ((key, value) in changes) {
+                                                val result = actions.setConfig(key, value)
+                                                notice = InteractMessages.describe(result)
+                                                if (!InteractMessages.succeeded(result)) break
+                                            }
+                                            busy = false
+                                        }
+                                    }
                                 },
                             )
                         }

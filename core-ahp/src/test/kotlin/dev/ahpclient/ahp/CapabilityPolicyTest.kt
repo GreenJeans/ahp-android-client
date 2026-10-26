@@ -11,6 +11,7 @@ class CapabilityPolicyTest {
     private val interactActions = setOf(
         "chat/turnStarted", "chat/pendingMessageSet", "chat/pendingMessageRemoved", "chat/inputAnswerChanged",
         "chat/inputCompleted", "chat/toolCallConfirmed", "chat/toolCallResultConfirmed", "chat/turnCancelled",
+        "chat/configChanged",
     )
 
     // Everything the spec's Design Notes name as denied, plus the rest of the protocol surface.
@@ -54,8 +55,18 @@ class CapabilityPolicyTest {
     }
 
     @Test
-    fun `INTERACT allows exactly the eight interaction action types`() {
+    fun `INTERACT allows exactly the nine interaction action types`() {
         interactActions.forEach { CapabilityPolicy.INTERACT.check("dispatchAction", it) }
+    }
+
+    @Test
+    fun `only INTERACT and MANAGE may set a chat's own setting, and READ never`() {
+        CapabilityPolicy.INTERACT.check("dispatchAction", "chat/configChanged")
+        CapabilityPolicy.MANAGE.check("dispatchAction", "chat/configChanged")
+        assertFailsWith<CapabilityDeniedException> { CapabilityPolicy.READ.check("dispatchAction", "chat/configChanged") }
+        // The neighbours are not allowed: the session's own setting, and a made-up one.
+        assertFailsWith<CapabilityDeniedException> { CapabilityPolicy.INTERACT.check("dispatchAction", "session/configChanged") }
+        assertFailsWith<CapabilityDeniedException> { CapabilityPolicy.MANAGE.check("dispatchAction", "chat/configChanged ") }
     }
 
     @Test
@@ -127,7 +138,7 @@ class CapabilityPolicyTest {
     }
 
     @Test
-    fun `MANAGE allows the eight interaction actions and exactly three more`() {
+    fun `MANAGE allows the nine interaction actions and exactly three more`() {
         (interactActions + manageActions).forEach { CapabilityPolicy.MANAGE.check("dispatchAction", it) }
         assertEquals(manageActions, CapabilityPolicy.MANAGE_ACTIONS)
         assertEquals(manageCommands, CapabilityPolicy.MANAGE_COMMANDS)
