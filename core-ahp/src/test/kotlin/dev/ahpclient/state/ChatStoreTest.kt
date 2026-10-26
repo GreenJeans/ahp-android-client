@@ -13,6 +13,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -157,6 +158,50 @@ class ChatStoreTest {
         store.markGone()
         assertFalse(store.needsSubscribe)
         assertEquals(CHAT_A, assertIs<ChatGoneException>(store.error.value).uri)
+    }
+
+    @Test
+    fun `an action that arrives after the chat was invalidated is held until the new snapshot and applied on top of it`() = runTest {
+        val store = store()
+        store.seed(chatSnapshot(CHAT_A, 10))
+        store.invalidate()
+
+        store.apply(env(TURN_STARTED, 12))
+        advance(100)
+        assertNull(store.state.value!!.activeTurn, "the old transcript is left alone while the new one is awaited")
+
+        store.seed(chatSnapshot(CHAT_A, 11))
+
+        assertEquals("t1", store.state.value!!.activeTurn!!.id, "the action is later than the snapshot, so it is not lost")
+    }
+
+    @Test
+    fun `an action the new snapshot already covers is dropped when it is applied from the held ones`() = runTest {
+        val store = store()
+        store.seed(chatSnapshot(CHAT_A, 10))
+        store.invalidate()
+
+        store.apply(env(TURN_STARTED, 11))
+        store.seed(chatSnapshot(CHAT_A, 11))
+
+        assertNull(store.state.value!!.activeTurn)
+    }
+
+    @Test
+    fun `the flag that says a snapshot is awaited stays up until the snapshot is published`() = runTest {
+        val store = store()
+        store.seed(chatSnapshot(CHAT_A, 10, turns = listOf(turnJson("old"))))
+        store.invalidate()
+        var shown: List<String>? = null
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            store.subscribeNeeded.first { !it }
+            shown = store.state.value?.turns?.map { it.id }
+        }
+
+        store.apply(env(TURN_STARTED, 12))
+        store.seed(chatSnapshot(CHAT_A, 11, turns = listOf(turnJson("fresh"))))
+
+        assertEquals(listOf("fresh"), shown, "a waiter that wakes on the flag already finds the new transcript")
     }
 
     @Test

@@ -1,6 +1,6 @@
 # Hardening: battery, network, memory and recovery
 
-> **Status:** Draft, not started.
+> **Status:** In progress. H1 and H2 are built and covered by JVM tests; their on-phone checks (AC-H1.5, AC-H1.6, AC-H2.6) are still to do. H3 to H8, F1 and F2 are not started.
 > **Date:** 2026-10-26
 > **Parent:** [`docs/spec.md`](spec.md). That spec holds the product phases; this one holds the work that makes the app behave well over a long day in a pocket. Tick boxes here as work lands and add a row to the Progress Log at the bottom; note the commit in the row.
 > **Source:** a review of the code at commit `a8bb8ed` (concurrency, state, persistence, battery), 2026-10-26.
@@ -63,34 +63,39 @@ H1, H2, H4 and H5 touch different files and can be done in any order or in paral
       data class Available(val id: String) : NetworkState
   }
   ```
-- `HostSession` takes `network: StateFlow<NetworkState> = MutableStateFlow(NetworkState.Available("default"))` so the probe and existing tests are unchanged.
+- A companion `NetworkState.ALWAYS_AVAILABLE` (`Available("default")`, never changes) is for callers with no monitor.
+- `HostSession` takes `network: StateFlow<NetworkState> = NetworkState.ALWAYS_AVAILABLE` so the probe and existing tests are unchanged.
 - New `ConnState.WaitingForNetwork`. It is not a failure and does not count as an attempt.
 - In `supervise()`:
   - Before each connect, if the network is `Unavailable`, set `WaitingForNetwork` and suspend until it is `Available`. Reset `attempt` to 0 when it returns.
-  - Replace the bare `delay(backoff.delayMs(attempt))` with a race between the delay and the network id changing (`network.first { it is Available && it.id != idAtFailure }`). Whichever comes first ends the wait.
-  - While `Online`, a child coroutine watches `network`. When the id changes, or it goes `Unavailable`, it closes the current connection the way `restart()` does but **without** bumping `epoch` (the tier has not changed, so the next connect resumes with `reconnect`).
-- `Backoff` takes a `random: Random = Random.Default` and returns `delay × (0.8 … 1.2)`, still capped at `maxMs`.
-- `MonitorStatus.from` ([InputNeeded.kt:184](../core-ahp/src/main/kotlin/dev/ahpclient/state/InputNeeded.kt)) shows "Waiting for network" for the new state.
-- Every `when` over `ConnState` gains the new case. Today these are in `AppController.kt`, `HostSession.kt`, `InputNeeded.kt`, `AppContainer.kt` (debug log), `ui/Components.kt` and `ui/SessionsDrawer.kt`.
+  - The network is read just before each connect (`usedNetwork`). A failure that ends with the network `Unavailable` goes back to the top of the loop and waits, uncounted. A failure that ends with a different network than `usedNetwork` belongs to the old one: it is retried at once with `attempt` back at 0.
+  - Replace the bare `delay(backoff.delayMs(attempt))` with a race between the delay and any change of `network` (`withTimeoutOrNull(delay) { network.first { it != now } }`). Whichever comes first ends the wait; a change also starts the schedule again from attempt 0.
+  - While `Online`, `routeWhileOnNetwork` runs a child coroutine beside the notification collector. When `network` stops being `usedNetwork` (a new id, or `Unavailable`), it closes the current connection the way `restart()` does but **without** bumping `epoch` (the tier has not changed, so the next connect resumes with `reconnect`).
+- `Backoff` takes `jitter: Double = 0.2` and `random: Random = Random.Default` and returns `delay × (1 ± jitter)`, still capped at `maxMs`. A `jitter` of 0 gives the plain schedule.
+- `MonitorStatus.from` ([InputNeeded.kt](../core-ahp/src/main/kotlin/dev/ahpclient/state/InputNeeded.kt)) shows "Waiting for network" for the new state.
+- The `when`s over `ConnState` that are exhaustive, and so gained the case, are in `InputNeeded.kt` and `ui/Components.kt`. The debug log in `AppContainer.kt` has an `else` and prints the state's class name; `AppController.kt` and the drawer test for single states only.
 
 **app**
 
-- `AndroidNetworkMonitor(context, scope)` wraps `ConnectivityManager.registerDefaultNetworkCallback`. `Available(network.toString())` when the default network has `NET_CAPABILITY_INTERNET` and `NET_CAPABILITY_VALIDATED`; `Unavailable` on `onLost` or when validation drops. Expose it as a `StateFlow` started eagerly in `AppContainer` and pass it to every `HostSession`.
+- `AndroidNetworkMonitor(context)` wraps `ConnectivityManager.registerDefaultNetworkCallback` and holds the result in a `StateFlow`. It takes no scope. `AppContainer` creates it lazily, once, when the first session is built, and passes `network.state` to every `HostSession`; it lives as long as the process and is never unregistered.
+- `Available(network.toString())` when the default network has `NET_CAPABILITY_INTERNET`; `Unavailable` when that network is lost (a loss of some other network is ignored) or when the default network no longer has `NET_CAPABILITY_INTERNET`.
+- **It does not require `NET_CAPABILITY_VALIDATED`, on purpose.** A network that blocks Android's connectivity probe is never validated, and the session would sit in `WaitingForNetwork` on a network that reaches the host. The cost: a Wi-Fi with no real internet (a captive portal) counts as `Available`, so it shows `Reconnecting` with backoff rather than `WaitingForNetwork`. Anything that needs "no route at all" (H6 included) must not assume a no-internet Wi-Fi is `Unavailable`.
+- It fails open: if the callback cannot be registered, the state is `Available("unknown")` and the session retries as it did before.
 - Manifest: add `android.permission.ACCESS_NETWORK_STATE`.
-- The connection banner and the drawer show "Waiting for network" rather than a retry count.
+- The connection banner and the drawer both go through `describe()` in `ui/Components.kt`, which says "Waiting for network…" rather than a retry count.
 
 ### Acceptance criteria
 
-- [ ] **AC-H1.1** With the network `Unavailable`, `HostSession` makes no `connect` calls, and the state is `WaitingForNetwork`.
-- [ ] **AC-H1.2** When the network comes back, the first connect starts within 1 s, whatever backoff was pending.
-- [ ] **AC-H1.3** A change of network id while `Online` closes the connection and the next one uses `reconnect` (resume), not `initialize`.
-- [ ] **AC-H1.4** Backoff delays stay within ±20 % of the base schedule and never exceed `maxMs`.
+- [x] **AC-H1.1** With the network `Unavailable`, `HostSession` makes no `connect` calls, and the state is `WaitingForNetwork`.
+- [x] **AC-H1.2** When the network comes back, the first connect starts within 1 s, whatever backoff was pending.
+- [x] **AC-H1.3** A change of network id while `Online` closes the connection and the next one uses `reconnect` (resume), not `initialize`.
+- [x] **AC-H1.4** Backoff delays stay within ±20 % of the base schedule and never exceed `maxMs`.
 - [ ] **AC-H1.5** On the phone: airplane mode on for 5 minutes with monitoring running gives no `AhpConn` "reconnecting" lines while it is on, and the notification says "Waiting for network". Turning it off reaches Online without waiting out a backoff.
 - [ ] **AC-H1.6** On the phone: walking off Wi-Fi onto mobile data reconnects within a few seconds, not after a ping timeout.
 
 ### Tests
 
-- `HostSessionNetworkTest` (JVM) with a `MutableStateFlow<NetworkState>` and the fake connector in `HostTestKit`: count connect calls offline; flip to available and assert the time to the connect call with the test scheduler; change id while online and assert `reconnect` is the next request on `FakeSocket`.
+- `HostSessionNetworkTest` (JVM) with a `MutableStateFlow<NetworkState>` and the fake connector in `HostTestKit`: count connect calls offline; flip to available and assert the time to the connect call with the test scheduler; change id while online and assert `reconnect` is the next request on `FakeSocket`. It also covers a change during a backoff wait, a failure on a network that has since changed, losing the network while online, and `restart()` and `stop()` while waiting.
 - `BackoffTest`: seeded `Random`, bounds and cap.
 
 ---
@@ -105,27 +110,31 @@ The background only needs the root channel (session list, statuses) for alerts a
 
 ### Design
 
-- `HostSession.park()` and `unpark()`, both idempotent, guarded by `subscribeLock`, with a `@Volatile parked` flag.
-  - `park()`: for every chat and aux store currently subscribed, send `unsubscribe` and `invalidate()` the store (it keeps showing what it has and needs a subscribe again). Session stores stay subscribed: they are small and the open one feeds `ChatConfig` and the custom agents.
-  - `unpark()`: run the same resubscribe the connection does after it comes online (`chatsNeedingSubscribe().forEach(::subscribeNow)`, plus `auxNeedingSubscribe()`).
-  - While parked, `attach()` leaves chats and aux channels out of `reconnect` and `initialize`, and the post-online resubscribe is skipped.
-- **An explicit open still works while parked.** `decideToolCall` from a notification calls `openChat`, and that must subscribe. Rule: while parked, `openChat` and `openAux` subscribe the store and count it in `heldWhileParked`. When the matching close leaves the store still open (because the screen also holds it) and the session is still parked, it is unsubscribed and invalidated again.
-- **Who parks.** `AppContainer` already knows `inForeground`. Add a `ForegroundTracker` that parks the live session `PARK_GRACE_MS` (30 s) after the activity stops and unparks it on the next start. The grace period covers quick hops: the biometric prompt, the browser for GitHub sign-in, a glance at another app. Use `ProcessLifecycleOwner` (androidx.lifecycle-process) rather than `MainActivity` alone, so `ApproveActivity` in front counts as foreground.
+- `HostSession.park()` and `unpark()`, both idempotent and safe from any thread. Each sets a `@Volatile parked` flag at once, then does its work on the session's scope under `subscribeLock`, which reads the flag again first, so the last call wins when they overlap.
+  - `park()`: for every chat and aux store currently subscribed, send `unsubscribe` and `invalidate()` the store (it keeps showing what it has and needs a subscribe again). Session stores stay subscribed: they are small and the open one feeds `ChatConfig` and the custom agents. A chat held open in the background (below) is left as it is.
+  - `unpark()`: run the same resubscribe the connection does after it comes online (`restoreChats()`, plus `auxNeedingSubscribe()`). With no live connection it does nothing; the next connection subscribes because the flag is clear.
+  - While parked, `openChannels()` (what `initialize` and `reconnect` name to the host) leaves out the changesets, `attach()` invalidates any aux store left out, and the post-online `restoreChats()` skips every chat that parking let go of and nothing holds in the background (`stayingParked`). A reconnect while parked therefore names only the root and the sessions.
+  - A connection that is being made while `park()` or `unpark()` is called has nothing live to act on, yet its handshake already named (or left out) the changesets. `settleChannels()` runs once the connection is live and lets go of, or subscribes, whatever the flag asks for.
+- **An explicit open still works while parked.** `decideToolCall` from a notification calls `openChat`, and that must subscribe. As built: `openChat(uri, background = false)` and `closeChat(uri, background = false)`. A chat opened with `background = true` counts in `ChatStore.backgroundOpeners`, survives `park()`, and is subscribed again by a reconnect while parked. When the last background closer leaves a chat that a screen still holds, and the session is parked, the chat is unsubscribed and invalidated again. `decideToolCall` opens and closes with `background = true`. Changesets and terminals opened while parked are subscribed at once and have no background hold: nothing opens one out of sight.
+- **A chat that is subscribed again keeps its old state, so the store must say when that state is stale.** `ChatStore.subscribeNeeded` is `needsSubscribe` as a `StateFlow`, true until a snapshot arrives and again after `invalidate()`. While it is true, `apply()` holds actions in the early buffer, so none is lost between the request and the new snapshot. The snapshot clears it last, after `state` is published. `decideToolCall` waits for `subscribeNeeded` to turn false and `state` to be non-null before it acts, and refuses if the store reports an error, so an approval is never decided against a transcript from before the park.
+- **Who parks.** `ParkScheduler` (`core-ahp/.../app/ParkScheduler.kt`, plain Kotlin so it runs under virtual time) takes `visible(on)`, parks `graceMs` (`DEFAULT_GRACE_MS`, 30 s) after the app leaves sight, and unparks on the next return. A return inside the wait cancels it and calls nothing, and repeated stops never stack waits. `AppController` owns one: `setAppVisible(visible)`, with `parkGraceMs` as a constructor parameter, parking whichever `HostSession` is `Connected`. `connect()` asks `ifParked` to park a session created while the app is already out of sight. The grace period covers quick hops: the biometric prompt, the browser for GitHub sign-in, a glance at another app. `AhpApp.onCreate` registers a `ProcessLifecycleOwner` observer (`androidx.lifecycle:lifecycle-process`, version-catalog alias `lifecycle-process`) that calls `setAppVisible(true)` on `ON_START` and `false` on `ON_STOP`. The process lifecycle rather than `MainActivity` means `ApproveActivity` in front counts as visible, and a rotation, which the process reports a moment late, is not a stop. The container is built lazily, so the observer reaches it only when an event arrives.
 - `AppState` does not change. The UI still shows the open chat. When it returns, the chat says it is loading the way it does after a reconnect.
 
 ### Acceptance criteria
 
-- [ ] **AC-H2.1** 30 s after the app leaves the screen, the wire log shows `unsubscribe` for each chat, terminal and changeset that was subscribed, and nothing else changes.
-- [ ] **AC-H2.2** A reconnect while parked names only the root and session channels.
-- [ ] **AC-H2.3** Coming back resubscribes them. The transcript on screen stays until the new snapshot replaces it, and its expansion state is kept.
-- [ ] **AC-H2.4** Approve and Deny from a notification while parked still work, and leave the chat unsubscribed afterwards.
-- [ ] **AC-H2.5** Leaving and coming back within 30 s sends no `unsubscribe`.
+- [x] **AC-H2.1** 30 s after the app leaves the screen, the wire log shows `unsubscribe` for each chat, terminal and changeset that was subscribed, and nothing else changes.
+- [x] **AC-H2.2** A reconnect while parked names only the root and session channels.
+- [x] **AC-H2.3** Coming back resubscribes them. The transcript on screen stays until the new snapshot replaces it, and its expansion state is kept. (The tests pin the first two; the expansion state is held by the screen, not the store, so parking cannot touch it, and no test covers it.)
+- [x] **AC-H2.4** Approve and Deny from a notification while parked still work, and leave the chat unsubscribed afterwards.
+- [x] **AC-H2.5** Leaving and coming back within 30 s sends no `unsubscribe`.
 - [ ] **AC-H2.6** On the phone: 30 minutes of monitoring with the screen off while an agent works uses clearly less mobile data than before (measure with `adb shell dumpsys netstats detail` for the app's UID, before and after). Record the numbers in `docs/verification/`.
 
 ### Tests
 
-- `HostSessionParkTest` (JVM): park and unpark against `FakeSocket`, checking the frames; a transient `openChat` while parked; `reconnect` params while parked.
-- `ForegroundTrackerTest` (JVM, virtual time): grace period, a quick return, repeated stops.
+- `HostSessionParkTest` (JVM): park and unpark against `FakeSocket`, checking the frames; a transient `openChat` while parked; `reconnect` params while parked; overlapping park and unpark; a park that comes while a connection is being made.
+- `ParkSchedulerTest` (JVM, virtual time): grace period, a quick return, repeated stops.
+- `ChatStoreTest`: actions held while a snapshot is awaited, and `subscribeNeeded` staying up until the new state is published.
+- `AppControllerTest`: `setAppVisible` parking and unparking the live session, including one connected while the app is out of sight; `decideToolCall` while parked subscribes for the decision, acts on the new snapshot, and refuses a chat found gone.
 
 ---
 
@@ -337,3 +346,4 @@ For each item that has an on-phone criterion, record the run in `docs/verificati
 | Date | Entry |
 |---|---|
 | 2026-10-26 | Spec drafted from the code review at `a8bb8ed`. Nothing started. |
+| 2026-10-26 | H1 and H2 built on `95af56d`, in the commit that adds this row, with `BackoffTest`, `HostSessionNetworkTest`, `HostSessionParkTest`, `ParkSchedulerTest` and additions to `ChatStoreTest` and `AppControllerTest`. AC-H1.1 to H1.4 and AC-H2.1 to H2.5 ticked. AC-H1.5, AC-H1.6 and AC-H2.6 need the phone and are still open. The H1 and H2 designs above describe what was built, including that the network monitor does not require `NET_CAPABILITY_VALIDATED`. |

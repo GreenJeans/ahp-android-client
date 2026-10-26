@@ -83,7 +83,8 @@ internal class HostScript(
     val missingSessions: Set<String> = emptySet(),
     /** What a subscribed session reports as waiting on the user, as the JSON array of `inputNeeded`; null for none. */
     val inputNeeded: String? = null,
-    val onReconnect: (id: Long?) -> String = { id -> result(id, """{"type":"replay","actions":[],"missing":[]}""") },
+    /** What the host answers to a `reconnect`; returning null is a host that has not answered yet. */
+    val onReconnect: (id: Long?) -> String? = { id -> result(id, """{"type":"replay","actions":[],"missing":[]}""") },
     /** The `turnsNextCursor` a subscribed chat reports; null for a chat with nothing older. */
     val chatCursor: String? = null,
     /** The chats a subscribed session lists, as a JSON array of chat summaries. */

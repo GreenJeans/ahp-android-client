@@ -75,7 +75,7 @@ class SessionCatalogTest {
 
     @Test
     fun `backoff doubles from one second up to the cap`() {
-        val backoff = Backoff()
+        val backoff = Backoff(jitter = 0.0)
 
         assertEquals(listOf(1_000L, 2_000L, 4_000L, 8_000L, 16_000L, 30_000L, 30_000L), (1..7).map(backoff::delayMs))
     }

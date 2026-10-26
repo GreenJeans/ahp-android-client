@@ -37,6 +37,7 @@ biometric = { module = "androidx.biometric:biometric", version.ref = "biometric"
 # Biometric 1.1.0 depends on an old Fragment whose FragmentActivity breaks the ActivityResult API (lint: InvalidFragmentVersionForActivityResult).
 fragment = { module = "androidx.fragment:fragment", version.ref = "fragment" }
 lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycleCompose" }
+lifecycle-process = { module = "androidx.lifecycle:lifecycle-process", version.ref = "lifecycleCompose" }
 markdown-renderer-m3 = { module = "com.mikepenz:multiplatform-markdown-renderer-m3", version.ref = "markdown" }
 compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }
 compose-ui-test-accessibility = { module = "androidx.compose.ui:ui-test-junit4-accessibility" }

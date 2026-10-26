@@ -193,6 +193,7 @@ class MonitorStatusTest {
     fun `connection trouble is stated without leaking a cause`() {
         assertEquals("Connecting…", MonitorStatus.from("h", sessions, ConnState.Connecting).text)
         assertTrue(MonitorStatus.from("h", sessions, ConnState.Reconnecting(2, IllegalStateException("secret-ish"))).text.startsWith("Connection lost"))
+        assertEquals("Waiting for network", MonitorStatus.from("h", sessions, ConnState.WaitingForNetwork).text)
         val failed = MonitorStatus.from("h", sessions, ConnState.Failed(IllegalStateException("secret-ish"))).text
         assertEquals("Disconnected. Open the app for details.", failed)
     }

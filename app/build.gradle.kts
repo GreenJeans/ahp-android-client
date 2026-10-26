@@ -35,6 +35,7 @@ dependencies {
     implementation(libs.biometric)
     implementation(libs.fragment)
     implementation(libs.lifecycle.runtime.compose)
+    implementation(libs.lifecycle.process)
     implementation(libs.markdown.renderer.m3)
     debugImplementation(libs.compose.ui.tooling)
     debugImplementation(libs.compose.ui.test.manifest)

@@ -195,6 +195,7 @@ data class MonitorStatus(val title: String, val text: String) {
                 }
                 ConnState.Connecting -> "Connecting…"
                 is ConnState.Reconnecting -> "Connection lost. Reconnecting…"
+                ConnState.WaitingForNetwork -> "Waiting for network"
                 is ConnState.Failed -> "Disconnected. Open the app for details."
                 ConnState.Stopped -> "Stopped"
             }

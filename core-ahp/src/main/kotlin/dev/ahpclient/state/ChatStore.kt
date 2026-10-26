@@ -40,7 +40,8 @@ class ChatNotLoadedException(val uri: String, val interrupted: Boolean) : Except
 /**
  * One subscribed chat: a snapshot plus the ordered actions after it, folded with the generated `chatReducer`.
  * Ordering and duplicate handling follow [SessionStore]: actions before the snapshot are held, and anything at or below
- * the last applied `serverSeq` is dropped.
+ * the last applied `serverSeq` is dropped. A chat that was let go of and is being subscribed again keeps its old state, but
+ * holds actions the same way until the new snapshot arrives, so that none is lost between the request and the reply.
  *
  * Every action is reduced at once, so nothing is lost, but [state] is published at most once per [publishIntervalMs]:
  * the first change shows immediately, later ones within the interval are coalesced, and the latest state is always
@@ -90,12 +91,25 @@ class ChatStore internal constructor(
     private var cooldownGeneration = 0L
     private var olderArrived: CompletableDeferred<Unit>? = null
 
-    @Volatile
-    internal var needsSubscribe = true
-        private set
+    private val _needsSubscribe = MutableStateFlow(true)
+
+    internal var needsSubscribe: Boolean
+        get() = _needsSubscribe.value
+        private set(value) {
+            _needsSubscribe.value = value
+        }
+
+    /**
+     * [needsSubscribe] as a flow: true until a snapshot arrives, and again once the chat has been let go of. While it is true what
+     * [state] shows may be old, so a caller that acts on the chat waits for it to turn false (`AppController.decideToolCall` does).
+     */
+    internal val subscribeNeeded: StateFlow<Boolean> = _needsSubscribe.asStateFlow()
 
     /** Counts openers; the host connection drops the subscription at zero. */
     internal var openers = 0
+
+    /** How many of [openers] hold this chat for a job running out of sight (see [HostSession.park]), not for a screen. */
+    internal var backgroundOpeners = 0
 
     /** Connections lost, one after another, while this chat's subscription was waiting for its snapshot. A snapshot clears it. */
     private var interrupted = 0
@@ -108,13 +122,14 @@ class ChatStore internal constructor(
             _error.value = null
             interrupted = 0
             lastApplied = snapshot.fromSeq
-            needsSubscribe = false
             // The snapshot's own values come first: the held actions are later than it and are applied over them.
             facts?.chatValues?.let { _ownConfig.value = it }
             val held = early.sortedBy { it.serverSeq }
             early.clear()
             held.forEach(::reduce)
             publishNow()
+            // Last, so that whoever waits on [subscribeNeeded] finds the new snapshot in [state] the moment it turns false.
+            needsSubscribe = false
             olderArrived?.complete(Unit)
         }
         return true
@@ -122,7 +137,7 @@ class ChatStore internal constructor(
 
     internal fun apply(envelope: ActionEnvelope) {
         synchronized(lock) {
-            if (latest == null) {
+            if (latest == null || needsSubscribe) {
                 if (early.size < MAX_EARLY_ACTIONS) early += envelope
                 return
             }

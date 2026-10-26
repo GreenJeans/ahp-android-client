@@ -27,17 +27,20 @@ import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.math.roundToLong
+import kotlin.random.Random
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -60,13 +63,28 @@ sealed interface ConnState {
     /** Waiting to retry; [attempt] counts consecutive failures since the last good connection. */
     data class Reconnecting(val attempt: Int, val cause: Throwable?) : ConnState
 
+    /** There is no usable network, so no connection is tried. Not a failure and not an attempt: it ends when a network returns. */
+    data object WaitingForNetwork : ConnState
+
     /** Retrying cannot help (expired sign-in, tunnel deleted, unsupported protocol); the caller must act. */
     data class Failed(val cause: Throwable) : ConnState
 }
 
-class Backoff(private val baseMs: Long = 1_000, private val maxMs: Long = 30_000) {
-    /** 1 s, 2 s, 4 s ... capped at [maxMs]. */
-    fun delayMs(attempt: Int): Long = (baseMs shl (attempt - 1).coerceIn(0, MAX_SHIFT)).coerceAtMost(maxMs)
+class Backoff(
+    private val baseMs: Long = 1_000,
+    private val maxMs: Long = 30_000,
+    private val jitter: Double = 0.2,
+    private val random: Random = Random.Default,
+) {
+    /**
+     * 1 s, 2 s, 4 s ... capped at [maxMs], each spread evenly by up to [jitter] either way so that clients which lost the host
+     * together do not all come back together. Never more than [maxMs]; 0.0 for [jitter] gives the plain schedule.
+     */
+    fun delayMs(attempt: Int): Long {
+        val base = (baseMs shl (attempt - 1).coerceIn(0, MAX_SHIFT)).coerceAtMost(maxMs)
+        val spread = 1.0 + jitter * (random.nextDouble() * 2 - 1)
+        return (base * spread).roundToLong().coerceAtMost(maxMs)
+    }
 
     private companion object {
         const val MAX_SHIFT = 10
@@ -81,6 +99,13 @@ class Backoff(private val baseMs: Long = 1_000, private val maxMs: Long = 30_000
  * Reconnecting resumes with the AHP `reconnect` command, which replays missed actions. Notifications are not
  * replayed, so the session list is fetched again every time; if the host no longer knows this client, a fresh
  * `initialize` takes over on the same connection.
+ *
+ * With no usable [network] it makes no attempts at all ([ConnState.WaitingForNetwork]) and connects at once when one
+ * returns. A change of network ends the live connection and a pending backoff wait and starts the backoff schedule over,
+ * since a socket made on the old network is dead whether or not it has noticed.
+ *
+ * Out of sight, only the root and the sessions need to stay subscribed for alerts: [park] lets go of the chats and channels and
+ * [unpark] takes them up again.
  */
 class HostSession(
     private val connector: HostConnector,
@@ -88,6 +113,7 @@ class HostSession(
     private val clientInfo: Implementation,
     private val backoff: Backoff = Backoff(),
     private val clientId: String = UUID.randomUUID().toString(),
+    private val network: StateFlow<NetworkState> = NetworkState.ALWAYS_AVAILABLE,
 ) : ManagementCommands {
     val root = RootStore()
 
@@ -126,6 +152,11 @@ class HostSession(
     private var lastSeq = 0L
     private var job: Job? = null
 
+    /** Whether the chats and channels are let go of (see [park]). Set at once; the work that follows reads it again under [subscribeLock]. */
+    @Volatile
+    internal var parked = false
+        private set
+
     @Synchronized
     fun start() {
         if (job?.isActive == true) return
@@ -155,6 +186,92 @@ class HostSession(
         current?.close()
     }
 
+    /**
+     * Lets the host stop sending what nobody can see, for when the app is out of sight: every chat, changeset and terminal that
+     * is subscribed gets an `unsubscribe` and is marked as needing a subscription again, and keeps showing what it has. Sessions
+     * stay subscribed: they are small, and the open one feeds the chat's settings and the custom agents. A chat held open in the
+     * background (see [openChat]) is left as it is.
+     *
+     * While parked, a connection names only the root and the sessions to the host and subscribes no chat or channel that nothing
+     * holds in the background; opening one with [openChat], [openChangeset] or [openTerminal] still subscribes it at once.
+     * Safe to repeat and to call from any thread: the flag is set here and read again before the work is done, so the last call wins.
+     */
+    fun park() {
+        parked = true
+        scope.launch {
+            subscribeLock.withLock {
+                if (!parked) return@withLock
+                synchronized(chats) { chats.values.toList() }.forEach(::parkChat)
+                synchronized(aux) { aux.values.toList() }.forEach(::parkChannel)
+            }
+        }
+    }
+
+    /**
+     * Undoes [park]: subscribes again whatever it let go of, and the new snapshots replace what the chats and channels were
+     * showing. With no connection there is nothing to do yet: the next one subscribes as usual, since the flag is clear.
+     */
+    fun unpark() {
+        parked = false
+        scope.launch {
+            try {
+                subscribeLock.withLock {
+                    if (parked) return@withLock
+                    val ahp = current ?: return@withLock
+                    restoreChats()
+                    auxNeedingSubscribe().forEach { subscribeIfNeeded(ahp, it) }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // The connection dropped mid-subscribe; the next one subscribes because the store still needs it.
+            }
+        }
+    }
+
+    /** Lets go of [store] if it is subscribed and nothing holds it in the background. Called under [subscribeLock], and only does anything while parked. */
+    private fun parkChat(store: ChatStore) {
+        if (!parked || store.needsSubscribe) return
+        if (synchronized(chats) { chats[store.uri] !== store || store.backgroundOpeners > 0 }) return
+        store.invalidate()
+        current?.unsubscribe(store.uri)
+    }
+
+    /**
+     * Lets go of [store] if it is subscribed. With no live connection it does nothing: a connection that is still being made may
+     * already hold the channel for the host (a changeset is named in `reconnect`), and [settleChannels] lets go of it once it is live.
+     */
+    private fun parkChannel(store: AuxStore) {
+        val ahp = current ?: return
+        if (!parked || store.needsSubscribe) return
+        store.invalidate()
+        ahp.unsubscribe(store.uri)
+    }
+
+    /**
+     * Brings the changesets and terminals in line with [parked] on the connection that has just gone live. A [park] or [unpark] that came
+     * while it was being made found nothing to act on, yet its handshake had already named the changesets to the host (or left them out),
+     * so what is held there is let go of now, or subscribed, whichever the flag asks for.
+     */
+    private fun settleChannels() {
+        scope.launch {
+            try {
+                subscribeLock.withLock {
+                    val ahp = current ?: return@withLock
+                    if (parked) {
+                        synchronized(aux) { aux.values.toList() }.forEach(::parkChannel)
+                    } else {
+                        auxNeedingSubscribe().forEach { subscribeIfNeeded(ahp, it) }
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // The connection dropped mid-subscribe; the next one subscribes because the store still needs it.
+            }
+        }
+    }
+
     /** The store for [uri], subscribing now if online or on the next connection. Pair every call with [closeSession]. */
     fun openSession(uri: String): SessionStore {
         val store = synchronized(sessions) { sessions.getOrPut(uri) { SessionStore(uri) }.also { it.openers++ } }
@@ -179,21 +296,32 @@ class HostSession(
         if (dropped) current?.unsubscribe(uri)
     }
 
-    /** The store for the chat at [uri], subscribing now if online or on the next connection. Pair every call with [closeChat]. */
-    fun openChat(uri: String): ChatStore {
+    /**
+     * The store for the chat at [uri], subscribing now if online or on the next connection, even while parked. Pair every call
+     * with [closeChat] using the same [background]. A chat opened in the [background], by a job that runs while the app is out
+     * of sight (a decision from a notification), stays subscribed through [park]; a screen's does not.
+     */
+    fun openChat(uri: String, background: Boolean = false): ChatStore {
         val store = synchronized(chats) {
             chats.getOrPut(uri) {
                 ChatStore(uri, scope, fetchOlder = { cursor -> fetchTurns(uri, cursor) }, subscribeAgain = { chatFor(uri)?.let(::subscribeNow) })
-            }.also { it.openers++ }
+            }.also {
+                it.openers++
+                if (background) it.backgroundOpeners++
+            }
         }
         subscribeNow(store)
         return store
     }
 
-    private fun subscribeNow(store: ChatStore) {
+    /** Subscribes [store] if it needs it. [restoring] marks a subscription brought back on its own, which a parked session leaves to [unpark]; an open that asks for the chat always subscribes. */
+    private fun subscribeNow(store: ChatStore, restoring: Boolean = false) {
         scope.launch {
             try {
-                subscribeLock.withLock { subscribeIfNeeded(current ?: return@launch, store) }
+                subscribeLock.withLock {
+                    if (restoring && stayingParked(store)) return@launch
+                    subscribeIfNeeded(current ?: return@launch, store)
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
@@ -202,13 +330,25 @@ class HostSession(
         }
     }
 
-    fun closeChat(uri: String) {
-        val dropped = synchronized(chats) {
+    /**
+     * Gives up one opener of the chat, with the same [background] it was opened with. When the last background opener of a chat that
+     * a screen still holds goes while parked, the chat is let go of again, as [park] would have.
+     */
+    fun closeChat(uri: String, background: Boolean = false) {
+        var dropped = false
+        var letGo: ChatStore? = null
+        synchronized(chats) {
             val store = chats[uri] ?: return
             store.openers--
-            if (store.openers > 0) false else chats.remove(uri) != null
+            if (background) store.backgroundOpeners--
+            if (store.openers <= 0) {
+                dropped = chats.remove(uri) != null
+            } else if (background && parked && store.backgroundOpeners == 0) {
+                letGo = store
+            }
         }
         if (dropped) current?.unsubscribe(uri)
+        letGo?.let { store -> scope.launch { subscribeLock.withLock { parkChat(store) } } }
     }
 
     /** The store for the changeset at [uri], read only, subscribing now if online or on the next connection. Pair every call with [closeChannel]. */
@@ -306,8 +446,16 @@ class HostSession(
         var resume = false
         var lastError: Throwable? = null
         while (true) {
+            if (network.value is NetworkState.Unavailable) {
+                _connection.value = ConnState.WaitingForNetwork
+                network.first { it is NetworkState.Available }
+                // A network that has just returned deserves a fresh schedule, not the tail of the one that ran on the last.
+                attempt = 0
+            }
             if (attempt == 0) _connection.value = ConnState.Connecting
             val generation = epoch.get()
+            // Taken before connecting, so a change while the connection is being made still counts against it.
+            val usedNetwork = network.value
             val parent = currentCoroutineContext()
             val connectionScope = CoroutineScope(parent + SupervisorJob(parent[Job]))
             var ahp: AhpConnection? = null
@@ -323,8 +471,9 @@ class HostSession(
                 _canInteract.value = ahp.canDispatch
                 _canManage.value = ahp.canManage
                 _connection.value = ConnState.Online
-                chatsNeedingSubscribe().forEach(::subscribeNow)
-                ahp.notifications.collect(::route)
+                restoreChats()
+                settleChannels()
+                routeWhileOnNetwork(ahp, usedNetwork)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -346,9 +495,35 @@ class HostSession(
                 connectionScope.cancel()
             }
             if (epoch.get() != generation) continue
+            val now = network.value
+            // No network is neither a failure nor an attempt: the top of the loop waits for one.
+            if (now is NetworkState.Unavailable) continue
+            if (now != usedNetwork) {
+                // The connection was tried on a network that has since gone, so its failure says nothing about this one.
+                attempt = 0
+                continue
+            }
             attempt++
             _connection.value = ConnState.Reconnecting(attempt, lastError)
-            delay(backoff.delayMs(attempt))
+            // A different network ends the wait early and starts the schedule again: the delay was for the one that failed.
+            val changed = withTimeoutOrNull(backoff.delayMs(attempt)) { network.first { it != now } }
+            if (changed != null) attempt = 0
+        }
+    }
+
+    /**
+     * Routes what [ahp] receives until it ends, and ends it if the network is no longer the one it was made on ([usedNetwork]):
+     * a socket on a network that has gone can sit silent for a minute before its keep-alive notices. This is not a [restart]:
+     * the tier has not changed, so the next connection resumes with `reconnect` rather than starting over.
+     */
+    private suspend fun routeWhileOnNetwork(ahp: AhpConnection, usedNetwork: NetworkState) {
+        coroutineScope {
+            val watcher = launch {
+                network.first { it != usedNetwork }
+                ahp.close()
+            }
+            ahp.notifications.collect(::route)
+            watcher.cancel()
         }
     }
 
@@ -363,8 +538,8 @@ class HostSession(
     private suspend fun attach(ahp: AhpConnection, resume: Boolean) {
         val open = openChannels()
         // A terminal is not named to the host here (its snapshot cannot be decoded in these replies) and a subscription belongs to
-        // one connection, so each is subscribed afresh below.
-        synchronized(aux) { aux.values.filter { it.byHand } }.forEach { it.invalidate() }
+        // one connection, so each is subscribed afresh below. So is any other channel left out because the session is parked.
+        synchronized(aux) { aux.values.filter { it.uri !in open } }.forEach { it.invalidate() }
         // A chat is not named here either, so the host cannot answer with all of its history in `initialize` or `reconnect`: it is
         // subscribed afresh below, asking for only its latest turns (see [CHAT_SNAPSHOT_TURNS]). What is shown stays until it arrives.
         synchronized(chats) { chats.values.toList() }.forEach { it.invalidate() }
@@ -381,7 +556,7 @@ class HostSession(
         refreshCatalog(ahp)
         subscribeLock.withLock {
             sessionsNeedingSubscribe().forEach { subscribeIfNeeded(ahp, it) }
-            auxNeedingSubscribe().forEach { subscribeIfNeeded(ahp, it) }
+            if (!parked) auxNeedingSubscribe().forEach { subscribeIfNeeded(ahp, it) }
         }
         // The chats are not subscribed here: a long one is slow to arrive, and the connection is not made to wait for it. They are
         // asked for once it is online, so the sessions stay usable while a chat loads, and one slow chat cannot hold the rest hostage.
@@ -440,7 +615,15 @@ class HostSession(
         synchronized(sessions) { sessions.values.filter { it.needsSubscribe } }
 
     private fun chatsNeedingSubscribe(): List<ChatStore> =
-        synchronized(chats) { chats.values.filter { it.needsSubscribe } }
+        synchronized(chats) { chats.values.filter { it.needsSubscribe && !stayingParked(it) } }
+
+    /** Subscribes the chats that need it, as a new connection does once online and [unpark] does. While parked, that is only the ones held in the background. */
+    private fun restoreChats() {
+        chatsNeedingSubscribe().forEach { subscribeNow(it, restoring = true) }
+    }
+
+    /** True for a chat that parking has let go of and nothing holds in the background: no connection subscribes it until [unpark]. */
+    private fun stayingParked(store: ChatStore): Boolean = parked && synchronized(chats) { store.backgroundOpeners == 0 }
 
     private fun auxNeedingSubscribe(): List<AuxStore> =
         synchronized(aux) { aux.values.filter { it.needsSubscribe } }
@@ -518,8 +701,11 @@ class HostSession(
 
     private fun auxFor(uri: String): AuxStore? = synchronized(aux) { aux[uri] }
 
-    private fun openChannels(): List<String> =
-        synchronized(sessions) { sessions.keys.toList() } + synchronized(aux) { aux.values.filter { !it.byHand }.map { it.uri } }
+    /** The channels named to the host in `initialize` and `reconnect`: every session, and unless parked, every changeset. */
+    private fun openChannels(): List<String> {
+        val channels = synchronized(aux) { if (parked) emptyList() else aux.values.filter { !it.byHand }.map { it.uri } }
+        return synchronized(sessions) { sessions.keys.toList() } + channels
+    }
 
     private companion object {
         const val MAX_LIST_PAGES = 50

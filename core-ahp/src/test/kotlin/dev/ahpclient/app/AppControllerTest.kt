@@ -40,6 +40,7 @@ import dev.ahpclient.state.SESSION_C
 import dev.ahpclient.state.TERMINAL_REAL
 import dev.ahpclient.state.TerminalView
 import dev.ahpclient.state.terminalStateJson
+import dev.ahpclient.state.chatSnapshotJson
 import dev.ahpclient.state.chatSummaryJson
 import dev.ahpclient.state.turnJson
 import dev.ahpclient.state.fixture
@@ -2533,6 +2534,200 @@ class AppControllerTest {
             controller.closeChat()
             runCurrent()
             assertEquals(listOf(CHAT_A), channelsSent("unsubscribe").filter { it == CHAT_A })
+        }
+    }
+
+    // ---- parking the live session while the app is out of sight ----------------------------------------------------
+
+    private val oneChat = { HostScript(sessionChats = "[${chatSummaryJson(CHAT_A)}]") }
+
+    @Test
+    fun `the app out of sight for the grace period parks the live session, and coming back subscribes the chat again`() = runTest {
+        withRig(script = oneChat) {
+            val session = connectToFirstHost().session
+            openChatInteractor(this)
+            runCurrent()
+
+            controller.setAppVisible(false)
+            advanceTimeBy(29_999)
+            runCurrent()
+            assertFalse(session.parked)
+            assertEquals(emptyList(), unsubscribed())
+
+            advanceTimeBy(1)
+            runCurrent()
+            assertTrue(session.parked)
+            assertEquals(listOf(CHAT_A), unsubscribed(), "the chat is let go of, and the session is not")
+
+            controller.setAppVisible(true)
+            runCurrent()
+            assertFalse(session.parked)
+            assertEquals(2, channelsSent("subscribe").count { it == CHAT_A })
+            assertEquals(1, channelsSent("subscribe").count { it == SESSION_C })
+        }
+    }
+
+    @Test
+    fun `a return inside the grace period sends nothing`() = runTest {
+        withRig(script = oneChat) {
+            val session = connectToFirstHost().session
+            openChatInteractor(this)
+            runCurrent()
+
+            controller.setAppVisible(false)
+            advanceTimeBy(10_000)
+            controller.setAppVisible(true)
+            advanceTimeBy(120_000)
+            runCurrent()
+
+            assertFalse(session.parked)
+            assertEquals(emptyList(), unsubscribed())
+            assertEquals(1, channelsSent("subscribe").count { it == CHAT_A })
+        }
+    }
+
+    @Test
+    fun `a session connected while the app is out of sight starts parked, and one connected after it returned does not`() = runTest {
+        withRig {
+            vault.save(savedToken)
+            server.json(fixture("list-tunnels.json"))
+            server.json(fixture("list-tunnels.json"))
+            controller.start()
+            awaitHosts()
+            controller.setAppVisible(false)
+            advanceTimeBy(30_000)
+            runCurrent()
+
+            controller.connect(loaded().first().tunnel)
+            val first = assertIs<AppState.Connected>(state).session
+            assertTrue(first.parked, "the app was already out of sight")
+
+            controller.setAppVisible(true)
+            runCurrent()
+            assertFalse(first.parked)
+
+            controller.disconnect()
+            awaitHosts()
+            controller.connect(loaded().first().tunnel)
+            val second = assertIs<AppState.Connected>(state).session
+            assertNotSame(first, second)
+            assertFalse(second.parked)
+        }
+    }
+
+    @Test
+    fun `leaving a host while the app is out of sight parks the next session too, and returning unparks it`() = runTest {
+        withRig {
+            server.json(fixture("list-tunnels.json"))
+            val first = connectToFirstHost().session
+            controller.setAppVisible(false)
+            advanceTimeBy(30_000)
+            runCurrent()
+            assertTrue(first.parked)
+
+            controller.disconnect()
+            awaitHosts()
+            controller.connect(loaded().first().tunnel)
+            val second = assertIs<AppState.Connected>(state).session
+            assertTrue(second.parked, "the app is still away")
+
+            controller.setAppVisible(true)
+            runCurrent()
+            assertFalse(second.parked)
+        }
+    }
+
+    @Test
+    fun `an approval from a notification while parked subscribes the chat for the decision, sends it, and leaves the chat unsubscribed`() = runTest {
+        var clientId = ""
+        withRig(script = decideScript { clientId }, interaction = allowed, approvalGate = ApprovalGate { true }) {
+            val connected = connectToFirstHost()
+            clientId = "client-${connected.host.tunnelId}"
+            connected.session.canInteract.first { it }
+            controller.setAppVisible(false)
+            advanceTimeBy(30_000)
+            runCurrent()
+            assertTrue(connected.session.parked)
+
+            assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), controller.decideToolCall(CHAT_A, "c1", approve = true))
+            runCurrent()
+
+            assertEquals(listOf(Triple("chat/toolCallConfirmed", "c1", true)), decisions())
+            assertEquals(1, channelsSent("subscribe").count { it == CHAT_A })
+            assertEquals(1, channelsSent("unsubscribe").count { it == CHAT_A }, "left unsubscribed afterwards")
+            assertTrue(connected.session.parked)
+        }
+    }
+
+    @Test
+    fun `a denial from a notification while parked acts on the chat's new snapshot, not on the transcript the screen kept`() = runTest {
+        var clientId = ""
+        var chatSubscribes = 0
+        val script = {
+            HostScript(
+                sessionChats = "[${chatSummaryJson(CHAT_A)}]",
+                // The first snapshot, for the screen, has nothing waiting; the call starts waiting while the app is away.
+                onChatSubscribe = { id, _ ->
+                    val waiting = if (++chatSubscribes == 1) null else pendingTool
+                    result(id, """{"snapshot":${chatSnapshotJson(CHAT_A, SNAPSHOT_SEQ, activeTurn = waiting)}}""")
+                },
+                onDispatch = { echoOf(it, SNAPSHOT_SEQ + 1, clientId = clientId) },
+            )
+        }
+        withRig(script = script, interaction = allowed, approvalGate = ApprovalGate { true }) {
+            val connected = connectToFirstHost()
+            clientId = "client-${connected.host.tunnelId}"
+            connected.session.canInteract.first { it }
+            openChatInteractor(this)
+            runCurrent()
+            controller.setAppVisible(false)
+            advanceTimeBy(30_000)
+            runCurrent()
+            assertEquals(listOf(CHAT_A), unsubscribed())
+
+            assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), controller.decideToolCall(CHAT_A, "c1", approve = false))
+            runCurrent()
+
+            assertEquals(listOf(Triple("chat/toolCallConfirmed", "c1", false)), decisions())
+            assertEquals(listOf(CHAT_A, CHAT_A), unsubscribed(), "let go again after the decision, though the screen still holds the chat")
+
+            controller.setAppVisible(true)
+            runCurrent()
+            assertEquals(3, channelsSent("subscribe").count { it == CHAT_A }, "coming back subscribes the chat the screen holds")
+        }
+    }
+
+    @Test
+    fun `a decision from a notification is not sent when the chat the screen kept is found gone, though its old transcript still shows the call`() = runTest {
+        var clientId = ""
+        var chatSubscribes = 0
+        val script = {
+            HostScript(
+                sessionChats = "[${chatSummaryJson(CHAT_A)}]",
+                onChatSubscribe = { id, _ ->
+                    if (++chatSubscribes == 1) {
+                        result(id, """{"snapshot":${chatSnapshotJson(CHAT_A, SNAPSHOT_SEQ, activeTurn = pendingTool)}}""")
+                    } else {
+                        error(id, -32008, "no such chat")
+                    }
+                },
+                onDispatch = { echoOf(it, SNAPSHOT_SEQ + 1, clientId = clientId) },
+            )
+        }
+        withRig(script = script, interaction = allowed, approvalGate = ApprovalGate { true }) {
+            val connected = connectToFirstHost()
+            clientId = "client-${connected.host.tunnelId}"
+            connected.session.canInteract.first { it }
+            openChatInteractor(this)
+            runCurrent()
+            controller.setAppVisible(false)
+            advanceTimeBy(30_000)
+            runCurrent()
+
+            assertIs<InteractResult.NotSent>(controller.decideToolCall(CHAT_A, "c1", approve = true))
+
+            assertTrue(dispatches().isEmpty(), "nothing is decided on a transcript that is no longer being kept")
+            assertEquals(2, channelsSent("subscribe").count { it == CHAT_A })
         }
     }
 }

@@ -18,6 +18,7 @@ import dev.ahpclient.data.PrefsLastHostStore
 import dev.ahpclient.data.UiSettings
 import dev.ahpclient.data.PrefsMonitorSettings
 import dev.ahpclient.monitor.AndroidMonitorService
+import dev.ahpclient.monitor.AndroidNetworkMonitor
 import dev.ahpclient.monitor.NotificationFinishedSink
 import dev.ahpclient.monitor.NotificationInputNeededSink
 import dev.ahpclient.security.AndroidTokenVault
@@ -76,7 +77,7 @@ class AppContainer(context: Context) {
             devTunnels = devTunnels,
             lastHost = PrefsLastHostStore(prefs),
             sessions = HostSessionFactory { tunnel, accessToken ->
-                HostSession(TunnelHostConnector(devTunnels, gateway, tunnel, accessToken, policy = interaction::policy), appScope, clientInfo)
+                HostSession(TunnelHostConnector(devTunnels, gateway, tunnel, accessToken, policy = interaction::policy), appScope, clientInfo, network = network.state)
                     .also { if (debuggable) logConnection(it) }
             },
             scope = appScope,
@@ -96,6 +97,9 @@ class AppContainer(context: Context) {
             managementSettings = PrefsInteractionSettings(prefs, PrefsInteractionSettings.MANAGEMENT_KEY),
         )
     }
+
+    /** What the phone's network is doing, so a session makes no attempts without one and reconnects when it changes. Shared by every session, created once. */
+    private val network by lazy { AndroidNetworkMonitor(appContext) }
 
     private val monitorService by lazy { AndroidMonitorService(appContext) }
 

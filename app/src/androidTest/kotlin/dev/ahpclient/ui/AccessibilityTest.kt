@@ -196,7 +196,13 @@ class AccessibilityTest {
 
     @Test
     fun sessionListInEveryConnectionState() {
-        val states = listOf(ConnState.Online, ConnState.Connecting, ConnState.Reconnecting(2, null), ConnState.Failed(IllegalStateException("no running agent host")))
+        val states = listOf(
+            ConnState.Online,
+            ConnState.Connecting,
+            ConnState.Reconnecting(2, null),
+            ConnState.WaitingForNetwork,
+            ConnState.Failed(IllegalStateException("no running agent host")),
+        )
         checkEach(*states.map { connection -> @Composable { DrawerFor(connection = connection, showArchived = true) } }.toTypedArray())
     }
 

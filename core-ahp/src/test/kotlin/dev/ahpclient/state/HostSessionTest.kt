@@ -39,7 +39,7 @@ class HostSessionTest {
 
     private fun TestScope.rig(vararg scripts: HostScript, clientId: String = "client-1"): Rig {
         val connector = ScriptedConnector(*scripts)
-        return Rig(connector, HostSession(connector, backgroundScope, info, Backoff(), clientId))
+        return Rig(connector, HostSession(connector, backgroundScope, info, Backoff(jitter = 0.0), clientId))
     }
 
     private suspend fun HostSession.awaitState(match: (ConnState) -> Boolean): ConnState = withTimeout(300_000) { connection.first(match) }

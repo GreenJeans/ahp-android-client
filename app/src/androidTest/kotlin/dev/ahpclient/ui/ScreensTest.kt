@@ -351,6 +351,7 @@ class ScreensTest {
         val states = listOf(
             ConnState.Connecting to "Connecting",
             ConnState.Reconnecting(2, null) to "Reconnecting (attempt 2)",
+            ConnState.WaitingForNetwork to "Waiting for network",
             ConnState.Failed(IllegalStateException("The tunnel lists no running agent host")) to "no running agent host",
         )
         states.forEach { (state, words) ->

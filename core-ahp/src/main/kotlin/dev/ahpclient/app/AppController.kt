@@ -79,6 +79,8 @@ class AppController(
     private val renewBefore: Duration = Duration.ofMinutes(5),
     /** Where renewals are noted, for a debug build's log: only what happened, never a token. */
     private val note: (String) -> Unit = {},
+    /** How long the app must be out of sight before the live session lets go of its chats and channels (see [HostSession.park]). */
+    private val parkGraceMs: Long = ParkScheduler.DEFAULT_GRACE_MS,
 ) {
     private val _state = MutableStateFlow<AppState>(AppState.Restoring)
     val state: StateFlow<AppState> = _state.asStateFlow()
@@ -95,6 +97,17 @@ class AppController(
     private fun connectedSession(): HostSession? = (_state.value as? AppState.Connected)?.session
 
     private fun liveSession(): HostSession = connectedSession() ?: throw IOException("Not connected to the host")
+
+    /** Parks whichever session is live once the app has been out of sight for [parkGraceMs], and takes it up again when the app returns. */
+    private val parking = ParkScheduler(scope, parkGraceMs, park = { connectedSession()?.park() }, unpark = { connectedSession()?.unpark() })
+
+    /**
+     * Tells the controller whether the app can be seen, from the process lifecycle so that another screen of this app in front counts.
+     * Out of sight for the grace period, the live session stops streaming chats and channels it was keeping for the screen, and the
+     * host list and alerts carry on; coming back subscribes them again. Nothing on screen changes: a chat keeps what it showed until
+     * its new snapshot replaces it.
+     */
+    fun setAppVisible(visible: Boolean) = parking.visible(visible)
 
     /** Looks after sessions and chats on the live host. Every request checks the tier, the target and, where it matters, the device check first. */
     val manager = SessionManager(
@@ -217,6 +230,8 @@ class AppController(
         val session = sessions.create(tunnel) { freshToken().access }
         session.start()
         _state.value = AppState.Connected(tunnel, session)
+        // The app may have gone out of sight before this session existed: it starts parked rather than waiting for another trip away.
+        parking.ifParked(session::park)
         scope.launch {
             try {
                 lastHost.set(tunnel.tunnelId)
@@ -425,14 +440,19 @@ class AppController(
         val session = (_state.value as? AppState.Connected)?.session ?: return InteractResult.NotAllowed
         if (chatUri.isBlank() || chatUri.length > ApprovalTarget.MAX_CHAT_URI) return InteractResult.NotAllowed
         if (optionId != null && (optionId.isBlank() || optionId.length > ApprovalTarget.MAX_OPTION_ID)) return InteractResult.NotAllowed
-        val store = session.openChat(chatUri)
+        // A background opener: this runs from a notification with the app out of sight, when a parked session would otherwise let the chat go.
+        val store = session.openChat(chatUri, background = true)
         try {
-            withTimeoutOrNull(CHAT_LOAD_MS) { store.state.first { it != null } }
-                ?: return InteractResult.NotSent(IOException("The chat did not load in time"))
+            // A chat a screen kept while the app was out of sight still shows the transcript from before: wait for the snapshot that replaces it.
+            withTimeoutOrNull(CHAT_LOAD_MS) {
+                store.subscribeNeeded.first { !it }
+                store.state.first { it != null }
+            } ?: return InteractResult.NotSent(IOException("The chat did not load in time"))
+            if (store.error.value != null) return InteractResult.NotSent(IOException("The chat could not be loaded"))
             val interactor = interactorFor(session, chatUri, store)
             return if (approve) interactor.approve(toolCallId, optionId) else interactor.deny(toolCallId, optionId)
         } finally {
-            session.closeChat(chatUri)
+            session.closeChat(chatUri, background = true)
         }
     }
 
