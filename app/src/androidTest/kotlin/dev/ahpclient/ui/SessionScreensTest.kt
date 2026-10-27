@@ -1,5 +1,6 @@
 package dev.ahpclient.ui
 
+import dev.ahpclient.app.HostRef
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -101,7 +102,7 @@ class SessionScreensTest {
         var query by androidx.compose.runtime.remember { mutableStateOf(initialQuery) }
         AhpTheme {
             DrawerContent(
-                connectedHost, connection, sessions, now, selected, showArchived, { showArchived = !showArchived; onToggle() }, query, { query = it },
+                connectedHost?.let(HostRef::Tunnel), connection, sessions, now, selected, showArchived, { showArchived = !showArchived; onToggle() }, query, { query = it },
                 rememberLazyListState(), manage, onOpenHost, onOpen, onOpenSettings, onSessionCreated = {}, watched = watched, inboxCount = inboxCount, onOpenInbox = onOpenInbox,
             )
         }

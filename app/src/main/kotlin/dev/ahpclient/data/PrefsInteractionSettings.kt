@@ -21,10 +21,19 @@ class PrefsInteractionSettings(
         dataStore.edit { it[key] = on }
     }
 
+    override suspend fun clear() {
+        dataStore.edit { it.remove(key) }
+    }
+
     companion object {
         val KEY = booleanPreferencesKey("allow_interaction")
 
         /** The second choice: also create, archive and remove sessions and chats. Separate from [KEY] so each is its own decision. */
         val MANAGEMENT_KEY = booleanPreferencesKey("allow_management")
+
+        /** The two choices of one direct host, kept under keys of its own: a direct host never inherits what was allowed for another. */
+        fun interactionKeyFor(hostId: String) = booleanPreferencesKey("allow_interaction.$hostId")
+
+        fun managementKeyFor(hostId: String) = booleanPreferencesKey("allow_management.$hostId")
     }
 }

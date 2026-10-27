@@ -8,6 +8,9 @@ import dev.ahpclient.auth.DeviceFlowResult
 import dev.ahpclient.auth.GitHubAuthException
 import dev.ahpclient.auth.GitHubDeviceAuth
 import dev.ahpclient.auth.GitHubToken
+import dev.ahpclient.auth.Secret
+import dev.ahpclient.direct.DirectHost
+import dev.ahpclient.state.DirectHostConnector
 import dev.ahpclient.state.activityState
 import dev.ahpclient.state.isArchived
 import dev.ahpclient.state.isRead
@@ -38,7 +41,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 
-private const val USAGE = "usage: probe [--tunnel <name|id>] [--instance <id>] [--capture <file>] [--watch <seconds>] [--session <title-or-uri>] [--chat <title-or-uri>]"
+private const val USAGE = "usage: probe [--tunnel <name|id>] [--instance <id>] [--capture <file>] [--watch <seconds>] [--session <title-or-uri>] [--chat <title-or-uri>] [--direct <ws-or-wss-address>]"
 private const val SESSION_PAGE_SIZE = 100L
 private const val MAX_SESSION_PAGES = 10
 private const val TITLE_WIDTH = 60
@@ -51,6 +54,8 @@ internal data class ProbeArgs(
     val watchSeconds: Int = 0,
     val session: String? = null,
     val chat: String? = null,
+    /** A host reached by its own address (such as ahpd), with its token in the AHPD_TOKEN environment variable. No sign-in and no tunnel. */
+    val direct: String? = null,
 ) {
     companion object {
         fun parse(args: Array<String>): ProbeArgs {
@@ -65,6 +70,7 @@ internal data class ProbeArgs(
                     "--watch" -> result = result.copy(watchSeconds = value(flag).toIntOrNull()?.takeIf { it >= 0 } ?: throw IllegalArgumentException("--watch needs a number of seconds\n$USAGE"))
                     "--session" -> result = result.copy(session = value(flag))
                     "--chat" -> result = result.copy(chat = value(flag))
+                    "--direct" -> result = result.copy(direct = value(flag))
                     else -> throw IllegalArgumentException("unknown option '$flag'\n$USAGE")
                 }
                 i++
@@ -95,7 +101,25 @@ internal class Probe(private val args: ProbeArgs, private val out: (String) -> U
         fail(describe(e))
     }
 
+    /** The same checks as for a tunnel host, against a host reached by address: the production connector, read tier, methods checked on the wire. */
+    private suspend fun executeDirect(address: String): Int {
+        val token = System.getenv("AHPD_TOKEN")?.takeIf { it.isNotBlank() }?.let(::Secret)
+        log("info", "direct host $address, ${if (token != null) "with a token from AHPD_TOKEN (not shown)" else "no token"}")
+        val frames = FrameLog(args.capture)
+        val host = DirectHost(DirectHost.ID_PREFIX + "probe", "probe", address)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val ahp = DirectHostConnector(RecordingOpener(OkHttpSocketOpener(), frames), host, { token }).connect(java.util.UUID.randomUUID().toString(), 0, scope)
+        try {
+            observe(ahp)
+        } finally {
+            ahp.close()
+            scope.cancel()
+        }
+        return verifyReadOnly(frames)
+    }
+
     private suspend fun execute(): Int {
+        args.direct?.let { return executeDirect(it) }
         val token = signIn() ?: return 1
         val devTunnels = DevTunnelsClient()
 
@@ -274,7 +298,7 @@ internal class Probe(private val args: ProbeArgs, private val out: (String) -> U
 
     private fun describe(e: Throwable): String = when (e) {
         is DevTunnelsException.AuthExpired -> "${e.message}"
-        is DevTunnelsException, is GatewayException, is AhpException, is GitHubAuthException, is UpgradeRejectedException -> "${e.message}"
+        is DevTunnelsException, is GatewayException, is AhpException, is GitHubAuthException, is UpgradeRejectedException, is dev.ahpclient.state.DirectHostException -> "${e.message}${e.cause?.message?.let { " (${it.take(400)})" }.orEmpty()}"
         is SocketClosedException -> "${e.message}"
         else -> "${e.javaClass.simpleName}: ${e.message}"
     }

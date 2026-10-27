@@ -1,5 +1,6 @@
 package dev.ahpclient.ui
 
+import dev.ahpclient.app.HostRef
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.getValue
@@ -1052,7 +1053,7 @@ class ManageUiTest {
 
     @androidx.compose.runtime.Composable
     private fun Drawer(host: TunnelInfo?, sessions: List<SessionSummary>, manage: ManageActionsUi?) = DrawerContent(
-        host, ConnState.Online, sessions, now, selected = null, showArchived = false, onToggleArchived = {}, query = "", onQueryChange = {},
+        host?.let(HostRef::Tunnel), ConnState.Online, sessions, now, selected = null, showArchived = false, onToggleArchived = {}, query = "", onQueryChange = {},
         listState = rememberLazyListState(), manage = manage, onOpenHost = {}, onOpenSession = {}, onOpenSettings = {}, onSessionCreated = {},
     )
 

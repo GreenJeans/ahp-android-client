@@ -705,7 +705,7 @@ class AppControllerTest {
             connected.session.connection.first { it == ConnState.Online }
             runCurrent()
 
-            assertEquals(host, connected.host)
+            assertEquals(HostRef.Tunnel(host), connected.host)
             assertEquals(listOf("ghu_saved"), tokensSeenByHost)
             assertEquals("test-tunnel-1", lastHost.id)
             assertEquals(6, connected.session.root.sessions.value.size)
@@ -787,7 +787,7 @@ class AppControllerTest {
             connected.session.connection.first { it == ConnState.Online }
             runCurrent()
 
-            assertEquals(host, connected.host)
+            assertEquals(HostRef.Tunnel(host), connected.host)
             assertSame(created.single(), connected.session)
             assertEquals("test-tunnel-1", lastHost.id)
         }
@@ -1956,7 +1956,7 @@ class AppControllerTest {
         val script = { HostScript(sessionChats = "[${chatSummaryJson(CHAT_A)}]", onDispatch = { echoOf(it, SNAPSHOT_SEQ + 1, clientId = clientId) }) }
         withRig(script = script) {
             val connected = connectToFirstHost()
-            clientId = "client-${connected.host.tunnelId}"
+            clientId = "client-${connected.host.id}"
             val interactor = openChatInteractor(this)
 
             assertEquals(InteractResult.NotAllowed, interactor.send("hello"), "read only until the user allows more")
@@ -1983,7 +1983,7 @@ class AppControllerTest {
         }
         withRig(script = script, interaction = InteractionConsent(FakeInteractionSettings(saved = true))) {
             val connected = connectToFirstHost()
-            clientId = "client-${connected.host.tunnelId}"
+            clientId = "client-${connected.host.id}"
             val interactor = openChatInteractor(this)
             runCurrent()
 
@@ -1992,7 +1992,7 @@ class AppControllerTest {
         }
         withRig(script = script, interaction = InteractionConsent(FakeInteractionSettings(saved = true)), approvalGate = ApprovalGate { true }) {
             val connected = connectToFirstHost()
-            clientId = "client-${connected.host.tunnelId}"
+            clientId = "client-${connected.host.id}"
             val interactor = openChatInteractor(this)
             runCurrent()
 
@@ -2029,7 +2029,7 @@ class AppControllerTest {
         var clientId = ""
         withRig(script = decideScript { clientId }, interaction = allowed, approvalGate = ApprovalGate { true }) {
             val connected = connectToFirstHost()
-            clientId = "client-${connected.host.tunnelId}"
+            clientId = "client-${connected.host.id}"
             connected.session.canInteract.first { it }
 
             assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), controller.decideToolCall(CHAT_A, "c1", approve = true))
@@ -2045,7 +2045,7 @@ class AppControllerTest {
         var clientId = ""
         withRig(script = decideScript { clientId }, interaction = allowed) {
             val connected = connectToFirstHost()
-            clientId = "client-${connected.host.tunnelId}"
+            clientId = "client-${connected.host.id}"
             connected.session.canInteract.first { it }
 
             assertEquals(InteractResult.NotConfirmed, controller.decideToolCall(CHAT_A, "c1", approve = true))
@@ -2129,7 +2129,7 @@ class AppControllerTest {
         var clientId = ""
         withRig(script = decideScript { clientId }, interaction = allowed, approvalGate = ApprovalGate { true }) {
             val connected = connectToFirstHost()
-            clientId = "client-${connected.host.tunnelId}"
+            clientId = "client-${connected.host.id}"
             connected.session.canInteract.first { it }
 
             assertEquals(InteractResult.NoSuchRequest, controller.decideToolCall(CHAT_A, "some-other-call", approve = true))
@@ -2161,7 +2161,7 @@ class AppControllerTest {
         val asked = mutableListOf<ApprovalRequest>()
         withRig(script = decideWithOptionsScript { clientId }, interaction = allowed, approvalGate = ApprovalGate { asked += it; true }) {
             val connected = connectToFirstHost()
-            clientId = "client-${connected.host.tunnelId}"
+            clientId = "client-${connected.host.id}"
             connected.session.canInteract.first { it }
 
             assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), controller.decideToolCall(CHAT_A, "c1", approve = true, optionId = "o-allow"))
@@ -2178,7 +2178,7 @@ class AppControllerTest {
         var clientId = ""
         withRig(script = decideWithOptionsScript { clientId }, interaction = allowed, approvalGate = ApprovalGate { false }) {
             val connected = connectToFirstHost()
-            clientId = "client-${connected.host.tunnelId}"
+            clientId = "client-${connected.host.id}"
             connected.session.canInteract.first { it }
 
             assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), controller.decideToolCall(CHAT_A, "c1", approve = false, optionId = "o-no"))
@@ -2194,7 +2194,7 @@ class AppControllerTest {
         var clientId = ""
         withRig(script = decideWithOptionsScript { clientId }, interaction = allowed, approvalGate = ApprovalGate { true }) {
             val connected = connectToFirstHost()
-            clientId = "client-${connected.host.tunnelId}"
+            clientId = "client-${connected.host.id}"
             connected.session.canInteract.first { it }
 
             assertEquals(InteractResult.NoSuchRequest, controller.decideToolCall(CHAT_A, "c1", approve = true, optionId = "o-no"), "a refusal cannot approve")
@@ -2211,7 +2211,7 @@ class AppControllerTest {
         var clientId = ""
         withRig(script = decideScript { clientId }, interaction = allowed, approvalGate = ApprovalGate { true }) {
             val connected = connectToFirstHost()
-            clientId = "client-${connected.host.tunnelId}"
+            clientId = "client-${connected.host.id}"
             connected.session.canInteract.first { it }
 
             assertEquals(InteractResult.NoSuchRequest, controller.decideToolCall(CHAT_A, "c1", approve = true, optionId = "o-allow"))
@@ -2295,7 +2295,7 @@ class AppControllerTest {
         var clientId = ""
         withRig(script = managementScript { clientId }, interaction = managing, approvalGate = ApprovalGate { true }) {
             val connected = connectToFirstHost()
-            clientId = "client-${connected.host.tunnelId}"
+            clientId = "client-${connected.host.id}"
             connected.session.canManage.first { it }
             controller.openSession(SESSION_C)
             assertIs<AppState.Connected>(state).open!!.store.state.first { it != null }
@@ -2471,7 +2471,7 @@ class AppControllerTest {
         var clientId = ""
         withRig(script = reviewScript { clientId }, interaction = managing) {
             val connected = connectToFirstHost()
-            clientId = "client-${connected.host.tunnelId}"
+            clientId = "client-${connected.host.id}"
             connected.session.canManage.first { it }
             openLoadedSession(this)
             controller.openChangeset(CHANGESET_A)
@@ -2493,7 +2493,7 @@ class AppControllerTest {
         var clientId = ""
         withRig(script = reviewScript(plainChangeset) { clientId }, interaction = managing) {
             val connected = connectToFirstHost()
-            clientId = "client-${connected.host.tunnelId}"
+            clientId = "client-${connected.host.id}"
             connected.session.canManage.first { it }
             openLoadedSession(this)
             controller.openChangeset(CHANGESET_A)
@@ -2511,7 +2511,7 @@ class AppControllerTest {
         var clientId = ""
         withRig(script = reviewScript { clientId }, interaction = managing) {
             val connected = connectToFirstHost()
-            clientId = "client-${connected.host.tunnelId}"
+            clientId = "client-${connected.host.id}"
             connected.session.canManage.first { it }
             openLoadedSession(this)
             assertEquals(ManageResult.NoSuchTarget, controller.setFileReviewed("file:///work/a.kt", true), "no changeset is open")
@@ -2550,7 +2550,7 @@ class AppControllerTest {
         }
         withRig(script = script, interaction = managing, approvalGate = ApprovalGate { true }) {
             val connected = connectToFirstHost()
-            clientId = "client-${connected.host.tunnelId}"
+            clientId = "client-${connected.host.id}"
             connected.session.canManage.first { it }
             val folder = controller.manager.offeredFolders().first()
 
@@ -2589,7 +2589,7 @@ class AppControllerTest {
         val script = { HostScript(sessionChats = "[${chatSummaryJson(CHAT_A)}]", onDispatch = { echoOf(it, SNAPSHOT_SEQ + 1, clientId = clientId) }) }
         withRig(script = script, interaction = allowed) {
             val connected = connectToFirstHost()
-            clientId = "client-${connected.host.tunnelId}"
+            clientId = "client-${connected.host.id}"
             connected.session.canInteract.first { it }
             val interactor = openChatInteractor(this)
 
@@ -2785,7 +2785,7 @@ class AppControllerTest {
         var clientId = ""
         withRig(script = decideScript { clientId }, interaction = allowed, approvalGate = ApprovalGate { true }) {
             val connected = connectToFirstHost()
-            clientId = "client-${connected.host.tunnelId}"
+            clientId = "client-${connected.host.id}"
             openChatInteractor(this)
             runCurrent()
 
@@ -2903,7 +2903,7 @@ class AppControllerTest {
         var clientId = ""
         withRig(script = decideScript { clientId }, interaction = allowed, approvalGate = ApprovalGate { true }) {
             val connected = connectToFirstHost()
-            clientId = "client-${connected.host.tunnelId}"
+            clientId = "client-${connected.host.id}"
             connected.session.canInteract.first { it }
             controller.setAppVisible(false)
             advanceTimeBy(30_000)
@@ -2937,7 +2937,7 @@ class AppControllerTest {
         }
         withRig(script = script, interaction = allowed, approvalGate = ApprovalGate { true }) {
             val connected = connectToFirstHost()
-            clientId = "client-${connected.host.tunnelId}"
+            clientId = "client-${connected.host.id}"
             connected.session.canInteract.first { it }
             openChatInteractor(this)
             runCurrent()
@@ -2977,7 +2977,7 @@ class AppControllerTest {
         }
         withRig(script = script, interaction = allowed, approvalGate = ApprovalGate { true }) {
             val connected = connectToFirstHost()
-            clientId = "client-${connected.host.tunnelId}"
+            clientId = "client-${connected.host.id}"
             connected.session.canInteract.first { it }
             openChatInteractor(this)
             runCurrent()
@@ -3011,7 +3011,7 @@ class AppControllerTest {
             connected.session.connection.first { it == ConnState.Online }
             runCurrent()
 
-            assertEquals("test-tunnel-1", connected.host.tunnelId)
+            assertEquals("test-tunnel-1", connected.host.id)
             assertEquals(1, created.size)
             assertEquals(listOf("ghu_saved"), tokensSeenByHost)
         }
@@ -3144,7 +3144,7 @@ class AppControllerTest {
             assertTrue(controller.ensureConnected(10_000))
             val connected = assertIs<AppState.Connected>(state)
             assertEquals(ConnState.Online, connected.session.connection.value)
-            assertEquals("test-tunnel-1", connected.host.tunnelId)
+            assertEquals("test-tunnel-1", connected.host.id)
             assertEquals(1, created.size)
         }
     }

@@ -15,6 +15,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import dev.ahpclient.app.HostRef
 import dev.ahpclient.app.AppState
 import dev.ahpclient.app.HostEntry
 import dev.ahpclient.app.HostList
@@ -74,7 +75,7 @@ class ScreensTest {
         onBack: () -> Unit = {},
     ) = rule.setContent {
         AhpTheme {
-            HostScreen(list, connected, connection, onBack, onRefresh, onConnect, onDisconnect, onSignOut, browsers, browser, onBrowser, tokenExpiresAt = expiresAt, renews = renews)
+            HostScreen(list, connected?.let(HostRef::Tunnel), connection, onBack, onRefresh, onConnect, onDisconnect, onSignOut, browsers, browser, onBrowser, tokenExpiresAt = expiresAt, renews = renews)
         }
     }
 

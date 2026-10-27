@@ -400,7 +400,7 @@ class AhpConnection(
             return
         }
         try {
-            val envelope = json.decodeFromJsonElement(ActionEnvelope.serializer(), params)
+            val envelope = json.decodeFromJsonElement(ActionEnvelope.serializer(), HostQuirks.action(params))
             // The resume point moves only once the action is queued: if the buffer is full the action is lost, and the resume must ask for it again.
             enqueue(ServerNotification.Action(envelope))
             // A rejected action changed nothing, so it must not move the resume point: the host may reuse its number.
@@ -418,7 +418,7 @@ class AhpConnection(
         if (error == null) {
             // Recorded before the waiting caller is released, so it can read them as soon as it has its reply.
             ConfigFacts.fromResult(frame["result"]).forEach { (channel, facts) -> if (configFacts.size < MAX_CONFIG_FACTS || configFacts.containsKey(channel)) configFacts[channel] = facts }
-            waiting.complete(frame["result"] ?: JsonNull)
+            waiting.complete(HostQuirks.result(frame["result"]) ?: JsonNull)
             return
         }
         val code = (error["code"] as? JsonPrimitive)?.longOrNull?.toInt() ?: JsonRpcErrorCodes.INTERNAL_ERROR

@@ -1,6 +1,6 @@
 # Host extensions and a second host kind
 
-> **Status:** Draft, not started.
+> **Status:** E6 built (2026-10-27), checked on the JVM, the emulator and against a live `ahpd`; the phone run and the rest are not done. E0 is partly done (how `ahpd` is addressed). E1 to E5 and E7 not started.
 > **Date:** 2026-10-27
 > **Parent:** [`docs/spec.md`](spec.md). That spec holds the product phases. [`docs/hardening-spec.md`](hardening-spec.md) holds the battery, network, memory and recovery work; this one holds what the app can learn from other hosts and clients. Tick boxes here as work lands and add a row to the Progress Log at the bottom; note the commit in the row.
 > **Source:** the "Private extensions in the wild" section of [`docs/CONFORMANCE.md`](https://github.com/softov/ahpc/blob/main/docs/CONFORMANCE.md) in the `ahpc` repo (a terminal AHP client by the author of `ahpd`), read 2026-10-26, and a comparison with this app's code at commit `c682a67`. The `ahpc` document was captured against AHP 0.9.0 on 2026-09-13 and reached me through a summarising fetch, so **read the original before relying on a field name**; Item E0 exists to check each one against real captures.
@@ -66,7 +66,7 @@ We know twelve extension fields by name from a third party's notes, for one prot
 - [ ] **AC-E0.2** `docs/verification/extensions.md` says, for each of the twelve fields and for each host reached, seen / not seen / other name, with the date and protocol version the host chose.
 - [ ] **AC-E0.3** The same file says which generated types have a `_meta` property and which do not.
 - [ ] **AC-E0.4** Redacted fixtures with the extension fields are checked in and pass the redaction check.
-- [ ] **AC-E0.5** The file records how `ahpd` is addressed and authenticated, or says plainly that it could not be reached.
+- [x] **AC-E0.5** The file records how `ahpd` is addressed and authenticated, or says plainly that it could not be reached. _Done 2026-10-27: see `docs/verification/extensions.md`._
 
 ### Tests
 
@@ -221,21 +221,36 @@ The host list only knows tunnel hosts: `HostEntry` wraps a `TunnelInfo`, `Tunnel
 
 ### Acceptance criteria
 
-- [ ] **AC-E6.1** A direct host can be added (address, name, token), listed beside tunnel hosts, connected to, and removed; its token is in the vault and absent from preferences, logs and backups.
-- [ ] **AC-E6.2** A new direct host starts at the read tier; turning on "Act for me" for the tunnel host does not turn it on for the direct one, and the reverse.
-- [ ] **AC-E6.3** A `ws://` address outside the allowed ranges is refused with a clear message; an allowed one connects; `wss://` connects.
-- [ ] **AC-E6.4** Removing a direct host removes its token, cached list and consent; signing out of GitHub leaves direct hosts and their tokens alone.
-- [ ] **AC-E6.5** A direct host and a tunnel host cannot be live at once, and a cached session list is never shown for the wrong one.
+- [x] **AC-E6.1** A direct host can be added (address, name, token), listed beside tunnel hosts, connected to, and removed; its token is in the vault and absent from preferences, logs and backups.
+- [x] **AC-E6.2** A new direct host starts at the read tier; turning on "Act for me" for the tunnel host does not turn it on for the direct one, and the reverse.
+- [x] **AC-E6.3** A `ws://` address outside the allowed ranges is refused with a clear message; an allowed one connects; `wss://` connects.
+- [x] **AC-E6.4** Removing a direct host removes its token, cached list and consent; signing out of GitHub leaves direct hosts and their tokens alone.
+- [x] **AC-E6.5** A direct host and a tunnel host cannot be live at once, and a cached session list is never shown for the wrong one.
 - [ ] **AC-E6.6** On the emulator, against a local `ahpd`, the app connects, lists sessions and shows a chat; with "Act for me" on it receives and decides a tool-approval request. Record the run in `docs/verification/extensions.md`.
 
 ### Tests
 
 `DirectHostConnector` against a local `MockWebServer`; the address-policy table; the host store and vault round trips with the existing fakes; `AppController` cases for adding, connecting, switching and removing; per-host consent cases in `InteractionConsentTest`; UI tests for the add screen. AC-E6.6 needs a running `ahpd` and the emulator.
 
+### As built (2026-10-27)
+
+What differs from the design above, and why:
+
+- **No GitHub sign-in is needed.** A direct host is reachable with nobody signed in: the sign-in screen has "Connect to a host by address", the app opens on the host list when hosts were added and no one is signed in, and the last host used, if it is a direct one, is reconnected to by itself under the same Monitoring rule as a tunnel host. `AppState.Hosts` carries the tunnel list (`list`, which may be `NotSignedIn`, `Loading` or `Failed`) and the direct hosts (`direct`) separately, so a failed tunnel list never hides them. Signing out of GitHub leaves the hosts and their tokens alone; it does end a live connection (of either kind) and wipes the one saved session list.
+- **The model** is `HostRef` (`Tunnel(TunnelInfo)` or `Direct(DirectHost)`) on `AppState.Connected.host`, not a sealed host-list entry: `HostEntry` and `DirectEntry` stay two plain rows, which kept every existing screen and test as they were. Ids of direct hosts start `direct:`, so the one "last host" setting holds either.
+- **The token** is sent as `Authorization: Bearer`, never in the address (an address that carries `?tkn=`, a fragment or credentials is refused). It is kept in `DirectHostVault`: one sealed blob of all tokens, with its own Keystore key (`ahp-android-client.direct-hosts-key.v1`), its own DataStore file (`ahp_direct_tokens`) and its own AAD, because signing out of GitHub destroys the GitHub vault's key and these must survive that. A blank token keeps nothing (a host started with `--without-connection-token`).
+- **Consent per host.** The tunnel hosts keep today's two saved choices. Each direct host has two of its own (`allow_interaction.<id>`, `allow_management.<id>`), off until turned on while connected to it. `AppController.interactionAllowed`, `managementAllowed`, `setInteraction` and `setManagement` all follow the host that is connected (the tunnel hosts' when none is), and Settings says which one it is acting on. Removing a host removes both keys.
+- **Transport.** `HostAddress.check` accepts `wss://` anywhere, and `ws://` only to loopback, 10/8, 172.16/12, 192.168/16, 100.64/10, IPv6 loopback and unique-local, and `localhost`; a `ws://` to any other name is refused, because a name cannot be known to be private. It runs when a host is added, when it is loaded, and again on every connection. **The network-security configuration the design asked for cannot be written:** it names domains, not address ranges. Cleartext is therefore allowed in the manifest and the rule above is what keeps it to private networks; so that this is not a way round the old protection, the shared HTTP client no longer follows a redirect between https and http.
+- **Per-host cached list.** The session list cache is keyed by the host id, as H7 built it, so a list saved for one host is never shown for another; it is one slot, so switching hosts drops the other's list.
+- **A bad token or address ends the retrying** (`DirectHostException`, terminal like an unsupported protocol version) with a sentence in the person's words; a host that is only down keeps the normal backoff.
+- **Host quirk found on the first live run.** `ahpd` 0.14.0 leaves `description` out of an agent that has none (its `copilot` agent), which the pinned library requires, so the `initialize` reply would not decode and the app could not have connected at all. `HostQuirks` fills an absent description with an empty one, on the fixed paths where agents appear (the root snapshot in `initialize`, `reconnect` and `subscribe`, and `root/agentsChanged`). Nothing else is changed, and a present value is never touched.
+- **The probe** takes `--direct <address>` with the token in `AHPD_TOKEN` and runs the production connector at the read tier, checking the methods on the wire.
+
 ### Open design questions
 
-- How does `ahpd` take the token (first message, query string, header)? Does it speak TLS itself or expect a tunnel in front? (E0.)
-- Does it need the app to appear as an active client, which our allowlist forbids? (If so, that is a new decision, not part of this item.)
+- ~~How does `ahpd` take the token? Does it speak TLS itself?~~ Answered 2026-10-27: a Bearer header or `?tkn=`; no TLS (see `docs/verification/extensions.md`).
+- Does it need the app to appear as an active client, which our allowlist forbids? (If so, that is a new decision, not part of this item.) Not at the read tier: the live probe listed sessions with no such need.
+- Echoes without `origin` (E5) are still unchecked against `ahpd`; the first "Act for me" message sent to it answers that.
 
 ---
 
@@ -275,3 +290,4 @@ Items with a phone criterion (E2.4, E6.6) get a run recorded in `docs/verificati
 | Date | Entry |
 |---|---|
 | 2026-10-27 | Spec drafted from the `ahpc` conformance document and a read of the code at `c682a67`. Nothing started. |
+| 2026-10-27 | **E6 built, and the one piece of E0 it needed (how `ahpd` is addressed).** See "As built" under E6 and `docs/verification/extensions.md`. A direct host can be added by address and token, listed beside the tunnel hosts, connected to with no GitHub sign-in, allowed to act on its own terms and removed. **First live run against the real `ahpd` 0.14.0 on this laptop (read-only probe, `--direct`):** connected with the Bearer header, protocol 1.0.0, `listSessions` returned 758, only `initialize` and `listSessions` on the wire. It first failed to decode, because `ahpd` omits `AgentInfo.description` for its copilot agent; `HostQuirks` now covers that. **Checked:** 1,223 JVM tests pass; lint at its 3 baseline warnings. Not done: the on-device run (AC-E6.6) on the emulator with "Act for me", the phone (it cannot reach a loopback-only `ahpd`), E0 (census, fixtures), E1 to E5, E7. |

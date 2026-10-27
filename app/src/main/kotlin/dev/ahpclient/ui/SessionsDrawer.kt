@@ -58,7 +58,7 @@ import dev.ahpclient.state.SessionCatalog
 import dev.ahpclient.state.SessionListModel
 import dev.ahpclient.state.SessionRow
 import dev.ahpclient.state.label
-import dev.ahpclient.tunnel.TunnelInfo
+import dev.ahpclient.app.HostRef
 import com.microsoft.agenthostprotocol.generated.SessionSummary
 import java.time.Instant
 
@@ -70,7 +70,7 @@ import java.time.Instant
  */
 @Composable
 fun DrawerContent(
-    host: TunnelInfo?,
+    host: HostRef?,
     connection: ConnState?,
     sessions: List<SessionSummary>,
     now: Instant,
@@ -156,7 +156,7 @@ private fun InboxButton(count: Int, onOpenInbox: () -> Unit) {
 
 /** The host's name and how the connection stands, as one button to the host screen. */
 @Composable
-private fun HostButton(host: TunnelInfo?, connection: ConnState?, onOpenHost: () -> Unit) {
+private fun HostButton(host: HostRef?, connection: ConnState?, onOpenHost: () -> Unit) {
     val state = when {
         host == null -> "Tap to connect"
         connection != null -> describe(connection)

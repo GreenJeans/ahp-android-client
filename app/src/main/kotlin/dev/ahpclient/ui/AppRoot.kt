@@ -72,7 +72,7 @@ fun AppRoot(
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             when (val current = state) {
                 AppState.Restoring -> Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars).testTag("restoring"), contentAlignment = Alignment.Center) { Busy("Loading…") }
-                is AppState.SignedOut -> SignInScreen(current, controller::signIn, controller::cancelSignIn, onOpenGitHub, onCopyCode)
+                is AppState.SignedOut -> SignInScreen(current, controller::signIn, controller::cancelSignIn, onOpenGitHub, onCopyCode, onUseDirect = controller::useDirectHosts)
                 is AppState.Hosts -> Shell(controller, ui, current, null, monitorEnabled, notificationsAllowed, onMonitorChange, alerts)
                 is AppState.Connected -> Shell(controller, ui, null, current, monitorEnabled, notificationsAllowed, onMonitorChange, alerts)
             }
@@ -201,9 +201,21 @@ private fun Shell(
                     connection = connection,
                     onBack = { page = Page.MAIN },
                     onRefresh = controller::refreshHosts,
-                    onConnect = controller::connect,
+                    onConnect = { controller.connect(it) },
                     onDisconnect = controller::disconnect,
                     onSignOut = controller::signOut,
+                    direct = hosts?.direct.orEmpty(),
+                    onConnectDirect = { controller.connect(it) },
+                    onAddHost = { name, address, token ->
+                        when (val result = controller.addDirectHost(name, address, token)) {
+                            is AppController.AddHostResult.Added -> null
+                            is AppController.AddHostResult.Invalid -> result.reason
+                            AppController.AddHostResult.NotSaved -> "The host could not be saved on this phone."
+                        }
+                    },
+                    onRemoveHost = { host -> scope.launch { controller.removeDirectHost(host.id) } },
+                    signedIn = controller.isSignedIn,
+                    onSignIn = controller::signIn,
                     browsers = browsers,
                     browser = browser,
                     onBrowser = ui::setBrowser,
@@ -224,6 +236,7 @@ private fun Shell(
                     scope.launch { if (!controller.setInteraction(on)) Toast.makeText(context, "Could not save the setting", Toast.LENGTH_SHORT).show() }
                 },
                 managementAllowed = managementAllowed,
+                appliesTo = controller.consentScope,
                 onManagementChange = { on ->
                     scope.launch { if (!controller.setManagement(on)) Toast.makeText(context, "Could not save the setting", Toast.LENGTH_SHORT).show() }
                 },

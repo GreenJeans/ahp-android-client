@@ -6,6 +6,13 @@ import dev.ahpclient.auth.GitHubDeviceAuth
 import dev.ahpclient.auth.GitHubToken
 import dev.ahpclient.auth.RefreshResult
 import dev.ahpclient.auth.Secret
+import dev.ahpclient.direct.DirectHost
+import dev.ahpclient.direct.DirectHostCodec
+import dev.ahpclient.direct.DirectHostStore
+import dev.ahpclient.direct.HostAddress
+import dev.ahpclient.direct.HostAddressCheck
+import dev.ahpclient.direct.InMemoryDirectHostStore
+import dev.ahpclient.security.DirectHostVault
 import dev.ahpclient.security.SessionListCache
 import dev.ahpclient.security.TokenVault
 import dev.ahpclient.security.VaultCryptoException
@@ -49,6 +56,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.getAndUpdate
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -101,18 +109,47 @@ class AppController(
      * the sessions made by [sessions] are given the same cache, keyed by their host, to read and write.
      */
     private val sessionCache: SessionListCache? = null,
+    /** The hosts added by address. With none given (and no [directSessions]) the app has only its tunnel hosts. */
+    private val directStore: DirectHostStore = InMemoryDirectHostStore(),
+    /** Where the connection tokens of those hosts are kept encrypted. Null keeps none, which suits a host that takes no token. */
+    private val directVault: DirectHostVault? = null,
+    /** Builds the connection to one of them, under that host's own permission. Null means direct hosts cannot be connected to. */
+    private val directSessions: DirectSessionFactory? = null,
+    /** The permission of one direct host, kept apart from every other host's. Read once per host, so loading it makes it stick. */
+    private val directConsent: (DirectHost) -> InteractionConsent = { InteractionConsent() },
 ) {
     private val _state = MutableStateFlow<AppState>(AppState.Restoring)
     val state: StateFlow<AppState> = _state.asStateFlow()
 
-    /** Whether the user has allowed this app to act for them. Off until they turn it on, and off again after signing out. */
-    val interactionAllowed: StateFlow<Boolean> get() = interaction.allowed
+    /**
+     * The permission of the host that is connected: a direct host has its own, and with none connected (or a tunnel host) it is the one
+     * for the signed-in account's tunnel hosts. Everything below that asks "may this app act" asks this.
+     */
+    private fun consentOf(state: AppState): InteractionConsent {
+        val direct = (state as? AppState.Connected)?.host as? HostRef.Direct ?: return interaction
+        return consentFor(direct.host)
+    }
+
+    private val directConsents = HashMap<String, InteractionConsent>()
+
+    private fun consentFor(host: DirectHost): InteractionConsent = synchronized(directConsents) { directConsents.getOrPut(host.id) { directConsent(host) } }
+
+    private val activeConsent get() = consentOf(_state.value)
+
+    /** Whether the user has allowed this app to act for them, on the host that is connected. Off until they turn it on, and off again after signing out (for the tunnel hosts). */
+    val interactionAllowed: StateFlow<Boolean> = ActiveFlag({ activeConsent.allowed.value }, _state.map { consentOf(it).allowed })
 
     /** False on a phone that cannot run the device check in front of approvals (Android before 11): the switch is shown but cannot be turned on. */
     val interactionSupported: Boolean get() = interaction.supported
 
     /** Whether the user has also allowed this app to look after sessions (mark read, archive, start and remove). Only ever on while [interactionAllowed] is. */
-    val managementAllowed: StateFlow<Boolean> get() = interaction.managementAllowed
+    val managementAllowed: StateFlow<Boolean> = ActiveFlag({ activeConsent.managementAllowed.value }, _state.map { consentOf(it).managementAllowed })
+
+    /** What the permissions on the Settings screen apply to: the connected direct host's name, or null for the tunnel hosts. */
+    val consentScope: String? get() = ((_state.value as? AppState.Connected)?.host as? HostRef.Direct)?.host?.name
+
+    /** Whether a GitHub sign-in is held. A direct host needs none. */
+    val isSignedIn: Boolean get() = token != null
 
     private fun connectedSession(): HostSession? = (_state.value as? AppState.Connected)?.session
 
@@ -203,6 +240,7 @@ class AppController(
         // The saved choice is read before anything can connect, so the first connection already uses the right tier.
         scope.launch {
             interaction.load()
+            loadDirectHosts()
             restore()
         }
     }
@@ -214,9 +252,10 @@ class AppController(
      * @return true when the choice was saved. Turning it off takes effect either way.
      */
     suspend fun setInteraction(on: Boolean): Boolean {
-        val saved = interaction.set(on)
+        val consent = activeConsent
+        val saved = consent.set(on)
         // Reconnect only when the permission really changed: a turn-on that could not be saved changed nothing.
-        if (interaction.allowed.value == on) (_state.value as? AppState.Connected)?.session?.restart()
+        if (consent.allowed.value == on) (_state.value as? AppState.Connected)?.session?.restart()
         return saved
     }
 
@@ -227,16 +266,130 @@ class AppController(
      * @return true when the choice was saved. Turning it off takes effect either way.
      */
     suspend fun setManagement(on: Boolean): Boolean {
-        val saved = interaction.setManagement(on)
-        if (interaction.managementAllowed.value == on) (_state.value as? AppState.Connected)?.session?.restart()
+        val consent = activeConsent
+        val saved = consent.setManagement(on)
+        if (consent.managementAllowed.value == on) (_state.value as? AppState.Connected)?.session?.restart()
         return saved
     }
 
     fun signIn() {
         val current = _state.value
+        // From the host list of a person who has not signed in (they came for a host added by address), signing in starts from the sign-in screen.
+        if (current is AppState.Hosts && current.list == HostList.NotSignedIn) {
+            if (_state.compareAndSet(current, AppState.SignedOut(SignInStep.Idle, null))) launchSignIn()
+            return
+        }
         if (current !is AppState.SignedOut) return
         if (current.step is SignInStep.RequestingCode || current.step is SignInStep.AwaitingApproval) return
         launchSignIn()
+    }
+
+    /**
+     * Skips the GitHub sign-in to use only the hosts added by address. Ignored while a sign-in is under way. Nothing is signed in afterwards:
+     * Remote Tunnel Access hosts are not listed until the person signs in, and signing in from the host list is [signIn].
+     */
+    fun useDirectHosts() {
+        val current = _state.value as? AppState.SignedOut ?: return
+        if (current.step is SignInStep.RequestingCode || current.step is SignInStep.AwaitingApproval) return
+        _state.compareAndSet(current, AppState.Hosts(HostList.NotSignedIn, null, direct = directEntries()))
+    }
+
+    /** What [addDirectHost] came to. */
+    sealed interface AddHostResult {
+        data class Added(val host: DirectHost) : AddHostResult
+
+        /** [reason] is written for the person who typed it. */
+        data class Invalid(val reason: String) : AddHostResult
+
+        /** The host or its token could not be saved on this phone. Nothing was added. */
+        data object NotSaved : AddHostResult
+    }
+
+    /**
+     * Adds a host by address and keeps its [token] (if any) encrypted in the vault, under its own id; the address is checked by
+     * [HostAddress.check] first. A new host starts with no permission to act: that is chosen per host, after it is connected to.
+     */
+    suspend fun addDirectHost(name: String, address: String, token: String): AddHostResult {
+        if (directSessions == null) return AddHostResult.Invalid("Adding a host by its address is not available here.")
+        val checked = HostAddress.check(address)
+        val ok = checked as? HostAddressCheck.Ok ?: return AddHostResult.Invalid((checked as HostAddressCheck.Refused).reason)
+        val current = directHosts
+        if (current.size >= DirectHostCodec.MAX_HOSTS) return AddHostResult.Invalid("That is as many hosts as can be kept (${DirectHostCodec.MAX_HOSTS}). Remove one first.")
+        current.firstOrNull { it.url == ok.url }?.let { return AddHostResult.Invalid("That address is already added as “${it.name}”.") }
+        val host = DirectHost(DirectHost.ID_PREFIX + java.util.UUID.randomUUID(), DirectHostCodec.cleanName(name).ifEmpty { ok.host }, ok.url)
+        val secret = token.trim()
+        return try {
+            if (secret.isNotEmpty()) (directVault ?: return AddHostResult.NotSaved).put(host.id, Secret(secret))
+            try {
+                directStore.save(current + host)
+            } catch (e: IOException) {
+                // The token is not kept for a host that was not added.
+                try { directVault?.remove(host.id) } catch (_: IOException) {} catch (_: VaultCryptoException) {}
+                throw e
+            }
+            directHosts = current + host
+            consentFor(host).load()
+            publishDirect()
+            AddHostResult.Added(host)
+        } catch (_: IOException) {
+            AddHostResult.NotSaved
+        } catch (_: VaultCryptoException) {
+            AddHostResult.NotSaved
+        }
+    }
+
+    /**
+     * Removes a direct host: its token, its saved permissions and the saved session list go with it. If it is the host connected to, the
+     * connection is ended first. Signing out of GitHub never does any of this.
+     */
+    suspend fun removeDirectHost(id: String) {
+        val host = directHosts.firstOrNull { it.id == id } ?: return
+        if ((_state.value as? AppState.Connected)?.host?.id == id) disconnect()
+        directHosts = directHosts.filter { it.id != id }
+        try {
+            directStore.save(directHosts)
+        } catch (_: IOException) {
+            // Gone for this run; if it was not saved it comes back at the next start, token already removed, and can be removed again.
+        }
+        try {
+            directVault?.remove(id)
+        } catch (_: IOException) {
+        } catch (_: VaultCryptoException) {
+        }
+        synchronized(directConsents) { directConsents.remove(id) }?.forget() ?: directConsent(host).forget()
+        safeClearCache()
+        publishDirect()
+    }
+
+    /** The hosts added by address, with the last used first and the rest by name. */
+    private fun directEntries(): List<DirectEntry> =
+        directHosts.map { DirectEntry(it, isLastUsed = it.id == lastId) }.sortedWith(compareByDescending<DirectEntry> { it.isLastUsed }.thenBy { it.host.name.lowercase() })
+
+    /** Puts the current direct hosts into the host list if that is what is showing. */
+    private fun publishDirect() {
+        _state.update { if (it is AppState.Hosts) it.copy(direct = directEntries()) else it }
+    }
+
+    @Volatile
+    private var directHosts: List<DirectHost> = emptyList()
+
+    /** The id of the last host connected to, tunnel or direct, as saved. Read at start and set at each connection. */
+    @Volatile
+    private var lastId: String? = null
+
+    private suspend fun loadDirectHosts() {
+        directHosts = try {
+            directStore.load()
+        } catch (_: IOException) {
+            emptyList()
+        }
+        lastId = try {
+            lastHost.get()
+        } catch (_: IOException) {
+            null
+        }
+        // Each host's permission is read before it can be connected to, so the first connection is already made under the right tier.
+        directHosts.forEach { consentFor(it).load() }
     }
 
     fun cancelSignIn() {
@@ -258,7 +411,25 @@ class AppController(
     fun connect(tunnel: TunnelInfo) {
         if (_state.value !is AppState.Hosts) return
         cancelHostsJob()
-        val session = sessions.create(tunnel) { freshToken().access }
+        swapToConnected(HostRef.Tunnel(tunnel), sessions.create(tunnel) { freshToken().access })
+    }
+
+    /**
+     * Connects to [host], one added by address, from the host list, on the same terms as [connect]. It needs no GitHub sign-in and asks
+     * for no token from GitHub or the Dev Tunnels service; it is made under that host's own permission, which starts as read only.
+     */
+    @Synchronized
+    fun connect(host: DirectHost) {
+        if (_state.value !is AppState.Hosts) return
+        val factory = directSessions ?: return
+        // Only a host on the list can be connected to: what a caller holds may be a host that was removed since.
+        val listed = directHosts.firstOrNull { it.id == host.id } ?: return
+        cancelHostsJob()
+        val vault = directVault
+        swapToConnected(HostRef.Direct(listed), factory.create(listed, { vault?.get(listed.id) }, consentFor(listed)))
+    }
+
+    private fun swapToConnected(host: HostRef, session: HostSession) {
         session.start()
         while (true) {
             val current = _state.value
@@ -266,13 +437,14 @@ class AppController(
                 session.stop()
                 return
             }
-            if (_state.compareAndSet(current, AppState.Connected(tunnel, session))) break
+            if (_state.compareAndSet(current, AppState.Connected(host, session))) break
         }
         // The app may have gone out of sight before this session existed: it starts parked rather than waiting for another trip away.
         parking.ifParked(session::park)
+        lastId = host.id
         scope.launch {
             try {
-                lastHost.set(tunnel.tunnelId)
+                lastHost.set(host.id)
             } catch (_: IOException) {
                 // Remembering the last host is a convenience; failing to save it must not disturb a live connection.
             }
@@ -540,7 +712,7 @@ class AppController(
     private suspend fun reachOnline(): Boolean {
         var current = _state.first { it !is AppState.Restoring && !(it is AppState.Hosts && it.list is HostList.Loading) }
         if (current is AppState.Hosts) {
-            if (!connectToLastHost(current.list)) return false
+            if (!connectToLastHost(current)) return false
             current = _state.value
         }
         val session = (current as? AppState.Connected)?.session ?: return false
@@ -548,16 +720,19 @@ class AppController(
     }
 
     /**
-     * Connects to the last used host from a loaded host list when [autoConnect] allows and that host is online; the one place both the
-     * cold start and [ensureConnected] do it. Does nothing, and says so, for any other list, an offline or unlisted host, or a screen
-     * that has moved on from the host list.
+     * Connects to the last used host from the host list when [autoConnect] allows and that host is a direct one or an online tunnel host;
+     * the one place both the cold start and [ensureConnected] do it. Does nothing, and says so, for an offline or unlisted host, or a
+     * screen that has moved on from the host list.
      *
      * @return true when the app is connected afterwards.
      */
-    private suspend fun connectToLastHost(list: HostList): Boolean {
-        val last = (list as? HostList.Loaded)?.hosts?.firstOrNull { it.isLastUsed && it.tunnel.isOnline } ?: return false
+    private suspend fun connectToLastHost(from: AppState.Hosts): Boolean {
+        // A host added by address is tried whether or not it is known to be up: nothing tells the app that before it connects. A tunnel host must be online.
+        val lastDirect = from.direct.firstOrNull { it.isLastUsed }
+        val lastTunnel = (from.list as? HostList.Loaded)?.hosts?.firstOrNull { it.isLastUsed && it.tunnel.isOnline }
+        if (lastDirect == null && lastTunnel == null) return false
         if (!autoConnect()) return false
-        connect(last.tunnel)
+        if (lastDirect != null) connect(lastDirect.host) else connect(lastTunnel!!.tunnel)
         return _state.value is AppState.Connected
     }
 
@@ -645,7 +820,16 @@ class AppController(
                     showHosts()
                 }
             }
-            VaultLoad.Absent -> _state.value = AppState.SignedOut(SignInStep.Idle, null)
+            VaultLoad.Absent -> {
+                if (directHosts.isEmpty()) {
+                    _state.value = AppState.SignedOut(SignInStep.Idle, null)
+                } else {
+                    // Nobody is signed in, but hosts were added by address: they are what the app opens on, and the last one is connected to by itself like any other.
+                    val hosts = AppState.Hosts(HostList.NotSignedIn, null, direct = directEntries())
+                    _state.value = hosts
+                    connectToLastHost(hosts)
+                }
+            }
             is VaultLoad.Unreadable -> {
                 // The vault has wiped itself, and with it the key to the saved session lists.
                 safeClearCache()
@@ -758,9 +942,10 @@ class AppController(
     private fun showHosts(from: AppState? = null) {
         val signedIn = token
         val next = if (signedIn == null) {
-            AppState.SignedOut(SignInStep.Idle, null)
+            // Not signed in: the way here is a host added by address, which is listed on its own.
+            AppState.Hosts(HostList.NotSignedIn, null, direct = directEntries())
         } else {
-            AppState.Hosts(HostList.Loading, signedIn.expiresAt, renews = signedIn.refresh != null)
+            AppState.Hosts(HostList.Loading, signedIn.expiresAt, renews = signedIn.refresh != null, direct = directEntries())
         }
         if (from == null) _state.value = next else if (!_state.compareAndSet(from, next)) return
         if (signedIn == null) return
@@ -795,9 +980,9 @@ class AppController(
             HostList.Failed("Could not load your hosts (${e.javaClass.simpleName}).")
         }
         // Only update while still on the host list: the user may have connected or signed out while this was loading.
-        _state.update { if (it is AppState.Hosts) it.copy(list = list) else it }
+        _state.update { if (it is AppState.Hosts) it.copy(list = list, direct = directEntries()) else it }
         // Taken by the first list to finish, whatever it holds, so a later refresh or a return to the list never connects on its own.
-        if (autoConnectPending.getAndSet(false) && _state.value is AppState.Hosts) connectToLastHost(list)
+        if (autoConnectPending.getAndSet(false)) (_state.value as? AppState.Hosts)?.let { connectToLastHost(it) }
     }
 
     @Synchronized

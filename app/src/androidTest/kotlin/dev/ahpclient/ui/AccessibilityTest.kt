@@ -20,6 +20,7 @@ import androidx.compose.ui.test.tryPerformAccessibilityChecks
 import androidx.compose.ui.unit.dp
 import android.os.Build
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import dev.ahpclient.app.HostRef
 import dev.ahpclient.app.AppState
 import dev.ahpclient.app.HostEntry
 import dev.ahpclient.app.HostList
@@ -128,7 +129,7 @@ class AccessibilityTest {
     @Composable
     private fun HostScreenFor(list: HostList? = null, connected: TunnelInfo? = null, connection: ConnState? = null, browser: String? = null, renews: Boolean = false) =
         HostScreen(
-            list, connected, connection, onBack = {}, onRefresh = {}, onConnect = {}, onDisconnect = {}, onSignOut = {},
+            list, connected?.let(HostRef::Tunnel), connection, onBack = {}, onRefresh = {}, onConnect = {}, onDisconnect = {}, onSignOut = {},
             browsers = browsers, browser = browser, onBrowser = {}, tokenExpiresAt = now.plusSeconds(3600), renews = renews,
         )
 
@@ -143,7 +144,7 @@ class AccessibilityTest {
         watched: Set<String> = emptySet(),
         inboxCount: Int? = null,
     ) = DrawerContent(
-        connected, connection, list, now, selected = null, showArchived = showArchived, onToggleArchived = {}, query = query, onQueryChange = {},
+        connected?.let(HostRef::Tunnel), connection, list, now, selected = null, showArchived = showArchived, onToggleArchived = {}, query = query, onQueryChange = {},
         listState = rememberLazyListState(), manage = manage, onOpenHost = {}, onOpenSession = {}, onOpenSettings = {}, onSessionCreated = {}, watched = watched, inboxCount = inboxCount,
     )
 

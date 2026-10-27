@@ -42,6 +42,8 @@ fun SignInScreen(
     onOpenGitHub: (String) -> Unit,
     onCopyCode: (String) -> Unit,
     modifier: Modifier = Modifier,
+    /** Skips the sign-in to use only hosts added by address. Null hides the way. */
+    onUseDirect: (() -> Unit)? = null,
 ) {
     ScreenScaffold(title = "AHP Client", modifier = modifier) {
         Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
@@ -54,6 +56,7 @@ fun SignInScreen(
                 when (val step = state.step) {
                     SignInStep.Idle -> {
                         StartSignIn(onSignIn, label = "Sign in with GitHub")
+                        if (onUseDirect != null) UseDirect(onUseDirect)
                         if (state.offerRevoke) RevokeAccess(onOpenGitHub)
                     }
                     SignInStep.RequestingCode -> {
@@ -64,11 +67,22 @@ fun SignInScreen(
                     is SignInStep.Failed -> {
                         ErrorText(step.message, Modifier.testTag("sign_in_error"))
                         StartSignIn(onSignIn, label = "Try again")
+                        if (onUseDirect != null) UseDirect(onUseDirect)
                     }
                 }
             }
         }
     }
+}
+
+/** For a host that is reached by its own address (such as ahpd), which needs no GitHub account. */
+@Composable
+private fun UseDirect(onUseDirect: () -> Unit) {
+    Text(
+        "Or connect to a host by its address, with no GitHub account.",
+        style = MaterialTheme.typography.bodyMedium,
+    )
+    OutlinedButton(onClick = onUseDirect, modifier = Modifier.fillMaxWidth().testTag("use_direct_hosts")) { Text("Connect to a host by address") }
 }
 
 /** Signing out forgets the token on this phone; the grant stays on the GitHub account until it is removed there. */

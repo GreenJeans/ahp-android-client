@@ -14,6 +14,9 @@ interface InteractionSettings {
 
     /** @throws IOException when the choice cannot be saved. */
     suspend fun setEnabled(on: Boolean)
+
+    /** Takes the saved choice away altogether, for a host that was removed. Writing "off" is the fallback for a store that cannot do better. */
+    suspend fun clear() = setEnabled(false)
 }
 
 /** Keeps the choice for this process only. The default when nothing persists it, so the answer is always "off" after a restart. */
@@ -95,6 +98,18 @@ class InteractionConsent(
             true
         } catch (_: IOException) {
             false
+        }
+    }
+
+    /** Off at once, and both saved choices taken away: for the host these belong to being removed. A failure to remove them is not reported; they read as off either way. */
+    suspend fun forget() {
+        _allowed.value = false
+        _managementAllowed.value = false
+        try {
+            managementSettings.clear()
+            settings.clear()
+        } catch (_: IOException) {
+            // Off already took effect above, and an entry for a host that no longer exists is never read.
         }
     }
 

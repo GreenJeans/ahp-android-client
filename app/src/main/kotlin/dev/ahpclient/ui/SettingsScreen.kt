@@ -47,6 +47,8 @@ fun SettingsScreen(
     interactionSupported: Boolean = true,
     onInteractionChange: (Boolean) -> Unit = {},
     managementAllowed: Boolean = false,
+    /** The connected direct host these permissions are for; null when they are for the signed-in account's tunnel hosts. */
+    appliesTo: String? = null,
     onManagementChange: (Boolean) -> Unit = {},
     textScale: Float = TextScale.DEFAULT,
     onTextScale: (Float) -> Unit = {},
@@ -79,6 +81,12 @@ fun SettingsScreen(
                 TilePadding { FinishedAllToggle(finishedAll, monitorEnabled, onFinishedAll) }
             }
             SectionHeader("Permissions")
+            Text(
+                if (appliesTo != null) "These apply to “$appliesTo” only. Each host you add has its own." else "These apply to your VS Code (Remote Tunnel Access) hosts. A host added by address has its own, set while connected to it.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp).testTag("permissions_scope"),
+            )
             TileCard(shape = connectedShape(0, 2)) {
                 TilePadding { InteractionToggle(interactionAllowed, onInteractionChange, supported = interactionSupported) }
             }

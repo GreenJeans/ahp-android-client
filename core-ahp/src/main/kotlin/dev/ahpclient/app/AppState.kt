@@ -1,6 +1,7 @@
 package dev.ahpclient.app
 
 import dev.ahpclient.auth.Secret
+import dev.ahpclient.direct.DirectHost
 import dev.ahpclient.state.ChannelStore
 import dev.ahpclient.state.ChatInteractor
 import dev.ahpclient.state.ChatStore
@@ -26,6 +27,30 @@ fun interface HostSessionFactory {
     fun create(tunnel: TunnelInfo, accessToken: suspend () -> Secret): HostSession
 }
 
+/**
+ * Builds the live connection for a host the person added by address. [token] is asked for on every (re)connect and is null for a host that
+ * takes none; [consent] is this host's own permission, whose tier the connection is made under. Nothing about the GitHub sign-in is involved.
+ */
+fun interface DirectSessionFactory {
+    fun create(host: DirectHost, token: suspend () -> Secret?, consent: InteractionConsent): HostSession
+}
+
+/** A host the app can be connected to: one of the user's Remote Tunnel Access hosts, or one added by its address. [id] is unique across both kinds. */
+sealed interface HostRef {
+    val id: String
+    val name: String
+
+    data class Tunnel(val info: TunnelInfo) : HostRef {
+        override val id: String get() = info.tunnelId
+        override val name: String get() = info.name
+    }
+
+    data class Direct(val host: DirectHost) : HostRef {
+        override val id: String get() = host.id
+        override val name: String get() = host.name
+    }
+}
+
 sealed interface SignInStep {
     data object Idle : SignInStep
 
@@ -39,6 +64,9 @@ sealed interface SignInStep {
 
 data class HostEntry(val tunnel: TunnelInfo, val isLastUsed: Boolean)
 
+/** A host added by address, as the host list shows it. Whether it answers is not known until it is tried. */
+data class DirectEntry(val host: DirectHost, val isLastUsed: Boolean)
+
 sealed interface HostList {
     data object Loading : HostList
 
@@ -48,6 +76,9 @@ sealed interface HostList {
     data object Empty : HostList
 
     data class Failed(val message: String) : HostList
+
+    /** Not signed in to GitHub, so Remote Tunnel Access hosts are not listed. Hosts added by address still are (see [AppState.Hosts.direct]). */
+    data object NotSignedIn : HostList
 }
 
 /** What the app is showing, as one value. Screens are a pure function of this. */
@@ -58,11 +89,22 @@ sealed interface AppState {
     /** [notice] explains why the user is back here, for example an expired sign-in. [offerRevoke] is set only after the user signed out on purpose. */
     data class SignedOut(val step: SignInStep, val notice: String?, val offerRevoke: Boolean = false) : AppState
 
-    /** [tokenExpiresAt] is when the current access token runs out; with [renews] the app trades it for a new one on its own before then. */
-    data class Hosts(val list: HostList, val tokenExpiresAt: Instant?, val renews: Boolean = false) : AppState
+    /**
+     * [list] is the tunnel hosts of the signed-in account; [direct] the hosts added by address, which are listed whether or not anyone is
+     * signed in and whether or not [list] loaded. [tokenExpiresAt] is when the current access token runs out; with [renews] the app trades
+     * it for a new one on its own before then.
+     */
+    data class Hosts(
+        val list: HostList,
+        val tokenExpiresAt: Instant?,
+        val renews: Boolean = false,
+        val direct: List<DirectEntry> = emptyList(),
+    ) : AppState
 
     /** [open] is the session whose detail is on screen; its [OpenSession.store] stays subscribed until the user goes back. */
-    data class Connected(val host: TunnelInfo, val session: HostSession, val open: OpenSession? = null) : AppState
+    data class Connected(val host: HostRef, val session: HostSession, val open: OpenSession? = null) : AppState {
+        constructor(tunnel: TunnelInfo, session: HostSession, open: OpenSession? = null) : this(HostRef.Tunnel(tunnel), session, open)
+    }
 }
 
 /**

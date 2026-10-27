@@ -6,6 +6,7 @@ import android.os.Build
 import android.util.Log
 import androidx.datastore.preferences.preferencesDataStoreFile
 import dev.ahpclient.app.AppController
+import dev.ahpclient.app.DirectSessionFactory
 import dev.ahpclient.app.FinishedAlerts
 import dev.ahpclient.app.HostSessionFactory
 import dev.ahpclient.app.InteractionConsent
@@ -13,6 +14,7 @@ import dev.ahpclient.app.MonitorCoordinator
 import dev.ahpclient.app.OnScreen
 import dev.ahpclient.app.WatchdogDecision
 import dev.ahpclient.auth.GitHubDeviceAuth
+import dev.ahpclient.data.PrefsDirectHostStore
 import dev.ahpclient.data.PrefsFinishedWatch
 import dev.ahpclient.data.PrefsInteractionSettings
 import dev.ahpclient.data.PrefsLastHostStore
@@ -26,8 +28,12 @@ import dev.ahpclient.monitor.NotificationInputNeededSink
 import dev.ahpclient.monitor.NotificationMonitorProblemSink
 import dev.ahpclient.security.AndroidSessionListCache
 import dev.ahpclient.security.AndroidTokenVault
+import dev.ahpclient.security.DataStoreBlobStore
+import dev.ahpclient.security.DirectHostVault
+import dev.ahpclient.security.KeystoreSecureBox
 import dev.ahpclient.security.BiometricApprovalGate
 import dev.ahpclient.state.ConnState
+import dev.ahpclient.state.DirectHostConnector
 import dev.ahpclient.state.HostSession
 import dev.ahpclient.state.InteractResult
 import dev.ahpclient.state.TunnelHostConnector
@@ -62,7 +68,9 @@ class AppContainer(context: Context) {
     private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val started = AtomicBoolean(false)
 
-    private val http = OkHttpClient.Builder().pingInterval(30, TimeUnit.SECONDS).build()
+    // No redirect from https to http, or back: cleartext is allowed in the manifest for hosts added by address (see DirectHostConnector and
+    // HostAddress, which decide which), so a redirect must not be the way a GitHub or Dev Tunnels request ends up unencrypted.
+    private val http = OkHttpClient.Builder().pingInterval(30, TimeUnit.SECONDS).followSslRedirects(false).build()
     private val versionName: String = appContext.packageManager.getPackageInfo(appContext.packageName, 0).versionName ?: "0"
     private val prefs by lazy { PrefsLastHostStore.dataStoreFor(appContext.preferencesDataStoreFile("ahp_prefs"), ioScope) }
 
@@ -98,8 +106,35 @@ class AppContainer(context: Context) {
             // Leaving on purpose ends monitoring, so the periodic check has nothing left to remind the person of.
             afterSignOut = { monitorSettings.setEnabled(false) },
             sessionCache = sessionList,
+            directStore = PrefsDirectHostStore(prefs),
+            directVault = directVault,
+            directSessions = DirectSessionFactory { host, token, consent ->
+                HostSession(
+                    DirectHostConnector(directOpener, host, token, policy = consent::policy), appScope, clientInfo,
+                    network = network.state, cache = sessionList, cacheKey = host.id,
+                ).also { if (debuggable) logConnection(it) }
+            },
+            // Each direct host is allowed (or not) to act on its own; a new one starts with neither, whatever is allowed for the tunnel hosts.
+            directConsent = { host ->
+                InteractionConsent(
+                    PrefsInteractionSettings(prefs, PrefsInteractionSettings.interactionKeyFor(host.id)),
+                    supported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
+                    managementSettings = PrefsInteractionSettings(prefs, PrefsInteractionSettings.managementKeyFor(host.id)),
+                )
+            },
         )
     }
+
+    /**
+     * The tokens of the hosts added by address. Their own Keystore key and file, because signing out of GitHub destroys the key of the
+     * GitHub vault and these must outlive that.
+     */
+    private val directVault by lazy {
+        val file = appContext.preferencesDataStoreFile("ahp_direct_tokens")
+        DirectHostVault(KeystoreSecureBox("ahp-android-client.direct-hosts-key.v1"), DataStoreBlobStore(DataStoreBlobStore.dataStoreFor(file, ioScope)))
+    }
+
+    private val directOpener by lazy { withWireLog(OkHttpSocketOpener(http)) }
 
     /** The session list kept encrypted between runs, so a cold start has something to show. One instance: every session writes it and sign-out wipes it. */
     private val sessionList by lazy { AndroidSessionListCache.create(appContext) }

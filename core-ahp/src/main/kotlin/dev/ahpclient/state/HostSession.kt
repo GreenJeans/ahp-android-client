@@ -624,7 +624,7 @@ class HostSession(
 
     private fun isTerminal(e: Throwable): Boolean = when (e) {
         is DevTunnelsException.AuthExpired, is DevTunnelsException.Forbidden, is DevTunnelsException.TunnelNotFound,
-        is AhpException.UnsupportedProtocolVersion,
+        is AhpException.UnsupportedProtocolVersion, is DirectHostException,
         -> true
         is UpgradeRejectedException -> e.httpCode in TERMINAL_UPGRADE_CODES
         else -> false

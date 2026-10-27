@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -21,6 +22,12 @@
         </intent>
     </queries>
 
+    <!--
+        Cleartext is allowed because a network security configuration cannot name an address range, and a host added by address
+        (ahpd on a laptop) is reached by a private IP. Which addresses may be used unencrypted is decided in code instead: HostAddress
+        accepts ws:// only for this phone and private networks, DirectHostConnector checks it again on every connection, and every
+        other URL the app opens is https (the shared HTTP client does not follow a redirect to http).
+    -->
     <application
         android:name=".AhpApp"
         android:allowBackup="false"
@@ -29,6 +36,8 @@
         android:label="AHP Client"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
+        android:usesCleartextTraffic="true"
+        tools:ignore="InsecureBaseConfiguration"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity
             android:name=".MainActivity"
