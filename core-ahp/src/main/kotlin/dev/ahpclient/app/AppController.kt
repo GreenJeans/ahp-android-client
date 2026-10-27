@@ -178,7 +178,7 @@ class AppController(
             override suspend fun createSession(uri: String, provider: String?, workingDirectories: List<String>?, config: Map<String, JsonElement>?) =
                 liveSession().createSession(uri, provider, workingDirectories, config)
 
-            override suspend fun resolveSessionConfig(provider: String, workingDirectory: String, config: Map<String, JsonElement>?) =
+            override suspend fun resolveSessionConfig(provider: String, workingDirectory: String?, config: Map<String, JsonElement>?) =
                 liveSession().resolveSessionConfig(provider, workingDirectory, config)
 
             override suspend fun createChat(sessionUri: String, chatUri: String) = liveSession().createChat(sessionUri, chatUri)

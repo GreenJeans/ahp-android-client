@@ -47,10 +47,10 @@ class SessionManagerTest {
     private class Commands : ManagementCommands {
         val calls = mutableListOf<String>()
         val configs = mutableListOf<Map<String, JsonElement>?>()
-        val resolves = mutableListOf<Triple<String, String, Map<String, JsonElement>?>>()
+        val resolves = mutableListOf<Triple<String, String?, Map<String, JsonElement>?>>()
         var failure: Throwable? = null
         var resolveFailure: Throwable? = null
-        var resolution: (provider: String, directory: String, config: Map<String, JsonElement>?) -> ResolveSessionConfigResult = { _, _, _ -> empty }
+        var resolution: (provider: String, directory: String?, config: Map<String, JsonElement>?) -> ResolveSessionConfigResult = { _, _, _ -> empty }
 
         private fun record(call: String) {
             calls += call
@@ -62,7 +62,7 @@ class SessionManagerTest {
             record("createSession $uri $provider $workingDirectories")
         }
 
-        override suspend fun resolveSessionConfig(provider: String, workingDirectory: String, config: Map<String, JsonElement>?): ResolveSessionConfigResult {
+        override suspend fun resolveSessionConfig(provider: String, workingDirectory: String?, config: Map<String, JsonElement>?): ResolveSessionConfigResult {
             resolves += Triple(provider, workingDirectory, config)
             resolveFailure?.let { throw it }
             return resolution(provider, workingDirectory, config)
@@ -233,6 +233,51 @@ class SessionManagerTest {
     }
 
     @Test
+    fun `a session with no folder names none to the host, and the device check says the host chooses`() = runTest {
+        val rig = Rig()
+
+        val result = rig.manager.newSession("claude", null)
+
+        assertEquals(ManageResult.Done("ahp-session:/id1"), result)
+        assertEquals(listOf(ApprovalRequest("Claude", SettingsSummary.NO_FOLDER, title = "Start a new session?")), rig.asked)
+        assertEquals(listOf("createSession ahp-session:/id1 claude null"), rig.commands.calls)
+    }
+
+    @Test
+    fun `no folder works on a host with no sessions yet, which is the case that offers no folder at all`() = runTest {
+        val rig = Rig().apply { sessions = emptyList() }
+
+        assertEquals(emptyList(), rig.manager.offeredFolders())
+        assertIs<ManageResult.Done>(rig.manager.newSession("claude", null))
+        assertEquals(listOf("createSession ahp-session:/id1 claude null"), rig.commands.calls)
+    }
+
+    @Test
+    fun `no folder still needs an agent the host offered, the manage tier and the device check`() = runTest {
+        val rig = Rig()
+
+        assertEquals(ManageResult.InvalidChoice, rig.manager.newSession("rogue", null))
+        rig.allowed = false
+        assertEquals(ManageResult.NotAllowed, rig.manager.newSession("claude", null))
+        rig.allowed = true
+        rig.answer = false
+        assertEquals(ManageResult.NotConfirmed, rig.manager.newSession("claude", null))
+
+        assertTrue(rig.commands.calls.isEmpty())
+    }
+
+    @Test
+    fun `the host is asked for a new session's settings with no folder named when none is chosen`() = runTest {
+        val rig = Rig().apply { hostOffers("$thinking") }
+
+        assertIs<ConfigOffer.Form>(rig.manager.sessionSettings("claude", null))
+        rig.manager.newSession("claude", null, thoroughly)
+
+        assertEquals(listOf(null, null), rig.commands.resolves.map { it.second })
+        assertEquals(listOf("createSession ahp-session:/id1 claude null"), rig.commands.calls)
+    }
+
+    @Test
     fun `a new session that fails the device check sends nothing`() = runTest {
         val rig = Rig().apply { answer = false }
 
@@ -312,7 +357,7 @@ class SessionManagerTest {
 
         val offer = assertIs<ConfigOffer.Form>(rig.manager.sessionSettings("claude", "file:///work/b"))
 
-        assertEquals(listOf(Triple<String, String, Map<String, JsonElement>?>("claude", "file:///work/b", null)), rig.commands.resolves)
+        assertEquals(listOf(Triple<String, String?, Map<String, JsonElement>?>("claude", "file:///work/b", null)), rig.commands.resolves)
         assertEquals(listOf("thinking", "autoApprove"), offer.form.fields.map { it.id })
         assertEquals(ConfigPick.Text("low"), offer.form.fields[0].value)
         assertEquals(ConfigPick.Flag(false), offer.form.fields[1].value)
@@ -449,6 +494,8 @@ class SessionManagerTest {
     @Test
     fun `the device check line lists settings first and counts any that do not fit`() {
         assertEquals("file:///work/b", SettingsSummary.of("file:///work/b", emptyList()))
+        assertEquals(SettingsSummary.NO_FOLDER, SettingsSummary.of(null, emptyList()))
+        assertEquals("Thinking: Thorough\n${SettingsSummary.NO_FOLDER}", SettingsSummary.of(null, listOf("Thinking: Thorough")))
         assertEquals("Thinking: Thorough\nMode: Plan\nfile:///work/b", SettingsSummary.of("file:///work/b", listOf("Thinking: Thorough", "Mode: Plan")))
 
         val many = (1..9).map { "Setting number $it: a fairly long value that is cut" }

@@ -295,6 +295,27 @@ class AhpConnectionTest {
     }
 
     @Test
+    fun `a session with no folder puts no folder on the wire, for the settings question or for the creation`() = runTest {
+        val socket = FakeSocket { method, id, _ ->
+            when (method) {
+                "resolveSessionConfig" -> result(id, """{"schema":{"type":"object","properties":{}},"values":{}}""")
+                "createSession" -> result(id, "null")
+                else -> null
+            }
+        }
+        val connection = connection(socket, policy = CapabilityPolicy.MANAGE)
+
+        connection.resolveSessionConfig("claude", null, null)
+        connection.createSession("ahp-session:/new", "claude", null)
+
+        for (frame in socket.sent) {
+            val params = frame["params"]!!.jsonObject
+            assertTrue(params["workingDirectory"].let { it == null || it is kotlinx.serialization.json.JsonNull }, "$params")
+            assertTrue(params["workingDirectories"].let { it == null || it is kotlinx.serialization.json.JsonNull }, "$params")
+        }
+    }
+
+    @Test
     fun `READ and INTERACT refuse to ask for a new session's settings and send nothing`() = runTest {
         for (policy in listOf(CapabilityPolicy.READ, CapabilityPolicy.INTERACT)) {
             val socket = FakeSocket()

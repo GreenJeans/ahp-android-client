@@ -76,11 +76,12 @@ class ManageActionsUi(
     val setRead: suspend (sessionUri: String, read: Boolean) -> ManageResult,
     val setArchived: suspend (sessionUri: String, archived: Boolean) -> ManageResult,
     val newChat: suspend (sessionUri: String) -> ManageResult,
-    val newSession: suspend (provider: String, folder: String, picks: Map<String, ConfigPick>) -> ManageResult,
+    /** A null folder starts a session with no working folder named; the host chooses where the agent works. */
+    val newSession: suspend (provider: String, folder: String?, picks: Map<String, ConfigPick>) -> ManageResult,
     val disposeSession: suspend (sessionUri: String) -> ManageResult,
     val disposeChat: suspend (sessionUri: String, chatUri: String) -> ManageResult,
     /** Asks the host which settings it offers for a new session of this agent in this folder, given the choices so far. */
-    val sessionSettings: suspend (provider: String, folder: String, picks: Map<String, ConfigPick>) -> ConfigOffer = { _, _, _ -> ConfigOffer.NoSettings },
+    val sessionSettings: suspend (provider: String, folder: String?, picks: Map<String, ConfigPick>) -> ConfigOffer = { _, _, _ -> ConfigOffer.NoSettings },
 )
 
 @Composable
@@ -189,6 +190,8 @@ private val PicksSaver: Saver<Map<String, ConfigPick>, Any> = listSaver<Map<Stri
 private fun NewSessionDialog(manage: ManageActionsUi, onDismiss: () -> Unit, onCreated: (String) -> Unit) {
     var provider by rememberSaveable { mutableStateOf(manage.agents.singleOrNull()?.provider) }
     var folder by rememberSaveable { mutableStateOf(manage.folders.singleOrNull()) }
+    // "No folder" is a choice of its own, since a null folder alone would read as nothing chosen yet. With no folders to pick it is the one choice, so it starts chosen.
+    var noFolder by rememberSaveable { mutableStateOf(manage.folders.isEmpty()) }
     var picks by rememberSaveable(stateSaver = PicksSaver) { mutableStateOf<Map<String, ConfigPick>>(emptyMap()) }
     var form by remember { mutableStateOf<SessionConfigForm?>(null) }
     var settingsNote by remember { mutableStateOf<String?>(null) }
@@ -200,10 +203,10 @@ private fun NewSessionDialog(manage: ManageActionsUi, onDismiss: () -> Unit, onC
     val scope = rememberCoroutineScope()
 
     // Asked again whenever the agent, folder or a choice changes: the host's list of settings can depend on all three.
-    LaunchedEffect(provider, folder, picks) {
+    LaunchedEffect(provider, folder, noFolder, picks) {
         val chosenAgent = provider
-        val chosenFolder = folder
-        if (chosenAgent == null || chosenFolder == null) {
+        val chosenFolder = if (noFolder) null else folder
+        if (chosenAgent == null || (!noFolder && chosenFolder == null)) {
             form = null
             settingsNote = null
             return@LaunchedEffect
@@ -229,7 +232,7 @@ private fun NewSessionDialog(manage: ManageActionsUi, onDismiss: () -> Unit, onC
 
     val missing = form?.missingRequired(picks).orEmpty()
     // With the host's list unknown and nothing chosen, starting with the host's own settings is still fine.
-    val canStart = provider != null && folder != null && !busy && !loading && missing.isEmpty() && (settingsNote == null || picks.isEmpty())
+    val canStart = provider != null && (noFolder || folder != null) && !busy && !loading && missing.isEmpty() && (settingsNote == null || picks.isEmpty())
     AlertDialog(
         onDismissRequest = { if (!busy) onDismiss() },
         title = { Text("Start a new session") },
@@ -249,11 +252,21 @@ private fun NewSessionDialog(manage: ManageActionsUi, onDismiss: () -> Unit, onC
                 }
                 Text("Folder", style = MaterialTheme.typography.titleSmall, modifier = Modifier.semantics { heading() })
                 if (manage.folders.isEmpty()) {
-                    Text("No folders yet. Start a session in VS Code first.", modifier = Modifier.testTag("no_folders"))
+                    Text("The host has no folders to pick yet.", modifier = Modifier.testTag("no_folders"))
+                }
+                ChoiceRow("No folder (the host chooses)", noFolder, "folder_none") {
+                    if (!noFolder) {
+                        noFolder = true
+                        folder = null
+                        picks = emptyMap()
+                        form = null
+                        settingsNote = null
+                    }
                 }
                 shownFolders.forEach { path ->
-                    ChoiceRow(displayPath(path).take(MAX_SHOWN), folder == path, "folder_$path") {
-                        if (folder != path) {
+                    ChoiceRow(displayPath(path).take(MAX_SHOWN), !noFolder && folder == path, "folder_$path") {
+                        if (noFolder || folder != path) {
+                            noFolder = false
                             folder = path
                             picks = emptyMap()
                             form = null
@@ -283,8 +296,8 @@ private fun NewSessionDialog(manage: ManageActionsUi, onDismiss: () -> Unit, onC
             TextButton(
                 onClick = {
                     val chosenAgent = provider
-                    val chosenFolder = folder
-                    if (chosenAgent != null && chosenFolder != null) {
+                    val chosenFolder = if (noFolder) null else folder
+                    if (chosenAgent != null && (noFolder || chosenFolder != null)) {
                         scope.launch {
                             busy = true
                             val result = manage.newSession(chosenAgent, chosenFolder, picks)

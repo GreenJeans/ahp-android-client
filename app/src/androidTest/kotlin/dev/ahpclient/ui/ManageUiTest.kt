@@ -68,10 +68,10 @@ class ManageUiTest {
         val read = mutableListOf<Pair<String, Boolean>>()
         val archived = mutableListOf<Pair<String, Boolean>>()
         val chats = mutableListOf<String>()
-        val sessions = mutableListOf<Pair<String, String>>()
+        val sessions = mutableListOf<Pair<String, String?>>()
         val sessionPicks = mutableListOf<Map<String, ConfigPick>>()
-        val asked = mutableListOf<Triple<String, String, Map<String, ConfigPick>>>()
-        var offer: suspend (provider: String, folder: String, picks: Map<String, ConfigPick>) -> ConfigOffer = { _, _, _ -> ConfigOffer.NoSettings }
+        val asked = mutableListOf<Triple<String, String?, Map<String, ConfigPick>>>()
+        var offer: suspend (provider: String, folder: String?, picks: Map<String, ConfigPick>) -> ConfigOffer = { _, _, _ -> ConfigOffer.NoSettings }
         val disposedSessions = mutableListOf<String>()
         val disposedChats = mutableListOf<Pair<String, String>>()
         var result: ManageResult = ManageResult.Done()
@@ -201,8 +201,37 @@ class ManageUiTest {
         showNewSession(calls, actions(calls, agents = emptyList(), folders = emptyList()))
 
         rule.onNodeWithTag("no_agents").assertIsDisplayed()
-        rule.onNodeWithTag("no_folders").assertTextContains("Start a session in VS Code first", substring = true)
+        rule.onNodeWithTag("no_folders").assertTextContains("no folders to pick", substring = true)
         rule.onNodeWithTag("new_session_start").assertIsNotEnabled()
+    }
+
+    @Test
+    fun aHostWithNoFoldersStillStartsASessionWithNoFolder() {
+        val calls = Calls().apply { created = "ahp-session:/new" }
+        showNewSession(calls, actions(calls, agents = listOf(AgentOption("claude", "Claude")), folders = emptyList()))
+
+        rule.onNodeWithTag("no_folders").assertIsDisplayed()
+        rule.onNodeWithTag("folder_none").assertIsSelected()
+        rule.onNodeWithTag("new_session_start").assertIsEnabled().performClick()
+
+        rule.waitUntil(5_000) { calls.sessions.isNotEmpty() }
+        assertEquals(listOf<Pair<String, String?>>("claude" to null), calls.sessions)
+    }
+
+    @Test
+    fun noFolderCanBePickedBesideFoldersAndAFolderPickedAfterIt() {
+        val calls = Calls()
+        showNewSession(calls)
+
+        rule.onNodeWithTag("agent_claude").performClick()
+        rule.onNodeWithTag("folder_none").performClick().assertIsSelected()
+        rule.onNodeWithTag("new_session_start").assertIsEnabled()
+        rule.onNodeWithTag("folder_file:///work/a").performClick().assertIsSelected()
+        rule.onNodeWithTag("folder_none").assertIsNotSelected()
+        rule.onNodeWithTag("new_session_start").assertIsEnabled().performClick()
+
+        rule.waitUntil(5_000) { calls.sessions.isNotEmpty() }
+        assertEquals(listOf<Pair<String, String?>>("claude" to "file:///work/a"), calls.sessions)
     }
 
     @Test

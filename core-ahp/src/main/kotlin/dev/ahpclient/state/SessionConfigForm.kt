@@ -134,13 +134,18 @@ object SettingsSummary {
     const val MAX_CHARS = 190
     private const val MAX_LINE = 38
 
-    fun of(folder: String, chosen: List<String>): String {
-        if (chosen.isEmpty()) return folder
+    /** Said at the device check when no folder was named, so the person knows the host will pick where the agent works. */
+    const val NO_FOLDER = "No folder: the host chooses"
+
+    /** [folder] null names none; the line then says the host chooses. */
+    fun of(folder: String?, chosen: List<String>): String {
+        val place = folder ?: NO_FOLDER
+        if (chosen.isEmpty()) return place
         val lines = chosen.map { it.take(MAX_LINE) }
         fun settings(shown: Int): String =
             (lines.take(shown) + if (shown < lines.size) listOf("+${lines.size - shown} more settings") else emptyList()).joinToString("\n")
         var shown = lines.size
         while (shown > 0 && settings(shown).length > MAX_CHARS) shown--
-        return settings(shown) + "\n" + folder
+        return settings(shown) + "\n" + place
     }
 }

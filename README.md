@@ -158,7 +158,7 @@ is saved before it counts; turning it on or off reconnects under the new tier. I
 `session/isArchivedChanged` and `changeset/filesReviewChanged` (mark read and mark a file viewed need no check; archiving asks first, because this host may remove the session's working copy with it, but needs no device check) and four commands: `createChat` (only in a session
 the host reports as ready, no check), and `createSession`, `disposeSession` and `disposeChat`, which **do** go through the same
 device check, looked up again after the prompt. Removing asks first and offers archiving as the gentler alternative. A new session
-can only use an agent the host lists and a folder one of the host's own sessions already uses (most recent first, eight shown and the rest one tap away, never a working copy of a project: its project folder is offered instead), so nothing the host did not offer is
+can only use an agent the host lists and either no folder (nothing is sent for it and the host chooses where the agent works, which the device check says; it is the only choice on a host with no sessions yet) or a folder one of the host's own sessions already uses (most recent first, eight shown and the rest one tap away, never a working copy of a project: its project folder is offered instead), so nothing the host did not offer is
 sent. None of the controls exist on a connection that is not on the `MANAGE` tier. A session's main chat (and a lone chat) has no "Remove this chat…" menu item, because the host refuses it, but only after it has shut the chat down. The three switches (monitoring, acting,
 managing) are on a Settings screen, behind the gear on the session list.
 

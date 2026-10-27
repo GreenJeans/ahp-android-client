@@ -473,7 +473,7 @@ class HostSession(
     override suspend fun createSession(uri: String, provider: String?, workingDirectories: List<String>?, config: Map<String, JsonElement>?) =
         live().createSession(uri, provider, workingDirectories, config)
 
-    override suspend fun resolveSessionConfig(provider: String, workingDirectory: String, config: Map<String, JsonElement>?): ResolveSessionConfigResult =
+    override suspend fun resolveSessionConfig(provider: String, workingDirectory: String?, config: Map<String, JsonElement>?): ResolveSessionConfigResult =
         live().resolveSessionConfig(provider, workingDirectory, config)
 
     override suspend fun createChat(sessionUri: String, chatUri: String) = live().createChat(sessionUri, chatUri)

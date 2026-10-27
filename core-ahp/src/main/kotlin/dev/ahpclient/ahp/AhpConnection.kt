@@ -223,11 +223,11 @@ class AhpConnection(
     }
 
     /**
-     * Asks the host which settings it would offer for a new session of [provider] in [workingDirectory], given the values
-     * already chosen in [config]. The answer can change as values are chosen, so the caller asks again after each choice.
-     * Changes nothing on the host.
+     * Asks the host which settings it would offer for a new session of [provider] in [workingDirectory] (null: none named, the
+     * host's own choice), given the values already chosen in [config]. The answer can change as values are chosen, so the
+     * caller asks again after each choice. Changes nothing on the host.
      */
-    suspend fun resolveSessionConfig(provider: String, workingDirectory: String, config: Map<String, JsonElement>?): ResolveSessionConfigResult =
+    suspend fun resolveSessionConfig(provider: String, workingDirectory: String?, config: Map<String, JsonElement>?): ResolveSessionConfigResult =
         request(
             "resolveSessionConfig",
             ResolveSessionConfigParams.serializer(),

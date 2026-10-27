@@ -17,8 +17,8 @@ interface ManagementCommands {
     /** [config] is what the host itself resolved for this agent and folder, with the person's choices in it; null leaves every setting to the host. */
     suspend fun createSession(uri: String, provider: String?, workingDirectories: List<String>?, config: Map<String, JsonElement>? = null)
 
-    /** Asks which settings the host would offer for a new session of [provider] in [workingDirectory], given the values already chosen. */
-    suspend fun resolveSessionConfig(provider: String, workingDirectory: String, config: Map<String, JsonElement>?): ResolveSessionConfigResult
+    /** Asks which settings the host would offer for a new session of [provider] in [workingDirectory] (null: no folder named, the host's own choice), given the values already chosen. */
+    suspend fun resolveSessionConfig(provider: String, workingDirectory: String?, config: Map<String, JsonElement>?): ResolveSessionConfigResult
 
     suspend fun createChat(sessionUri: String, chatUri: String)
 
@@ -99,11 +99,12 @@ class SessionManager(
 
     /**
      * Asks the host which settings it offers for a new session of [provider] in [folder], given the [picks] already made. Asked
-     * again after each pick, because the answer can change. Only an agent and folder the host offered are ever asked about.
+     * again after each pick, because the answer can change. Only an agent and folder the host offered are ever asked about; a
+     * null [folder] names none, which the protocol allows (a session with no working folder), and the host picks its own.
      */
-    suspend fun sessionSettings(provider: String, folder: String, picks: Map<String, ConfigPick> = emptyMap()): ConfigOffer {
+    suspend fun sessionSettings(provider: String, folder: String?, picks: Map<String, ConfigPick> = emptyMap()): ConfigOffer {
         if (!allowed()) return ConfigOffer.Unavailable(ManageMessages.describe(ManageResult.NotAllowed).orEmpty())
-        if (agents().none { it.provider == provider } || folder !in offeredFolders()) {
+        if (agents().none { it.provider == provider } || !folderOffered(folder)) {
             return ConfigOffer.Unavailable(ManageMessages.describe(ManageResult.InvalidChoice).orEmpty())
         }
         return when (val resolved = resolve(provider, folder, picks)) {
@@ -117,11 +118,13 @@ class SessionManager(
      * Starts a session with [provider] in [folder], after the device check. Both must be ones the host offered. With [picks] (the
      * person's choices of settings), the host is asked again first, so every pick is checked against what it offers now and took;
      * the device check then names the settings, so what is confirmed is what is sent. With none, the host keeps all its own settings.
+     * A null [folder] starts a session with no working folder named: nothing is sent for it and the host chooses where the agent
+     * works, which the device check says in words.
      */
-    suspend fun newSession(provider: String, folder: String, picks: Map<String, ConfigPick> = emptyMap()): ManageResult {
+    suspend fun newSession(provider: String, folder: String?, picks: Map<String, ConfigPick> = emptyMap()): ManageResult {
         if (!allowed()) return ManageResult.NotAllowed
         val agent = agents().firstOrNull { it.provider == provider } ?: return ManageResult.InvalidChoice
-        if (folder !in offeredFolders()) return ManageResult.InvalidChoice
+        if (!folderOffered(folder)) return ManageResult.InvalidChoice
         var config: Map<String, JsonElement>? = null
         var chosen: List<String> = emptyList()
         if (picks.isNotEmpty()) {
@@ -137,8 +140,11 @@ class SessionManager(
         if (!confirmed(request)) return ManageResult.NotConfirmed
         if (!allowed()) return ManageResult.NotAllowed
         val uri = "$SESSION_SCHEME${newId()}"
-        return command { commands.createSession(uri, provider, listOf(folder), config) }.let { if (it is ManageResult.Done) ManageResult.Done(uri) else it }
+        return command { commands.createSession(uri, provider, folder?.let(::listOf), config) }.let { if (it is ManageResult.Done) ManageResult.Done(uri) else it }
     }
+
+    /** No folder is always a valid choice, because nothing is sent for it; a named one must be one the host's own sessions use. */
+    private fun folderOffered(folder: String?): Boolean = folder == null || folder in offeredFolders()
 
     private sealed interface Resolved {
         data class Form(val form: SessionConfigForm) : Resolved
@@ -146,7 +152,7 @@ class SessionManager(
         data class Failed(val result: ManageResult) : Resolved
     }
 
-    private suspend fun resolve(provider: String, folder: String, picks: Map<String, ConfigPick>): Resolved =
+    private suspend fun resolve(provider: String, folder: String?, picks: Map<String, ConfigPick>): Resolved =
         try {
             val values = picks.takeIf { it.isNotEmpty() }?.mapValues { it.value.toJson() }
             Resolved.Form(SessionConfigForm.from(commands.resolveSessionConfig(provider, folder, values)))
