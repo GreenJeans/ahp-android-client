@@ -11,6 +11,7 @@ import dev.ahpclient.app.HostSessionFactory
 import dev.ahpclient.app.InteractionConsent
 import dev.ahpclient.app.MonitorCoordinator
 import dev.ahpclient.app.OnScreen
+import dev.ahpclient.app.WatchdogDecision
 import dev.ahpclient.auth.GitHubDeviceAuth
 import dev.ahpclient.data.PrefsFinishedWatch
 import dev.ahpclient.data.PrefsInteractionSettings
@@ -19,8 +20,11 @@ import dev.ahpclient.data.UiSettings
 import dev.ahpclient.data.PrefsMonitorSettings
 import dev.ahpclient.monitor.AndroidMonitorService
 import dev.ahpclient.monitor.AndroidNetworkMonitor
+import dev.ahpclient.monitor.MonitorWatchdog
 import dev.ahpclient.monitor.NotificationFinishedSink
 import dev.ahpclient.monitor.NotificationInputNeededSink
+import dev.ahpclient.monitor.NotificationMonitorProblemSink
+import dev.ahpclient.security.AndroidSessionListCache
 import dev.ahpclient.security.AndroidTokenVault
 import dev.ahpclient.security.BiometricApprovalGate
 import dev.ahpclient.state.ConnState
@@ -41,6 +45,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.transformWhile
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -77,16 +83,31 @@ class AppContainer(context: Context) {
             devTunnels = devTunnels,
             lastHost = PrefsLastHostStore(prefs),
             sessions = HostSessionFactory { tunnel, accessToken ->
-                HostSession(TunnelHostConnector(devTunnels, gateway, tunnel, accessToken, policy = interaction::policy), appScope, clientInfo, network = network.state)
-                    .also { if (debuggable) logConnection(it) }
+                HostSession(
+                    TunnelHostConnector(devTunnels, gateway, tunnel, accessToken, policy = interaction::policy), appScope, clientInfo,
+                    network = network.state, cache = sessionList, cacheKey = tunnel.tunnelId,
+                ).also { if (debuggable) logConnection(it) }
             },
             scope = appScope,
             interaction = interaction,
             approvalGate = approvalGate,
             // Debug builds only: says that a sign-in was renewed or refused, never anything of the token.
             note = { if (debuggable) Log.i(AUTH_TAG, it) },
+            // A restarted process connects to the last host by itself only while the user has monitoring turned on.
+            autoConnect = { monitorSettings.enabled.first() },
+            // Leaving on purpose ends monitoring, so the periodic check has nothing left to remind the person of.
+            afterSignOut = { monitorSettings.setEnabled(false) },
+            sessionCache = sessionList,
         )
     }
+
+    /** The session list kept encrypted between runs, so a cold start has something to show. One instance: every session writes it and sign-out wipes it. */
+    private val sessionList by lazy { AndroidSessionListCache.create(appContext) }
+
+    private val monitorSettings by lazy { PrefsMonitorSettings(prefs) }
+
+    /** The one "monitoring stopped" or "could not start" notification, shared by the coordinator and the periodic check. */
+    private val monitorProblems by lazy { NotificationMonitorProblemSink(appContext) }
 
     /** Off until the user turns it on, and off again at sign-out. Decides the tier of every new connection. */
     private val interaction by lazy {
@@ -107,13 +128,14 @@ class AppContainer(context: Context) {
     val monitor: MonitorCoordinator by lazy {
         MonitorCoordinator(
             state = controller.state,
-            settings = PrefsMonitorSettings(prefs),
+            settings = monitorSettings,
             service = monitorService,
             // Buttons on a notification are offered only while the user has let the app act for them.
             sink = NotificationInputNeededSink(appContext, canDecide = { controller.interactionAllowed.value }),
             scope = appScope,
             // The session on screen is never alerted about, but only while the app is in front: pressing Home with it open is not looking.
             finished = FinishedAlerts(PrefsFinishedWatch(prefs), NotificationFinishedSink(appContext), viewing = { OnScreen.session(inForeground, controller.state.value) }),
+            problems = monitorProblems,
         )
     }
 
@@ -131,12 +153,14 @@ class AppContainer(context: Context) {
 
     /**
      * Decides one waiting tool call for a notification button, off the main thread, and reports back on it. The decision
-     * itself is [AppController.decideToolCall]: nothing here adds a way around its checks.
+     * itself is [AppController.decideToolCall]: nothing here adds a way around its checks. A process started just for the button has
+     * not restored the sign-in, so that is begun first; the decision then waits for a connection.
      */
     fun decideFromNotification(chatUri: String, toolCallId: String, approve: Boolean, optionId: String?, done: (InteractResult) -> Unit) {
+        start()
         appScope.launch {
             val result = try {
-                controller.decideToolCall(chatUri, toolCallId, approve, optionId)
+                controller.decideToolCall(chatUri, toolCallId, approve, optionId, background = true)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -147,9 +171,16 @@ class AppContainer(context: Context) {
     }
 
     /** Starts the service again if monitoring is on, which posts its notification afresh. Safe to repeat. */
-    fun refreshMonitorNotification() {
-        if (monitor.status.value != null) monitorService.start()
-    }
+    fun refreshMonitorNotification() = monitor.refreshService()
+
+    /** The person has opened the app, which is what the warning asked for; it is posted again by the next failed start or check. */
+    fun clearMonitorWarning() = monitorProblems.clear()
+
+    /**
+     * For the periodic check: monitoring is on, yet this process has no live session and the app is not in front. In a process nothing
+     * has started yet that is the case.
+     */
+    suspend fun monitoringStopped(): Boolean = WatchdogDecision.shouldWarn(monitorSettings.enabled.first(), controller.state.value, appInFront = inForeground)
 
     fun setMonitoring(on: Boolean) {
         appScope.launch { monitor.setEnabled(on) }
@@ -185,6 +216,18 @@ class AppContainer(context: Context) {
         if (started.compareAndSet(false, true)) {
             controller.start()
             monitor.start()
+            // Scheduled while monitoring is on, found on at start or turned on later, and taken away when it is turned off, together with
+            // any warning it or the coordinator left showing: with monitoring off there is nothing to resume.
+            appScope.launch {
+                monitorSettings.enabled.distinctUntilChanged().collect { on ->
+                    if (on) {
+                        MonitorWatchdog.schedule(appContext)
+                    } else {
+                        MonitorWatchdog.cancel(appContext)
+                        monitorProblems.clear()
+                    }
+                }
+            }
         }
     }
 

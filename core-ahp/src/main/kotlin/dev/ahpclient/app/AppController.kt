@@ -6,6 +6,7 @@ import dev.ahpclient.auth.GitHubDeviceAuth
 import dev.ahpclient.auth.GitHubToken
 import dev.ahpclient.auth.RefreshResult
 import dev.ahpclient.auth.Secret
+import dev.ahpclient.security.SessionListCache
 import dev.ahpclient.security.TokenVault
 import dev.ahpclient.security.VaultCryptoException
 import dev.ahpclient.security.VaultLoad
@@ -38,6 +39,7 @@ import dev.ahpclient.tunnel.TunnelInfo
 import java.io.IOException
 import java.time.Duration
 import java.time.Instant
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -64,6 +66,8 @@ import kotlinx.serialization.json.JsonElement
  *   sign-in screen with a notice, from any point, including mid-session.
  * - The token lives in memory only while signed in, and in the [TokenVault] at rest. It never appears in [state].
  * - Failures are shown as messages here, never thrown to the caller, because the callers are UI event handlers.
+ * - A saved sign-in restored at process start connects to the last host by itself, once, if [autoConnect] allows and that host is
+ *   online. Going back to the host list, refreshing it or signing in afresh never does.
  */
 class AppController(
     private val auth: GitHubDeviceAuth,
@@ -82,6 +86,21 @@ class AppController(
     private val note: (String) -> Unit = {},
     /** How long the app must be out of sight before the live session lets go of its chats and channels (see [HostSession.park]). */
     private val parkGraceMs: Long = ParkScheduler.DEFAULT_GRACE_MS,
+    /**
+     * Whether the app may connect to the last host by itself: after the process was restarted, and for a notification button when no
+     * connection is live. On Android it is the Monitoring switch. It never signs in and never changes what the app is allowed to do.
+     */
+    private val autoConnect: suspend () -> Boolean = { false },
+    /**
+     * Runs after the user's own Sign out, once it has taken effect; not after a sign-in that GitHub or the host refused. On Android it
+     * turns Monitoring off, so nothing keeps asking the person to resume what they chose to leave. A failure to save is not reported.
+     */
+    private val afterSignOut: suspend () -> Unit = {},
+    /**
+     * Where the sessions' lists are kept between runs. The controller only wipes it, at sign-out, so no session title outlives the sign-in;
+     * the sessions made by [sessions] are given the same cache, keyed by their host, to read and write.
+     */
+    private val sessionCache: SessionListCache? = null,
 ) {
     private val _state = MutableStateFlow<AppState>(AppState.Restoring)
     val state: StateFlow<AppState> = _state.asStateFlow()
@@ -112,7 +131,8 @@ class AppController(
 
     /** Looks after sessions and chats on the live host. Every request checks the tier, the target and, where it matters, the device check first. */
     val manager = SessionManager(
-        allowed = { connectedSession()?.canManage?.value == true },
+        // Never from a list that is only what was saved last time: the host may no longer have those sessions.
+        allowed = { connectedSession()?.let { it.canManage.value && !it.root.stale.value } == true },
         sessions = { connectedSession()?.root?.sessions?.value.orEmpty() },
         agents = { connectedSession()?.root?.root?.value?.agents.orEmpty() },
         sessionState = { uri -> (_state.value as? AppState.Connected)?.open?.takeIf { it.uri == uri }?.store?.state?.value },
@@ -172,6 +192,9 @@ class AppController(
     private var hostsJob: Job? = null
     private var watchJob: Job? = null
     private var diffJob: Job? = null
+
+    /** Set when a saved sign-in is restored and taken by the first host list that loads after it, so that only the cold start auto-connects. */
+    private val autoConnectPending = AtomicBoolean(false)
 
     /** Which blocks the user opened in each chat, kept while connected so leaving a chat and coming back finds them as they were. */
     private val expansions = LinkedHashMap<String, ExpansionState>()
@@ -450,32 +473,92 @@ class AppController(
      * this: the write tier must be on, the call must still be waiting in the live chat, an approval goes through the device
      * check (and is looked up again after it), denying needs none, and nothing counts as done until the host echoes it. With an
      * [optionId] it is one of the host's own options, and only if the host offers it now and it means what the button says.
+     *
+     * With [background] set, for a caller with no screen in front of the person, there may be no live connection when the button is
+     * pressed (the process was killed): [ensureConnected] makes one first (within [CONNECT_MS]) when monitoring allows it, and when it
+     * cannot the result is [InteractResult.NotConnected] with nothing sent. Reaching the host and reading the chat together take at
+     * most [PREPARE_MS], so the answer is not left waiting behind a connection that came up late. The in-app inbox leaves it unset:
+     * it neither connects nor waits for a connection to come back, and a connection that is down is [InteractResult.NotSent].
      */
-    suspend fun decideToolCall(chatUri: String, toolCallId: String, approve: Boolean, optionId: String? = null): InteractResult {
-        val session = (_state.value as? AppState.Connected)?.session ?: return InteractResult.NotAllowed
+    suspend fun decideToolCall(chatUri: String, toolCallId: String, approve: Boolean, optionId: String? = null, background: Boolean = false): InteractResult {
         if (chatUri.isBlank() || chatUri.length > ApprovalTarget.MAX_CHAT_URI) return InteractResult.NotAllowed
         if (optionId != null && (optionId.isBlank() || optionId.length > ApprovalTarget.MAX_OPTION_ID)) return InteractResult.NotAllowed
-        // A background opener: this runs from a notification with the app out of sight, when a parked session would otherwise let the chat go.
-        val store = session.openChat(chatUri, background = true)
+        // Set once the chat is open, so that exactly what was opened is closed again.
+        var opened: HostSession? = null
         try {
-            // A chat a screen kept while the app was out of sight still shows the transcript from before: wait for the snapshot that replaces it.
-            withTimeoutOrNull(CHAT_LOAD_MS) {
-                store.subscribeNeeded.first { !it }
-                store.state.first { it != null }
-            } ?: return InteractResult.NotSent(IOException("The chat did not load in time"))
+            val store = withTimeoutOrNull(PREPARE_MS) {
+                val session = hostFor(background) ?: return@withTimeoutOrNull null
+                // A background opener: this runs from a notification with the app out of sight, when a parked session would otherwise let the chat go.
+                val chat = session.openChat(chatUri, background = true)
+                opened = session
+                // A chat a screen kept while the app was out of sight still shows the transcript from before: wait for the snapshot that replaces it.
+                withTimeoutOrNull(CHAT_LOAD_MS) {
+                    chat.subscribeNeeded.first { !it }
+                    chat.state.first { it != null }
+                } ?: return@withTimeoutOrNull null
+                chat
+            }
+            val session = opened ?: return if (background && autoConnect()) InteractResult.NotConnected else InteractResult.NotAllowed
+            if (store == null) return InteractResult.NotSent(IOException("The chat did not load in time"))
             if (store.error.value != null) return InteractResult.NotSent(IOException("The chat could not be loaded"))
             val interactor = interactorFor(session, chatUri, store)
             return if (approve) interactor.approve(toolCallId, optionId) else interactor.deny(toolCallId, optionId)
         } finally {
-            session.closeChat(chatUri, background = true)
+            opened?.closeChat(chatUri, background = true)
         }
     }
 
-    /** What a session that needs the person is waiting for, read once and closed again; null when not connected, gone, or nothing is pending. */
-    suspend fun readWaiting(resource: String): RequestRead? {
-        val session = (_state.value as? AppState.Connected)?.session ?: return null
+    /**
+     * What a session that needs the person is waiting for, read once and closed again; null when not connected, gone, or nothing is
+     * pending. [background] is as for [decideToolCall]: only then does it wait for a connection to be made.
+     */
+    suspend fun readWaiting(resource: String, background: Boolean = false): RequestRead? {
+        val session = hostFor(background) ?: return null
         if (resource.isBlank() || resource.length > ApprovalTarget.MAX_CHAT_URI) return null
         return WaitingRequests.read(session, resource)
+    }
+
+    /**
+     * The live session, for a caller that acts on it; a [background] caller first waits for one to be made (see [ensureConnected]). A
+     * session still showing the list saved last time is not one to act on: the sessions in it may be gone.
+     */
+    private suspend fun hostFor(background: Boolean): HostSession? {
+        if (background && !ensureConnected(CONNECT_MS)) return null
+        return connectedSession()?.takeUnless { it.root.stale.value }
+    }
+
+    /**
+     * For background callers (a notification button): makes sure there is a live host connection, waiting at most [timeoutMs]. It waits
+     * for the saved sign-in to be restored, and from the host list connects to the last host the way the cold start does, if
+     * [autoConnect] allows and that host is online. Then it waits for the connection to be online.
+     *
+     * @return true when connected and online. False on timeout, when signed out, when [autoConnect] says no, when the host is offline
+     * or not listed, or when the connection fails for good. It never signs in, never changes what the app is allowed to do and shows nothing.
+     */
+    suspend fun ensureConnected(timeoutMs: Long): Boolean = withTimeoutOrNull(timeoutMs) { reachOnline() } ?: false
+
+    private suspend fun reachOnline(): Boolean {
+        var current = _state.first { it !is AppState.Restoring && !(it is AppState.Hosts && it.list is HostList.Loading) }
+        if (current is AppState.Hosts) {
+            if (!connectToLastHost(current.list)) return false
+            current = _state.value
+        }
+        val session = (current as? AppState.Connected)?.session ?: return false
+        return session.connection.first { it == ConnState.Online || it is ConnState.Failed || it == ConnState.Stopped } == ConnState.Online
+    }
+
+    /**
+     * Connects to the last used host from a loaded host list when [autoConnect] allows and that host is online; the one place both the
+     * cold start and [ensureConnected] do it. Does nothing, and says so, for any other list, an offline or unlisted host, or a screen
+     * that has moved on from the host list.
+     *
+     * @return true when the app is connected afterwards.
+     */
+    private suspend fun connectToLastHost(list: HostList): Boolean {
+        val last = (list as? HostList.Loaded)?.hosts?.firstOrNull { it.isLastUsed && it.tunnel.isOnline } ?: return false
+        if (!autoConnect()) return false
+        connect(last.tunnel)
+        return _state.value is AppState.Connected
     }
 
     /**
@@ -530,7 +613,14 @@ class AppController(
     }
 
     fun signOut() {
-        scope.launch { endSignIn(notice = null, offerRevoke = true) }
+        scope.launch {
+            endSignIn(notice = null, offerRevoke = true)
+            try {
+                afterSignOut()
+            } catch (_: IOException) {
+                // The sign-out has happened; a setting that could not be saved must not look like it failed.
+            }
+        }
     }
 
     private suspend fun restore() {
@@ -546,14 +636,21 @@ class AppController(
                 // An expired token that can be renewed is kept: it is renewed when it is first needed, which is when the hosts are listed.
                 if (saved.refresh == null && saved.expiresAt?.let { !now().isBefore(it) } == true) {
                     safeClear()
+                    safeClearCache()
                     _state.value = AppState.SignedOut(SignInStep.Idle, "Your GitHub sign-in expired. Sign in again.")
                 } else {
                     token = saved
+                    // Once per process start: the first list that loads after this may connect to the last host by itself.
+                    autoConnectPending.set(true)
                     showHosts()
                 }
             }
             VaultLoad.Absent -> _state.value = AppState.SignedOut(SignInStep.Idle, null)
-            is VaultLoad.Unreadable -> _state.value = AppState.SignedOut(SignInStep.Idle, "The saved sign-in could not be read and was removed. Sign in again.")
+            is VaultLoad.Unreadable -> {
+                // The vault has wiped itself, and with it the key to the saved session lists.
+                safeClearCache()
+                _state.value = AppState.SignedOut(SignInStep.Idle, "The saved sign-in could not be read and was removed. Sign in again.")
+            }
         }
     }
 
@@ -699,6 +796,8 @@ class AppController(
         }
         // Only update while still on the host list: the user may have connected or signed out while this was loading.
         _state.update { if (it is AppState.Hosts) it.copy(list = list) else it }
+        // Taken by the first list to finish, whatever it holds, so a later refresh or a return to the list never connects on its own.
+        if (autoConnectPending.getAndSet(false) && _state.value is AppState.Hosts) connectToLastHost(list)
     }
 
     @Synchronized
@@ -724,15 +823,19 @@ class AppController(
         cancelHostsJob()
         cancelWatchJob()
         forgetExpansions()
-        (_state.value as? AppState.Connected)?.session?.stop()
+        // Stopped without saving its session list: the cache is wiped below, and nothing may write it again after that.
+        (_state.value as? AppState.Connected)?.session?.stopAndForget()
         cancelDiffJob()
         interaction.set(false)
+        autoConnectPending.set(false)
         token = null
         refusedRefresh = null
         safeClear()
         // The host list stayed tappable while the disk was written, so a connection may have been made meanwhile: it is displaced, and stopped.
         val displaced = _state.getAndUpdate { AppState.SignedOut(SignInStep.Idle, notice, offerRevoke) }
-        (displaced as? AppState.Connected)?.session?.stop()
+        (displaced as? AppState.Connected)?.session?.stopAndForget()
+        // After every session is stopped, so none is left to write it again; no session title stays on the phone.
+        safeClearCache()
         cancelWatchJob()
     }
 
@@ -748,6 +851,15 @@ class AppController(
             vault.clear()
         } catch (_: IOException) {
             // The next launch reads the old blob; if it is still valid the user is simply signed in again, which is safe.
+        }
+    }
+
+    /** As [safeClear], for the saved session lists: a list that cannot be removed now is only a stale convenience, and is replaced or dropped at the next load. */
+    private suspend fun safeClearCache() {
+        try {
+            sessionCache?.clear()
+        } catch (_: IOException) {
+            // The list is useless without the key the vault wipe has just destroyed.
         }
     }
 
@@ -793,6 +905,12 @@ class AppController(
 
         /** How long a notification button waits for the chat's first snapshot before giving up. */
         const val CHAT_LOAD_MS = 8_000L
+
+        /** How long a background caller waits for a connection to be made or restored before it gives up. */
+        const val CONNECT_MS = 10_000L
+
+        /** How long a notification button may spend reaching the host and reading the chat in all, a little under the 12 s its receiver is held open. */
+        const val PREPARE_MS = 11_000L
 
         /** No channel address this app opens is longer than this. */
         const val MAX_CHANNEL_URI = 512

@@ -9,6 +9,7 @@ import dev.ahpclient.ahp.error
 import dev.ahpclient.ahp.result
 import dev.ahpclient.security.FakeBox
 import dev.ahpclient.security.FakeStore
+import dev.ahpclient.security.SessionListCache
 import dev.ahpclient.security.TokenVault
 import dev.ahpclient.security.VaultLoad
 import dev.ahpclient.state.Backoff
@@ -49,7 +50,9 @@ import dev.ahpclient.state.fixture
 import dev.ahpclient.tunnel.DevTunnelsClient
 import dev.ahpclient.tunnel.DevTunnelsException
 import dev.ahpclient.tunnel.TunnelInfo
+import com.microsoft.agenthostprotocol.Ahp
 import com.microsoft.agenthostprotocol.generated.Implementation
+import com.microsoft.agenthostprotocol.generated.ListSessionsResult
 import java.io.IOException
 import java.time.Instant
 import kotlin.test.Test
@@ -62,14 +65,17 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -153,6 +159,14 @@ class AppControllerTest {
         approvalGate: ApprovalGate? = null,
         /** Runs inside the factory, before a session is returned: for changing the controller's state at the point a connect is half done. */
         onCreate: Rig.() -> Unit = {},
+        /** Whether the controller may connect by itself (the Monitoring switch, in the app). Read each time it is asked. */
+        autoConnect: suspend () -> Boolean = { false },
+        /** Runs after the user's own sign-out has taken effect (Monitoring off, in the app). */
+        afterSignOut: suspend () -> Unit = {},
+        /** How long each connection to the host takes to come up, in the test's virtual time. */
+        connectDelayMs: Long = 0,
+        /** Where the sessions keep the host list between runs; the controller wipes it at sign-out. Each session reads and writes it under its own host. */
+        sessionCache: SessionListCache? = null,
         block: suspend Rig.() -> Unit,
     ) = MockWebServer().use { server ->
         server.start()
@@ -169,10 +183,11 @@ class AppControllerTest {
             val scripted = ScriptedConnector(script(), script(), script()).also { connectors += it }
             val connector = HostConnector { clientId, seq, scope: CoroutineScope ->
                 seen += accessToken().reveal()
+                delay(connectDelayMs)
                 scripted.policy = interaction.policy()
                 scripted.connect(clientId, seq, scope)
             }
-            HostSession(connector, backgroundScope, clientInfo, Backoff(), clientId = "client-${tunnel.tunnelId}").also {
+            HostSession(connector, backgroundScope, clientInfo, Backoff(), clientId = "client-${tunnel.tunnelId}", cache = sessionCache, cacheKey = tunnel.tunnelId).also {
                 created += it
                 rig?.onCreate()
             }
@@ -181,9 +196,9 @@ class AppControllerTest {
         val tunnels = DevTunnelsClient(serviceUrl = devTunnelsUrl?.invoke(server) ?: server.url("/").toString())
         // With no gate given the controller's own default is used, which is the one a test of the default must see.
         val controller = if (approvalGate == null) {
-            AppController(auth, vault, tunnels, lastHost, factory, backgroundScope, now, interaction)
+            AppController(auth, vault, tunnels, lastHost, factory, backgroundScope, now, interaction, autoConnect = autoConnect, afterSignOut = afterSignOut, sessionCache = sessionCache)
         } else {
-            AppController(auth, vault, tunnels, lastHost, factory, backgroundScope, now, interaction, approvalGate)
+            AppController(auth, vault, tunnels, lastHost, factory, backgroundScope, now, interaction, approvalGate, autoConnect = autoConnect, afterSignOut = afterSignOut, sessionCache = sessionCache)
         }
         val built = Rig(server, controller, vault, box, store, lastHost, seen, created, connectors, interaction)
         rig = built
@@ -291,6 +306,39 @@ class AppControllerTest {
 
             assertTrue(assertIs<AppState.SignedOut>(state).notice!!.contains("removed"))
             assertNull(store.blob)
+        }
+    }
+
+    @Test
+    fun `an expired saved token also removes the saved session list`() = runTest {
+        val listStore = FakeStore()
+        val cache = SessionListCache(FakeBox(), listStore)
+        cache.save("test-tunnel-1", listedSessions)
+        withRig(now = { Instant.parse("2026-10-23T12:00:00Z") }, sessionCache = cache) {
+            vault.save(GitHubToken(Secret("old"), null, Instant.parse("2026-10-22T04:00:00Z")))
+
+            controller.start()
+            runCurrent()
+
+            assertIs<AppState.SignedOut>(state)
+            assertNull(listStore.blob, "no session title stays on the phone once the sign-in is gone")
+        }
+    }
+
+    @Test
+    fun `an unreadable saved token also removes the saved session list`() = runTest {
+        val listStore = FakeStore()
+        val cache = SessionListCache(FakeBox(), listStore)
+        cache.save("test-tunnel-1", listedSessions)
+        withRig(sessionCache = cache) {
+            vault.save(savedToken)
+            box.keyExists = false
+
+            controller.start()
+            runCurrent()
+
+            assertIs<AppState.SignedOut>(state)
+            assertNull(listStore.blob)
         }
     }
 
@@ -1504,6 +1552,91 @@ class AppControllerTest {
             assertEquals(ConnState.Stopped, created.single().connection.value)
             assertEquals(VaultLoad.Absent, vault.load())
             assertFalse(box.keyExists)
+        }
+    }
+
+    private val listedSessions = Ahp.json.decodeFromString(ListSessionsResult.serializer(), fixture("live/list-sessions.json")).items
+
+    @Test
+    fun `signing out wipes the saved session list, and the session it stops does not write it back`() = runTest {
+        val listStore = FakeStore()
+        val cache = SessionListCache(FakeBox(), listStore)
+        cache.save("test-tunnel-1", listedSessions.map { it.copy(title = "Secret plan") })
+        withRig(sessionCache = cache) {
+            val session = connectToFirstHost().session
+            assertTrue(session.root.hasLiveCatalog)
+            assertTrue(listStore.blob != null)
+
+            controller.signOut()
+            await { it is AppState.SignedOut }
+            runCurrent()
+            advanceTimeBy(60_000)
+
+            assertEquals(ConnState.Stopped, session.connection.value)
+            assertNull(listStore.blob, "no session title stays on the phone after a sign-out")
+            assertNull(cache.load("test-tunnel-1"))
+        }
+    }
+
+    @Test
+    fun `a host never shows the list that was saved for another`() = runTest {
+        val listStore = FakeStore()
+        val cache = SessionListCache(FakeBox(), listStore)
+        cache.save("test-tunnel-1", listedSessions)
+        withRig(sessionCache = cache, connectDelayMs = 10_000) {
+            vault.save(savedToken)
+            server.json(fixture("list-tunnels.json"))
+            server.json(fixture("list-tunnels.json"))
+            controller.start()
+            awaitHosts()
+            val (first, second) = loaded().map { it.tunnel }.take(2)
+            assertEquals(listOf("test-tunnel-1", "test-tunnel-2"), listOf(first.tunnelId, second.tunnelId))
+
+            controller.connect(first)
+            runCurrent()
+            val own = created.last()
+            assertTrue(own.root.stale.value, "its own list is shown at once, marked")
+            assertEquals(listedSessions.size, own.root.sessions.value.size)
+            controller.disconnect()
+            awaitHosts()
+
+            controller.connect(second)
+            runCurrent()
+            val other = created.last()
+            assertFalse(other.root.stale.value)
+            assertEquals(emptyList(), other.root.sessions.value, "nothing of the first host is shown for the second")
+            assertNull(listStore.blob, "the list of the other host is dropped")
+        }
+    }
+
+    @Test
+    fun `a notification button does nothing while the list shown is only the saved one, and works once the host's has come`() = runTest {
+        val listStore = FakeStore()
+        val cache = SessionListCache(FakeBox(), listStore)
+        cache.save("test-tunnel-1", listedSessions)
+        var clientId = ""
+        val script = decideScript { clientId }
+        withRig(script = script, interaction = allowed, approvalGate = ApprovalGate { true }, sessionCache = cache, connectDelayMs = 20_000) {
+            vault.save(savedToken)
+            server.json(fixture("list-tunnels.json"))
+            controller.start()
+            awaitHosts()
+            val tunnel = loaded().first().tunnel
+            clientId = "client-${tunnel.tunnelId}"
+            controller.connect(tunnel)
+            runCurrent()
+            val session = created.last()
+            assertTrue(session.root.stale.value, "the saved list is on show")
+
+            assertEquals(InteractResult.NotAllowed, controller.decideToolCall(CHAT_A, "c1", approve = false))
+            assertTrue(connectors.single().sockets.isEmpty(), "nothing was asked of a host that may no longer have the session")
+
+            advanceTimeBy(20_000)
+            session.connection.first { it == ConnState.Online }
+            session.canInteract.first { it }
+
+            assertFalse(session.root.stale.value)
+            assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), controller.decideToolCall(CHAT_A, "c1", approve = false))
         }
     }
 
@@ -2856,6 +2989,420 @@ class AppControllerTest {
 
             assertTrue(dispatches().isEmpty(), "nothing is decided on a transcript that is no longer being kept")
             assertEquals(2, channelsSent("subscribe").count { it == CHAT_A })
+        }
+    }
+
+    // ---- coming back after the process was killed ------------------------------------------------------------------
+
+    /** A saved sign-in whose host list is the fixture's three hosts, of which [last] is the last used one; the first and the third are online. */
+    private suspend fun Rig.savedSignIn(last: String? = "test-tunnel-1") {
+        vault.save(savedToken)
+        lastHost.id = last
+        server.json(fixture("list-tunnels.json"))
+    }
+
+    @Test
+    fun `a restored sign-in connects to the last host by itself when monitoring is on and that host is online`() = runTest {
+        withRig(autoConnect = { true }) {
+            savedSignIn()
+
+            controller.start()
+            val connected = assertIs<AppState.Connected>(await { it is AppState.Connected })
+            connected.session.connection.first { it == ConnState.Online }
+            runCurrent()
+
+            assertEquals("test-tunnel-1", connected.host.tunnelId)
+            assertEquals(1, created.size)
+            assertEquals(listOf("ghu_saved"), tokensSeenByHost)
+        }
+    }
+
+    @Test
+    fun `with monitoring off a restored sign-in stops at the host list`() = runTest {
+        withRig(autoConnect = { false }) {
+            savedSignIn()
+
+            controller.start()
+            awaitHosts()
+            runCurrent()
+
+            assertIs<AppState.Hosts>(state)
+            assertTrue(loaded().first { it.tunnel.tunnelId == "test-tunnel-1" }.isLastUsed)
+            assertTrue(created.isEmpty())
+        }
+    }
+
+    @Test
+    fun `a last host that is offline, or not listed, or none at all is not connected to`() = runTest {
+        for (last in listOf("test-tunnel-2", "no-such-tunnel", null)) {
+            withRig(autoConnect = { true }) {
+                savedSignIn(last)
+
+                controller.start()
+                awaitHosts()
+                runCurrent()
+
+                assertIs<AppState.Hosts>(state, "last host $last")
+                assertTrue(created.isEmpty(), "last host $last")
+            }
+        }
+    }
+
+    @Test
+    fun `a host list that cannot be loaded does not connect, and a later refresh does not either`() = runTest {
+        withRig(autoConnect = { true }) {
+            vault.save(savedToken)
+            lastHost.id = "test-tunnel-1"
+            server.json("{}", code = 500)
+            server.json(fixture("list-tunnels.json"))
+
+            controller.start()
+            assertIs<HostList.Failed>(awaitHosts())
+            controller.refreshHosts()
+            assertIs<HostList.Loaded>(awaitHosts())
+            runCurrent()
+
+            assertIs<AppState.Hosts>(state)
+            assertTrue(created.isEmpty())
+        }
+    }
+
+    @Test
+    fun `going back to the host list and refreshing it never connect again`() = runTest {
+        withRig(autoConnect = { true }) {
+            savedSignIn()
+            server.json(fixture("list-tunnels.json"))
+            server.json(fixture("list-tunnels.json"))
+            controller.start()
+            assertIs<AppState.Connected>(await { it is AppState.Connected }).session.connection.first { it == ConnState.Online }
+
+            controller.disconnect()
+            awaitHosts()
+            runCurrent()
+            assertIs<AppState.Hosts>(state)
+            controller.refreshHosts()
+            awaitHosts()
+            runCurrent()
+
+            assertIs<AppState.Hosts>(state)
+            assertEquals(1, created.size, "only the cold start connected")
+        }
+    }
+
+    @Test
+    fun `a fresh sign-in lands on the host list, whatever the last host and the monitoring switch`() = runTest {
+        withRig(autoConnect = { true }) {
+            lastHost.id = "test-tunnel-1"
+            server.json(deviceCode)
+            server.json(approved)
+            server.json(fixture("list-tunnels.json"))
+            controller.start()
+            runCurrent()
+
+            controller.signIn()
+            awaitHosts()
+            runCurrent()
+
+            assertIs<AppState.Hosts>(state)
+            assertTrue(created.isEmpty())
+        }
+    }
+
+    @Test
+    fun `a sign-in GitHub refused at the first list does not leave a connection waiting for the next sign-in`() = runTest {
+        withRig(autoConnect = { true }) {
+            vault.save(savedToken)
+            lastHost.id = "test-tunnel-1"
+            server.json("{}", code = 401)
+            controller.start()
+            await { it is AppState.SignedOut }
+            server.json(deviceCode)
+            server.json(approved)
+            server.json(fixture("list-tunnels.json"))
+
+            controller.signIn()
+            awaitHosts()
+            runCurrent()
+
+            assertIs<AppState.Hosts>(state)
+            assertTrue(created.isEmpty())
+        }
+    }
+
+    @Test
+    fun `ensureConnected connects from the host list when monitoring allows it, and waits until the connection is online`() = runTest {
+        var monitoring = false
+        withRig(autoConnect = { monitoring }) {
+            savedSignIn()
+            controller.start()
+            awaitHosts()
+            runCurrent()
+            assertIs<AppState.Hosts>(state)
+
+            monitoring = true
+
+            assertTrue(controller.ensureConnected(10_000))
+            val connected = assertIs<AppState.Connected>(state)
+            assertEquals(ConnState.Online, connected.session.connection.value)
+            assertEquals("test-tunnel-1", connected.host.tunnelId)
+            assertEquals(1, created.size)
+        }
+    }
+
+    // The sign-in is restored from disk and the host list read over a real socket, outside the test's virtual time. A timeout that starts
+    // before that read ends would be skipped to at once, so a call that begins at a cold start runs on a real dispatcher.
+    @Test
+    fun `ensureConnected called while the sign-in is still being restored waits for it, and makes one connection`() = runTest {
+        withRig(autoConnect = { true }) {
+            savedSignIn()
+            controller.start()
+            assertIs<AppState.Restoring>(state)
+
+            assertTrue(withContext(Dispatchers.Default) { controller.ensureConnected(10_000) })
+
+            assertIs<AppState.Connected>(state)
+            assertEquals(1, created.size, "the cold start and the caller share one connection")
+        }
+    }
+
+    @Test
+    fun `ensureConnected is true at once when already connected and online, and asks for nothing`() = runTest {
+        withRig {
+            connectToFirstHost()
+
+            assertTrue(controller.ensureConnected(1))
+
+            assertEquals(1, created.size)
+        }
+    }
+
+    @Test
+    fun `ensureConnected gives up when the connection does not come in time`() = runTest {
+        withRig(script = { HostScript(failure = IOException("host unreachable")) }, autoConnect = { true }) {
+            savedSignIn()
+            controller.start()
+            val connected = assertIs<AppState.Connected>(await { it is AppState.Connected })
+
+            assertFalse(controller.ensureConnected(5_000))
+
+            assertIs<ConnState.Reconnecting>(connected.session.connection.value)
+        }
+    }
+
+    @Test
+    fun `ensureConnected gives up on a connection that failed for good`() = runTest {
+        withRig(script = { HostScript(failure = DevTunnelsException.TunnelNotFound("test-tunnel-1")) }, autoConnect = { true }) {
+            savedSignIn()
+            controller.start()
+            val connected = assertIs<AppState.Connected>(await { it is AppState.Connected })
+
+            val before = testScheduler.currentTime
+            assertFalse(controller.ensureConnected(60_000))
+
+            assertIs<ConnState.Failed>(connected.session.connection.value)
+            assertTrue(testScheduler.currentTime - before < 60_000, "it returned when the connection failed, not when the time ran out")
+        }
+    }
+
+    @Test
+    fun `ensureConnected is false when signed out, and never signs in`() = runTest {
+        withRig(autoConnect = { true }) {
+            controller.start()
+            runCurrent()
+
+            assertFalse(controller.ensureConnected(10_000))
+
+            assertIs<AppState.SignedOut>(state)
+            assertTrue(created.isEmpty())
+            assertEquals(0, server.requestCount)
+        }
+    }
+
+    @Test
+    fun `ensureConnected is false when monitoring is off, and leaves the host list showing`() = runTest {
+        withRig(autoConnect = { false }) {
+            restoredToHostList()
+
+            assertFalse(controller.ensureConnected(10_000))
+
+            assertIs<AppState.Hosts>(state)
+            assertTrue(created.isEmpty())
+        }
+    }
+
+    @Test
+    fun `ensureConnected is false when the last host is offline`() = runTest {
+        withRig(autoConnect = { true }) {
+            restoredToHostList(last = "test-tunnel-2")
+
+            assertFalse(controller.ensureConnected(10_000))
+
+            assertIs<AppState.Hosts>(state)
+            assertTrue(created.isEmpty())
+        }
+    }
+
+    /** The cold start has finished with the host list showing and nothing connected, as when monitoring was off at the time. */
+    private suspend fun Rig.restoredToHostList(last: String? = "test-tunnel-1") {
+        savedSignIn(last)
+        controller.start()
+        awaitHosts()
+        assertIs<AppState.Hosts>(state)
+    }
+
+    @Test
+    fun `a notification button pressed after the process was killed connects, then decides`() = runTest {
+        var monitoring = false
+        withRig(script = decideScript { "client-test-tunnel-1" }, interaction = allowed, approvalGate = ApprovalGate { true }, autoConnect = { monitoring }) {
+            restoredToHostList()
+            monitoring = true
+
+            assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), controller.decideToolCall(CHAT_A, "c1", approve = false, background = true))
+
+            assertEquals(listOf(Triple("chat/toolCallConfirmed", "c1", false)), decisions())
+            assertEquals(1, created.size)
+            assertEquals(listOf(CHAT_A), channelsSent("unsubscribe").filter { it == CHAT_A }, "opened for the decision and closed after it")
+        }
+    }
+
+    @Test
+    fun `an approval after the process was killed still goes through the device check once connected`() = runTest {
+        var monitoring = false
+        withRig(script = decideScript { "client-test-tunnel-1" }, interaction = allowed, autoConnect = { monitoring }) {
+            restoredToHostList()
+            monitoring = true
+
+            assertEquals(InteractResult.NotConfirmed, controller.decideToolCall(CHAT_A, "c1", approve = true, background = true))
+
+            assertTrue(dispatches().isEmpty())
+        }
+    }
+
+    @Test
+    fun `a notification button that cannot get a connection says so and sends nothing`() = runTest {
+        withRig(script = decideScript { "" }, interaction = allowed, approvalGate = ApprovalGate { true }, autoConnect = { true }) {
+            restoredToHostList(last = "test-tunnel-2")
+
+            assertEquals(InteractResult.NotConnected, controller.decideToolCall(CHAT_A, "c1", approve = false, background = true))
+            assertEquals(InteractResult.NotConnected, controller.decideToolCall(CHAT_A, "c1", approve = true, background = true))
+
+            assertTrue(connectors.isEmpty(), "no connection was made, so nothing could have been sent")
+        }
+    }
+
+    @Test
+    fun `a notification button whose connection does not come up in time says so and sends nothing`() = runTest {
+        withRig(script = { HostScript(failure = IOException("host unreachable")) }, interaction = allowed, approvalGate = ApprovalGate { true }, autoConnect = { true }) {
+            savedSignIn()
+            controller.start()
+            await { it is AppState.Connected }
+
+            assertEquals(InteractResult.NotConnected, controller.decideToolCall(CHAT_A, "c1", approve = false, background = true))
+
+            assertTrue(connectors.all { it.sockets.isEmpty() }, "the host was never reached")
+        }
+    }
+
+    @Test
+    fun `a notification button answers within its budget when the connection and the chat are both slow`() = runTest {
+        var monitoring = false
+        val chatNeverLoads = { HostScript(sessionChats = "[${chatSummaryJson(CHAT_A)}]", chatActiveTurn = pendingTool, onChatSubscribe = { _, _ -> null }) }
+        withRig(script = chatNeverLoads, connectDelayMs = 9_000, interaction = allowed, approvalGate = ApprovalGate { true }, autoConnect = { monitoring }) {
+            restoredToHostList()
+            monitoring = true
+
+            val before = testScheduler.currentTime
+            val result = controller.decideToolCall(CHAT_A, "c1", approve = false, background = true)
+
+            assertIs<InteractResult.NotSent>(result)
+            assertTrue(testScheduler.currentTime - before < 12_000, "connecting and reading the chat share one budget: ${testScheduler.currentTime - before} ms")
+            assertTrue(dispatches().isEmpty())
+        }
+    }
+
+    @Test
+    fun `with monitoring off a notification button does not connect, and is not allowed`() = runTest {
+        withRig(script = decideScript { "" }, interaction = allowed, approvalGate = ApprovalGate { true }, autoConnect = { false }) {
+            restoredToHostList()
+
+            assertEquals(InteractResult.NotAllowed, controller.decideToolCall(CHAT_A, "c1", approve = false, background = true))
+
+            assertTrue(connectors.isEmpty())
+        }
+    }
+
+    @Test
+    fun `the inbox on screen does not wait for a connection that is down, and does not call it a reason to open the app`() = runTest {
+        withRig(script = { HostScript(failure = IOException("host unreachable")) }, interaction = allowed, approvalGate = ApprovalGate { true }, autoConnect = { true }) {
+            savedSignIn()
+            controller.start()
+            await { it is AppState.Connected }
+
+            val before = testScheduler.currentTime
+            val result = controller.decideToolCall(CHAT_A, "c1", approve = false)
+
+            assertIs<InteractResult.NotSent>(result)
+            assertTrue(testScheduler.currentTime - before < 10_000, "no wait for a connection beyond the chat's own: ${testScheduler.currentTime - before} ms")
+        }
+    }
+
+    @Test
+    fun `the inbox on screen never connects by itself, even with monitoring on`() = runTest {
+        var monitoring = false
+        withRig(script = decideScript { "" }, interaction = allowed, approvalGate = ApprovalGate { true }, autoConnect = { monitoring }) {
+            restoredToHostList()
+            monitoring = true
+
+            assertEquals(InteractResult.NotAllowed, controller.decideToolCall(CHAT_A, "c1", approve = false))
+            assertNull(controller.readWaiting(SESSION_C))
+
+            assertTrue(connectors.isEmpty())
+        }
+    }
+
+    @Test
+    fun `a waiting session is read after the process was killed too, once the connection is made`() = runTest {
+        var monitoring = false
+        withRig(script = { HostScript(inputNeeded = question) }, autoConnect = { monitoring }) {
+            restoredToHostList()
+            monitoring = true
+
+            val read = controller.readWaiting(SESSION_C, background = true)
+
+            assertEquals("Which season do you prefer?", read?.text)
+            assertEquals(1, created.size)
+        }
+    }
+
+    @Test
+    fun `a waiting session is not read when no connection can be made`() = runTest {
+        withRig(autoConnect = { true }) {
+            restoredToHostList(last = "test-tunnel-2")
+
+            assertNull(controller.readWaiting(SESSION_C, background = true))
+
+            assertTrue(connectors.isEmpty())
+        }
+    }
+
+    @Test
+    fun `signing out runs what follows it, but a sign-in the host refused does not`() = runTest {
+        var ran = 0
+        withRig(script = { HostScript(failure = DevTunnelsException.AuthExpired()) }, afterSignOut = { ran++ }) {
+            vault.save(savedToken)
+            server.json(fixture("list-tunnels.json"))
+            controller.start()
+            awaitHosts()
+            controller.connect(loaded().first().tunnel)
+            await { it is AppState.SignedOut }
+            runCurrent()
+
+            assertEquals(0, ran, "a refused sign-in is not the person leaving")
+
+            controller.signOut()
+            runCurrent()
+
+            assertEquals(1, ran)
         }
     }
 }

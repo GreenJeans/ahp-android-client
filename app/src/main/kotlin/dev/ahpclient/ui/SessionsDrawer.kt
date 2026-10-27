@@ -66,6 +66,7 @@ import java.time.Instant
  * The side menu: the host at the top (a way to its screen), a button to start a session (only when the app may look after
  * sessions), the host's sessions with those needing you first, and Settings at the bottom. [host] is null while not connected.
  * [selected] is the open session. [listState], [showArchived] and [query] are held by the caller so they survive the menu closing.
+ * While [stale] the sessions are only what the phone saved last time, and say so.
  */
 @Composable
 fun DrawerContent(
@@ -90,6 +91,7 @@ fun DrawerContent(
     /** How many sessions wait on the user; null when there is no host, and the inbox entry is not shown. */
     inboxCount: Int? = null,
     onOpenInbox: () -> Unit = {},
+    stale: Boolean = false,
 ) {
     ModalDrawerSheet(modifier = modifier.testTag("drawer")) {
         Column(Modifier.fillMaxSize()) {
@@ -107,7 +109,7 @@ fun DrawerContent(
                     modifier = Modifier.weight(1f).padding(16.dp).testTag("drawer_no_host"),
                 )
             } else {
-                SessionList(sessions, connection, now, selected, showArchived, onToggleArchived, query, onQueryChange, listState, watched, onOpenSession, Modifier.weight(1f))
+                SessionList(sessions, connection, stale, now, selected, showArchived, onToggleArchived, query, onQueryChange, listState, watched, onOpenSession, Modifier.weight(1f))
             }
             HorizontalDivider()
             Row(
@@ -184,6 +186,7 @@ private fun HostButton(host: TunnelInfo?, connection: ConnState?, onOpenHost: ()
 private fun SessionList(
     sessions: List<SessionSummary>,
     connection: ConnState?,
+    stale: Boolean,
     now: Instant,
     selected: String?,
     showArchived: Boolean,
@@ -200,6 +203,7 @@ private fun SessionList(
         item(key = "header") {
             Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Sessions", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f).semantics { heading() })
+                if (stale) UpdatingChip(Modifier.padding(end = 12.dp))
                 if (model.hiddenArchived > 0 || showArchived) {
                     TextButton(onClick = onToggleArchived, modifier = Modifier.heightIn(min = 48.dp).testTag("archived_toggle")) {
                         Text(if (showArchived) "Hide archived" else "Archived (${model.hiddenArchived})")

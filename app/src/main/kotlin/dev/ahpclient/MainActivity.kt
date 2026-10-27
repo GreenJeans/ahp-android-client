@@ -79,6 +79,7 @@ class MainActivity : FragmentActivity() {
     override fun onStart() {
         super.onStart()
         container.inForeground = true
+        container.clearMonitorWarning()
         container.approvalGate.attach(this)
     }
 

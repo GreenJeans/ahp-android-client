@@ -1,25 +1,34 @@
 package dev.ahpclient.app
 
+import dev.ahpclient.security.FakeBox
+import dev.ahpclient.security.FakeStore
+import dev.ahpclient.security.SessionListCache
 import dev.ahpclient.state.ApprovalTarget
 import dev.ahpclient.state.Backoff
 import dev.ahpclient.state.CHAT_A
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.FinishedSession
 import dev.ahpclient.state.FinishedWatch
+import dev.ahpclient.state.HostConnector
 import dev.ahpclient.state.HostScript
 import dev.ahpclient.state.HostSession
 import dev.ahpclient.state.InputNeeded
 import dev.ahpclient.state.SESSION_C
 import dev.ahpclient.state.ScriptedConnector
 import dev.ahpclient.state.chatSummaryJson
+import dev.ahpclient.state.fixture
 import dev.ahpclient.tunnel.TunnelInfo
+import com.microsoft.agenthostprotocol.Ahp
 import com.microsoft.agenthostprotocol.generated.Implementation
+import com.microsoft.agenthostprotocol.generated.ListSessionsResult
 import com.microsoft.agenthostprotocol.generated.SessionStatus
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
@@ -43,12 +52,29 @@ private class FakeService : MonitorService {
     var starts = 0
     var stops = 0
 
-    override fun start() {
+    /** Whether the next start works, the way Android may refuse a foreground service started from the background. */
+    var startWorks = true
+
+    override fun start(): Boolean {
         starts++
+        return startWorks
     }
 
     override fun stop() {
         stops++
+    }
+}
+
+private class FakeProblems : MonitorProblemSink {
+    val posted = mutableListOf<String>()
+    var clears = 0
+
+    override fun post(text: String) {
+        posted += text
+    }
+
+    override fun clear() {
+        clears++
     }
 }
 
@@ -107,12 +133,17 @@ class MonitorCoordinatorTest {
         var connector: ScriptedConnector? = null
     }
 
-    private fun TestScope.rig(enabled: Boolean = true, finished: FinishedAlerts? = null): Rig {
+    private fun TestScope.rig(
+        enabled: Boolean = true,
+        finished: FinishedAlerts? = null,
+        startWorks: Boolean = true,
+        problems: MonitorProblemSink? = null,
+    ): Rig {
         val state = MutableStateFlow<AppState>(AppState.Hosts(HostList.Loading, null))
         val settings = FakeSettings(enabled)
-        val service = FakeService()
+        val service = FakeService().also { it.startWorks = startWorks }
         val sink = FakeSink()
-        val coordinator = MonitorCoordinator(state, settings, service, sink, backgroundScope, debounceMs = 3_000, finished = finished, finishedDebounceMs = 5_000)
+        val coordinator = MonitorCoordinator(state, settings, service, sink, backgroundScope, debounceMs = 3_000, finished = finished, finishedDebounceMs = 5_000, problems = problems)
         coordinator.start()
         runCurrent()
         return Rig(state, settings, service, sink, coordinator)
@@ -155,6 +186,99 @@ class MonitorCoordinatorTest {
         val status = assertNotNull(rig.coordinator.status.value)
         assertEquals("Monitoring dev-box", status.title)
         assertTrue(status.text.contains("active session"), status.text)
+    }
+
+    @Test
+    fun `a service that cannot start is said so in the status and to the problem sink`() = runTest {
+        val problems = FakeProblems()
+        val rig = rig(startWorks = false, problems = problems)
+
+        connect(rig)
+
+        assertEquals(1, rig.service.starts)
+        val status = assertNotNull(rig.coordinator.status.value)
+        assertEquals("Monitoring dev-box", status.title)
+        assertEquals("Monitoring could not start. Open the app.", status.text)
+        assertEquals(listOf("Monitoring could not start. Open the app."), problems.posted)
+        assertEquals(0, problems.clears, "nothing was monitored before, so there was no warning of this coordinator's to take away")
+    }
+
+    @Test
+    fun `the first look in a process with nothing connected leaves a warning that was already posted`() = runTest {
+        val problems = FakeProblems()
+
+        val rig = rig(problems = problems)
+
+        assertEquals(0, problems.clears)
+        assertEquals(1, rig.service.stops, "the service is still told to stop")
+    }
+
+    @Test
+    fun `the failure stays in the status while the connection changes, and alerts still run`() = runTest {
+        val rig = rig(startWorks = false, problems = FakeProblems())
+        val host = connect(rig)
+        advanceTimeBy(10_000)
+
+        waitingOn(host, "Session D")
+        runCurrent()
+        advanceTimeBy(3_500)
+
+        assertEquals("Monitoring could not start. Open the app.", rig.coordinator.status.value!!.text)
+        assertEquals(listOf("Session D"), rig.sink.posted.map { it.title })
+    }
+
+    @Test
+    fun `a start that works later clears the problem and brings the status back`() = runTest {
+        val problems = FakeProblems()
+        val rig = rig(startWorks = false, problems = problems)
+        connect(rig)
+        val clearsBefore = problems.clears
+
+        rig.service.startWorks = true
+        rig.coordinator.refreshService()
+        runCurrent()
+
+        assertEquals(2, rig.service.starts)
+        assertEquals(clearsBefore + 1, problems.clears)
+        assertTrue(rig.coordinator.status.value!!.text.contains("active session"), rig.coordinator.status.value!!.text)
+    }
+
+    @Test
+    fun `a start that works never touches the problem sink, and ending monitoring clears it`() = runTest {
+        val problems = FakeProblems()
+        val rig = rig(problems = problems)
+        val clearsBefore = problems.clears
+        connect(rig)
+
+        assertEquals(emptyList(), problems.posted)
+        assertEquals(clearsBefore + 1, problems.clears, "a start that works takes any warning away")
+        rig.coordinator.setEnabled(false)
+        runCurrent()
+        assertEquals(clearsBefore + 2, problems.clears, "turning monitoring off takes it away too")
+    }
+
+    @Test
+    fun `a failed start is cleared when the user leaves the host`() = runTest {
+        val problems = FakeProblems()
+        val rig = rig(startWorks = false, problems = problems)
+        connect(rig)
+        val clearsBefore = problems.clears
+
+        rig.state.value = AppState.Hosts(HostList.Loading, null)
+        runCurrent()
+
+        assertNull(rig.coordinator.status.value)
+        assertEquals(clearsBefore + 1, problems.clears)
+    }
+
+    @Test
+    fun `refreshing the service does nothing while monitoring is off`() = runTest {
+        val rig = rig(enabled = false)
+        connect(rig)
+
+        rig.coordinator.refreshService()
+
+        assertEquals(0, rig.service.starts)
     }
 
     @Test
@@ -415,6 +539,40 @@ class MonitorCoordinatorTest {
 
         assertEquals(listOf("Session C"), sink.posted.map { it.title })
         assertNull(sink.posted.single().tookMs, "when it started is not known")
+    }
+
+    @Test
+    fun `a saved list that differs from the hosts own raises no alert for the difference`() = runTest {
+        val live = Ahp.json.decodeFromString(ListSessionsResult.serializer(), fixture("live/list-sessions.json")).items
+        // Saved while every session was working: against the host's list, the waiting ones look newly waiting and the idle ones look finished.
+        val cache = SessionListCache(FakeBox(), FakeStore())
+        cache.save("t", live.map { it.copy(status = SessionStatus.IN_PROGRESS) })
+        val finished = FakeFinishedSink()
+        val rig = rig(finished = FinishedAlerts(FakeWatch(FinishedWatch(all = true)), finished))
+        val release = CompletableDeferred<Unit>()
+        val scripted = ScriptedConnector(HostScript())
+        val host = HostSession(
+            HostConnector { clientId, seq, scope -> release.await(); scripted.connect(clientId, seq, scope) },
+            backgroundScope, clientInfo, Backoff(), clientId = "c", cache = cache, cacheKey = "t",
+        )
+        host.start()
+        rig.state.value = AppState.Connected(tunnel, host)
+        runCurrent()
+        assertTrue(host.root.stale.value, "the saved list is on show while the connection is made")
+        assertEquals(live.size, host.root.sessions.value.size)
+        advanceTimeBy(10_000)
+
+        release.complete(Unit)
+        host.connection.first { it == ConnState.Online }
+        advanceTimeBy(60_000)
+
+        assertFalse(host.root.stale.value)
+        assertEquals(emptyList(), rig.sink.posted, "who was waiting differs between the two lists: that is no news")
+        assertEquals(emptyList(), finished.posted, "who was working differs between the two lists: that is no news")
+        waitingOn(host, "Session D")
+        runCurrent()
+        advanceTimeBy(3_500)
+        assertEquals(listOf("Session D"), rig.sink.posted.map { it.title }, "the alerts do run on what the host says next")
     }
 
     @Test

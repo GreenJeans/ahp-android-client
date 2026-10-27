@@ -4,6 +4,7 @@ import dev.ahpclient.ahp.AhpConnection
 import dev.ahpclient.ahp.AhpException
 import dev.ahpclient.ahp.ROOT_CHANNEL
 import dev.ahpclient.ahp.ServerNotification
+import dev.ahpclient.security.SessionListCache
 import dev.ahpclient.tunnel.DevTunnelsException
 import dev.ahpclient.tunnel.UpgradeRejectedException
 import com.microsoft.agenthostprotocol.generated.ActionEnvelope
@@ -33,18 +34,22 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonElement
 
@@ -106,6 +111,10 @@ class Backoff(
  *
  * Out of sight, only the root and the sessions need to stay subscribed for alerts: [park] lets go of the chats and channels and
  * [unpark] takes them up again.
+ *
+ * With a [cache] and a [cacheKey] (the host's tunnel id) the session list saved last time is shown, marked [RootStore.stale], until the
+ * host's own arrives, and the list is saved again as it changes. A cache that cannot be read or written is ignored: it never gets in the
+ * way of the connection. The saved list is never written from itself: nothing is saved before the host's own list has been taken.
  */
 class HostSession(
     private val connector: HostConnector,
@@ -114,8 +123,25 @@ class HostSession(
     private val backoff: Backoff = Backoff(),
     private val clientId: String = UUID.randomUUID().toString(),
     private val network: StateFlow<NetworkState> = NetworkState.ALWAYS_AVAILABLE,
+    cache: SessionListCache? = null,
+    cacheKey: String? = null,
 ) : ManagementCommands {
     val root = RootStore()
+
+    private class CacheTarget(val cache: SessionListCache, val key: String)
+
+    private val cacheTarget = if (cache != null && cacheKey != null) CacheTarget(cache, cacheKey) else null
+
+    /** One save at a time, so a later list is never overwritten by an earlier one; held across the check and the write. */
+    private val cacheLock = Mutex()
+
+    // Guarded by cacheLock. What was last written, so an unchanged list is not written again.
+    private var lastSaved: List<SessionSummary>? = null
+
+    /** Set by [stopAndForget]: from then on nothing is written to the cache. */
+    @Volatile
+    private var cacheForgotten = false
+    private var cacheJob: Job? = null
 
     private val _connection = MutableStateFlow<ConnState>(ConnState.Stopped)
     val connection: StateFlow<ConnState> = _connection.asStateFlow()
@@ -161,6 +187,8 @@ class HostSession(
     fun start() {
         if (job?.isActive == true) return
         _connection.value = ConnState.Connecting
+        // Launched first, so a list from disk is in place before the first connection can take its first step.
+        cacheJob = cacheTarget?.let { target -> scope.launch { seedFromCache(target); saveWhenChanged(target) } }
         job = scope.launch { supervise() }
     }
 
@@ -168,10 +196,23 @@ class HostSession(
     fun stop() {
         job?.cancel()
         job = null
+        cacheJob?.cancel()
+        cacheJob = null
         current?.close()
         _canInteract.value = false
         _canManage.value = false
         _connection.value = ConnState.Stopped
+        saveCatalogSoon()
+    }
+
+    /**
+     * Stops as [stop] does, but saves nothing, now or later, and waits for a save that is under way. For a sign-out: the caller then
+     * wipes the cache knowing that nothing here can write it again.
+     */
+    suspend fun stopAndForget() {
+        cacheForgotten = true
+        stop()
+        cacheLock.withLock { }
     }
 
     /**
@@ -441,6 +482,55 @@ class HostSession(
 
     override suspend fun disposeChat(uri: String) = live().disposeChat(uri)
 
+    /** Shows the list saved last time, marked stale, unless the host's own has already arrived. */
+    private suspend fun seedFromCache(target: CacheTarget) {
+        val saved = try {
+            target.cache.load(target.key)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+        if (!saved.isNullOrEmpty()) root.seedStale(saved)
+    }
+
+    /**
+     * Saves the list [CACHE_SAVE_DEBOUNCE_MS] after it last changed. Not conditional on the connection being online: the host's list
+     * arrives before the connection is declared online, and a slow subscription behind it must not let the one chance to save go by.
+     * [saveCatalog] still refuses a list that is only the seed.
+     */
+    private suspend fun saveWhenChanged(target: CacheTarget) {
+        root.sessions.collectLatest {
+            delay(CACHE_SAVE_DEBOUNCE_MS)
+            saveCatalog(target)
+        }
+    }
+
+    /** Saves the list now, for when the connection ends and the session stops, which the debounce might not live to see. */
+    private fun saveCatalogSoon() {
+        val target = cacheTarget ?: return
+        scope.launch { saveCatalog(target) }
+    }
+
+    /**
+     * Writes the list to the cache if it is the host's own and differs from what was last written. A list that is only the seed from
+     * disk is never written back, and a failure to write is not reported: the cache is a convenience. Not cancellable once it starts,
+     * so a newer change cannot leave it half done.
+     */
+    private suspend fun saveCatalog(target: CacheTarget) = withContext(NonCancellable) {
+        cacheLock.withLock {
+            if (cacheForgotten || !root.hasLiveCatalog) return@withLock
+            val items = root.sessions.value
+            if (items == lastSaved) return@withLock
+            try {
+                target.cache.save(target.key, items)
+                lastSaved = items
+            } catch (_: Exception) {
+                // Neither a full disk nor a lost key is a reason to disturb the connection.
+            }
+        }
+    }
+
     private suspend fun supervise() {
         var attempt = 0
         var resume = false
@@ -497,6 +587,7 @@ class HostSession(
                 // Whatever was sent and not yet answered can no longer be answered on this connection.
                 awaiting.values.forEach { it.complete(DispatchOutcome.Interrupted) }
                 connectionScope.cancel()
+                saveCatalogSoon()
             }
             if (epoch.get() != generation) continue
             val now = network.value
@@ -714,6 +805,9 @@ class HostSession(
     private companion object {
         const val MAX_LIST_PAGES = 50
         const val DISPATCH_TIMEOUT_MS = 15_000L
+
+        /** How long the session list must stay as it is before it is written to the cache. */
+        const val CACHE_SAVE_DEBOUNCE_MS = 5_000L
         val TERMINAL_UPGRADE_CODES = setOf(401, 403, 404)
 
         /**

@@ -24,16 +24,17 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
-/** Starts and stops [MonitorService]. Starting from the background is refused by Android; that is reported, never thrown. */
+/** Starts and stops [MonitorService]. Starting from the background is refused by Android; that is reported by the result, never thrown. */
 class AndroidMonitorService(private val context: Context) : MonitorServiceControl {
-    override fun start() {
-        try {
-            context.startForegroundService(Intent(context, MonitorService::class.java))
-        } catch (_: IllegalStateException) {
-            // Android 12+ refuses to start a foreground service while the app is in the background.
-        } catch (_: SecurityException) {
-            // The foreground-service permission is missing from the manifest.
-        }
+    override fun start(): Boolean = try {
+        context.startForegroundService(Intent(context, MonitorService::class.java))
+        true
+    } catch (_: IllegalStateException) {
+        // Android 12+ refuses to start a foreground service while the app is in the background.
+        false
+    } catch (_: SecurityException) {
+        // The foreground-service permission is missing from the manifest.
+        false
     }
 
     override fun stop() {

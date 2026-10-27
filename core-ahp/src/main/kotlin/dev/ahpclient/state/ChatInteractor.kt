@@ -147,6 +147,9 @@ sealed interface InteractResult {
 
     /** Sending failed before anything left the phone (offline, or the connection was just lost). Safe to try again. */
     data class NotSent(val cause: Throwable) : InteractResult
+
+    /** A notification button was pressed with no live connection, and none could be made in time. Nothing was sent; the person has to open the app. */
+    data object NotConnected : InteractResult
 }
 
 /**

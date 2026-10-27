@@ -138,11 +138,13 @@ private fun Shell(
     val canManage = connected?.let { it.session.canManage.collectAsStateWithLifecycle().value } == true
     val rootState = connected?.let { it.session.root.root.collectAsStateWithLifecycle().value }
     val listed: List<SessionSummary> = connected?.let { it.session.root.sessions.collectAsStateWithLifecycle().value }.orEmpty()
+    // The list is only what was saved last time until the host sends its own: to look at, with nothing in it to act on.
+    val stale = connected?.let { it.session.root.stale.collectAsStateWithLifecycle().value } == true
     val now by rememberNow()
     // Where the person is needed, from the same list as the side menu: what waits on them, and what finished unread.
     val inbox = remember(listed, now) { Inbox.from(listed, now) }
-    // Nothing to look after sessions with unless the connection is on the manage tier: no controls, not disabled ones.
-    val manageActions = if (canManage) {
+    // Nothing to look after sessions with unless the connection is on the manage tier: no controls, not disabled ones. Nor from a stale list.
+    val manageActions = if (canManage && !stale) {
         remember(controller.manager, rootState, listed) {
             ManageActionsUi(
                 agents = controller.manager.offeredAgents().map { AgentOption(it.provider, it.displayName) },
@@ -186,6 +188,7 @@ private fun Shell(
                 onSessionCreated = showSession,
                 inboxCount = if (connected != null) inbox.waiting.size else null,
                 onOpenInbox = { closeDrawer(); page = Page.INBOX },
+                stale = stale,
             )
         },
     ) {
@@ -235,7 +238,8 @@ private fun Shell(
                 val reader = remember(controller) { InboxReader(controller::readWaiting) }
                 val details by reader.details.collectAsStateWithLifecycle()
                 // Read again whenever a session starts waiting, stops waiting, or changes: what a card says it waits for must be what it waits for.
-                LaunchedEffect(inbox.waiting.map { it.row.resource to it.stamp }) { reader.refresh(inbox.waiting) }
+                // Not from a stale list: those sessions may be gone, and a read that came to nothing would be kept until the session changes.
+                LaunchedEffect(stale, inbox.waiting.map { it.row.resource to it.stamp }) { if (!stale) reader.refresh(inbox.waiting) }
                 InboxScreen(
                     inbox = inbox,
                     details = details,
@@ -244,6 +248,7 @@ private fun Shell(
                     canDecide = interactionAllowed,
                     onDecide = { chat, call, approve, option -> controller.decideToolCall(chat, call, approve, option) },
                     manage = manageActions,
+                    stale = stale,
                 )
             }
             Page.MAIN -> if (connected == null || connection == null) {

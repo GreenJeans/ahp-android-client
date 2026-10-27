@@ -126,7 +126,7 @@ Never in any tier without a new decision: `authenticate`, `resourceWrite|Delete|
 
 ### Background monitoring
 
-Android kills idle sockets in the background. Monitoring is **opt-in**: a foreground service (type `dataSync`; re-check Play policy for long-running connections at Phase 1 release) with a persistent "Monitoring N sessions" notification holds the socket, pings on an interval, and posts a high-priority notification on each **transition into** `InputNeeded`. Off = live updates only while the app is visible. Push via a relay server is out of scope (it would need our own backend holding tokens).
+Android kills idle sockets in the background. Monitoring is **opt-in**: a foreground service (type `dataSync` below Android 14 and `specialUse` from Android 14, to avoid the six-hour cut on `dataSync`, see H8 in [`docs/hardening-spec.md`](hardening-spec.md); re-check Play policy for long-running connections at Phase 1 release) with a persistent "Monitoring N sessions" notification holds the socket, pings on an interval, and posts a high-priority notification on each **transition into** `InputNeeded`. Off = live updates only while the app is visible. Push via a relay server is out of scope (it would need our own backend holding tokens).
 
 ### Versioning & churn
 
@@ -326,7 +326,7 @@ Paths are relative to the new repo root. Hours use the calibrated buckets (0.5, 
 **Files affected:**
 - `app/src/main/kotlin/dev/ahpclient/monitor/MonitorService.kt`
 - `app/src/main/kotlin/dev/ahpclient/monitor/InputNeededNotifier.kt`
-- `app/src/main/AndroidManifest.xml` — service `foregroundServiceType="dataSync"`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_DATA_SYNC`, `POST_NOTIFICATIONS`
+- `app/src/main/AndroidManifest.xml` — service `foregroundServiceType="dataSync|specialUse"` (started as `dataSync` below Android 14 and `specialUse` from Android 14, see H8 in `docs/hardening-spec.md`), `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_DATA_SYNC`, `FOREGROUND_SERVICE_SPECIAL_USE`, `POST_NOTIFICATIONS`
 
 **Copilot prompt:**
 > Add a settings toggle "Monitor in background" (default off). When on, `MonitorService` (foreground, persistent low-priority "Monitoring N sessions on <host>" notification with a Stop action) keeps `HostSession` alive and pings every 30 s. `InputNeededNotifier` diffs consecutive `RootStore.sessions` emissions and posts a high-importance notification only on a session's transition **into** `isInputNeeded` (debounced 3 s; one per session until it leaves the state), deep-linking to `SessionDetailScreen`. Request `POST_NOTIFICATIONS` at toggle time on API 33+. Stop the service on sign-out and when the toggle is turned off.

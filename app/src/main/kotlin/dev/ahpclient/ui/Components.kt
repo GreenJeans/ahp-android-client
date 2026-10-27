@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -81,6 +82,29 @@ fun ConnectionLine(connection: ConnState, modifier: Modifier = Modifier) {
         ErrorText(describe(connection), modifier.testTag("connection_status"))
     } else {
         Text(describe(connection), style = MaterialTheme.typography.bodyLarge, modifier = modifier.testTag("connection_status"))
+    }
+}
+
+/**
+ * Said over a list that is only what the phone saved last time, while the host's own is on its way. Its words carry the meaning, so the
+ * spinner is only company; the rows under it are to look at, not to act on.
+ */
+@Composable
+fun UpdatingChip(modifier: Modifier = Modifier) {
+    Surface(
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        shape = MaterialTheme.shapes.small,
+        modifier = modifier.semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }.testTag("updating_chip"),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 2.dp)
+            Text("Updating…", style = MaterialTheme.typography.labelLarge)
+        }
     }
 }
 

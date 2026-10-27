@@ -33,7 +33,8 @@ class DecisionReceiver : BroadcastReceiver() {
         val pending = goAsync()
         val finished = AtomicBoolean(false)
         val finish = { if (finished.compareAndSet(false, true)) pending.finish() }
-        // A receiver may not run for long; if the host is slow the decision carries on without holding it open.
+        // A receiver may not run for long; if the host is slow the decision carries on without holding it open. The budget is longer than the
+        // time the decision allows itself to reach the host and read the chat, so "Open the app to answer" can still be shown from here.
         Handler(Looper.getMainLooper()).postDelayed(finish, RECEIVER_BUDGET_MS)
         (app as AhpApp).container.decideFromNotification(chat, call, approve = false, optionId = option) { result ->
             Toast.makeText(app, InteractMessages.describeDecision(approved = false, result), Toast.LENGTH_LONG).show()
@@ -42,6 +43,6 @@ class DecisionReceiver : BroadcastReceiver() {
     }
 
     private companion object {
-        const val RECEIVER_BUDGET_MS = 8_000L
+        const val RECEIVER_BUDGET_MS = 12_000L
     }
 }

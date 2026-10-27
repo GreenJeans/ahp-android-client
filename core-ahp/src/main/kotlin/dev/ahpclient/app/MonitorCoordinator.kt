@@ -29,9 +29,17 @@ interface MonitorSettings {
 
 /** Starts and stops whatever keeps the process alive in the background (on Android, a foreground service). */
 interface MonitorService {
-    fun start()
+    /** @return false when it could not be started (Android refuses a foreground service started from the background), true when it was asked to run. */
+    fun start(): Boolean
 
     fun stop()
+}
+
+/** Where "monitoring is not running" is said when no screen shows it: a notification on the phone that opens the app. */
+interface MonitorProblemSink {
+    fun post(text: String)
+
+    fun clear()
 }
 
 /** Where "a session needs you" goes: a notification on the phone. */
@@ -79,7 +87,8 @@ class FinishedAlerts(
  * Decides when background monitoring runs and feeds it. Monitoring is on exactly while the user has turned it on and
  * is connected to a host: signing out, leaving the host or turning it off stops it, with nothing left running. While
  * it runs, [status] is the persistent notification's text and sessions that start waiting on the user go to [sink]. With [finished]
- * set, sessions the user chose to watch (or all of them) also go to its sink when they stop working.
+ * set, sessions the user chose to watch (or all of them) also go to its sink when they stop working. When the service cannot be
+ * started the status says so and [problems], if given, is told too, until a start works or monitoring ends.
  */
 class MonitorCoordinator(
     private val state: StateFlow<AppState>,
@@ -90,8 +99,10 @@ class MonitorCoordinator(
     private val debounceMs: Long = InputNeededNotifier.DEFAULT_DEBOUNCE_MS,
     private val finished: FinishedAlerts? = null,
     private val finishedDebounceMs: Long = FinishedNotifier.DEFAULT_DEBOUNCE_MS,
+    private val problems: MonitorProblemSink? = null,
 ) {
     private val _status = MutableStateFlow<MonitorStatus?>(null)
+    private val startFailed = MutableStateFlow(false)
 
     /** Null when monitoring is off. */
     val status: StateFlow<MonitorStatus?> = _status.asStateFlow()
@@ -115,14 +126,32 @@ class MonitorCoordinator(
         scope.launch { run() }
     }
 
+    /** Asks the service to run again while monitoring is on, which brings its notification back, and says so if it still cannot. Safe to repeat. */
+    fun refreshService() {
+        if (_status.value != null) startService()
+    }
+
+    private fun startService() {
+        val started = service.start()
+        startFailed.value = !started
+        if (started) problems?.clear() else problems?.post(START_FAILED)
+    }
+
     private suspend fun run() {
+        // A warning is taken away only when monitoring that was running ends. The first look in a new process, with nothing connected yet,
+        // is not that: the periodic check may have posted "Monitoring stopped", and nothing has brought monitoring back.
+        var monitoring = false
         combine(state, settings.enabled) { current, on -> if (on) current as? AppState.Connected else null }
             .distinctUntilChanged { old, new -> old?.session === new?.session }
             .collectLatest { connected ->
                 if (connected == null) {
                     _status.value = null
+                    startFailed.value = false
+                    if (monitoring) problems?.clear()
+                    monitoring = false
                     service.stop()
                 } else {
+                    monitoring = true
                     monitor(connected)
                 }
             }
@@ -132,10 +161,11 @@ class MonitorCoordinator(
         val session = connected.session
         // The status is set before the service starts, so the service never sees "off" while it is starting.
         _status.value = MonitorStatus.from(connected.host.name, session.root.sessions.value, session.connection.value)
-        service.start()
+        startService()
         launch {
-            combine(session.connection, session.root.sessions) { connection, list -> MonitorStatus.from(connected.host.name, list, connection) }
-                .collect { _status.value = it }
+            combine(session.connection, session.root.sessions, startFailed) { connection, list, failed ->
+                MonitorStatus.from(connected.host.name, list, connection).let { if (failed) it.copy(text = START_FAILED) else it }
+            }.collect { _status.value = it }
         }
         launch {
             // The list is complete once the connection is online, so what is waiting then is the baseline, not news.
@@ -161,5 +191,9 @@ class MonitorCoordinator(
                 ).run()
             }
         }
+    }
+
+    companion object {
+        const val START_FAILED = "Monitoring could not start. Open the app."
     }
 }

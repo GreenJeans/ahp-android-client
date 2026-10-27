@@ -110,8 +110,8 @@ internal class HostScript(
     val changesetState: String = changesetStateJson(),
     /** What a subscribed terminal reports, as the state JSON. */
     val terminalState: String = terminalStateJson(),
-    /** Replaces the whole reply to a terminal `subscribe` (for a host that answers badly); null is the scripted snapshot. */
-    val onTerminalSubscribe: ((id: Long?, channel: String) -> String)? = null,
+    /** Replaces the whole reply to a terminal `subscribe` (for a host that answers badly, or not yet: null); no function is the scripted snapshot. */
+    val onTerminalSubscribe: ((id: Long?, channel: String) -> String?)? = null,
     /** The `config` a subscribed session reports (its schema and values), as JSON; null for a session without any. */
     val sessionConfig: String? = null,
     /** The `config` a subscribed chat reports (its own values), as JSON; null for a chat with none of its own. */
@@ -159,10 +159,12 @@ internal class HostScript(
         return JsonObject(snapshot + ("state" to JsonObject(state + ("terminals" to Json.parseToJsonElement(terminals)))))
     }
 
-    private fun subscribeReply(id: Long?, channel: String): String = when {
-        channel.startsWith("ahp-terminal:/") || channel.startsWith("agenthost-terminal://") ->
-            onTerminalSubscribe?.invoke(id, channel)
-                ?: if (channel in missingSessions) error(id, -32008, "no such terminal") else result(id, """{"snapshot":${terminalSnapshotJson(channel, SNAPSHOT_SEQ, terminalState)}}""")
+    private fun subscribeReply(id: Long?, channel: String): String? = when {
+        channel.startsWith("ahp-terminal:/") || channel.startsWith("agenthost-terminal://") -> when {
+            onTerminalSubscribe != null -> onTerminalSubscribe.invoke(id, channel)
+            channel in missingSessions -> error(id, -32008, "no such terminal")
+            else -> result(id, """{"snapshot":${terminalSnapshotJson(channel, SNAPSHOT_SEQ, terminalState)}}""")
+        }
         channel.startsWith("ahp-chat:/") ->
             if (channel in missingSessions) error(id, -32008, "no such chat") else result(id, """{"snapshot":${chatSnapshotJson(channel, SNAPSHOT_SEQ, turns = chatTurns, cursor = chatCursor, activeTurn = chatActiveTurn, config = chatConfig)}}""")
         channel.startsWith("ahp-changeset:/") ->

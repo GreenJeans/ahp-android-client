@@ -12,6 +12,7 @@ import dev.ahpclient.MainActivity
 import dev.ahpclient.R
 import dev.ahpclient.app.FinishedSink
 import dev.ahpclient.app.InputNeededSink
+import dev.ahpclient.app.MonitorProblemSink
 import dev.ahpclient.state.ApprovalTarget
 import dev.ahpclient.state.FinishedSession
 import dev.ahpclient.state.FinishedText
@@ -24,6 +25,7 @@ object MonitorChannels {
     const val MONITOR = "monitor"
     const val INPUT_NEEDED = "input_needed"
     const val FINISHED = "finished"
+    const val PROBLEM = "monitor_problem"
 
     fun ensure(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java)
@@ -42,6 +44,50 @@ object MonitorChannels {
                 description = "A session you chose to watch has stopped working."
             },
         )
+        manager.createNotificationChannel(
+            NotificationChannel(PROBLEM, "Monitoring problems", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                description = "Background monitoring stopped, or could not start. Tap to open the app and resume it."
+            },
+        )
+    }
+}
+
+/**
+ * The one warning that background monitoring is not running: "Monitoring stopped", from the periodic check, or "could not start", from
+ * the coordinator. It has a fixed id so a second one replaces the first, makes a sound only the first time, and opens the app when
+ * tapped, which connects again when monitoring is on. Nothing in it is sensitive.
+ */
+class NotificationMonitorProblemSink(private val context: Context) : MonitorProblemSink {
+    private val manager = context.getSystemService(NotificationManager::class.java)
+
+    override fun post(text: String) {
+        MonitorChannels.ensure(context)
+        val open = PendingIntent.getActivity(
+            context,
+            0,
+            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            PendingIntent.FLAG_IMMUTABLE,
+        )
+        manager.notify(
+            NOTIFICATION_ID,
+            Notification.Builder(context, MonitorChannels.PROBLEM)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle(text)
+                .setContentIntent(open)
+                .setAutoCancel(true)
+                .setOnlyAlertOnce(true)
+                .setCategory(Notification.CATEGORY_STATUS)
+                .build(),
+        )
+    }
+
+    override fun clear() {
+        manager.cancel(NOTIFICATION_ID)
+    }
+
+    internal companion object {
+        /** Not an id the service uses for its own notifications (100 and 101). */
+        const val NOTIFICATION_ID = 102
     }
 }
 

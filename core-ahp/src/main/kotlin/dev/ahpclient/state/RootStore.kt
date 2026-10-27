@@ -37,14 +37,48 @@ class RootStore {
     /** Notifications this store recognized by name but could not decode. */
     val decodeFailures: StateFlow<Int> = _decodeFailures.asStateFlow()
 
+    private val _stale = MutableStateFlow(false)
+
+    /**
+     * True while [sessions] is only what was saved on the phone from an earlier run (see [seedStale]): good to look at, not to act on, and
+     * not to alert from. Only the host's own list ([replaceCatalog]) ends it; a notification that arrives meanwhile does not.
+     */
+    val stale: StateFlow<Boolean> = _stale.asStateFlow()
+
+    // Guarded by lock.
+    private var live = false
+
+    /** True once the host's own list has been taken, which nothing later undoes. A list that is only a seed does not count. */
+    val hasLiveCatalog: Boolean get() = synchronized(lock) { live }
+
     fun seedRoot(state: RootState) {
         _root.value = state
     }
 
-    /** Replaces the whole list, for example after a (re)connect. */
-    fun replaceCatalog(items: List<SessionSummary>) = mutate {
+    /**
+     * Shows [items], a list saved on the phone, until the host's own arrives. It marks the list [stale] first, so nothing that reads both
+     * can see these rows without the mark. Ignored once the host's list has been taken: late news from disk never replaces live data.
+     *
+     * @return true when the rows were taken.
+     */
+    fun seedStale(items: List<SessionSummary>): Boolean = synchronized(lock) {
+        if (live) return false
+        _stale.value = true
         byUri.clear()
         items.forEach { byUri[it.resource] = it }
+        _sessions.value = SessionCatalog.sorted(byUri.values)
+        true
+    }
+
+    /** Replaces the whole list with the host's own, for example after a (re)connect, and ends [stale]. */
+    fun replaceCatalog(items: List<SessionSummary>) {
+        mutate {
+            byUri.clear()
+            items.forEach { byUri[it.resource] = it }
+            live = true
+        }
+        // After the rows, so no one sees the old ones without the mark.
+        _stale.value = false
     }
 
     fun applyAction(action: StateAction) {

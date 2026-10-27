@@ -211,6 +211,7 @@ class InteractMessagesTest {
             InteractResult.Sent(DispatchOutcome.Rejected("no")),
             InteractResult.NotAllowed,
             InteractResult.NotConfirmed,
+            InteractResult.NotConnected,
             InteractResult.NotSent(java.io.IOException()),
         ).forEach { assertEquals(false, InteractMessages.succeeded(it), "$it") }
     }
@@ -235,6 +236,14 @@ class InteractMessagesTest {
     fun `every other result has words of its own`() {
         listOf(InteractResult.NotAllowed, InteractResult.NoActiveTurn, InteractResult.NoSuchRequest, InteractResult.NotConfirmed, InteractResult.NotSent(java.io.IOException()))
             .forEach { assertTrue(!InteractMessages.describe(it).isNullOrBlank(), "$it") }
+    }
+
+    @Test
+    fun `a button pressed with no connection to be had tells the person to open the app, and never says it was done`() {
+        assertEquals("Open the app to answer.", InteractMessages.describe(InteractResult.NotConnected))
+        for (approved in listOf(true, false)) {
+            assertEquals("Open the app to answer.", InteractMessages.describeDecision(approved, InteractResult.NotConnected))
+        }
     }
 
     @Test

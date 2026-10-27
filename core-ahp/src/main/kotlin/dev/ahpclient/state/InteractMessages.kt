@@ -15,6 +15,7 @@ object InteractMessages {
         InteractResult.InvalidAgent -> "The host does not offer that agent here any more. Pick another and send again."
         InteractResult.InvalidConfig -> "The host does not let this chat change that setting here."
         is InteractResult.NotSent -> "Could not send. Check the connection and try again."
+        InteractResult.NotConnected -> "Open the app to answer."
     }
 
     fun describe(outcome: DispatchOutcome): String? = when (outcome) {

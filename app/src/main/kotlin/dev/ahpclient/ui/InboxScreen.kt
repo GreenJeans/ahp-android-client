@@ -51,7 +51,8 @@ import kotlinx.coroutines.launch
  * decide it, an approval behind the phone's device check as everywhere else), and the ones that finished on their own and that you have
  * not read. Tapping a session opens it. [details] holds what each waiting session was read to be waiting for; a session with no words yet,
  * or none, still has a way to open it. The buttons to decide exist only when [canDecide] (the app may act for you); the buttons to mark
- * sessions read only when [manage] is given.
+ * sessions read only when [manage] is given. While [stale], the list is only what the phone saved last time: it says so, and nothing in it
+ * can be decided or marked read, since the host may no longer have those sessions.
  */
 @Composable
 fun InboxScreen(
@@ -63,11 +64,18 @@ fun InboxScreen(
     onDecide: suspend (chat: String, toolCallId: String, approve: Boolean, optionId: String?) -> InteractResult,
     manage: ManageActionsUi?,
     modifier: Modifier = Modifier,
+    stale: Boolean = false,
 ) {
     val scope = rememberCoroutineScope()
     var notice by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
-    ScreenScaffold(title = "Inbox", onBack = onBack, titleTag = "inbox_title", modifier = modifier) {
+    ScreenScaffold(
+        title = "Inbox",
+        onBack = onBack,
+        titleTag = "inbox_title",
+        modifier = modifier,
+        actions = { if (stale) UpdatingChip(Modifier.padding(end = 8.dp)) },
+    ) {
         if (inbox.isEmpty) {
             EmptyState(
                 AppIcons.Inbox,
@@ -85,7 +93,7 @@ fun InboxScreen(
                 if (inbox.waiting.isNotEmpty()) {
                     item(key = "waiting_header") { SectionHeader("Waiting for you", Modifier.testTag("inbox_waiting_header")) }
                     items(inbox.waiting, key = { "w:" + it.row.resource }) { item ->
-                        WaitingCard(item, details[item.row.resource], loaded = details.containsKey(item.row.resource), canDecide, onOpen, onDecide)
+                        WaitingCard(item, details[item.row.resource], loaded = details.containsKey(item.row.resource), canDecide, stale, onOpen, onDecide)
                     }
                 }
                 if (inbox.finished.isNotEmpty()) {
@@ -94,7 +102,7 @@ fun InboxScreen(
                             SectionHeader("Finished, not read", Modifier.weight(1f).testTag("inbox_finished_header"))
                             if (manage != null && inbox.finished.size > 1) {
                                 TextButton(
-                                    enabled = !busy,
+                                    enabled = !busy && !stale,
                                     onClick = {
                                         scope.launch {
                                             busy = true
@@ -115,7 +123,7 @@ fun InboxScreen(
                             }
                         }
                     }
-                    items(inbox.finished, key = { "f:" + it.row.resource }) { item -> FinishedCard(item, manage, onOpen) }
+                    items(inbox.finished, key = { "f:" + it.row.resource }) { item -> FinishedCard(item, manage, stale, onOpen) }
                 }
             }
         }
@@ -152,6 +160,7 @@ private fun WaitingCard(
     read: RequestRead?,
     loaded: Boolean,
     canDecide: Boolean,
+    stale: Boolean,
     onOpen: (String) -> Unit,
     onDecide: suspend (chat: String, toolCallId: String, approve: Boolean, optionId: String?) -> InteractResult,
 ) {
@@ -185,9 +194,9 @@ private fun WaitingCard(
                     }
                     val tag = if (target.options.isEmpty()) (if (choice.approves) "inbox_approve" else "inbox_deny") else "inbox_option"
                     if (choice.approves) {
-                        Button(onClick = decide, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp).testTag(tag)) { Text(choice.label, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                        Button(onClick = decide, enabled = !busy && !stale, modifier = Modifier.heightIn(min = 48.dp).testTag(tag)) { Text(choice.label, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                     } else {
-                        OutlinedButton(onClick = decide, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp).testTag(tag)) { Text(choice.label, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                        OutlinedButton(onClick = decide, enabled = !busy && !stale, modifier = Modifier.heightIn(min = 48.dp).testTag(tag)) { Text(choice.label, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                     }
                 }
             } else if (loaded || !canDecide) {
@@ -206,7 +215,7 @@ private fun WaitingCard(
 }
 
 @Composable
-private fun FinishedCard(item: InboxItem, manage: ManageActionsUi?, onOpen: (String) -> Unit) {
+private fun FinishedCard(item: InboxItem, manage: ManageActionsUi?, stale: Boolean, onOpen: (String) -> Unit) {
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf(false) }
     var problem by remember(item.stamp) { mutableStateOf<String?>(null) }
@@ -217,7 +226,7 @@ private fun FinishedCard(item: InboxItem, manage: ManageActionsUi?, onOpen: (Str
         CardHeader(item, detail = null, second = second, onOpen = onOpen)
         if (manage != null) {
             TextButton(
-                enabled = !busy,
+                enabled = !busy && !stale,
                 onClick = {
                     scope.launch {
                         busy = true
