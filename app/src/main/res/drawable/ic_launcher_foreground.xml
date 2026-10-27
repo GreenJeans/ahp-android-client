@@ -1,17 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- An agent's spark inside a tunnel's arch: the agent, reached through the Dev Tunnel. -->
+<!-- A kite on its string: the agent flies where it will, and you hold the other end. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
     <path
-        android:pathData="M34,80L34,52A20,20 0,0 1,74 52L74,80"
-        android:strokeWidth="7"
-        android:strokeColor="#FFFFFF"
-        android:strokeLineCap="round"
+        android:fillColor="#FFF4E0"
+        android:pathData="M62,24L78,44L62,70L46,44Z"
+        android:strokeWidth="3"
+        android:strokeColor="#FFF4E0"
         android:strokeLineJoin="round" />
     <path
-        android:fillColor="#FFC857"
-        android:pathData="M54,50Q55.9,60.1 66,62Q55.9,63.9 54,74Q52.1,63.9 42,62Q52.1,60.1 54,50Z" />
+        android:pathData="M62,24L62,70M46,44L78,44"
+        android:strokeWidth="2.5"
+        android:strokeColor="@color/ic_launcher_background"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M62,70C62,80 50,75 44,84"
+        android:strokeWidth="3.5"
+        android:strokeColor="#FFF4E0"
+        android:strokeLineCap="round" />
 </vector>

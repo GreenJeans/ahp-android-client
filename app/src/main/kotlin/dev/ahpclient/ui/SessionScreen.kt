@@ -147,7 +147,7 @@ fun SessionScreen(
                         when {
                             detail.phase == SessionPhase.FAILED -> Unit
                             shownChat != null && shownChat in tabUris -> chat()
-                            detail.tabs.isEmpty() -> EmptyState(AppIcons.Info, "No chats in this session yet")
+                            detail.tabs.isEmpty() -> EmptyState(AppIcons.InfoDuo, "No chats in this session yet")
                             else -> Busy("Loading chat…", Modifier.padding(24.dp).testTag("chat_pending"))
                         }
                     }

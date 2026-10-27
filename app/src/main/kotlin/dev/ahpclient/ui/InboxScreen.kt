@@ -78,7 +78,7 @@ fun InboxScreen(
     ) {
         if (inbox.isEmpty) {
             EmptyState(
-                AppIcons.Inbox,
+                AppIcons.InboxDuo,
                 "Nothing needs you",
                 modifier = Modifier.testTag("inbox_empty"),
                 body = "Sessions that wait for you, and recent ones you have not read, show up here.",

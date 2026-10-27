@@ -1,17 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The launcher foreground in one colour, for the themed icons of Android 13 and newer. -->
+<!-- The launcher foreground in one colour, for the themed icons of Android 13 and newer. The kite is four panels, because the spars cannot be drawn in the background colour here: the gaps between the panels are the spars. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
     <path
-        android:pathData="M34,80L34,52A20,20 0,0 1,74 52L74,80"
-        android:strokeWidth="7"
-        android:strokeColor="#FFFFFF"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round" />
+        android:fillColor="#FFFFFF"
+        android:pathData="M60.75,25.56L60.75,42.75L47,42.75Z" />
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M54,50Q55.9,60.1 66,62Q55.9,63.9 54,74Q52.1,63.9 42,62Q52.1,60.1 54,50Z" />
+        android:pathData="M63.25,25.56L63.25,42.75L77,42.75Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M46.77,45.25L60.75,45.25L60.75,67.97Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M77.23,45.25L63.25,45.25L63.25,67.97Z" />
+    <path
+        android:pathData="M62,70C62,80 50,75 44,84"
+        android:strokeWidth="3.5"
+        android:strokeColor="#FFFFFF"
+        android:strokeLineCap="round" />
 </vector>

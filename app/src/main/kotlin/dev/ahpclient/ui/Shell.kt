@@ -40,7 +40,7 @@ fun MainEmpty(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
     ) {
-        Icon(AppIcons.Host, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 4.dp))
+        Icon(AppIcons.HostDuo, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 4.dp))
         if (!connected) {
             Text("Not connected", style = MaterialTheme.typography.titleMedium, modifier = Modifier.testTag("empty_title"))
             Button(onClick = onConnect, modifier = Modifier.testTag("connect_host")) { Text("Connect to a host") }
