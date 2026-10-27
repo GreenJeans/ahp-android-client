@@ -1,0 +1,277 @@
+# Host extensions and a second host kind
+
+> **Status:** Draft, not started.
+> **Date:** 2026-10-27
+> **Parent:** [`docs/spec.md`](spec.md). That spec holds the product phases. [`docs/hardening-spec.md`](hardening-spec.md) holds the battery, network, memory and recovery work; this one holds what the app can learn from other hosts and clients. Tick boxes here as work lands and add a row to the Progress Log at the bottom; note the commit in the row.
+> **Source:** the "Private extensions in the wild" section of [`docs/CONFORMANCE.md`](https://github.com/softov/ahpc/blob/main/docs/CONFORMANCE.md) in the `ahpc` repo (a terminal AHP client by the author of `ahpd`), read 2026-10-26, and a comparison with this app's code at commit `c682a67`. The `ahpc` document was captured against AHP 0.9.0 on 2026-09-13 and reached me through a summarising fetch, so **read the original before relying on a field name**; Item E0 exists to check each one against real captures.
+
+## Overview
+
+Real AHP hosts send fields the protocol does not declare. `ahpc` records twelve of them, found by validating live captures from two hosts: VS Code's agent host and `ahpd`. It reads about five and leaves the rest alone. This app reads none: the only `_meta` handling is in `SessionCatalog.kt`, which replaces it whole and ignores it.
+
+Most of the fields are cheap, read-only and useful on a phone: the git branch, the pull request and its state, the "what is it doing now" text of a running tool call, and the flag that tells a client to hide a message from the transcript. None needs a new capability tier.
+
+The same document points at a second thing. `ahpc` talks to `ahpd` over a plain WebSocket with a connection token and no Dev Tunnel, GitHub sign-in or tunnel discovery. This app only knows how to reach a Remote Tunnel Access host. A second **host kind** is much smaller than the concurrent multi-host support we deferred (parent spec, open question 6), and it would give us a safe host to test against: our notes record that tool-approval requests have not yet been seen live.
+
+### Goals
+
+- Read the useful extensions through one small module that absorbs the differences between hosts, so screens never see host-specific spellings.
+- Show branch and pull-request state on a session, a progress message on a running step, and hide the messages VS Code hides.
+- Find out, with evidence and not by reading someone else's list, which extensions each host we can reach actually sends.
+- Settle whether a host that omits `ActionEnvelope.origin` breaks the way this app matches an echo to a send.
+- Let the host list hold a directly addressed host (`ahpd`) next to the tunnel hosts, with its own consent.
+
+### Non-goals
+
+- Concurrent connections to several hosts (still deferred, parent spec open question 6).
+- Any write capability the tiers do not already allow. Customization toggles, `authenticate`, `terminal/input` and the rest stay out (parent spec, "Capability allowlist").
+- Serving completions, or the completion-attachment `_meta` contract (it only matters if we ever add `@` or `/` completion in the message box).
+- Mirroring `ahpc`'s tool server (`ahpc mcp`), recording, automations or telemetry.
+- Reading fields that exist only to serve write features: `argumentHint`, customization `enabled`/`nonce`/`childEnablement`, config `scope`, root `sessionMutable`.
+
+### Order of work
+
+| # | Item | Theme | Size | Depends on |
+|---|---|---|---|---|
+| E0 | Extension census and fixtures | Evidence | S | — |
+| E1 | `HostExtras` reader | Foundation | M | E0 |
+| E2 | Branch and pull-request chips | Feature | M | E1 |
+| E3 | Progress message on a running step | Feature | S | E1 |
+| E4 | Hide messages hidden from the transcript | Fidelity | S | E1 |
+| E5 | Match an echo without `origin` | Conformance | M | E0 |
+| E6 | A directly addressed host kind (`ahpd`) | Multi-host | L | E0, E5 |
+| E7 | Protocol version fallback | Compatibility | S | E0 |
+
+E0 comes first because everything else rests on facts about hosts we have not captured. After it, E2, E3 and E4 are independent and can run in parallel sessions once E1 is in. E5 can start as soon as E0 says whether any reachable host omits `origin`. E6 is the largest and shares files (host list, `AppController`, `AppContainer`) with the hardening work, so start it only when nothing else is touching them.
+
+---
+
+## E0 - Extension census and fixtures
+
+### Problem
+
+We know twelve extension fields by name from a third party's notes, for one protocol version, from hosts we have not run. We have live captures of one host (VS Code's, through a tunnel), redacted into `core-ahp/src/test/resources/live/`. We do not know which of the twelve it sends to us at protocol 1.0.0, what `ahpd` sends, or whether the generated Kotlin types expose `_meta` on session state, tool calls and messages at all (`SessionSummary` does; the rest is unchecked).
+
+### Design
+
+- Add a `--census` option to `:core-ahp:probe` (`ProbeMain.kt`). It connects as today, subscribes to the root, to every listed session up to a limit, and to the newest chat of each, reads for a fixed time, and writes a report of every **key path that is not in the generated types**: for each frame kind (snapshot, action, notification) the set of JSON paths seen under `_meta`, and any other key the generated decoder drops. Values are not recorded, only paths, types and counts, so the report holds no titles, branch names or URLs.
+- Compare the report to the twelve fields in the source document: for each, `seen`, `not seen` or `seen under another name`.
+- Check the library: for `SessionState`, `ToolCallState`, the message and turn types and `ActionEnvelope`, say whether the generated Kotlin type has a `_meta` property. Where it does not, E1 reads the raw frame the way `ConfigFacts` does.
+- Run it against the VS Code host through the tunnel, and, when one can be started, against a local `ahpd`. For `ahpd`, first find out (from its README and by trying) how it is addressed and authenticated; record that in `docs/verification/extensions.md`, because E5 and E6 need it.
+- From the captures, add redacted fixtures under `core-ahp/src/test/resources/live/` (using `tools/redact-capture.mjs`) that carry the extension fields, one set per host. The redaction check (`tools/redaction-check.mjs`) must pass on them.
+
+### Acceptance criteria
+
+- [ ] **AC-E0.1** `:core-ahp:probe --census` writes a report that lists the unknown key paths per frame kind and holds no values from the host.
+- [ ] **AC-E0.2** `docs/verification/extensions.md` says, for each of the twelve fields and for each host reached, seen / not seen / other name, with the date and protocol version the host chose.
+- [ ] **AC-E0.3** The same file says which generated types have a `_meta` property and which do not.
+- [ ] **AC-E0.4** Redacted fixtures with the extension fields are checked in and pass the redaction check.
+- [ ] **AC-E0.5** The file records how `ahpd` is addressed and authenticated, or says plainly that it could not be reached.
+
+### Tests
+
+A JVM test for the census's path collector over a fixture frame (known keys excluded, unknown paths found, no values in the output); the redaction check on the new fixtures.
+
+---
+
+## E1 - `HostExtras` reader
+
+### Problem
+
+The useful extensions arrive under different names depending on the host: `branchName` or `branch` for the git branch, `SessionState.model` or `_meta.model`, and so on. If each screen read its own spelling, every new host would mean edits across the UI.
+
+### Design
+
+- A pure module in `core-ahp` (`state/HostExtras.kt`) that takes the decoded state, plus the raw frame where the generated type drops `_meta`, and returns a small model per kind:
+  - `SessionExtras(branch: String?, ahead: Int?, behind: Int?, pullRequests: List<PullRequest>, model: String?)`, where `PullRequest(url, state, branch)`.
+  - `StepExtras(progressMessage: String?)` for a tool call.
+  - `MessageExtras(hiddenFromTranscript: Boolean)` for a message or request.
+- It accepts every spelling the source document lists and treats every field as optional: wrong type, missing, or from a host that does not send it all give `null` or the default, never an exception. Unknown values (a pull-request state we have not seen) are kept as text, not dropped.
+- Strings are bounded (a branch name or message over a fixed length is cut) and URLs are carried as text only; E2 decides which may be opened.
+- Where the raw frame is needed, extend `ConfigFacts`-style reading in `AhpConnection` (the facts are recorded as a reply is read and picked up when the snapshot is stored) rather than a second parsing pass. Only the keys this module needs are kept, and the number kept is bounded like `MAX_CONFIG_FACTS`.
+- The stores expose the extras next to their state (for example `SessionStore.extras: StateFlow<SessionExtras>`), so a screen reads a model and never a JSON path.
+
+### Acceptance criteria
+
+- [ ] **AC-E1.1** Given the E0 fixtures from each host, `HostExtras` returns the same `SessionExtras` model whichever spelling the host used.
+- [ ] **AC-E1.2** Missing, mistyped, oversized or hostile values (a branch of a million characters, a URL with a control character, a number where text is expected) produce defaults and no exception.
+- [ ] **AC-E1.3** The extras update when the host changes them (a `sessionSummaryChanged`, or an action that replaces `_meta`), and clear when the host removes them.
+- [ ] **AC-E1.4** No outbound method or action changes: the capability allowlist test passes unchanged.
+
+### Tests
+
+`HostExtrasTest` over the E0 fixtures and a table of malformed values; store tests for update and clear; the existing `CapabilityPolicyTest` untouched.
+
+---
+
+## E2 - Branch and pull-request chips
+
+### What
+
+A session shows its git branch (and how far it has drifted, when the host says) and, when the host reports pull requests, a chip for each: open, merged or closed. Tapping a pull-request chip opens it through the existing link confirmation (`SafeLinks` allows `github.com`, and the dialog shows the real address before leaving the app).
+
+### Design
+
+- Show them where a session is already described: the drawer row (branch only, one line), the session screen's header or Details sheet (branch, drift, pull requests), and the inbox cards (pull-request state only if it fits).
+- Pull-request chips use the pull-request URLs from `SessionExtras`, passed through `SafeLinks`; a URL that is not a plain `https://github.com/...` address is shown as text, not as a link. Nothing is fetched from GitHub: the state is whatever the host last said.
+- A state the app does not know is shown as its text, in the neutral style. Colour is never the only carrier (the chip carries a word).
+- A host that sends none of this shows none of it: no empty chip, no placeholder.
+
+### Acceptance criteria
+
+- [ ] **AC-E2.1** A session whose host sends a branch shows it on its drawer row and on the session screen; one that does not shows neither.
+- [ ] **AC-E2.2** A session with a pull request shows a chip with its state; tapping it opens the link confirmation with the real address, and an address that is not on `github.com` is not made tappable.
+- [ ] **AC-E2.3** The chips pass the accessibility test class (labels, contrast, touch size) in both themes.
+- [ ] **AC-E2.4** On the phone, against the VS Code host, a session with a branch and a pull request shows both within a few seconds of subscribing, and a session without shows no empty chip.
+
+### Tests
+
+Compose UI tests for the chips (present, absent, unknown state, hostile URL), added to `AccessibilityTest`; `SafeLinks` cases for the URLs `HostExtras` can carry. AC-E2.4 needs the phone.
+
+---
+
+## E3 - Progress message on a running step
+
+### What
+
+While a tool call is running, the host may say what it is doing ("Running tests", "Searching the repo"). Show it on the running step in the transcript, and in the live status line when the step is collapsed, in place of the bare tool name.
+
+### Design
+
+- `StepExtras.progressMessage`, read while the tool call is `running` only (the source document reads it only then); once the call finishes the normal result view takes over.
+- The transcript model (`TranscriptRowModel`) carries it on the step row; the collapsed "steps" row uses the newest running step's message as its one line.
+- The text is plain: no markdown, trimmed to one line, bounded, and never put in a notification (it may name files or commands).
+
+### Acceptance criteria
+
+- [ ] **AC-E3.1** A running tool call with a progress message shows it on its step row; a finished one does not.
+- [ ] **AC-E3.2** The collapsed steps row shows the newest running step's message and falls back to today's text when there is none.
+- [ ] **AC-E3.3** The message never reaches a notification, the monitor status line or a log.
+
+### Tests
+
+`TranscriptRowModelTest` cases (running, finished, absent, oversized, multi-line); a screen test for the collapsed row.
+
+---
+
+## E4 - Hide messages hidden from the transcript
+
+### Problem
+
+VS Code marks some messages (synthetic or system prompts) as hidden from the transcript. This app renders everything it receives, so a phone can show text that the VS Code panel does not, which is a fidelity bug rather than a feature.
+
+### Design
+
+- `MessageExtras.hiddenFromTranscript` from `_meta['vscode.chat.hiddenFromTranscript']` and `requestHiddenFromTranscript`, plus the text-prefix spellings `ahpc` also reads (confirm the exact prefixes against the original document and the E0 captures; do not guess them).
+- The transcript model drops a hidden message and any turn that becomes empty because of it. Nothing is deleted from the store, so a later "show hidden" switch stays possible.
+- A message hidden by the host is still counted where a count matters to correctness (paging cursors, turn counts used for "older turns"); only the rendering changes.
+
+### Acceptance criteria
+
+- [ ] **AC-E4.1** A message flagged hidden by either spelling is not rendered; the same chat without the flag renders it.
+- [ ] **AC-E4.2** A turn whose only content is hidden does not leave an empty bubble.
+- [ ] **AC-E4.3** Paging older turns, the "working" and "stopped" markers and subagent links behave as before on a chat that contains hidden messages.
+
+### Tests
+
+`TranscriptTest`/`TranscriptRowModelTest` cases built from a captured chat with hidden messages; a paging test over a chat that has them.
+
+---
+
+## E5 - Match an echo without `origin`
+
+### Problem
+
+`ActionEnvelope.origin` is declared required, but `ahpc` reports that hosts omit it. This app waits for the echo of its own action by matching `origin.clientId` and `origin.clientSeq` (`HostSession.resolveDispatch`, which returns at once when `origin` is null). Against a host that omits it, an accepted message, approval or answer would never resolve, and the person would be told "No answer from the host yet" even though it worked. Nothing is wrong in the code for the VS Code host; this is a risk for any other host, and E6 would add one.
+
+### Design
+
+- E0 says whether any host we can reach omits `origin`. If none does, record that and stop: add the fixture and a test that pins today's behaviour, and keep this item as a watch.
+- If one does, add a fallback that is safe to use without `origin`: an echo whose channel and action type match the oldest unanswered dispatch on that channel, and whose action equals the one sent (compared as the JSON we encoded), resolves that dispatch. Never resolve on channel alone. If several identical dispatches are outstanding, resolve in order.
+- A rejected echo with no `origin` is still never applied locally.
+- Surface the case in the debug log (`AhpConn`) so a run on a real device shows which path was used.
+
+### Acceptance criteria
+
+- [ ] **AC-E5.1** A fixture host that omits `origin` on echoes resolves a sent message as `Accepted`, and the chat shows it once.
+- [ ] **AC-E5.2** An echo that matches no outstanding dispatch resolves nothing and is applied as an ordinary action from someone else.
+- [ ] **AC-E5.3** Two identical dispatches in flight resolve in order and neither is lost or resolved twice.
+- [ ] **AC-E5.4** A host that does send `origin` behaves exactly as before (the existing `HostSessionDispatchTest` cases pass unchanged).
+
+### Tests
+
+`HostSessionDispatchTest` additions with a `HostScript` whose echoes drop `origin`; a duplicate-action test; a mutation check that removing the action comparison fails a test.
+
+---
+
+## E6 - A directly addressed host kind (`ahpd`)
+
+### Problem
+
+The host list only knows tunnel hosts: `HostEntry` wraps a `TunnelInfo`, `TunnelHostConnector` resolves a connect token through the Dev Tunnels service and the gateway handshake, and sign-in is GitHub-only. `ahpd` and VS Code's `code agent host` listen on a plain WebSocket and take a connection token. The seam for a second connector already exists (`HostConnector`).
+
+### Design (to be settled after E0 shows how `ahpd` is addressed and authenticated)
+
+- **Model.** Generalise the host list entry to a sealed type: `TunnelHost(TunnelInfo)` and `DirectHost(id, name, url)`. The saved direct hosts live in a small store (address and display name in preferences; the connection token in the Keystore-backed vault under its own AAD purpose, not in preferences, never in a log). Adding and removing a direct host is a screen on the host list; a token is typed or scanned once.
+- **Connector.** `DirectHostConnector(url, token)` implements `HostConnector`: open the socket (the existing `SocketOpener`, so the debug wire log and the buffer limits from H4 apply), send the token the way the host expects, and hand the socket to `AhpConnection` under the policy of the current consent tier. No GitHub token and no Dev Tunnels call.
+- **Consent per host.** `InteractionConsent` is global today. A direct host must start at the read tier regardless of what is allowed for the tunnel host, and "Act for me" and "Manage sessions" are chosen per host. Sign-out of GitHub does not forget direct hosts; removing a direct host removes its token, its cached session list (H7 keys by host id already) and its consent.
+- **Transport safety.** Android blocks cleartext by default at our `targetSdk`. Require `wss://` for any address that is not a loopback or private-range address, and for `ws://` addresses show the person what that means before the first connection and refuse them in a release build unless they are on a private range (10/8, 172.16/12, 192.168/16, 100.64/10 for mesh VPNs, `localhost`, and the emulator's `10.0.2.2`). A network-security configuration scoped to those ranges, not a blanket allow.
+- **Everything downstream is host-agnostic already**: `HostSession`, the stores, monitoring, alerts and the park/network logic work on any `HostConnector`. Auto-connect (H6) stays tied to the **last used** host; if that is a direct host, its saved address and token are used.
+- **Concurrent connections stay out of scope**: one live host at a time, switched from the host list as today.
+
+### Acceptance criteria
+
+- [ ] **AC-E6.1** A direct host can be added (address, name, token), listed beside tunnel hosts, connected to, and removed; its token is in the vault and absent from preferences, logs and backups.
+- [ ] **AC-E6.2** A new direct host starts at the read tier; turning on "Act for me" for the tunnel host does not turn it on for the direct one, and the reverse.
+- [ ] **AC-E6.3** A `ws://` address outside the allowed ranges is refused with a clear message; an allowed one connects; `wss://` connects.
+- [ ] **AC-E6.4** Removing a direct host removes its token, cached list and consent; signing out of GitHub leaves direct hosts and their tokens alone.
+- [ ] **AC-E6.5** A direct host and a tunnel host cannot be live at once, and a cached session list is never shown for the wrong one.
+- [ ] **AC-E6.6** On the emulator, against a local `ahpd`, the app connects, lists sessions and shows a chat; with "Act for me" on it receives and decides a tool-approval request. Record the run in `docs/verification/extensions.md`.
+
+### Tests
+
+`DirectHostConnector` against a local `MockWebServer`; the address-policy table; the host store and vault round trips with the existing fakes; `AppController` cases for adding, connecting, switching and removing; per-host consent cases in `InteractionConsentTest`; UI tests for the add screen. AC-E6.6 needs a running `ahpd` and the emulator.
+
+### Open design questions
+
+- How does `ahpd` take the token (first message, query string, header)? Does it speak TLS itself or expect a tunnel in front? (E0.)
+- Does it need the app to appear as an active client, which our allowlist forbids? (If so, that is a new decision, not part of this item.)
+
+---
+
+## E7 - Protocol version fallback
+
+### Problem
+
+`ahpc` prefers 1.0.0 and falls back to 0.9.0, 0.8.0 and 0.7.0. This app offers whatever the pinned library supports (1.0.0 and 0.9.0). A host that speaks only older versions answers with `-32005` and we show an unsupported-version failure.
+
+### Design
+
+- E0 records which versions `ahpd` and a stock `code agent host` choose. If both choose 1.0.0 or 0.9.0, close this item as not needed and keep the failure message as it is.
+- If an older version is needed, check whether the pinned library can decode it at all; if not, the fix is a library upgrade (a separate decision), not code here. Do not hand-roll decoding for old versions.
+
+### Acceptance criteria
+
+- [ ] **AC-E7.1** The versions each reachable host chooses are recorded in `docs/verification/extensions.md`.
+- [ ] **AC-E7.2** Either the item is closed as not needed, with that evidence, or a follow-up is written naming the library version that would cover the gap.
+
+---
+
+## Verification on the phone
+
+Items with a phone criterion (E2.4, E6.6) get a run recorded in `docs/verification/extensions.md`: date, build commit, Android version, host kind and version, what was done, what was seen. The `AhpWire` and `AhpConn` logcat tags already log methods and state changes without tokens; the census (E0) is the way to look at frame contents, and it records no values.
+
+## Open questions
+
+1. Which of the twelve fields does the VS Code host actually send us at protocol 1.0.0? (E0.)
+2. How is `ahpd` addressed and authenticated, and what does it speak? (E0.)
+3. Does any reachable host omit `origin` on echoes? (E0, then E5.)
+4. Is it right to read pull-request state from the host at all, with no GitHub call of our own? It keeps the app token-free for GitHub data and shows what the host last knew; the cost is that it can be stale. This spec says yes; revisit if a stale "open" misleads.
+5. Should hidden messages be reachable through a "show hidden" switch (E4)? Left out here; the store keeps them so it can be added.
+6. Is the `Updating…` stale-list behaviour from H7 right for a direct host that is offline at launch? Probably, but E6 should confirm with the person using it.
+
+## Progress Log
+
+| Date | Entry |
+|---|---|
+| 2026-10-27 | Spec drafted from the `ahpc` conformance document and a read of the code at `c682a67`. Nothing started. |

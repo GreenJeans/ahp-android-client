@@ -729,6 +729,7 @@ You asked for one place that shows where you are needed. Opened from the side me
 
 - Phase 2 and later start only when their Roadmap gate opens; add each phase's detailed steps here.
 - Retire `demo/ahp-metrics-overlay` mock-feed path once the JVM probe exists, or keep it as the Node canary.
+- Reading the extension fields other hosts send (branch, pull request, progress message, hidden messages), matching echoes from hosts that omit `origin`, and a second, directly addressed host kind (`ahpd`) are specified in [`docs/extensions-spec.md`](extensions-spec.md).
 - Battery, network, memory and recovery hardening (network-aware reconnect, releasing subscriptions in the background, bounded buffers, coming back after process death, a session-list cache, a foreground service without the six-hour cut) is specified in [`docs/hardening-spec.md`](hardening-spec.md), with its own acceptance criteria and progress log.
 
 ## Progress Log
