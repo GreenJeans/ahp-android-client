@@ -66,7 +66,7 @@ class MainActivity : FragmentActivity() {
                 controller = container.controller,
                 ui = container.ui,
                 onOpenGitHub = { url ->
-                    if (!openInBrowser(this, url, container.ui.browser.value)) Toast.makeText(this, "No browser found. Open the address on another device.", Toast.LENGTH_LONG).show()
+                    if (!openInBrowser(this, url)) Toast.makeText(this, "No browser found. Open the address on another device.", Toast.LENGTH_LONG).show()
                 },
                 onCopyCode = { code -> copyToClipboard(this, "GitHub code", code) },
                 monitorEnabled = monitorEnabled,

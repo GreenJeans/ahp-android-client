@@ -35,7 +35,6 @@ class DirectHostsUiTest {
     private val laptop = DirectHost("direct:11111111-aaaa", "Laptop", "ws://192.168.1.20:9187")
     private val server = DirectHost("direct:22222222-bbbb", "Server", "wss://agents.example.com")
     private val tunnel = TunnelInfo("t-online", "usw2", "dev-box", 6, 1, listOf(31546))
-    private val browsers = listOf(BrowserOption("com.android.chrome", "Chrome"))
 
     private fun show(
         list: HostList? = HostList.NotSignedIn,
@@ -50,7 +49,6 @@ class DirectHostsUiTest {
         AhpTheme {
             HostScreen(
                 list, null, null, onBack = {}, onRefresh = {}, onConnect = {}, onDisconnect = {}, onSignOut = onSignOut,
-                browsers = browsers, browser = null, onBrowser = {},
                 direct = direct, onConnectDirect = onConnectDirect, onAddHost = onAddHost, onRemoveHost = onRemoveHost, signedIn = signedIn, onSignIn = onSignIn,
             )
         }

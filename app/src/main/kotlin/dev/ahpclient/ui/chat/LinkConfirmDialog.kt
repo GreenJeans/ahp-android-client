@@ -2,6 +2,7 @@ package dev.ahpclient.ui.chat
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -17,10 +18,11 @@ import dev.ahpclient.state.LinkTarget
 /**
  * Asks before a link in agent output is opened, and says where it goes. Link text can say one thing and point at another, so the
  * real site, address or number is shown on its own line. Only a [LinkTarget] gets here: a link that goes nowhere on a phone is never
- * made tappable, so there is no dialog for one.
+ * made tappable, so there is no dialog for one. A web link can also be shared; a mail address or a number is not something a person
+ * shares, so those have no Share; nor has a web link when the caller gives no way to share it ([onShare] null).
  */
 @Composable
-fun LinkConfirmDialog(target: LinkTarget, onOpen: () -> Unit, onDismiss: () -> Unit) {
+fun LinkConfirmDialog(target: LinkTarget, onOpen: () -> Unit, onShare: (() -> Unit)?, onDismiss: () -> Unit) {
     val (title, full) = when (target) {
         is LinkTarget.Web -> "Open link?" to target.url
         is LinkTarget.Mail -> "Write to?" to null
@@ -37,7 +39,12 @@ fun LinkConfirmDialog(target: LinkTarget, onOpen: () -> Unit, onDismiss: () -> U
             }
         },
         confirmButton = { TextButton(onClick = onOpen, modifier = Modifier.testTag("link_open")) { Text("Open") } },
-        dismissButton = { TextButton(onClick = onDismiss, modifier = Modifier.testTag("link_cancel")) { Text("Cancel") } },
+        dismissButton = {
+            Row {
+                if (target is LinkTarget.Web && onShare != null) TextButton(onClick = onShare, modifier = Modifier.testTag("link_share")) { Text("Share") }
+                TextButton(onClick = onDismiss, modifier = Modifier.testTag("link_cancel")) { Text("Cancel") }
+            }
+        },
     )
 }
 

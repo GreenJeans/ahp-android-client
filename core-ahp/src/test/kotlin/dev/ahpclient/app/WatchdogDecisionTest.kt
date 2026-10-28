@@ -28,7 +28,7 @@ class WatchdogDecisionTest {
     private val warnedAbout = listOf(
         "restoring" to (AppState.Restoring to true),
         "signed out" to (AppState.SignedOut(SignInStep.Idle, null) to true),
-        "host list" to (AppState.Hosts(HostList.Loading, null) to true),
+        "host list" to (AppState.Hosts to true),
         "connected" to (AppState.Connected(TunnelInfo("t", "usw2", "dev-box", 6, 1, emptyList()), session) to false),
     )
 

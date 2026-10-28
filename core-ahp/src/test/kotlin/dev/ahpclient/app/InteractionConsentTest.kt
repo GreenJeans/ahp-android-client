@@ -7,6 +7,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flow
@@ -17,6 +18,9 @@ internal class FakeInteractionSettings(saved: Boolean = false) : InteractionSett
     private val value = MutableStateFlow(saved)
     var failReads = false
     var failWrites = false
+
+    /** While set, a write waits for it to complete, so a test can act between a choice being made and it being saved. */
+    var hold: CompletableDeferred<Unit>? = null
     val writes = mutableListOf<Boolean>()
 
     val saved: Boolean get() = value.value
@@ -27,6 +31,7 @@ internal class FakeInteractionSettings(saved: Boolean = false) : InteractionSett
     }
 
     override suspend fun setEnabled(on: Boolean) {
+        hold?.await()
         if (failWrites) throw IOException("disk full")
         writes += on
         value.value = on

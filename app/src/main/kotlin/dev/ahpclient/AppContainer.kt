@@ -75,7 +75,7 @@ class AppContainer(context: Context) {
     private val versionName: String = appContext.packageManager.getPackageInfo(appContext.packageName, 0).versionName ?: "0"
     private val prefs by lazy { PrefsLastHostStore.dataStoreFor(appContext.preferencesDataStoreFile("ahp_prefs"), ioScope) }
 
-    /** How the app looks, and the browser links open in. */
+    /** How the app looks. */
     val ui: UiSettings by lazy { UiSettings(appContext.getSharedPreferences("ahp_ui", Context.MODE_PRIVATE)) }
 
     /** The phone's own prompt in front of every tool approval. Attached to the activity while it is on screen. */

@@ -72,7 +72,8 @@ class ChatScreenTest {
         onBack: () -> Unit = {},
         onLoadOlder: () -> Unit = {},
         onOpenLink: (String) -> Unit = {},
-    ) = rule.setContent { AhpTheme { ChatScreen(transcript, error, loadingOlder, olderError, connection, onBack, onLoadOlder, onOpenLink) } }
+        onShareLink: (String) -> Unit = {},
+    ) = rule.setContent { AhpTheme { ChatScreen(transcript, error, loadingOlder, olderError, connection, onBack, onLoadOlder, onOpenLink, onShareLink = onShareLink) } }
 
     private fun y(text: String): Float = rule.onNodeWithText(text).fetchSemanticsNode().positionInRoot.y
 
@@ -347,8 +348,8 @@ class ChatScreenTest {
 
     // ---- links -------------------------------------------------------------------------------------------------
 
-    private fun showLink(markdown: String, onOpenLink: (String) -> Unit = {}) {
-        show(transcript(listOf(TranscriptItem.Markdown("m1", markdown))), onOpenLink = onOpenLink)
+    private fun showLink(markdown: String, onOpenLink: (String) -> Unit = {}, onShareLink: (String) -> Unit = {}) {
+        show(transcript(listOf(TranscriptItem.Markdown("m1", markdown))), onOpenLink = onOpenLink, onShareLink = onShareLink)
         awaitText("docs")
         rule.onNodeWithText("docs").performClick()
     }
@@ -386,6 +387,48 @@ class ChatScreenTest {
 
         assertTrue(opened.isEmpty())
         rule.onAllNodesWithTag("link_dialog").assertCountEquals(0)
+    }
+
+    @Test
+    fun aWebLinkOffersShareAndHandsOverTheFullAddressWithoutOpeningIt() {
+        val opened = mutableListOf<String>()
+        val shared = mutableListOf<String>()
+        showLink("[docs](https://example.com/docs?page=1&q=a)", opened::add, shared::add)
+
+        rule.onNodeWithTag("link_share").assertIsDisplayed().performClick()
+        rule.waitForIdle()
+
+        assertEquals(listOf("https://example.com/docs?page=1&q=a"), shared)
+        assertTrue("sharing does not open the link", opened.isEmpty())
+        rule.onAllNodesWithTag("link_dialog").assertCountEquals(0)
+    }
+
+    @Test
+    fun aWebLinkHasNoShareWhenTheCallerGivesNoWayToShare() {
+        val transcript = transcript(listOf(TranscriptItem.Markdown("m1", "[docs](https://example.com/docs)")))
+        rule.setContent { AhpTheme { ChatScreen(transcript, null, false, null, ConnState.Online, {}, {}, {}) } }
+        awaitText("docs")
+        rule.onNodeWithText("docs").performClick()
+
+        rule.onNodeWithTag("link_dialog").assertIsDisplayed()
+        rule.onNodeWithTag("link_open").assertIsDisplayed()
+        rule.onAllNodesWithTag("link_share").assertCountEquals(0)
+    }
+
+    @Test
+    fun aMailLinkHasNoShare() {
+        showLink("[docs](mailto:a@example.com)")
+
+        rule.onNodeWithTag("link_dialog").assertIsDisplayed()
+        rule.onAllNodesWithTag("link_share").assertCountEquals(0)
+    }
+
+    @Test
+    fun aPhoneLinkHasNoShare() {
+        showLink("[docs](tel:+15550100)")
+
+        rule.onNodeWithTag("link_dialog").assertIsDisplayed()
+        rule.onAllNodesWithTag("link_share").assertCountEquals(0)
     }
 
     @Test

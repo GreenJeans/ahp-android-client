@@ -124,13 +124,11 @@ class AccessibilityTest {
         checkEach(*states.map { state -> @Composable { SignInScreen(state, {}, {}, {}, {}) } }.toTypedArray())
     }
 
-    private val browsers = listOf(BrowserOption("com.android.chrome", "Chrome"), BrowserOption("org.mozilla.firefox", "Firefox"))
-
     @Composable
-    private fun HostScreenFor(list: HostList? = null, connected: TunnelInfo? = null, connection: ConnState? = null, browser: String? = null, renews: Boolean = false) =
+    private fun HostScreenFor(list: HostList? = null, connected: TunnelInfo? = null, connection: ConnState? = null, renews: Boolean = false) =
         HostScreen(
             list, connected?.let(HostRef::Tunnel), connection, onBack = {}, onRefresh = {}, onConnect = {}, onDisconnect = {}, onSignOut = {},
-            browsers = browsers, browser = browser, onBrowser = {}, tokenExpiresAt = now.plusSeconds(3600), renews = renews,
+            tokenExpiresAt = now.plusSeconds(3600), renews = renews,
         )
 
     @Composable
@@ -176,12 +174,27 @@ class AccessibilityTest {
     }
 
     @Test
+    fun theDrawerActionRowInBothThemes() {
+        var dark by mutableStateOf(false)
+        var showArchived by mutableStateOf(false)
+        rule.setContent { AhpTheme(dark) { DrawerFor(manage = manageActions(), inboxCount = 2, showArchived = showArchived) } }
+        listOf(false, true).forEach { theme ->
+            dark = theme
+            listOf(false, true).forEach { archived ->
+                showArchived = archived
+                rule.waitForIdle()
+                check()
+            }
+        }
+    }
+
+    @Test
     fun hostScreens() {
         val entries = listOf(HostEntry(host, isLastUsed = true), HostEntry(TunnelInfo("t-off", "usw2", "old-laptop", 5, 0, listOf(31546)), isLastUsed = false))
         val lists = listOf(HostList.Loading, HostList.Loaded(entries), HostList.Empty, HostList.Failed("Could not reach the Dev Tunnels service."))
         checkEach(
             *lists.map { list -> @Composable { HostScreenFor(list) } }.toTypedArray(),
-            { HostScreenFor(connected = host, connection = ConnState.Online, browser = "org.mozilla.firefox", renews = true) },
+            { HostScreenFor(connected = host, connection = ConnState.Online, renews = true) },
             { HostScreenFor(connected = host, connection = ConnState.Reconnecting(2, null)) },
         )
     }
@@ -400,16 +413,6 @@ class AccessibilityTest {
             { SessionScreen(archived, null, ConnState.Online, now, {}) },
             { SessionScreen(starting, null, ConnState.Online, now, {}) },
         )
-    }
-
-    @Test
-    fun hostScreenWithTheBrowserPickerOpen() {
-        val list = HostList.Loaded(listOf(HostEntry(host, isLastUsed = true)))
-        rule.setContent { AhpTheme { HostScreenFor(list) } }
-        rule.onNodeWithTag("browser_row").performClick()
-        rule.waitForIdle()
-
-        check()
     }
 
     private fun manageActions() = ManageActionsUi(

@@ -77,9 +77,22 @@ sealed interface HostList {
 
     data class Failed(val message: String) : HostList
 
-    /** Not signed in to GitHub, so Remote Tunnel Access hosts are not listed. Hosts added by address still are (see [AppState.Hosts.direct]). */
+    /** Not signed in to GitHub, so Remote Tunnel Access hosts are not listed. Hosts added by address still are (see [HostCatalog.direct]). */
     data object NotSignedIn : HostList
 }
+
+/**
+ * The hosts that can be connected to, kept apart from [AppState] so that they can be listed while a host is connected too.
+ * [list] is the tunnel hosts of the signed-in account; [direct] the hosts added by address, which are listed whether or not anyone is
+ * signed in and whether or not [list] loaded. [tokenExpiresAt] is when the current access token runs out; with [renews] the app trades
+ * it for a new one on its own before then.
+ */
+data class HostCatalog(
+    val list: HostList,
+    val direct: List<DirectEntry> = emptyList(),
+    val tokenExpiresAt: Instant? = null,
+    val renews: Boolean = false,
+)
 
 /** What the app is showing, as one value. Screens are a pure function of this. */
 sealed interface AppState {
@@ -89,17 +102,8 @@ sealed interface AppState {
     /** [notice] explains why the user is back here, for example an expired sign-in. [offerRevoke] is set only after the user signed out on purpose. */
     data class SignedOut(val step: SignInStep, val notice: String?, val offerRevoke: Boolean = false) : AppState
 
-    /**
-     * [list] is the tunnel hosts of the signed-in account; [direct] the hosts added by address, which are listed whether or not anyone is
-     * signed in and whether or not [list] loaded. [tokenExpiresAt] is when the current access token runs out; with [renews] the app trades
-     * it for a new one on its own before then.
-     */
-    data class Hosts(
-        val list: HostList,
-        val tokenExpiresAt: Instant?,
-        val renews: Boolean = false,
-        val direct: List<DirectEntry> = emptyList(),
-    ) : AppState
+    /** Signed in, or holding hosts added by address, with no host connected. The hosts to choose from are [AppController.hosts]. */
+    data object Hosts : AppState
 
     /** [open] is the session whose detail is on screen; its [OpenSession.store] stays subscribed until the user goes back. */
     data class Connected(val host: HostRef, val session: HostSession, val open: OpenSession? = null) : AppState {

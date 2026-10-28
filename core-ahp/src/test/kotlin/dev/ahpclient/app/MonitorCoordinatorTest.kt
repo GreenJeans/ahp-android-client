@@ -139,7 +139,7 @@ class MonitorCoordinatorTest {
         startWorks: Boolean = true,
         problems: MonitorProblemSink? = null,
     ): Rig {
-        val state = MutableStateFlow<AppState>(AppState.Hosts(HostList.Loading, null))
+        val state = MutableStateFlow<AppState>(AppState.Hosts)
         val settings = FakeSettings(enabled)
         val service = FakeService().also { it.startWorks = startWorks }
         val sink = FakeSink()
@@ -264,7 +264,7 @@ class MonitorCoordinatorTest {
         connect(rig)
         val clearsBefore = problems.clears
 
-        rig.state.value = AppState.Hosts(HostList.Loading, null)
+        rig.state.value = AppState.Hosts
         runCurrent()
 
         assertNull(rig.coordinator.status.value)
@@ -315,7 +315,7 @@ class MonitorCoordinatorTest {
         connect(rig)
         val stopsBefore = rig.service.stops
 
-        rig.state.value = AppState.Hosts(HostList.Loading, null)
+        rig.state.value = AppState.Hosts
         runCurrent()
         assertEquals(stopsBefore + 1, rig.service.stops)
         assertNull(rig.coordinator.status.value)
@@ -665,6 +665,6 @@ class MonitorCoordinatorTest {
         assertEquals("ahp-session:/x", OnScreen.session(inForeground = true, state = open))
         assertNull(OnScreen.session(inForeground = false, state = open), "pressing Home with a session open is not looking at it")
         assertNull(OnScreen.session(inForeground = true, state = connected), "no session is open")
-        assertNull(OnScreen.session(inForeground = true, state = AppState.Hosts(HostList.Loading, null)))
+        assertNull(OnScreen.session(inForeground = true, state = AppState.Hosts))
     }
 }

@@ -30,6 +30,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.ahpclient.app.AppController
 import dev.ahpclient.app.AppState
+import dev.ahpclient.app.HostCatalog
 import dev.ahpclient.app.OpenChat
 import dev.ahpclient.app.SignInStep
 import dev.ahpclient.data.UiSettings
@@ -65,6 +66,7 @@ fun AppRoot(
     alerts: FinishedAlertsUi = FinishedAlertsUi(),
 ) {
     val state by controller.state.collectAsStateWithLifecycle()
+    val catalog by controller.hosts.collectAsStateWithLifecycle()
     val theme by ui.theme.collectAsStateWithLifecycle()
     BackHandler(enabled = (state as? AppState.SignedOut)?.step is SignInStep.AwaitingApproval) { controller.cancelSignIn() }
     AhpTheme(theme) {
@@ -73,7 +75,7 @@ fun AppRoot(
             when (val current = state) {
                 AppState.Restoring -> Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars).testTag("restoring"), contentAlignment = Alignment.Center) { Busy("Loading…") }
                 is AppState.SignedOut -> SignInScreen(current, controller::signIn, controller::cancelSignIn, onOpenGitHub, onCopyCode, onUseDirect = controller::useDirectHosts)
-                is AppState.Hosts -> Shell(controller, ui, current, null, monitorEnabled, notificationsAllowed, onMonitorChange, alerts)
+                AppState.Hosts -> Shell(controller, ui, catalog, null, monitorEnabled, notificationsAllowed, onMonitorChange, alerts)
                 is AppState.Connected -> Shell(controller, ui, null, current, monitorEnabled, notificationsAllowed, onMonitorChange, alerts)
             }
         }
@@ -91,7 +93,7 @@ private enum class Page { MAIN, HOST, SETTINGS, INBOX }
 private fun Shell(
     controller: AppController,
     ui: UiSettings,
-    hosts: AppState.Hosts?,
+    hosts: HostCatalog?,
     connected: AppState.Connected?,
     monitorEnabled: Boolean,
     notificationsAllowed: Boolean,
@@ -105,7 +107,6 @@ private fun Shell(
     val textScale by ui.textScale.collectAsStateWithLifecycle()
     val theme by ui.theme.collectAsStateWithLifecycle()
     val keepAwake by ui.keepAwake.collectAsStateWithLifecycle()
-    val browser by ui.browser.collectAsStateWithLifecycle()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     var page by rememberSaveable { mutableStateOf(Page.MAIN) }
     var showArchived by rememberSaveable { mutableStateOf(false) }
@@ -194,7 +195,6 @@ private fun Shell(
     ) {
         when (page) {
             Page.HOST -> {
-                val browsers = remember { Browsers.installed(context) }
                 HostScreen(
                     list = hosts?.list,
                     connectedHost = connected?.host,
@@ -216,9 +216,6 @@ private fun Shell(
                     onRemoveHost = { host -> scope.launch { controller.removeDirectHost(host.id) } },
                     signedIn = controller.isSignedIn,
                     onSignIn = controller::signIn,
-                    browsers = browsers,
-                    browser = browser,
-                    onBrowser = ui::setBrowser,
                     tokenExpiresAt = hosts?.tokenExpiresAt,
                     renews = hosts?.renews == true,
                 )
@@ -379,7 +376,6 @@ private fun OpenChatView(
     val chatState by chat.store.state.collectAsStateWithLifecycle()
     val canInteract by session.canInteract.collectAsStateWithLifecycle()
     val textScale by ui.textScale.collectAsStateWithLifecycle()
-    val browser by ui.browser.collectAsStateWithLifecycle()
     val keepAwake by ui.keepAwake.collectAsStateWithLifecycle()
     val running = chatState?.activeTurn != null
     // The screen stays on while an agent works, when the person asked for that, and never otherwise.
@@ -422,7 +418,8 @@ private fun OpenChatView(
     } else {
         null
     }
-    val onOpenLink = { link: String -> if (!openLink(context, link, browser)) Toast.makeText(context, "Nothing can open this link", Toast.LENGTH_SHORT).show() }
+    val onOpenLink = { link: String -> if (!openLink(context, link)) Toast.makeText(context, "Nothing can open this link", Toast.LENGTH_SHORT).show() }
+    val onShareLink = { link: String -> if (!shareLink(context, link)) Toast.makeText(context, "Nothing can share this link", Toast.LENGTH_SHORT).show() }
     if (screen) {
         ChatScreen(
             transcript = transcript,
@@ -433,6 +430,7 @@ private fun OpenChatView(
             onBack = controller::closeChat,
             onLoadOlder = chat.store::loadOlder,
             onOpenLink = onOpenLink,
+            onShareLink = onShareLink,
             expanded = expanded,
             onToggle = chat.expansion::toggle,
             actions = actions,
@@ -453,6 +451,7 @@ private fun OpenChatView(
             connection = connection,
             onLoadOlder = chat.store::loadOlder,
             onOpenLink = onOpenLink,
+            onShareLink = onShareLink,
             expanded = expanded,
             onToggle = chat.expansion::toggle,
             actions = actions,

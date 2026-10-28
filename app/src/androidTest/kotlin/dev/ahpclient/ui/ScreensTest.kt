@@ -58,8 +58,6 @@ class ScreensTest {
         onCopy: (String) -> Unit = {},
     ) = rule.setContent { AhpTheme { SignInScreen(state, onSignIn, onCancel, onOpen, onCopy) } }
 
-    private val browsers = listOf(BrowserOption("com.android.chrome", "Chrome"), BrowserOption("org.mozilla.firefox", "Firefox"))
-
     private fun showHosts(
         list: HostList?,
         expiresAt: Instant? = null,
@@ -70,12 +68,10 @@ class ScreensTest {
         connected: TunnelInfo? = null,
         connection: ConnState? = null,
         onDisconnect: () -> Unit = {},
-        browser: String? = null,
-        onBrowser: (String?) -> Unit = {},
         onBack: () -> Unit = {},
     ) = rule.setContent {
         AhpTheme {
-            HostScreen(list, connected?.let(HostRef::Tunnel), connection, onBack, onRefresh, onConnect, onDisconnect, onSignOut, browsers, browser, onBrowser, tokenExpiresAt = expiresAt, renews = renews)
+            HostScreen(list, connected?.let(HostRef::Tunnel), connection, onBack, onRefresh, onConnect, onDisconnect, onSignOut, tokenExpiresAt = expiresAt, renews = renews)
         }
     }
 
@@ -287,62 +283,11 @@ class ScreensTest {
     // ---- browser ----------------------------------------------------------------------------------------------
 
     @Test
-    fun theBrowserRowNamesTheSystemDefaultUntilOneIsChosen() {
+    fun theHostScreenOffersNoBrowserChoice() {
         showHosts(HostList.Loading)
 
-        rule.onNodeWithTag("browser_label", useUnmergedTree = true).assertTextContains("System default")
-    }
-
-    @Test
-    fun theBrowserRowNamesTheChosenBrowser() {
-        showHosts(HostList.Loading, browser = "org.mozilla.firefox")
-
-        rule.onNodeWithTag("browser_label", useUnmergedTree = true).assertTextContains("Firefox")
-    }
-
-    @Test
-    fun aChosenBrowserThatIsNoLongerInstalledFallsBackToTheSystemDefaultInTheRow() {
-        showHosts(HostList.Loading, browser = "org.removed.browser")
-
-        rule.onNodeWithTag("browser_label", useUnmergedTree = true).assertTextContains("System default")
-    }
-
-    @Test
-    fun thePickerOffersTheSystemDefaultAndEachInstalledBrowserAndReportsThePick() {
-        val picks = mutableListOf<String?>()
-        showHosts(HostList.Loading, onBrowser = { picks += it })
-
-        rule.onNodeWithTag("browser_row").performClick()
-        rule.onNodeWithTag("browser_dialog").assertIsDisplayed()
-        rule.onNodeWithTag("browser_default").assertIsDisplayed()
-        rule.onAllNodesWithTag("browser_option").assertCountEquals(2)
-        rule.onNodeWithText("Firefox").assertTouchTargetAtLeast(48.dp).performClick()
-
-        assertEquals(listOf<String?>("org.mozilla.firefox"), picks)
-        rule.onNodeWithTag("browser_dialog").assertDoesNotExist()
-    }
-
-    @Test
-    fun choosingTheSystemDefaultReportsNull() {
-        val picks = mutableListOf<String?>("sentinel")
-        showHosts(HostList.Loading, browser = "com.android.chrome", onBrowser = { picks += it })
-
-        rule.onNodeWithTag("browser_row").performClick()
-        rule.onNodeWithTag("browser_default").performClick()
-
-        assertEquals(listOf<String?>("sentinel", null), picks)
-    }
-
-    @Test
-    fun cancellingThePickerChangesNothing() {
-        val picks = mutableListOf<String?>()
-        showHosts(HostList.Loading, onBrowser = { picks += it })
-
-        rule.onNodeWithTag("browser_row").performClick()
-        rule.onNodeWithTag("browser_cancel").performClick()
-
-        assertTrue(picks.isEmpty())
-        rule.onNodeWithTag("browser_dialog").assertDoesNotExist()
+        rule.onAllNodesWithTag("browser_row").assertCountEquals(0)
+        rule.onAllNodesWithText("Open links in").assertCountEquals(0)
     }
 
     // ---- connected --------------------------------------------------------------------------------------------

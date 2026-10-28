@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -22,7 +21,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -35,7 +33,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
@@ -63,7 +60,7 @@ private val dateTimeFormat: DateTimeFormatter = DateTimeFormatter.ofLocalizedDat
 
 /**
  * The host: the machines running VS Code with Remote Tunnel Access on, for the signed-in account, or, while connected, the one
- * connected to, with a way to switch. Also the browser that links open in, and signing out, which ends this app's access.
+ * connected to, with a way to switch. Also signing out, which ends this app's access.
  * Refreshing is the arrow in the bar. [list] is null while connected.
  */
 @Composable
@@ -76,9 +73,6 @@ fun HostScreen(
     onConnect: (TunnelInfo) -> Unit,
     onDisconnect: () -> Unit,
     onSignOut: () -> Unit,
-    browsers: List<BrowserOption>,
-    browser: String?,
-    onBrowser: (String?) -> Unit,
     modifier: Modifier = Modifier,
     tokenExpiresAt: Instant? = null,
     renews: Boolean = false,
@@ -92,7 +86,6 @@ fun HostScreen(
     signedIn: Boolean = true,
     onSignIn: () -> Unit = {},
 ) {
-    var pickingBrowser by rememberSaveable { mutableStateOf(false) }
     var adding by rememberSaveable { mutableStateOf(false) }
     var removing by remember { mutableStateOf<DirectHost?>(null) }
     var confirmingSignOut by rememberSaveable { mutableStateOf(false) }
@@ -145,23 +138,6 @@ fun HostScreen(
                     }
                 }
             }
-            item(key = "browser") {
-                val label = browsers.firstOrNull { it.packageName == browser }?.label ?: "System default"
-                TileCard(onClick = { pickingBrowser = true }, onClickLabel = "Choose browser", modifier = Modifier.testTag("browser_row")) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 16.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(16.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(AppIcons.Globe, contentDescription = null)
-                        Column(Modifier.weight(1f)) {
-                            Text("Open links in", style = MaterialTheme.typography.titleSmall)
-                            Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("browser_label"))
-                        }
-                        Icon(AppIcons.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-            }
             if (signedIn) item(key = "account") {
                 Column(modifier = Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     OutlinedButton(onClick = { confirmingSignOut = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("sign_out")) {
@@ -176,9 +152,6 @@ fun HostScreen(
                 }
             }
         }
-    }
-    if (pickingBrowser) {
-        BrowserPickerDialog(browsers, browser, onDismiss = { pickingBrowser = false }, onPick = { pickingBrowser = false; onBrowser(it) })
     }
     if (adding && onAddHost != null) {
         AddHostDialog(onDismiss = { adding = false }, onAdd = onAddHost, onAdded = { adding = false })
@@ -383,34 +356,4 @@ private fun AddHostDialog(onDismiss: () -> Unit, onAdd: suspend (String, String,
         },
         dismissButton = { TextButton(onClick = onDismiss, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp).testTag("add_host_cancel")) { Text("Cancel") } },
     )
-}
-
-/** Picks the browser links open in: the system's choice, or one of those installed. */
-@Composable
-private fun BrowserPickerDialog(browsers: List<BrowserOption>, current: String?, onDismiss: () -> Unit, onPick: (String?) -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        modifier = Modifier.testTag("browser_dialog"),
-        title = { Text("Open links in") },
-        text = {
-            Column {
-                BrowserChoice("System default", current == null, "browser_default") { onPick(null) }
-                browsers.forEach { BrowserChoice(it.label, current == it.packageName, "browser_option") { onPick(it.packageName) } }
-            }
-        },
-        confirmButton = {},
-        dismissButton = { TextButton(onClick = onDismiss, modifier = Modifier.testTag("browser_cancel")) { Text("Cancel") } },
-    )
-}
-
-@Composable
-private fun BrowserChoice(label: String, selected: Boolean, tag: String, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).selectable(selected = selected, role = Role.RadioButton, onClick = onClick).testTag(tag),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        RadioButton(selected = selected, onClick = null)
-        Text(label, style = MaterialTheme.typography.bodyLarge)
-    }
 }

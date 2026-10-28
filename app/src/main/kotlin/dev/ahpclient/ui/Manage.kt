@@ -16,6 +16,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -159,6 +160,16 @@ fun NewSessionButton(manage: ManageActionsUi, onCreated: (String) -> Unit, modif
     ) {
         Icon(AppIcons.Add, contentDescription = null, modifier = Modifier.padding(end = 8.dp))
         Text("New session")
+    }
+    if (open) NewSessionDialog(manage, onDismiss = { open = false }, onCreated = { open = false; onCreated(it) })
+}
+
+/** The same new-session dialog behind a tonal icon button, for where a labelled button would take too much room. Its spoken name is "New session". */
+@Composable
+fun NewSessionIconButton(manage: ManageActionsUi, onCreated: (String) -> Unit, modifier: Modifier = Modifier) {
+    var open by rememberSaveable { mutableStateOf(false) }
+    FilledTonalIconButton(onClick = { open = true }, modifier = modifier.testTag("new_session")) {
+        Icon(AppIcons.Add, contentDescription = "New session")
     }
     if (open) NewSessionDialog(manage, onDismiss = { open = false }, onCreated = { open = false; onCreated(it) })
 }

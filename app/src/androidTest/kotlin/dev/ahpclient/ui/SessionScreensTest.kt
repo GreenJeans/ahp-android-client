@@ -27,6 +27,8 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.Modifier
@@ -35,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.ahpclient.state.ActivityState
 import dev.ahpclient.state.ConnState
+import dev.ahpclient.state.ManageResult
 import dev.ahpclient.state.RelativeTime
 import dev.ahpclient.state.SessionGoneException
 import dev.ahpclient.tunnel.TunnelInfo
@@ -200,11 +203,69 @@ class SessionScreensTest {
         var toggles = 0
         showSessions(onToggle = { toggles++ })
 
-        rule.onNodeWithTag("archived_toggle").assertTextContains("Archived (1)").assertTouchTargetAtLeast(48.dp).performClick()
+        rule.onNodeWithTag("archived_toggle").assertContentDescriptionEquals("Show archived").assertIsOff().assertTouchTargetAtLeast(48.dp).performClick()
 
         assertEquals(1, toggles)
         rule.onAllNodesWithTag("session_row").assertCountEquals(4)
-        rule.onNodeWithTag("archived_toggle").assertTextContains("Hide archived")
+        rule.onNodeWithTag("archived_toggle").assertContentDescriptionEquals("Show archived").assertIsOn()
+    }
+
+    @Test
+    fun theArchivedToggleCountsWhatIsHiddenAndSaysOnOrOff() {
+        showSessions()
+        val state = androidx.compose.ui.semantics.SemanticsProperties.StateDescription
+
+        rule.onNodeWithTag("archived_count", useUnmergedTree = true).assertTextEquals("1")
+        assertEquals("Off, 1 hidden", rule.onNodeWithTag("archived_toggle").fetchSemanticsNode().config[state])
+
+        rule.onNodeWithTag("archived_toggle").performClick()
+
+        rule.onAllNodesWithTag("archived_count", useUnmergedTree = true).assertCountEquals(0)
+        assertEquals("On", rule.onNodeWithTag("archived_toggle").fetchSemanticsNode().config[state])
+    }
+
+    @Test
+    fun theArchivedToggleStaysWhileTheyAreShownEvenWhenNoneAreArchived() {
+        showSessions(listOf(waiting, working), initialShowArchived = true)
+
+        rule.onNodeWithTag("archived_toggle").assertContentDescriptionEquals("Show archived").assertIsOn()
+    }
+
+    @Test
+    fun theDrawerHasIconButtonsButNoneOfTheirNamesAsText() {
+        showSessions(manage = manageActions(), inboxCount = 2)
+
+        listOf("Inbox", "Archived", "New session", "Settings").forEach { word ->
+            rule.onAllNodesWithText(word, substring = true).assertCountEquals(0)
+        }
+        listOf("drawer_inbox", "archived_toggle", "new_session", "settings").forEach { tag ->
+            rule.onNodeWithTag(tag).assertIsDisplayed().assertTouchTargetAtLeast(48.dp)
+        }
+    }
+
+    @Test
+    fun theActionRowSitsUnderTheHostAndAboveTheSessions() {
+        showSessions(manage = manageActions(), inboxCount = 2)
+
+        // Touch bounds, since the buttons draw smaller than they touch.
+        fun top(tag: String) = rule.onNodeWithTag(tag).fetchSemanticsNode().touchBoundsInRoot.top
+        fun left(tag: String) = rule.onNodeWithTag(tag).fetchSemanticsNode().touchBoundsInRoot.left
+        assertTrue(top("drawer_host") < top("drawer_inbox"))
+        assertEquals(top("drawer_inbox"), top("settings"), 0.5f)
+        assertTrue(top("settings") < top("session_list"))
+        assertTrue(left("drawer_inbox") < left("archived_toggle") && left("archived_toggle") < left("new_session") && left("new_session") < left("settings"))
+        // Archived leaves the Sessions header, and Settings the bottom of the drawer.
+        assertTrue(top("settings") < rule.onNodeWithText("Sessions").fetchSemanticsNode().boundsInRoot.top)
+    }
+
+    @Test
+    fun aLongPressNamesAnIconButtonInATooltip() {
+        showSessions()
+
+        rule.onAllNodesWithText("Settings").assertCountEquals(0)
+        rule.onNodeWithTag("settings").performTouchInput { longClick() }
+
+        rule.onNodeWithText("Settings").assertIsDisplayed()
     }
 
     @Test
@@ -284,14 +345,41 @@ class SessionScreensTest {
     }
 
     @Test
-    fun theSettingsRowAtTheBottomOpensSettingsAndIsBigEnough() {
+    fun theSettingsButtonInTheActionRowOpensSettingsAndIsBigEnough() {
         var opened = 0
         showSessions(onOpenSettings = { opened++ })
 
-        rule.onNodeWithTag("settings").assertTextContains("Settings").assertTouchTargetAtLeast(48.dp).performClick()
+        rule.onNodeWithTag("settings").assertContentDescriptionEquals("Settings").assertTouchTargetAtLeast(48.dp).performClick()
 
         assertEquals(1, opened)
     }
+
+    @Test
+    fun theNewSessionButtonIsAnIconWithASpokenNameAndAFullSizeTarget() {
+        showSessions(manage = manageActions())
+
+        rule.onNodeWithTag("new_session").assertContentDescriptionEquals("New session").assertTouchTargetAtLeast(48.dp).assertHasClickAction()
+    }
+
+    @Test
+    fun theNewSessionIconOpensTheSameDialogAsTheButton() {
+        showSessions(manage = manageActions())
+
+        rule.onNodeWithTag("new_session").performClick()
+
+        rule.onNodeWithText("Start a new session").assertIsDisplayed()
+    }
+
+    private fun manageActions() = ManageActionsUi(
+        agents = emptyList(),
+        folders = emptyList(),
+        setRead = { _, _ -> ManageResult.Done() },
+        setArchived = { _, _ -> ManageResult.Done() },
+        newChat = { ManageResult.Done() },
+        newSession = { _, _, _ -> ManageResult.Done() },
+        disposeSession = { ManageResult.Done() },
+        disposeChat = { _, _ -> ManageResult.Done() },
+    )
 
     @Test
     fun theSwitchesAreNotOnTheListAnyMore() {
