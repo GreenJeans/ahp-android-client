@@ -15,6 +15,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.fragment.app.FragmentActivity
+import dev.ahpclient.monitor.EXTRA_OPEN_INBOX
 import dev.ahpclient.monitor.EXTRA_SESSION_URI
 import dev.ahpclient.app.MonitorToggle
 import dev.ahpclient.state.FinishedWatch
@@ -113,6 +114,11 @@ class MainActivity : FragmentActivity() {
 
     /** The extra is removed once used so the same tap is never acted on twice. The controller ignores sessions the host does not list. */
     private fun openRequestedSession(intent: Intent?) {
+        if (intent?.getBooleanExtra(EXTRA_OPEN_INBOX, false) == true) {
+            intent.removeExtra(EXTRA_OPEN_INBOX)
+            container.controller.closeSession()
+            return
+        }
         val uri = intent?.getStringExtra(EXTRA_SESSION_URI) ?: return
         intent.removeExtra(EXTRA_SESSION_URI)
         container.controller.focusSession(uri)

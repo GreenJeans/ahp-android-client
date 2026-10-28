@@ -60,6 +60,20 @@ class InputNeededDetailTest {
     }
 
     @Test
+    fun `the alert carries the free-text question target its reply field acts on`() = runTest {
+        val question = QuestionTarget("ahp-chat:/c1", "req-1")
+        val list = MutableStateFlow(listOf(quiet(1)))
+        startRead(list, backgroundScope) { RequestRead("Which branch?", question = question) }
+        runCurrent()
+
+        list.value = listOf(asking(1))
+        runCurrent()
+        advanceTimeBy(3_100)
+
+        assertEquals(listOf(InputNeeded("ahp-session:/q1", "Asking 1", "Which branch?", question = question)), notified)
+    }
+
+    @Test
     fun `an alert with no readable words still carries its tool call`() = runTest {
         val target = ApprovalTarget("ahp-chat:/c1", "call-1")
         val list = MutableStateFlow(listOf(quiet(1)))

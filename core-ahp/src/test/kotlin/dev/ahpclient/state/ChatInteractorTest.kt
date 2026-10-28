@@ -749,4 +749,35 @@ class ChatInteractorTest {
         assertEquals(InteractResult.Sent(DispatchOutcome.Rejected("a turn is already running")), rejected.interactor.send("x"))
         assertEquals(InteractResult.Sent(DispatchOutcome.NoReply), silent.interactor.send("x"))
     }
+
+    private fun pendingQuestion(
+        requestId: String = "req-1",
+        questions: String = """[{"kind":"text","id":"q1","title":"Branch","message":"Which branch?","min":2,"max":20}]""",
+        answered: Boolean = false,
+    ) = """{"kind":"inputRequest","request":{"id":"$requestId","questions":$questions}${if (answered) ""","response":"accept"""" else ""}}"""
+
+    @Test
+    fun `answerText answers a waiting free-text question without a device check and refuses anything else`() = runTest {
+        val rig = rig(chat(active = activeTurn(pendingQuestion()))).apply { gateAnswer = false }
+
+        assertEquals(InteractResult.Blank, rig.interactor.answerText("req-1", "   "))
+        assertEquals(InteractResult.Blank, rig.interactor.answerText("req-1", "a"), "shorter than min")
+        assertEquals(InteractResult.NoSuchRequest, rig.interactor.answerText("other", "main"))
+        assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), rig.interactor.answerText("req-1", "main"))
+        assertTrue(rig.prompts.isEmpty(), "answering a question needs no device check")
+        assertEquals("accept", rig.wire()["response"]!!.jsonPrimitive.content)
+        assertEquals("main", rig.wire()["answers"]!!.jsonObject["q1"]!!.jsonObject["value"]!!.jsonObject["value"]!!.jsonPrimitive.content)
+        assertEquals("Sent", InteractMessages.describeAnswer(InteractResult.Sent(DispatchOutcome.Accepted)))
+
+        val alreadyAnswered = rig(chat(active = activeTurn(pendingQuestion(answered = true))))
+        assertEquals(InteractResult.NoSuchRequest, alreadyAnswered.interactor.answerText("req-1", "main"))
+        assertEquals("That is no longer waiting for an answer.", InteractMessages.describeAnswer(InteractResult.NoSuchRequest))
+
+        val multiQuestion = rig(chat(active = activeTurn(pendingQuestion(questions = """[{"kind":"text","id":"q1","title":"One","message":"One"},{"kind":"text","id":"q2","title":"Two","message":"Two"}]"""))))
+        assertEquals(InteractResult.NoSuchRequest, multiQuestion.interactor.answerText("req-1", "main"))
+
+        val readOnly = rig(chat(active = activeTurn(pendingQuestion()))).apply { canInteract = false }
+        assertEquals(InteractResult.NotAllowed, readOnly.interactor.answerText("req-1", "main"))
+        assertEquals("Nothing was sent.", InteractMessages.describeAnswer(InteractResult.Blank))
+    }
 }

@@ -176,4 +176,26 @@ class HostExtrasTest {
         val untouched = SessionCatalog.merge(summary, PartialSessionSummary(activity = "x"))
         assertEquals("users/x/feature", untouched.extras.branch)
     }
+
+    @Test
+    fun `a session metaChanged action replaces the session's extras and an empty meta clears them`() {
+        val store = SessionStore(SESSION_C)
+        store.seed(Ahp.json.decodeFromString(com.microsoft.agenthostprotocol.generated.Snapshot.serializer(), sessionSnapshot(SESSION_C, fromSeq = 1, title = "t")))
+        assertTrue(store.state.value!!.extras.isEmpty)
+
+        val changed = Ahp.json.decodeFromString(
+            com.microsoft.agenthostprotocol.generated.ActionEnvelope.serializer(),
+            """{"channel":"$SESSION_C","serverSeq":2,"action":{"type":"session/metaChanged","_meta":$live}}""",
+        )
+        store.apply(changed)
+        assertEquals("users/x/feature", store.state.value!!.extras.branchLabel)
+        assertEquals(2, store.state.value!!.extras.outgoing)
+
+        val cleared = Ahp.json.decodeFromString(
+            com.microsoft.agenthostprotocol.generated.ActionEnvelope.serializer(),
+            """{"channel":"$SESSION_C","serverSeq":3,"action":{"type":"session/metaChanged","_meta":{}}}""",
+        )
+        store.apply(cleared)
+        assertTrue(store.state.value!!.extras.isEmpty)
+    }
 }

@@ -69,6 +69,19 @@
         <receiver
             android:name=".monitor.DecisionReceiver"
             android:exported="false" />
+        <receiver
+            android:name=".monitor.AnswerReceiver"
+            android:exported="false" />
+        <service
+            android:name=".monitor.MonitorTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_notification"
+            android:label="AHP Monitor"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
     </application>
 
 </manifest>

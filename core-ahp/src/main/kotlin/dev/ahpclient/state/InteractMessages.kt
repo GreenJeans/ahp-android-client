@@ -32,4 +32,8 @@ object InteractMessages {
     /** What a notification button says afterwards, where there is no screen to show it on: plainly done, or why not. */
     fun describeDecision(approved: Boolean, result: InteractResult): String =
         if (succeeded(result)) (if (approved) "Approved." else "Denied.") else describe(result) ?: "Nothing was sent."
+
+    /** What a notification's text reply says afterwards: Sent when the host accepted it, or why it was not sent. */
+    fun describeAnswer(result: InteractResult): String =
+        if (succeeded(result)) "Sent" else describe(result) ?: "Nothing was sent."
 }

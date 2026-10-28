@@ -14,6 +14,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import dev.ahpclient.state.ApprovalTarget
 import dev.ahpclient.state.DecisionOption
 import dev.ahpclient.state.InputNeeded
+import dev.ahpclient.state.QuestionTarget
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -153,6 +154,8 @@ class NotificationDecisionInstrumentedTest {
 
         assertFalse("another app must not be able to start the approval screen", approve.exported)
         assertFalse("another app must not be able to send Deny", receiver.exported)
+        val answerReceiver = context.packageManager.getReceiverInfo(ComponentName(context, AnswerReceiver::class.java), 0)
+        assertFalse("another app must not be able to send an answer", answerReceiver.exported)
         assertTrue("it stays out of the recent apps list", approve.flags and ActivityInfo.FLAG_EXCLUDE_FROM_RECENTS != 0)
         assertEquals("one at a time, never stacked", ActivityInfo.LAUNCH_SINGLE_INSTANCE, approve.launchMode)
     }
@@ -184,5 +187,31 @@ class NotificationDecisionInstrumentedTest {
             Thread.sleep(100)
         }
         error("the approval screen did not end by itself")
+    }
+
+    private val questionTarget = QuestionTarget("ahp-chat:/c1", "req-1")
+
+    private fun postQuestion(session: String, question: QuestionTarget? = questionTarget, canDecide: Boolean = true): Notification {
+        val unique = tag(session)
+        NotificationInputNeededSink(context, canDecide = { canDecide }).post(InputNeeded(unique, "Color preference", "Which season do you prefer?", question = question))
+        return shown(unique).notification
+    }
+
+    @Test
+    fun aSingleTextQuestionHasAnAnswerFieldOnlyWhenTheAppMayActForTheUser() {
+        val allowed = postQuestion("q-allowed", canDecide = true)
+        assertEquals(listOf("Answer"), titles(allowed))
+        assertEquals(listOf("Answer"), titles(checkNotNull(allowed.publicVersion)))
+        val remoteInput = allowed.actions.single().remoteInputs?.singleOrNull()
+        assertEquals(KEY_TEXT_REPLY, remoteInput?.resultKey)
+
+        val readOnly = postQuestion("q-readonly", canDecide = false)
+        assertEquals(emptyList<String>(), titles(readOnly))
+
+        val sink = NotificationInputNeededSink(context, canDecide = { true })
+        sink.postReplyStatus(tag("q-allowed"), "Sent")
+        val updated = checkNotNull(manager.activeNotifications.firstOrNull { it.tag == tag("q-allowed") }).notification
+        assertEquals("Sent", updated.extras.getString(Notification.EXTRA_TEXT))
+        assertEquals(emptyList<String>(), titles(updated))
     }
 }

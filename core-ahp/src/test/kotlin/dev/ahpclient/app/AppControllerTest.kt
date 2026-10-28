@@ -25,6 +25,7 @@ import dev.ahpclient.state.CHAT_C
 import dev.ahpclient.state.ApprovalGate
 import dev.ahpclient.state.ApprovalRequest
 import dev.ahpclient.state.ApprovalTarget
+import dev.ahpclient.state.QuestionTarget
 import dev.ahpclient.state.ChatInteractor
 import dev.ahpclient.state.DispatchOutcome
 import dev.ahpclient.state.InteractResult
@@ -2023,6 +2024,63 @@ class AppControllerTest {
     }
 
     private val allowed get() = InteractionConsent(FakeInteractionSettings(saved = true))
+
+    private val pendingTextQuestion =
+        """{"id":"t9","message":{"text":"go","origin":{"kind":"user"}},"startedAt":"2026-10-22T10:05:00.000Z","responseParts":[
+            {"kind":"inputRequest","request":{"id":"req-1","questions":[{"kind":"text","id":"q1","title":"Season","message":"Which season do you prefer?"}]}}]}"""
+
+    private fun answerQuestionScript(clientId: () -> String) = {
+        HostScript(
+            sessionChats = "[${chatSummaryJson(CHAT_A)}]",
+            chatActiveTurn = pendingTextQuestion,
+            inputNeeded = """[{"kind":"chatInput","id":"i1","chat":"$CHAT_A","request":{"id":"req-1","questions":[{"kind":"text","id":"q1","title":"Season","message":"Which season do you prefer?"}]}}]""",
+            onDispatch = { echoOf(it, SNAPSHOT_SEQ + 1, clientId = clientId()) },
+        )
+    }
+
+    @Test
+    fun `answering a question from a notification opens the chat, sends the answer without a device check, and closes the chat`() = runTest {
+        var clientId = ""
+        withRig(script = answerQuestionScript { clientId }, interaction = allowed, approvalGate = ApprovalGate { false }) {
+            val connected = connectToFirstHost()
+            clientId = "client-${connected.host.id}"
+            connected.session.canInteract.first { it }
+
+            val read = controller.readWaiting(SESSION_C)
+            assertEquals(QuestionTarget(CHAT_A, "req-1"), read?.question)
+
+            assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), controller.answerQuestion(CHAT_A, "req-1", "autumn"))
+
+            val action = dispatchedActions().single()
+            assertEquals("chat/inputCompleted", action["type"]!!.jsonPrimitive.content)
+            assertEquals("req-1", action["requestId"]!!.jsonPrimitive.content)
+            assertEquals("autumn", action["answers"]!!.jsonObject["q1"]!!.jsonObject["value"]!!.jsonObject["value"]!!.jsonPrimitive.content)
+            assertEquals(listOf(CHAT_A), channelsSent("subscribe").filter { it == CHAT_A })
+            assertEquals(listOf(CHAT_A), channelsSent("unsubscribe").filter { it == CHAT_A })
+        }
+    }
+
+    @Test
+    fun `answering a question from a notification refuses invalid inputs, read-only connections, and already-answered requests`() = runTest {
+        var clientId = ""
+        withRig(script = answerQuestionScript { clientId }, interaction = allowed) {
+            val connected = connectToFirstHost()
+            clientId = "client-${connected.host.id}"
+            connected.session.canInteract.first { it }
+
+            assertEquals(InteractResult.Blank, controller.answerQuestion(CHAT_A, "req-1", "  "))
+            assertEquals(InteractResult.NotAllowed, controller.answerQuestion("", "req-1", "autumn"))
+            assertEquals(InteractResult.NotAllowed, controller.answerQuestion(CHAT_A, "", "autumn"))
+            assertEquals(InteractResult.NotAllowed, controller.answerQuestion(CHAT_A, "req-1", "x".repeat(QuestionTarget.MAX_ANSWER_CHARS + 1)))
+            assertEquals(InteractResult.NoSuchRequest, controller.answerQuestion(CHAT_A, "already-gone", "autumn"))
+            assertTrue(dispatches().isEmpty())
+        }
+        withRig(script = answerQuestionScript { "" }) {
+            connectToFirstHost()
+            assertEquals(InteractResult.NotAllowed, controller.answerQuestion(CHAT_A, "req-1", "autumn"))
+            assertTrue(dispatches().isEmpty())
+        }
+    }
 
     @Test
     fun `an approval from a notification goes through the device check, reaches the host once, and the chat is left again`() = runTest {

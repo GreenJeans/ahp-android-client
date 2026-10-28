@@ -70,7 +70,8 @@ class AppContainer(context: Context) {
 
     // No redirect from https to http, or back: cleartext is allowed in the manifest for hosts added by address (see DirectHostConnector and
     // HostAddress, which decide which), so a redirect must not be the way a GitHub or Dev Tunnels request ends up unencrypted.
-    private val http = OkHttpClient.Builder().pingInterval(30, TimeUnit.SECONDS).followSslRedirects(false).build()
+    private val http = OkHttpClient.Builder().followSslRedirects(false).build()
+    private val wsHttp = http.newBuilder().pingInterval(30, TimeUnit.SECONDS).build()
     private val versionName: String = appContext.packageManager.getPackageInfo(appContext.packageName, 0).versionName ?: "0"
     private val prefs by lazy { PrefsLastHostStore.dataStoreFor(appContext.preferencesDataStoreFile("ahp_prefs"), ioScope) }
 
@@ -82,7 +83,7 @@ class AppContainer(context: Context) {
 
     val controller: AppController by lazy {
         val devTunnels = DevTunnelsClient(http, userAgent = "ahp-android-client/$versionName")
-        val gateway = TunnelGateway(withWireLog(OkHttpSocketOpener(http)))
+        val gateway = TunnelGateway(withWireLog(OkHttpSocketOpener(wsHttp)))
         val clientInfo = Implementation(name = "ahp-android-client", version = versionName)
         val debuggable = appContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
         AppController(
@@ -134,7 +135,7 @@ class AppContainer(context: Context) {
         DirectHostVault(KeystoreSecureBox("ahp-android-client.direct-hosts-key.v1"), DataStoreBlobStore(DataStoreBlobStore.dataStoreFor(file, ioScope)))
     }
 
-    private val directOpener by lazy { withWireLog(OkHttpSocketOpener(http)) }
+    private val directOpener by lazy { withWireLog(OkHttpSocketOpener(wsHttp)) }
 
     /** The session list kept encrypted between runs, so a cold start has something to show. One instance: every session writes it and sign-out wipes it. */
     private val sessionList by lazy { AndroidSessionListCache.create(appContext) }
@@ -196,6 +197,25 @@ class AppContainer(context: Context) {
         appScope.launch {
             val result = try {
                 controller.decideToolCall(chatUri, toolCallId, approve, optionId, background = true)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                InteractResult.NotSent(e)
+            }
+            withContext(Dispatchers.Main) { done(result) }
+        }
+    }
+
+    /**
+     * Answers one waiting free-text question for a notification's text field, off the main thread, and reports back on it.
+     * The check and dispatch are [AppController.answerQuestion], after starting the container if the process was started just
+     * for the reply.
+     */
+    fun answerFromNotification(chatUri: String, requestId: String, text: String, done: (InteractResult) -> Unit) {
+        start()
+        appScope.launch {
+            val result = try {
+                controller.answerQuestion(chatUri, requestId, text, background = true)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
