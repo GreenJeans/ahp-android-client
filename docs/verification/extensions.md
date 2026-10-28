@@ -106,6 +106,8 @@ Dropped by the generated types, outside `_meta` (all decoded without error):
 
 Across both hosts: branch data comes only from the VS Code host (`ahpd` sent none), and neither host sent a progress message or a hidden-from-transcript flag. E3 and E4 have no evidence yet.
 
+**Second pair of runs, with `--capture` (same day).** The VS Code run (5 sessions subscribed, 318 envelopes: 11 with `origin`, 307 without) and an `ahpd` run (42 envelopes: 6 with `origin`, 36 without) both decoded whole. New paths against the earlier runs: model-list `_meta` on an agents-changed action (`rowWarning`, `warningText.model_degraded_github`) and `summary._meta` on a session-added notification, nothing about pull requests, progress or hidden messages. `ahpd` again sent no git data. The VS Code capture (304 listed sessions) is the source of `live/vscode-session-meta.json`: `git` is a nested object and the `vscode.*` keys are dotted keys, as the reader assumes.
+
 ### AC-E0.3: which generated types carry `_meta`
 
 From the library's sources (1.0.0), checked 2026-10-27:

@@ -5,8 +5,11 @@ import com.microsoft.agenthostprotocol.generated.ListSessionsResult
 import com.microsoft.agenthostprotocol.generated.PartialSessionSummary
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -14,8 +17,8 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * The `_meta` shapes below are the ones the 2026-10-28 census saw from the VS Code host (`docs/verification/extensions.md`), written by
- * hand; they are replaced by redacted captures when AC-E0.4 is done.
+ * The inline `_meta` shapes are written by hand from the 2026-10-28 census (`docs/verification/extensions.md`); the test over
+ * `live/vscode-session-meta.json` uses a redacted capture of the VS Code host (`tools/redact-meta.mjs`).
  */
 class HostExtrasTest {
     private fun meta(json: String): Map<String, JsonElement> = Json.parseToJsonElement(json).jsonObject
@@ -105,6 +108,27 @@ class HostExtrasTest {
         assertNull(extras.outgoing)
         assertNull(extras.incoming)
         assertEquals("b", extras.branch)
+    }
+
+    @Test
+    fun `every git shape the VS Code host sent reads, and a session with no git reads as empty`() {
+        val metas = Json.parseToJsonElement(fixture("live/vscode-session-meta.json")).jsonObject["metas"]!!.jsonArray.map { it.jsonObject }
+        assertTrue(metas.size >= 5, "fixture should hold several shapes")
+
+        metas.forEach { meta ->
+            val git = meta["git"]?.jsonObject ?: meta["gitData"]?.jsonObject?.values?.firstOrNull { it.jsonObject.containsKey("branchName") }?.jsonObject
+            val extras = HostExtras.session(meta)
+            if (git == null) {
+                assertTrue(extras.isEmpty, meta.toString())
+            } else {
+                assertEquals(git["branchName"]?.jsonPrimitive?.content, extras.branch, meta.toString())
+                assertEquals(git["outgoingChanges"]?.jsonPrimitive?.int, extras.outgoing, meta.toString())
+                assertEquals(git["incomingChanges"]?.jsonPrimitive?.int, extras.incoming, meta.toString())
+                assertEquals(git["uncommittedChanges"]?.jsonPrimitive?.int, extras.uncommitted, meta.toString())
+            }
+        }
+        assertTrue(metas.any { it.containsKey("gitData") }, "the multi-root shape should be in the fixture")
+        assertTrue(metas.any { !it.containsKey("git") && !it.containsKey("gitData") }, "a session with no git should be in the fixture")
     }
 
     @Test
