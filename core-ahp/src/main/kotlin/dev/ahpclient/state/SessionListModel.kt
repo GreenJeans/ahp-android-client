@@ -14,6 +14,8 @@ data class SessionRow(
     val whenText: String,
     val chatCount: Int,
     val changes: ChangeStats? = null,
+    /** The git branch the host reports for the session, or null when it reports none (E2). */
+    val branch: String? = null,
 )
 
 /** What the sessions screen shows, computed from the host's list. Pure, so it is tested without a UI. */
@@ -72,6 +74,7 @@ data class SessionListModel(
             whenText = RelativeTime.format(session.modifiedAt, now),
             chatCount = session.chats?.size ?: 0,
             changes = ChangeStats.of(session.changes),
+            branch = session.extras.branchLabel,
         )
     }
 }

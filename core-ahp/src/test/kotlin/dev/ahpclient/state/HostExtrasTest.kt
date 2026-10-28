@@ -132,6 +132,36 @@ class HostExtrasTest {
     }
 
     @Test
+    fun `the branch label and counts read the way a person would say them`() {
+        val extras = SessionExtras(branch = "feature", outgoing = 2, incoming = 0, uncommitted = 3)
+
+        assertEquals("feature", extras.branchLabel)
+        assertEquals("2 outgoing, 3 uncommitted", extras.countsText)
+        assertEquals(SessionExtras.DETACHED, SessionExtras(detachedHead = true).branchLabel)
+        assertEquals("feature", SessionExtras(branch = "feature", detachedHead = true).branchLabel)
+        assertNull(SessionExtras.NONE.branchLabel)
+        assertNull(SessionExtras(branch = "b", outgoing = 0, incoming = 0, uncommitted = 0).countsText)
+        assertNull(SessionExtras(branch = "b").countsText)
+    }
+
+    @Test
+    fun `the session list row and the detail carry the branch, and a host without one shows none`() {
+        val summary = Ahp.json.decodeFromString(ListSessionsResult.serializer(), fixture("live/list-sessions.json")).items.first()
+        val now = java.time.Instant.parse("2026-10-22T12:00:00Z")
+
+        assertNull(SessionListModel.row(summary, now).branch)
+        assertEquals("users/x/feature", SessionListModel.row(summary.copy(meta = meta(live)), now).branch)
+
+        val store = SessionStore(SESSION_C)
+        store.seed(Ahp.json.decodeFromString(com.microsoft.agenthostprotocol.generated.Snapshot.serializer(), sessionSnapshot(SESSION_C, fromSeq = 1, title = "t")))
+        val state = store.state.value!!
+        assertTrue(SessionDetail.from(state, now).extras.isEmpty)
+        val detail = SessionDetail.from(state.copy(meta = meta(live)), now)
+        assertEquals("users/x/feature", detail.extras.branchLabel)
+        assertEquals("2 outgoing, 1 incoming, 3 uncommitted", detail.extras.countsText)
+    }
+
+    @Test
     fun `a summary carries its extras and a new meta replaces the old one whole`() {
         val summary = Ahp.json.decodeFromString(ListSessionsResult.serializer(), fixture("live/list-sessions.json")).items.first()
             .copy(meta = meta(live))

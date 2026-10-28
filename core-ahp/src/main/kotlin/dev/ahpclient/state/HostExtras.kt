@@ -22,8 +22,20 @@ data class SessionExtras(
 ) {
     val isEmpty: Boolean get() = this == NONE
 
+    /** The branch as a person reads it: its name, or "Detached HEAD" when the host says there is none. Null when the host said nothing about it. */
+    val branchLabel: String? get() = branch ?: if (detachedHead) DETACHED else null
+
+    /** The non-zero counts in the host's own words ("2 outgoing, 3 uncommitted"), or null when there are none. */
+    val countsText: String?
+        get() = listOfNotNull(
+            outgoing?.takeIf { it > 0 }?.let { "$it outgoing" },
+            incoming?.takeIf { it > 0 }?.let { "$it incoming" },
+            uncommitted?.takeIf { it > 0 }?.let { "$it uncommitted" },
+        ).joinToString(", ").ifEmpty { null }
+
     companion object {
         val NONE = SessionExtras()
+        const val DETACHED = "Detached HEAD"
     }
 }
 

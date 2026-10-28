@@ -298,6 +298,8 @@ private fun Facts(detail: SessionDetail) {
         add("Agent" to detail.provider)
         detail.project?.let { add("Project" to it) }
         detail.workingDirectories.forEach { add("Folder" to it) }
+        detail.extras.branchLabel?.let { add("Branch" to it) }
+        detail.extras.countsText?.let { add("Git status" to it) }
     }
     Column {
         facts.forEachIndexed { index, (label, value) ->

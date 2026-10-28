@@ -98,6 +98,8 @@ data class SessionDetail(
     val creationError: String? = null,
     /** The changesets the session advertises. One whose [ChangesetEntry.uri] is null needs values filled in and is not opened here. */
     val changesets: List<ChangesetEntry> = emptyList(),
+    /** What the host says about the session's git state (E2); [SessionExtras.NONE] for a host that says nothing. */
+    val extras: SessionExtras = SessionExtras.NONE,
 ) {
     /** The chat to show first: the session's main chat, or else the first the host lists. Null while the host lists none. */
     val mainChat: ChatRow? get() = chats.firstOrNull { it.isMain } ?: chats.firstOrNull()
@@ -139,6 +141,7 @@ data class SessionDetail(
             phase = SessionPhase.of(state.lifecycle.rawValue),
             creationError = state.creationError?.message?.take(MAX_ERROR_CHARS)?.takeIf { it.isNotBlank() },
             changesets = state.changesets.orEmpty().take(MAX_CHANGESETS).map(ChangesetEntry::from),
+            extras = state.extras,
         )
 
         /** Total: a request kind this client does not know is still shown rather than dropped. */
