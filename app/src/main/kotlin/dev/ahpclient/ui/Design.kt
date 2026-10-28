@@ -4,6 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
@@ -124,7 +125,8 @@ fun ScreenScaffold(
         bottomBar = bottomBar,
         floatingActionButton = floatingActionButton,
     ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.TopCenter) {
+        // Consumed, so a box inside that adds the keyboard's height (the composer's imePadding) does not add the navigation bar again.
+        Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding), contentAlignment = Alignment.TopCenter) {
             Box(Modifier.widthIn(max = Design.ContentMaxWidth).fillMaxSize()) { content() }
         }
     }
