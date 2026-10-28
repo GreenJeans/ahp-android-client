@@ -15,6 +15,7 @@ node tools/redact-capture.mjs captures/live-session.jsonl
 | `session-summary-changed.json` | A `root/sessionSummaryChanged` params object. The live capture only ever carried `_meta` changes, so the values here are synthetic; the shape (`channel`, `session`, `changes`) is real. |
 | `chat-subscribe-result.json` | A chat `subscribe` result: 7 of a live chat's 44 turns, chosen to cover every part kind and tool-result content type in the capture, plus the active turn. Real shapes; all text is placeholder words. |
 | `chat-actions.json` | The 67 `chat/*` actions that streamed in after that snapshot, as action envelopes (`channel`, `serverSeq`, `action`), in order and on the snapshot's active turn. |
+| `vscode-session-meta.json` | Twelve listed sessions' git `_meta` from the VS Code host (2026-10-28, protocol 1.0.0), one per distinct set of keys: a single-folder `git` object, a multi-root `gitData` object, and sessions with none. Branch names are placeholders; counts and flags are real. Made by `tools/redact-meta.mjs` (see below). |
 
 Titles, project names, paths, ids, turn ids and git metadata are replaced with neutral values. The script builds each file
 from a whitelist of fields and refuses to write anything if an original string, a home-directory path or the OS username
@@ -35,6 +36,14 @@ letters becomes a placeholder word, and line breaks, punctuation, short numbers,
 a string equal to an original, a run of 16 characters shared with one, a word outside the placeholder vocabulary, the user name, a drive or home path or a real-looking
 uuid or token all abort the write. Its tests are in `tools/redaction-check.test.mjs`. If a decode test fails after regenerating, check that the whitelist
 kept every field the library requires (it once dropped `title` from subagent content).
+
+## Session `_meta` fixture
+
+```powershell
+node tools/redact-meta.mjs captures/capture-vscode.jsonl vscode-session-meta.json
+```
+
+The two redactors above drop `_meta` whole. `tools/redact-meta.mjs` keeps only the git object that `HostExtras` reads (`git`, and `gitData.<folder>` for a multi-root workspace), from a whitelist of keys: branch names become placeholders, counts and flags are kept, and every other key (initiator, working directories, usage, quota) is dropped. It stops without writing if `findLeaks` finds an original string. `ahpd` sent no git data, so there is no `ahpd` fixture.
 
 **Not in the capture, so not covered by real data:** `chat/delta`, `chat/turnStarted`, `chat/turnComplete`, `chat/turnsLoaded` (and so `fetchTurns` paging: the host sent the whole history in the snapshot), tool calls
 that are streaming, awaiting confirmation or awaiting authorization, input-request and error response parts, and image content other than one embedded PNG. The unit tests build those from

@@ -19,7 +19,7 @@ import kotlinx.serialization.json.put
  * optionally, the raw frames as JSON lines for building test fixtures. Frames can contain session titles and local
  * paths, so a capture file is for local use and must never be committed (`captures/` is gitignored).
  */
-internal class FrameLog(private val file: Path?) {
+internal class FrameLog(private val file: Path?, private val census: ExtensionCensus? = null) {
     private val methods = Collections.synchronizedSet(linkedSetOf<String>())
 
     val sentMethods: List<String> get() = synchronized(methods) { methods.toList() }
@@ -33,10 +33,14 @@ internal class FrameLog(private val file: Path?) {
 
     fun outbound(text: String) {
         methodOf(text)?.let(methods::add)
+        census?.outbound(text)
         write("out", text)
     }
 
-    fun inbound(text: String) = write("in", text)
+    fun inbound(text: String) {
+        census?.inbound(text)
+        write("in", text)
+    }
 
     private fun methodOf(text: String): String? = try {
         (Json.parseToJsonElement(text).jsonObject["method"] as? JsonPrimitive)?.takeIf { it.isString }?.content

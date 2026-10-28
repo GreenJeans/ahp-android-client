@@ -286,6 +286,7 @@ private fun SessionRowItem(row: SessionRow, selected: Boolean, watched: Boolean,
         row.title,
         row.state.label,
         row.subtitle,
+        row.branch?.let { "branch $it" },
         row.changes?.spoken,
         row.whenText.ifEmpty { null },
         if (row.isRead) null else "unread",
@@ -321,13 +322,18 @@ private fun SessionRowItem(row: SessionRow, selected: Boolean, watched: Boolean,
             )
             val second = row.subtitle
             val changes = row.changes
-            if (second != null || changes != null) {
+            val branch = row.branch
+            if (second != null || changes != null || branch != null) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     second?.let {
                         Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                     }
+                    // The branch is host text and can be long; it shortens before the change count does.
+                    branch?.let {
+                        Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = if (second != null) 6.dp else 0.dp).weight(1f, fill = false).testTag("row_branch"))
+                    }
                     changes?.let {
-                        Text(it.text, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, modifier = Modifier.padding(start = if (second != null) 6.dp else 0.dp).testTag("row_changes"))
+                        Text(it.text, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, modifier = Modifier.padding(start = if (second != null || branch != null) 6.dp else 0.dp).testTag("row_changes"))
                     }
                 }
             }

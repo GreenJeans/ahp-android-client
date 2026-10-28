@@ -111,7 +111,7 @@ You need VS Code running with Remote Tunnel Access on, signed in with the same G
 Options: `--tunnel <name|id>`, `--instance <id>`, `--watch <seconds>` (print notifications for a while),
 `--session <title-or-uri>` (subscribe to one session and print which clients the host lists as active; this client
 must not be among them), `--chat <title-or-uri>` (subscribe to a session's chat, decode its snapshot and apply every chat
-action with the library's reducer, reporting counts and type names only), `--capture <file>` (raw frames as JSON lines). Capture files contain session titles and local paths, so they stay
+action with the library's reducer, reporting counts and type names only), `--census` (with `--census-sessions <n>`, default 10, and `--census-out <file>`: subscribe to the newest sessions and the main chat of each, watch for `--watch` seconds, default 10, and report per kind of frame every path under `_meta` and every other path the generated types drop; paths, JSON types and counts only, never a value, and a key that looks like a title or an address is shown as `<key>`), `--capture <file>` (raw frames as JSON lines). Capture files contain session titles and local paths, so they stay
 local: `captures/` is gitignored. The device code lasts 15 minutes; approve it at the URL the probe prints.
 
 ## Pinned versions

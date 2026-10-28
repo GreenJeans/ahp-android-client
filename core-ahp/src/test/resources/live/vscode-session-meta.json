@@ -1,0 +1,171 @@
+{
+  "metas": [
+    {
+      "git": {
+        "branchName": "branch-redacted-1",
+        "baseBranchName": "baseBranch-redacted-2",
+        "upstreamBranchName": "upstreamBranch-redacted-3",
+        "outgoingChanges": 0,
+        "incomingChanges": 0,
+        "uncommittedChanges": 1,
+        "hasBaseBranchChanges": true,
+        "hasGitHubRemote": false
+      },
+      "vscode.external": true
+    },
+    {
+      "vscode.external": false
+    },
+    {
+      "git": {
+        "branchName": "branch-redacted-4",
+        "baseBranchName": "baseBranch-redacted-2",
+        "defaultBranchName": "defaultBranch-redacted-5",
+        "defaultRemoteBranchName": "defaultRemoteBranch-redacted-6",
+        "upstreamBranchName": "upstreamBranch-redacted-7",
+        "outgoingChanges": 10,
+        "uncommittedChanges": 0,
+        "hasBaseBranchChanges": true,
+        "hasGitHubRemote": false,
+        "hasGitRemote": true
+      },
+      "vscode.external": false
+    },
+    {
+      "git": {
+        "branchName": "branch-redacted-8",
+        "uncommittedChanges": 5,
+        "hasGitHubRemote": false,
+        "hasGitRemote": false
+      },
+      "vscode.external": false
+    },
+    {
+      "git": {
+        "uncommittedChanges": 0,
+        "hasGitHubRemote": false,
+        "hasGitRemote": false,
+        "isDetachedHead": true
+      },
+      "vscode.external": true
+    },
+    {
+      "git": {
+        "branchName": "branch-redacted-10",
+        "baseBranchName": "baseBranch-redacted-11",
+        "defaultBranchName": "defaultBranch-redacted-12",
+        "defaultRemoteBranchName": "defaultRemoteBranch-redacted-13",
+        "upstreamBranchName": "upstreamBranch-redacted-14",
+        "outgoingChanges": 4,
+        "incomingChanges": 0,
+        "uncommittedChanges": 0,
+        "hasBaseBranchChanges": true,
+        "hasGitHubRemote": false,
+        "hasGitRemote": true
+      },
+      "gitData": {
+        "folder-1": {
+          "branchName": "branch-redacted-10",
+          "baseBranchName": "baseBranch-redacted-11",
+          "defaultBranchName": "defaultBranch-redacted-12",
+          "defaultRemoteBranchName": "defaultRemoteBranch-redacted-13",
+          "outgoingChanges": 581,
+          "uncommittedChanges": 0,
+          "hasBaseBranchChanges": true,
+          "hasGitHubRemote": false,
+          "hasGitRemote": true
+        }
+      },
+      "vscode.external": false
+    },
+    {
+      "git": {
+        "branchName": "branch-redacted-15",
+        "baseBranchName": "baseBranch-redacted-2",
+        "defaultBranchName": "defaultBranch-redacted-5",
+        "defaultRemoteBranchName": "defaultRemoteBranch-redacted-6",
+        "upstreamBranchName": "upstreamBranch-redacted-16",
+        "outgoingChanges": 0,
+        "incomingChanges": 0,
+        "uncommittedChanges": 1,
+        "hasBaseBranchChanges": true,
+        "hasGitHubRemote": false,
+        "hasGitRemote": true
+      },
+      "vscode.external": false
+    },
+    {
+      "git": {
+        "branchName": "branch-redacted-19",
+        "baseBranchName": "baseBranch-redacted-2",
+        "defaultBranchName": "defaultBranch-redacted-5",
+        "defaultRemoteBranchName": "defaultRemoteBranch-redacted-6",
+        "outgoingChanges": 0,
+        "uncommittedChanges": 0,
+        "hasBaseBranchChanges": false,
+        "hasGitHubRemote": false,
+        "hasGitRemote": true
+      },
+      "vscode.external": false
+    },
+    {
+      "git": {
+        "branchName": "branch-redacted-8",
+        "baseBranchName": "baseBranch-redacted-2",
+        "defaultBranchName": "defaultBranch-redacted-5",
+        "defaultRemoteBranchName": "defaultRemoteBranch-redacted-6",
+        "upstreamBranchName": "upstreamBranch-redacted-18",
+        "outgoingChanges": 0,
+        "incomingChanges": 0,
+        "uncommittedChanges": 1,
+        "hasGitHubRemote": false,
+        "hasGitRemote": true
+      },
+      "vscode.external": true
+    },
+    {
+      "git": {
+        "baseBranchName": "baseBranch-redacted-2",
+        "uncommittedChanges": 0,
+        "hasGitHubRemote": false,
+        "isDetachedHead": true
+      },
+      "vscode.external": true
+    },
+    {
+      "git": {
+        "branchName": "branch-redacted-43",
+        "baseBranchName": "baseBranch-redacted-44",
+        "defaultBranchName": "defaultBranch-redacted-5",
+        "defaultRemoteBranchName": "defaultRemoteBranch-redacted-6",
+        "upstreamBranchName": "upstreamBranch-redacted-45",
+        "outgoingChanges": 0,
+        "incomingChanges": 0,
+        "uncommittedChanges": 0,
+        "hasBaseBranchChanges": true,
+        "hasGitHubRemote": false,
+        "hasGitRemote": true
+      },
+      "gitData": {
+        "folder-1": {
+          "branchName": "branch-redacted-46",
+          "baseBranchName": "baseBranch-redacted-44",
+          "defaultBranchName": "defaultBranch-redacted-5",
+          "defaultRemoteBranchName": "defaultRemoteBranch-redacted-6",
+          "upstreamBranchName": "upstreamBranch-redacted-18",
+          "outgoingChanges": 0,
+          "incomingChanges": 0,
+          "uncommittedChanges": 0,
+          "hasBaseBranchChanges": true,
+          "hasGitHubRemote": false,
+          "hasGitRemote": true
+        }
+      },
+      "vscode.external": false
+    },
+    {
+      "vscode.external": false,
+      "workspaceless": true
+    }
+  ]
+}

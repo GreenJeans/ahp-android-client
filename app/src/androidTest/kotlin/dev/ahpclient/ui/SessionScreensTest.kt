@@ -127,14 +127,15 @@ class SessionScreensTest {
     private val mainChatUri = "ahp-chat://default/x"
     private val sideChatUri = "ahp-chat://default/y"
 
-    private fun detailState(inputNeeded: String? = null, chats: String = """[{"resource":"$mainChatUri","title":"Main chat","status":56,"modifiedAt":"2026-10-26T10:29:00.000Z"}]""", defaultChat: String? = null): SessionState =
+    private fun detailState(inputNeeded: String? = null, chats: String = """[{"resource":"$mainChatUri","title":"Main chat","status":56,"modifiedAt":"2026-10-26T10:29:00.000Z"}]""", defaultChat: String? = null, meta: String? = null): SessionState =
         Ahp.json.decodeFromString(
             SessionState.serializer(),
             """{"provider":"copilotcli","title":"Fix the build","status":56,"lifecycle":"ready","activeClients":[],"activity":"Waiting on you",
                 "project":{"uri":"file:///work/repo","displayName":"repo"},"workingDirectories":["file:///work/repo"],
                 "chats":$chats
                 ${if (defaultChat != null) ""","defaultChat":"$defaultChat"""" else ""}
-                ${if (inputNeeded != null) ""","inputNeeded":$inputNeeded""" else ""}}""",
+                ${if (inputNeeded != null) ""","inputNeeded":$inputNeeded""" else ""}
+                ${if (meta != null) ""","_meta":$meta""" else ""}}""",
         )
 
     private val twoChats = """[{"resource":"$sideChatUri","title":"Side chat","status":56,"modifiedAt":"2026-10-26T10:28:00.000Z"},
@@ -263,6 +264,17 @@ class SessionScreensTest {
         rule.onAllNodesWithTag("row_changes", useUnmergedTree = true).assertCountEquals(1)
         rule.onNodeWithTag("row_changes", useUnmergedTree = true).assertTextEquals("(+1072, \u22128)")
         assertTrue(spokenRow(0), spokenRow(0).contains("1072 lines added, 8 removed, in 14 files"))
+    }
+
+    @Test
+    fun aRowShowsTheBranchTheHostReportsAndASessionWithoutOneShowsNone() {
+        val onBranch = summary("ahp-session:/b", "On a branch", 1, "2026-10-26T10:00:00.000Z", ""","_meta":{"git":{"branchName":"feature/phone","outgoingChanges":2}}""")
+        showSessions(listOf(onBranch, unread))
+
+        rule.onAllNodesWithTag("row_branch", useUnmergedTree = true).assertCountEquals(1)
+        rule.onNodeWithTag("row_branch", useUnmergedTree = true).assertTextEquals("feature/phone")
+        assertTrue(spokenRow(0), spokenRow(0).contains("branch feature/phone"))
+        assertTrue(spokenRow(1), !spokenRow(1).contains("branch"))
     }
 
     @Test
@@ -542,6 +554,25 @@ class SessionScreensTest {
         rule.onNodeWithTag("input_request").assertTextContains("Which branch should I use?", substring = true)
         rule.onNodeWithTag("answer_hint").assertTextEquals("Answer in VS Code.")
         rule.onNodeWithText("repo").assertIsDisplayed()
+    }
+
+    @Test
+    fun detailsShowTheBranchAndGitStatusTheHostReportsAndNothingWhenItReportsNone() {
+        showDetail(detailState(meta = """{"git":{"branchName":"feature/phone","outgoingChanges":2,"uncommittedChanges":3}}"""))
+        openDetails()
+
+        rule.onNodeWithText("Branch").assertIsDisplayed()
+        rule.onNodeWithText("feature/phone").assertIsDisplayed()
+        rule.onNodeWithText("2 outgoing, 3 uncommitted").assertIsDisplayed()
+    }
+
+    @Test
+    fun detailsOfASessionWithNoGitDataHaveNoBranchTile() {
+        showDetail(detailState())
+        openDetails()
+
+        rule.onAllNodesWithText("Branch").assertCountEquals(0)
+        rule.onAllNodesWithText("Git status").assertCountEquals(0)
     }
 
     @Test
