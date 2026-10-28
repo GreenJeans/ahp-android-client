@@ -44,7 +44,7 @@ object MonitorWatchdog {
  */
 class MonitorWatchdogWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
-        val container = (applicationContext as AhpApp).container
+        val container = (applicationContext as? AhpApp ?: applicationContext.applicationContext as AhpApp).container
         if (container.monitoringStopped()) NotificationMonitorProblemSink(applicationContext).post(WatchdogDecision.STOPPED_TEXT)
         return Result.success()
     }

@@ -95,7 +95,7 @@ The useful extensions arrive under different names depending on the host: `branc
 
 - [~] **AC-E1.1** Given the E0 fixtures from each host, `HostExtras` returns the same `SessionExtras` model whichever spelling the host used.
 - [x] **AC-E1.2** Missing, mistyped, oversized or hostile values (a branch of a million characters, a URL with a control character, a number where text is expected) produce defaults and no exception. _Done 2026-10-28 for the fields built (branch and counts): `HostExtrasTest`._
-- [~] **AC-E1.3** The extras update when the host changes them (a `sessionSummaryChanged`, or an action that replaces `_meta`), and clear when the host removes them. _Done for the session list (`SessionCatalog.merge` replaces `_meta` whole; tested to change and to clear). Not yet tested for an open session's `session/metaChanged` action._
+- [x] **AC-E1.3** The extras update when the host changes them (a `sessionSummaryChanged`, or an action that replaces `_meta`), and clear when the host removes them. _Done 2026-10-28: `SessionCatalog.merge` replaces `_meta` whole on the session list, and `SessionStore.apply` reduces `session/metaChanged` on an open session (`HostExtrasTest`)._
 - [x] **AC-E1.4** No outbound method or action changes: the capability allowlist test passes unchanged. _Nothing outbound was touched; the 1,249 JVM tests pass, `CapabilityPolicyTest` among them._
 
 ### As built (2026-10-28, branch and counts only)
@@ -289,8 +289,8 @@ What differs from the design above, and why:
 
 ### Acceptance criteria
 
-- [ ] **AC-E7.1** The versions each reachable host chooses are recorded in `docs/verification/extensions.md`.
-- [ ] **AC-E7.2** Either the item is closed as not needed, with that evidence, or a follow-up is written naming the library version that would cover the gap.
+- [x] **AC-E7.1** The versions each reachable host chooses are recorded in `docs/verification/extensions.md`. _Done 2026-10-28: both `ahpd` 0.14.0 and the VS Code tunnel host chose `1.0.0` when offered `[1.0.0, 0.9.0]`._
+- [x] **AC-E7.2** Either the item is closed as not needed, with that evidence, or a follow-up is written naming the library version that would cover the gap. _Done 2026-10-28: closed as not needed, as both reachable hosts speak `1.0.0`._
 
 ---
 
@@ -321,3 +321,4 @@ Items with a phone criterion (E2.4, E6.6) get a run recorded in `docs/verificati
 | 2026-10-28 | **E1 started: `HostExtras` for branch and counts only.** `SessionExtras(branch, outgoing, incoming, uncommitted, detachedHead)` read from `_meta.git.*` (nested or dotted) and `gitData.<folder>.*`, bounded and never throwing; `SessionSummary.extras` and `SessionState.extras`. 10 `HostExtrasTest` cases; first run caught a real miss (a dotted `git.branchName` key at the top of `_meta` was not read), fixed. 1,249 JVM tests pass. Pull requests, progress message and hidden flag are not built: no host sent them. AC-E1.3 open for an open session's `session/metaChanged`. |
 | 2026-10-28 | **Captures taken from both hosts; first redacted fixture (AC-E0.4 partly).** New `tools/redact-meta.mjs` keeps only the git `_meta` (whitelist, branch names replaced, `findLeaks` must pass) where the other redactors drop `_meta` whole; `live/vscode-session-meta.json` holds 12 sessions' shapes from the VS Code host (304 listed), including multi-root `gitData`. `HostExtrasTest` now checks the reader against every one (11 cases pass). Real capture showed `git` is nested and `vscode.*` keys are dotted. `ahpd` (2 sessions listed, 64 frames) sent no git data, so it has no fixture. 12 redaction-tool tests pass. |
 | 2026-10-28 | **E2 started: branch only.** A branch label on the drawer row and **Branch** and **Git status** tiles in the Details sheet, from `HostExtras`; nothing shown for a host that sends no git data. No pull-request chip: no host sent one. 1,252 JVM tests pass, app and instrumented tests compile, lint at its 3 baseline warnings. The 3 new instrumented cases pass on the API 36 emulator (57 in `SessionScreensTest`); the Android 17 phone cannot run Compose tests (Espresso `InputManager.getInstance`). The code is in `db8285f`; this note is not committed. |
+| 2026-10-28 | **AC-E1.3 and E7 closed; `MonitorWatchdogWorker` cast fixed.** Added `session/metaChanged` store test in `HostExtrasTest` (AC-E1.3 done). Closed E7 (AC-E7.1, AC-E7.2) as not needed because both `ahpd` 0.14.0 and the VS Code tunnel host chose protocol `1.0.0`. Fixed `MonitorWatchdogWorker` and `MonitorWatchdogInstrumentedTest` `applicationContext` cast (`ContextImpl cannot be cast to AhpApp`). |

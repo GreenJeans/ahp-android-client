@@ -30,6 +30,8 @@ import com.microsoft.agenthostprotocol.generated.SnapshotState
 import com.microsoft.agenthostprotocol.generated.StateAction
 import java.nio.file.Path
 import java.nio.file.Paths
+import java.util.concurrent.TimeUnit
+import okhttp3.OkHttpClient
 import kotlin.system.exitProcess
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -41,7 +43,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 
-private const val USAGE = "usage: probe [--tunnel <name|id>] [--instance <id>] [--capture <file>] [--watch <seconds>] [--session <title-or-uri>] [--chat <title-or-uri>] [--direct <ws-or-wss-address>] [--census] [--census-sessions <n>] [--census-out <file>]"
+private const val USAGE = "usage: probe [--tunnel <name|id>] [--instance <id>] [--capture <file>] [--watch <seconds>] [--ping-seconds <n>] [--session <title-or-uri>] [--chat <title-or-uri>] [--direct <ws-or-wss-address>] [--census] [--census-sessions <n>] [--census-out <file>]"
+private const val DEFAULT_PING_SECONDS = 30
 private const val DEFAULT_CENSUS_SESSIONS = 10
 private const val MAX_CENSUS_SESSIONS = 50
 private const val DEFAULT_CENSUS_WATCH_SECONDS = 10
@@ -55,6 +58,7 @@ internal data class ProbeArgs(
     val instance: String? = null,
     val capture: Path? = null,
     val watchSeconds: Int = 0,
+    val pingSeconds: Int = DEFAULT_PING_SECONDS,
     val session: String? = null,
     val chat: String? = null,
     /** A host reached by its own address (such as ahpd), with its token in the AHPD_TOKEN environment variable. No sign-in and no tunnel. */
@@ -75,6 +79,7 @@ internal data class ProbeArgs(
                     "--instance" -> result = result.copy(instance = value(flag))
                     "--capture" -> result = result.copy(capture = Paths.get(value(flag)))
                     "--watch" -> result = result.copy(watchSeconds = value(flag).toIntOrNull()?.takeIf { it >= 0 } ?: throw IllegalArgumentException("--watch needs a number of seconds\n$USAGE"))
+                    "--ping-seconds" -> result = result.copy(pingSeconds = value(flag).toIntOrNull()?.takeIf { it >= 1 } ?: throw IllegalArgumentException("--ping-seconds needs a positive number of seconds\n$USAGE"))
                     "--session" -> result = result.copy(session = value(flag))
                     "--chat" -> result = result.copy(chat = value(flag))
                     "--direct" -> result = result.copy(direct = value(flag))
@@ -97,6 +102,8 @@ internal data class ProbeArgs(
  */
 internal class Probe(private val args: ProbeArgs, private val out: (String) -> Unit = ::println) {
     private val census = if (args.census) ExtensionCensus() else null
+
+    private fun socketOpener() = OkHttpSocketOpener(OkHttpClient.Builder().pingInterval(args.pingSeconds.toLong(), TimeUnit.SECONDS).build())
 
     private fun log(tag: String, message: String) = out("[${tag.padEnd(5)}] $message")
 
@@ -131,7 +138,7 @@ internal class Probe(private val args: ProbeArgs, private val out: (String) -> U
         val frames = FrameLog(args.capture, census)
         val host = DirectHost(DirectHost.ID_PREFIX + "probe", "probe", address)
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        val ahp = DirectHostConnector(RecordingOpener(OkHttpSocketOpener(), frames), host, { token }).connect(java.util.UUID.randomUUID().toString(), 0, scope)
+        val ahp = DirectHostConnector(RecordingOpener(socketOpener(), frames), host, { token }).connect(java.util.UUID.randomUUID().toString(), 0, scope)
         try {
             observe(ahp)
         } finally {
@@ -157,7 +164,7 @@ internal class Probe(private val args: ProbeArgs, private val out: (String) -> U
 
         val frames = FrameLog(args.capture, census)
         args.capture?.let { log("info", "recording frames to $it (local only, never commit)") }
-        val connection = TunnelGateway(opener = RecordingOpener(OkHttpSocketOpener(), frames)).open(target, args.instance)
+        val connection = TunnelGateway(opener = RecordingOpener(socketOpener(), frames)).open(target, args.instance)
         val selected = connection.selected
         if (selected != null) {
             log("ok", "gateway selected ${selected.type} ${selected.instanceId} (${selected.lifecycle})")

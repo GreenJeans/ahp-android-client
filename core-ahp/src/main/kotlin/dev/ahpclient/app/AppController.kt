@@ -23,6 +23,7 @@ import dev.ahpclient.state.ApprovalGate
 import dev.ahpclient.state.ChatConfig
 import dev.ahpclient.state.RequestRead
 import dev.ahpclient.state.ApprovalTarget
+import dev.ahpclient.state.QuestionTarget
 import dev.ahpclient.state.ChannelStore
 import dev.ahpclient.state.ChangesetDiffs
 import dev.ahpclient.state.ChangesetEntry
@@ -675,6 +676,38 @@ class AppController(
             if (store.error.value != null) return InteractResult.NotSent(IOException("The chat could not be loaded"))
             val interactor = interactorFor(session, chatUri, store)
             return if (approve) interactor.approve(toolCallId, optionId) else interactor.deny(toolCallId, optionId)
+        } finally {
+            opened?.closeChat(chatUri, background = true)
+        }
+    }
+
+    /**
+     * Answers one waiting free-text question for a notification's text field, with no screen showing it. Like [decideToolCall],
+     * the chat is opened long enough to read the live request and send the answer, then closed again, and the same
+     * [ChatInteractor] checks that the write tier is on, the question is still waiting and still a single free-text question,
+     * and the answer meets its bounds. Answering a question needs no device check: it only replies to what the agent asked.
+     */
+    suspend fun answerQuestion(chatUri: String, requestId: String, text: String, background: Boolean = false): InteractResult {
+        if (chatUri.isBlank() || chatUri.length > ApprovalTarget.MAX_CHAT_URI) return InteractResult.NotAllowed
+        if (requestId.isBlank() || requestId.length > QuestionTarget.MAX_REQUEST_ID) return InteractResult.NotAllowed
+        if (text.isBlank()) return InteractResult.Blank
+        if (text.length > QuestionTarget.MAX_ANSWER_CHARS) return InteractResult.NotAllowed
+        var opened: HostSession? = null
+        try {
+            val store = withTimeoutOrNull(PREPARE_MS) {
+                val session = hostFor(background) ?: return@withTimeoutOrNull null
+                val chat = session.openChat(chatUri, background = true)
+                opened = session
+                withTimeoutOrNull(CHAT_LOAD_MS) {
+                    chat.subscribeNeeded.first { !it }
+                    chat.state.first { it != null }
+                } ?: return@withTimeoutOrNull null
+                chat
+            }
+            val session = opened ?: return if (background && autoConnect()) InteractResult.NotConnected else InteractResult.NotAllowed
+            if (store == null) return InteractResult.NotSent(IOException("The chat did not load in time"))
+            if (store.error.value != null) return InteractResult.NotSent(IOException("The chat could not be loaded"))
+            return interactorFor(session, chatUri, store).answerText(requestId, text)
         } finally {
             opened?.closeChat(chatUri, background = true)
         }

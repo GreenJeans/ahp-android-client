@@ -1,5 +1,6 @@
 package dev.ahpclient.state
 
+import com.microsoft.agenthostprotocol.generated.ChatInputRequest
 import com.microsoft.agenthostprotocol.generated.ChatInteractivity
 import com.microsoft.agenthostprotocol.generated.ChatState
 import com.microsoft.agenthostprotocol.generated.ConfirmationOptionKind
@@ -240,6 +241,21 @@ class ChatInteractor(
     suspend fun answer(requestId: String, answers: Map<String, AnswerValue>): InteractResult =
         usable()?.let { deliver(ChatActions.completeInput(requestId, InputResponse.ACCEPT, answers)) } ?: InteractResult.NotAllowed
 
+    /**
+     * Answers a single free-text question by [requestId], checking that it is still waiting in the running turn and still a
+     * single free-text question whose bounds [text] meets. Used when answering from a notification, where the chat was not
+     * already open on screen.
+     */
+    suspend fun answerText(requestId: String, text: String): InteractResult {
+        val state = usable() ?: return InteractResult.NotAllowed
+        if (text.isBlank()) return InteractResult.Blank
+        val request = InputRequests.find(state, requestId) ?: return InteractResult.NoSuchRequest
+        val form = InputForm.from(request) ?: return InteractResult.NoSuchRequest
+        val question = form.questions.singleOrNull()?.takeIf { it.kind == QuestionKind.TEXT } ?: return InteractResult.NoSuchRequest
+        val checked = form.check(mapOf(question.id to FormValue.Text(text))) as? FormCheck.Ready ?: return InteractResult.Blank
+        return deliver(ChatActions.completeInput(requestId, InputResponse.ACCEPT, checked.answers))
+    }
+
     suspend fun declineInput(requestId: String): InteractResult =
         usable()?.let { deliver(ChatActions.completeInput(requestId, InputResponse.DECLINE)) } ?: InteractResult.NotAllowed
 
@@ -338,5 +354,12 @@ class ChatInteractor(
 internal object InputRequests {
     /** True when [requestId] is a question still waiting for an answer. */
     fun isWaiting(chat: ChatState, requestId: String): Boolean =
-        chat.activeTurn?.responseParts.orEmpty().any { it is ResponsePartInputRequest && it.value.request.id == requestId && it.value.response == null }
+        find(chat, requestId) != null
+
+    /** The unanswered request with [requestId] in the running turn, or null if it has been answered or the turn has ended. */
+    fun find(chat: ChatState, requestId: String): ChatInputRequest? =
+        chat.activeTurn?.responseParts.orEmpty()
+            .filterIsInstance<ResponsePartInputRequest>()
+            .firstOrNull { it.value.request.id == requestId && it.value.response == null }
+            ?.value?.request
 }

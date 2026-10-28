@@ -4,6 +4,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.app.RemoteInput
 import android.content.Context
 import android.content.Intent
 import android.graphics.drawable.Icon
@@ -17,9 +18,13 @@ import dev.ahpclient.state.ApprovalTarget
 import dev.ahpclient.state.FinishedSession
 import dev.ahpclient.state.FinishedText
 import dev.ahpclient.state.InputNeeded
+import dev.ahpclient.state.QuestionTarget
 
 /** The extra that carries the session a notification points at. The app only opens it if the host lists that session. */
 const val EXTRA_SESSION_URI = "dev.ahpclient.extra.SESSION_URI"
+
+/** The extra that asks the activity to return to the inbox rather than staying on an open session. */
+const val EXTRA_OPEN_INBOX = "dev.ahpclient.extra.OPEN_INBOX"
 
 object MonitorChannels {
     const val MONITOR = "monitor"
@@ -140,12 +145,81 @@ class NotificationInputNeededSink(
                 lockScreen.addAction(action)
             }
         }
+        request.question?.takeIf { canDecide() }?.let { target ->
+            val action = answerAction(request.resource, target)
+            builder.addAction(action)
+            lockScreen.addAction(action)
+        }
         builder.setPublicVersion(lockScreen.build())
         manager.notify(request.resource, NOTIFICATION_ID, builder.build())
     }
 
     override fun clear(resource: String) {
         manager.cancel(resource, NOTIFICATION_ID)
+    }
+
+    /**
+     * Replaces the notification after an inline reply is sent with [status] ("Sent", or why it could not be sent), so the
+     * system's sending spinner stops. It keeps the session's tag and id, so when the host's echo clears the waiting state the
+     * notification is removed as usual.
+     */
+    fun postReplyStatus(resource: String, status: String) {
+        MonitorChannels.ensure(context)
+        val open = PendingIntent.getActivity(
+            context,
+            resource.hashCode(),
+            Intent(context, MainActivity::class.java)
+                .putExtra(EXTRA_SESSION_URI, resource)
+                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val lockScreen = Notification.Builder(context, MonitorChannels.INPUT_NEEDED)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle("A session needs your input")
+            .setContentText(status)
+            .build()
+        manager.notify(
+            resource,
+            NOTIFICATION_ID,
+            Notification.Builder(context, MonitorChannels.INPUT_NEEDED)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle("Needs your input")
+                .setContentText(status)
+                .setContentIntent(open)
+                .setAutoCancel(true)
+                .setOnlyAlertOnce(true)
+                .setCategory(Notification.CATEGORY_MESSAGE)
+                .setVisibility(Notification.VISIBILITY_PRIVATE)
+                .setPublicVersion(lockScreen)
+                .build(),
+        )
+    }
+
+    private fun answerAction(resource: String, target: QuestionTarget): Notification.Action {
+        val icon = Icon.createWithResource(context, R.drawable.ic_notification)
+        val intent = Intent(context, AnswerReceiver::class.java)
+            .setAction(ACTION_ANSWER_QUESTION)
+            .putExtra(EXTRA_SESSION_URI, resource)
+            .putExtra(EXTRA_CHAT_URI, target.chat)
+            .putExtra(EXTRA_REQUEST_ID, target.requestId)
+            .setData(
+                Uri.Builder()
+                    .scheme("ahp-decision")
+                    .authority("answer")
+                    .appendQueryParameter("session", resource)
+                    .appendQueryParameter("chat", target.chat)
+                    .appendQueryParameter("request", target.requestId)
+                    .build(),
+            )
+        // Android requires FLAG_MUTABLE so the system can attach the RemoteInput bundle; the component is explicit and unexported.
+        val pending = PendingIntent.getBroadcast(
+            context,
+            0,
+            intent,
+            PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val input = RemoteInput.Builder(KEY_TEXT_REPLY).setLabel("Answer").build()
+        return Notification.Action.Builder(icon, "Answer", pending).addRemoteInput(input).build()
     }
 
     private class Button(val label: String, val approves: Boolean, val optionId: String?)

@@ -2,6 +2,7 @@ package dev.ahpclient.app
 
 import dev.ahpclient.state.ApprovalTarget
 import dev.ahpclient.state.HostSession
+import dev.ahpclient.state.QuestionTarget
 import dev.ahpclient.state.RequestRead
 import dev.ahpclient.state.WaitingText
 import kotlinx.coroutines.flow.combine
@@ -21,7 +22,7 @@ object WaitingRequests {
                 .first { (loaded, error) -> loaded != null || error != null }
                 .first ?: return null
             val text = WaitingText.of(state.inputNeeded.orEmpty())
-            return RequestRead(text, ApprovalTarget.from(state))
+            return RequestRead(text, ApprovalTarget.from(state), QuestionTarget.from(state))
         } finally {
             session.closeSession(resource)
         }

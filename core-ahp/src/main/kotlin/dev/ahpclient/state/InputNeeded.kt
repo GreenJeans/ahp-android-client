@@ -1,6 +1,8 @@
 package dev.ahpclient.state
 
+import com.microsoft.agenthostprotocol.generated.ChatInputQuestionText
 import com.microsoft.agenthostprotocol.generated.ConfirmationOptionKind
+import com.microsoft.agenthostprotocol.generated.SessionInputRequestChatInput
 import com.microsoft.agenthostprotocol.generated.SessionInputRequest
 import com.microsoft.agenthostprotocol.generated.SessionInputRequestToolConfirmation
 import com.microsoft.agenthostprotocol.generated.SessionState
@@ -79,7 +81,43 @@ data class ApprovalTarget(val chat: String, val toolCallId: String, val options:
  * approve) when that could be read in time; null means only the session [title] is known. [approval] is set when what it is
  * waiting for is one plain tool call that the notification may offer to decide.
  */
-data class InputNeeded(val resource: String, val title: String, val detail: String? = null, val approval: ApprovalTarget? = null)
+/**
+ * The one free-text question a notification may offer to answer in place: which chat it is in, and which request. It is only
+ * ever made by [from], and answering it still checks the live chat's form rules and capability tier before anything is sent.
+ */
+data class QuestionTarget(val chat: String, val requestId: String) {
+    companion object {
+        /** The longest request or question id accepted; a longer one is not offered and not answered from a notification. */
+        const val MAX_REQUEST_ID = 200
+
+        /** The longest answer accepted from a notification's text field. */
+        const val MAX_ANSWER_CHARS = 4_000
+
+        /**
+         * The question a notification may offer to answer, or null when it may not. That is when the session is waiting on
+         * exactly one thing, the thing is a chat input request with a single free-text question, and the chat it is in is
+         * one the session lists. A choice, number, yes/no or multi-question form is answered in the app instead.
+         */
+        fun from(state: SessionState): QuestionTarget? {
+            val only = state.inputNeeded.orEmpty().singleOrNull() as? SessionInputRequestChatInput ?: return null
+            val chat = only.value.chat
+            if (chat.isBlank() || chat.length > ApprovalTarget.MAX_CHAT_URI || state.chats.none { it.resource == chat }) return null
+            val request = only.value.request
+            if (request.id.isBlank() || request.id.length > MAX_REQUEST_ID) return null
+            val question = request.questions.orEmpty().singleOrNull() as? ChatInputQuestionText ?: return null
+            if (question.value.id.isBlank() || question.value.id.length > MAX_REQUEST_ID) return null
+            return QuestionTarget(chat, request.id)
+        }
+    }
+}
+
+data class InputNeeded(
+    val resource: String,
+    val title: String,
+    val detail: String? = null,
+    val approval: ApprovalTarget? = null,
+    val question: QuestionTarget? = null,
+)
 
 /** What a notification says a session is waiting for: the one thing, or, with several, how many and what the first is. */
 object WaitingText {
@@ -94,7 +132,7 @@ object WaitingText {
 }
 
 /** What reading a waiting session gave: its words, and the tool call to offer buttons for, if there is exactly one. */
-data class RequestRead(val text: String?, val approval: ApprovalTarget? = null)
+data class RequestRead(val text: String?, val approval: ApprovalTarget? = null, val question: QuestionTarget? = null)
 
 /**
  * Finds the sessions that have begun waiting on the user between one list and the next. The first list only records
@@ -150,14 +188,14 @@ class InputNeededNotifier(
                     val read = read(started.resource)
                     pending.remove(started.resource)
                     notified += started.resource
-                    notify(started.copy(detail = read?.text, approval = read?.approval))
+                    notify(started.copy(detail = read?.text, approval = read?.approval, question = read?.question))
                 }
             }
         }
     }
 
     private suspend fun read(resource: String): RequestRead? = try {
-        withTimeoutOrNull(readTimeoutMs) { readDetail(resource) }?.let { RequestRead(it.text?.let(::tidy), it.approval) }
+        withTimeoutOrNull(readTimeoutMs) { readDetail(resource) }?.let { RequestRead(it.text?.let(::tidy), it.approval, it.question) }
     } catch (e: CancellationException) {
         throw e
     } catch (_: Exception) {
@@ -203,5 +241,21 @@ data class MonitorStatus(val title: String, val text: String) {
         }
 
         private fun plural(count: Int) = if (count == 1) "session" else "sessions"
+    }
+}
+
+/** What the Quick Settings tile shows: active while monitoring runs, with the inbox's waiting count when online. */
+data class MonitorTileState(val active: Boolean, val label: String, val subtitle: String) {
+    companion object {
+        const val LABEL = "AHP Monitor"
+        const val OFF_SUBTITLE = "Monitoring off"
+
+        fun from(status: MonitorStatus?, sessions: List<SessionSummary>, online: Boolean): MonitorTileState {
+            if (status == null) return MonitorTileState(active = false, label = LABEL, subtitle = OFF_SUBTITLE)
+            if (!online) return MonitorTileState(active = true, label = LABEL, subtitle = status.text)
+            val waiting = sessions.count { !it.status.isArchived && it.status.activityState == ActivityState.NEEDS_INPUT }
+            val subtitle = if (waiting > 0) "$waiting waiting" else "No sessions waiting"
+            return MonitorTileState(active = true, label = LABEL, subtitle = subtitle)
+        }
     }
 }

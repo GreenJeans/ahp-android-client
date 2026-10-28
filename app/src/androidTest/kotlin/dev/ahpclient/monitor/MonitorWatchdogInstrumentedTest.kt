@@ -52,7 +52,7 @@ class MonitorWatchdogInstrumentedTest {
         manager.cancel(WARNING_ID)
     }
 
-    private fun runWorker(): ListenableWorker.Result = runBlocking { TestListenableWorkerBuilder<MonitorWatchdogWorker>(context).build().doWork() }
+    private fun runWorker(): ListenableWorker.Result = runBlocking { TestListenableWorkerBuilder<MonitorWatchdogWorker>(context.applicationContext).build().doWork() }
 
     private fun warning() = manager.activeNotifications.firstOrNull { it.id == WARNING_ID }
 
