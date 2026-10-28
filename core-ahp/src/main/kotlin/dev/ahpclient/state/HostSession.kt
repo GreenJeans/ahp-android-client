@@ -168,7 +168,10 @@ class HostSession(
 
     // Owned here, not by a connection, so it keeps increasing when a reconnect reuses this client id.
     private val nextClientSeq = AtomicLong(1)
-    private val awaiting = ConcurrentHashMap<Long, CompletableDeferred<DispatchOutcome>>()
+    private val awaiting = ConcurrentHashMap<Long, Pending>()
+
+    /** One sent action waiting for its echo, with what an echo that carries no `origin` must match to answer it. */
+    private class Pending(val channel: String, val key: EchoKey, val reply: CompletableDeferred<DispatchOutcome>)
 
     // Counts restart requests, so a connection made before one is never used after it.
     private val epoch = AtomicLong(0)
@@ -447,7 +450,7 @@ class HostSession(
         val clientSeq = nextClientSeq.getAndIncrement()
         val reply = CompletableDeferred<DispatchOutcome>()
         // Registered before sending: the echo can be read before dispatchAction returns.
-        awaiting[clientSeq] = reply
+        awaiting[clientSeq] = Pending(channel, EchoKey.of(action), reply)
         try {
             ahp.dispatchAction(channel, action, clientSeq)
             return withTimeoutOrNull(timeoutMs) { reply.await() } ?: DispatchOutcome.NoReply
@@ -585,7 +588,7 @@ class HostSession(
                     it.close()
                 }
                 // Whatever was sent and not yet answered can no longer be answered on this connection.
-                awaiting.values.forEach { it.complete(DispatchOutcome.Interrupted) }
+                awaiting.values.forEach { it.reply.complete(DispatchOutcome.Interrupted) }
                 connectionScope.cancel()
                 saveCatalogSoon()
             }
@@ -782,12 +785,27 @@ class HostSession(
         }
     }
 
-    /** Matches an echo of our own action to the [dispatch] waiting for it, after the state change it carries has been applied. */
+    /**
+     * Matches an echo of our own action to the [dispatch] waiting for it, after the state change it carries has been applied.
+     *
+     * An echo with no `origin` is matched by what it carries instead: `ahpd` sends one when it has to wake a sleeping session
+     * for a message, because the turn starts after the dispatch that asked for it has returned. Such an echo answers the oldest
+     * waiting dispatch with the same [EchoKey] (on the same channel, except a turn, whose id alone names it); one that matches
+     * none is only someone else's action. An echo naming another client is never ours.
+     */
     private fun resolveDispatch(envelope: ActionEnvelope) {
-        val origin = envelope.origin ?: return
-        if (origin.clientId != clientId) return
         val rejection = envelope.rejectionReason
-        awaiting.remove(origin.clientSeq)?.complete(if (rejection == null) DispatchOutcome.Accepted else DispatchOutcome.Rejected(rejection))
+        val outcome = if (rejection == null) DispatchOutcome.Accepted else DispatchOutcome.Rejected(rejection)
+        val origin = envelope.origin
+        if (origin != null) {
+            if (origin.clientId == clientId) awaiting.remove(origin.clientSeq)?.reply?.complete(outcome)
+            return
+        }
+        val key = EchoKey.of(envelope.action)
+        val seq = awaiting.entries
+            .filter { (_, p) -> p.key.matches(key) && (key.anyChannel || p.channel == envelope.channel) }
+            .minOfOrNull { it.key } ?: return
+        awaiting.remove(seq)?.reply?.complete(outcome)
     }
 
     private fun storeFor(uri: String): SessionStore? = synchronized(sessions) { sessions[uri] }

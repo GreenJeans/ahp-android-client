@@ -116,6 +116,53 @@ class HostSessionDispatchTest {
     }
 
     @Test
+    fun `a turn echoed with no origin, as ahpd does when it wakes a session, is accepted and shown once`() = runTest {
+        // ahpd answers on the chat it woke, with no origin: the turn id is what names it.
+        val rig = rig(HostScript(onDispatch = { notification("action", """{"channel":"$CHAT_A","action":$TURN_STARTED,"serverSeq":${SNAPSHOT_SEQ + 1}}""") })).start()
+        val store = rig.host.openChat(CHAT_A)
+        runCurrent()
+
+        val outcome = rig.host.dispatch(CHAT_A, startTurn, timeoutMs = 1_000)
+        settle()
+
+        assertEquals(DispatchOutcome.Accepted, outcome)
+        assertEquals("t1", store.state.value!!.activeTurn?.id)
+    }
+
+    @Test
+    fun `an echo with no origin that matches nothing sent answers nothing`() = runTest {
+        val other = TURN_STARTED.replace("\"t1\"", "\"t9\"")
+        val rig = rig(HostScript(onDispatch = { notification("action", """{"channel":"$CHAT_A","action":$other,"serverSeq":${SNAPSHOT_SEQ + 1}}""") })).start()
+        val store = rig.host.openChat(CHAT_A)
+        runCurrent()
+
+        val outcome = rig.host.dispatch(CHAT_A, startTurn, timeoutMs = 1_000)
+
+        assertEquals(DispatchOutcome.NoReply, outcome)
+        assertEquals("t9", store.state.value!!.activeTurn?.id, "it is still applied, as someone else's action")
+    }
+
+    @Test
+    fun `identical actions in flight are answered by origin-less echoes in the order they were sent`() = runTest {
+        val cancel = """{"type":"chat/turnCancelled","turnId":"t1","duration":0}"""
+        val rig = rig(HostScript()).start()
+        val action = Ahp.json.decodeFromString(StateAction.serializer(), cancel)
+        val first = async { rig.host.dispatch(CHAT_A, action, timeoutMs = 5_000) }
+        val second = async { rig.host.dispatch(CHAT_A, action, timeoutMs = 5_000) }
+        runCurrent()
+
+        rig.socket.serverSends(notification("action", """{"channel":"$CHAT_A","action":$cancel,"serverSeq":${SNAPSHOT_SEQ + 1},"rejectionReason":"no turn"}"""))
+        runCurrent()
+        assertEquals(DispatchOutcome.Rejected("no turn"), first.await())
+        assertTrue(second.isActive, "one echo answers one dispatch")
+
+        rig.socket.serverSends(notification("action", """{"channel":"$CHAT_B","action":$cancel,"serverSeq":${SNAPSHOT_SEQ + 1}}"""))
+        runCurrent()
+        assertTrue(second.isActive, "anything but a turn must come back on the channel it was sent on")
+        assertEquals(DispatchOutcome.NoReply, second.await())
+    }
+
+    @Test
     fun `a silent host ends in NoReply after the timeout, not an error`() = runTest {
         val rig = rig(HostScript()).start()
 
