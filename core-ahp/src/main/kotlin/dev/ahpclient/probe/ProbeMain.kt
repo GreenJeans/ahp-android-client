@@ -41,7 +41,10 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 
-private const val USAGE = "usage: probe [--tunnel <name|id>] [--instance <id>] [--capture <file>] [--watch <seconds>] [--session <title-or-uri>] [--chat <title-or-uri>] [--direct <ws-or-wss-address>]"
+private const val USAGE = "usage: probe [--tunnel <name|id>] [--instance <id>] [--capture <file>] [--watch <seconds>] [--session <title-or-uri>] [--chat <title-or-uri>] [--direct <ws-or-wss-address>] [--census] [--census-sessions <n>] [--census-out <file>]"
+private const val DEFAULT_CENSUS_SESSIONS = 10
+private const val MAX_CENSUS_SESSIONS = 50
+private const val DEFAULT_CENSUS_WATCH_SECONDS = 10
 private const val SESSION_PAGE_SIZE = 100L
 private const val MAX_SESSION_PAGES = 10
 private const val TITLE_WIDTH = 60
@@ -56,6 +59,10 @@ internal data class ProbeArgs(
     val chat: String? = null,
     /** A host reached by its own address (such as ahpd), with its token in the AHPD_TOKEN environment variable. No sign-in and no tunnel. */
     val direct: String? = null,
+    /** E0: subscribe to the newest [censusSessions] sessions and the main chat of each, watch for [watchSeconds], and report which paths the library's types drop. Paths and counts only. */
+    val census: Boolean = false,
+    val censusSessions: Int = DEFAULT_CENSUS_SESSIONS,
+    val censusOut: Path? = null,
 ) {
     companion object {
         fun parse(args: Array<String>): ProbeArgs {
@@ -71,6 +78,9 @@ internal data class ProbeArgs(
                     "--session" -> result = result.copy(session = value(flag))
                     "--chat" -> result = result.copy(chat = value(flag))
                     "--direct" -> result = result.copy(direct = value(flag))
+                    "--census" -> result = result.copy(census = true)
+                    "--census-sessions" -> result = result.copy(censusSessions = value(flag).toIntOrNull()?.takeIf { it in 1..MAX_CENSUS_SESSIONS } ?: throw IllegalArgumentException("--census-sessions needs a number from 1 to $MAX_CENSUS_SESSIONS\n$USAGE"))
+                    "--census-out" -> result = result.copy(censusOut = Paths.get(value(flag)))
                     else -> throw IllegalArgumentException("unknown option '$flag'\n$USAGE")
                 }
                 i++
@@ -86,6 +96,8 @@ internal data class ProbeArgs(
  * `initialize` and `listSessions`. It never prints a token and never sends anything outside the READ tier.
  */
 internal class Probe(private val args: ProbeArgs, private val out: (String) -> Unit = ::println) {
+    private val census = if (args.census) ExtensionCensus() else null
+
     private fun log(tag: String, message: String) = out("[${tag.padEnd(5)}] $message")
 
     private fun fail(message: String): Int {
@@ -94,18 +106,29 @@ internal class Probe(private val args: ProbeArgs, private val out: (String) -> U
     }
 
     suspend fun run(): Int = try {
-        execute()
+        execute().also { emitCensus() }
     } catch (e: CancellationException) {
         throw e
     } catch (e: Throwable) {
+        emitCensus()
         fail(describe(e))
+    }
+
+    private fun emitCensus() {
+        val report = census?.report() ?: return
+        out(report.trimEnd())
+        args.censusOut?.let { path ->
+            path.parent?.let(java.nio.file.Files::createDirectories)
+            java.nio.file.Files.writeString(path, report)
+            log("info", "census written to $path (paths, types and counts only)")
+        }
     }
 
     /** The same checks as for a tunnel host, against a host reached by address: the production connector, read tier, methods checked on the wire. */
     private suspend fun executeDirect(address: String): Int {
         val token = System.getenv("AHPD_TOKEN")?.takeIf { it.isNotBlank() }?.let(::Secret)
         log("info", "direct host $address, ${if (token != null) "with a token from AHPD_TOKEN (not shown)" else "no token"}")
-        val frames = FrameLog(args.capture)
+        val frames = FrameLog(args.capture, census)
         val host = DirectHost(DirectHost.ID_PREFIX + "probe", "probe", address)
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         val ahp = DirectHostConnector(RecordingOpener(OkHttpSocketOpener(), frames), host, { token }).connect(java.util.UUID.randomUUID().toString(), 0, scope)
@@ -132,7 +155,7 @@ internal class Probe(private val args: ProbeArgs, private val out: (String) -> U
         val target = devTunnels.resolveConnectTarget(token.access, tunnel)
         log("info", "web endpoint ${target.portUriFormat}")
 
-        val frames = FrameLog(args.capture)
+        val frames = FrameLog(args.capture, census)
         args.capture?.let { log("info", "recording frames to $it (local only, never commit)") }
         val connection = TunnelGateway(opener = RecordingOpener(OkHttpSocketOpener(), frames)).open(target, args.instance)
         val selected = connection.selected
@@ -191,8 +214,39 @@ internal class Probe(private val args: ProbeArgs, private val out: (String) -> U
             log("", "  [${session.status.activityState.name.lowercase()}${if (flags.isEmpty()) "" else "+$flags"}] ${session.title.take(TITLE_WIDTH)}  chats=${session.chats?.size ?: "?"} modified=${session.modifiedAt}")
         }
 
+        if (args.census) return runCensus(ahp, sessions)
         if (args.session != null) checkActiveClients(ahp, sessions, args.session)
         if (args.chat != null) traceChat(ahp, sessions, args.chat) else if (args.watchSeconds > 0) watch(ahp, args.watchSeconds)
+    }
+
+    /**
+     * E0: subscribes to the newest sessions and the main chat of each, stays subscribed while the host's pushes arrive, then lets go.
+     * Everything is read from the frames [ExtensionCensus] sees as they cross the socket; this only makes the host send them. A session or
+     * chat that does not arrive (a very long chat can take longer than the request timeout) is skipped, not fatal.
+     */
+    private suspend fun runCensus(ahp: AhpConnection, sessions: List<SessionSummary>) {
+        val newest = sessions.sortedByDescending { it.modifiedAt.toString() }.take(args.censusSessions)
+        log("info", "census: subscribing to ${newest.size} session(s) and the main chat of each")
+        val open = mutableListOf<String>()
+        for (summary in newest) {
+            val session = try {
+                (ahp.subscribe(summary.resource).also { open += summary.resource }.snapshot?.state as? SnapshotState.Session)?.value
+            } catch (e: AhpException) {
+                log("warn", "session did not arrive: ${e.message}")
+                null
+            } ?: continue
+            val chatUri = session.defaultChat ?: session.chats.firstOrNull()?.resource ?: continue
+            try {
+                ahp.subscribe(chatUri)
+                open += chatUri
+            } catch (e: AhpException) {
+                log("warn", "chat did not arrive: ${e.message}")
+            }
+        }
+        val seconds = if (args.watchSeconds > 0) args.watchSeconds else DEFAULT_CENSUS_WATCH_SECONDS
+        log("info", "census: watching ${seconds}s (use a session in the host now to see live actions)")
+        withTimeoutOrNull(seconds * 1000L) { ahp.notifications.collect { } }
+        open.asReversed().forEach(ahp::unsubscribe)
     }
 
     /**
