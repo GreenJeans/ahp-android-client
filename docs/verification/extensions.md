@@ -67,7 +67,7 @@ Still none: no branch, pull request, progress message or hidden-from-transcript 
 
 ### E0: census of the VS Code host through the tunnel (2026-10-28)
 
-`--census --census-sessions 20 --watch 60`, VS Code agent sessions in use during the window. Read-only on the wire. The report is `captures/census-vscode.txt` (not checked in). Host version and protocol version are not in the report (it keeps no values); the run's console lines have them, and they are **not yet recorded here**.
+`--census --census-sessions 20 --watch 60`, VS Code agent sessions in use during the window. Read-only on the wire. The report is `captures/census-vscode.txt` (not checked in). From the run's console: the host chose **protocol 1.0.0** (it was offered 1.0.0 and 0.9.0), the tunnel reported `protocolv6`, and `listSessions` returned 303 sessions (298 idle, 4 in progress, 1 error). The probe printed the server version as `?`, so the host's own version is not known from the console; `_meta.hostBuild.version` is on `initialize` but the report keeps no values.
 
 Frames seen: 1,383 action envelopes of 24 kinds (730 `chat/reasoning`, 273 `chat/delta`, 97 `session/metaChanged`, 66 `session/customizationUpdated`, 66 `chat/usage`, …), 103 `root/sessionSummaryChanged`, 40 `subscribe` results, 26 `notifications/tools/list_changed`, one `initialize` and one `listSessions` (303 sessions carry `_meta`). **None was undecodable.**
 
