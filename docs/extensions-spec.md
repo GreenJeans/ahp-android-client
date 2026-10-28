@@ -251,7 +251,7 @@ What differs from the design above, and why:
 
 - ~~How does `ahpd` take the token? Does it speak TLS itself?~~ Answered 2026-10-27: a Bearer header or `?tkn=`; no TLS (see `docs/verification/extensions.md`).
 - Does it need the app to appear as an active client, which our allowlist forbids? (If so, that is a new decision, not part of this item.) Not at the read tier: the live probe listed sessions with no such need.
-- Echoes without `origin` (E5) are still unchecked against `ahpd`. `ActionEnvelope.origin` is nullable in the pinned library, so the census cannot tell; it now counts envelopes with and without one, which is only suggestive. The phone run saw no failure; a frame capture of an echo of the app's own action would settle it.
+- Echoes without `origin` (E5): **`ahpd` always sends it** (read from its source on 2026-10-28; see `docs/verification/extensions.md`), so E5 is a watch item unless the VS Code host omits it. Earlier note: `ActionEnvelope.origin` is nullable in the pinned library, so the census cannot tell; it now counts envelopes with and without one, which is only suggestive. The phone run saw no failure; a frame capture of an echo of the app's own action would settle it.
 
 ---
 
