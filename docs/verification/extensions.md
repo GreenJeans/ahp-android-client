@@ -65,6 +65,47 @@ Still none: no branch, pull request, progress message or hidden-from-transcript 
 
 **Why this census cannot show it as built.** `ActionEnvelope.origin` is nullable with a default in the pinned library, so a missing `origin` still decodes and was never going to show under "could not decode" (an earlier note here said it would; that was wrong). The census now counts action envelopes `with-origin` and `no-origin` (`envelope:*` under "frames seen"). Even that is only suggestive: a host sends no `origin` on actions it starts itself, and an echo of this app's own action can only be seen by the app. The real test is the app's own `AhpWire` log from the phone run, where the message and approval were `Accepted`; no "No answer from the host yet" appeared.
 
+### E0: census of the VS Code host through the tunnel (2026-10-28)
+
+`--census --census-sessions 20 --watch 60`, VS Code agent sessions in use during the window. Read-only on the wire. The report is `captures/census-vscode.txt` (not checked in). Host version and protocol version are not in the report (it keeps no values); the run's console lines have them, and they are **not yet recorded here**.
+
+Frames seen: 1,383 action envelopes of 24 kinds (730 `chat/reasoning`, 273 `chat/delta`, 97 `session/metaChanged`, 66 `session/customizationUpdated`, 66 `chat/usage`, …), 103 `root/sessionSummaryChanged`, 40 `subscribe` results, 26 `notifications/tools/list_changed`, one `initialize` and one `listSessions` (303 sessions carry `_meta`). **None was undecodable.**
+
+What the spec's extension features would read:
+
+| Feature | Seen on this host | Where |
+|---|---|---|
+| Branch (E2) | **Yes**, as `_meta.git.*` | `branchName`, `baseBranchName`, `defaultBranchName`, `defaultRemoteBranchName`, `upstreamBranchName` (strings); `outgoingChanges`, `incomingChanges`, `uncommittedChanges` (numbers); `hasGitHubRemote`, `hasGitRemote`, `hasBaseBranchChanges`, `isDetachedHead` (booleans). On `listSessions` items, `subscribe` snapshots, `root/sessionSummaryChanged` and `session/metaChanged`. A multi-root session has `_meta.gitData.<key>.*` with the same names instead, one object per folder. |
+| Pull request (E2) | **No field by that name.** | The nearest is `items[]._meta.<key>[]` on `listSessions`: objects with `chat`, `id`, `label`, `type`, `uri`, `link`, `isArtifact`, `isGitHub` (5 objects). Whether any of them is a pull request needs a look at the values, which the census does not keep. |
+| Progress message (E3) | **No**, in 18 tool starts | Tool-call `_meta` carries `toolKind`, `language`, `mcpServerName`, `mcpToolName`, `subagentAgentName`, `subagentDescription`, `autoApproveBySetting`, `vscode.toolInputContract`. |
+| Hidden from transcript (E4) | **No** | There is no `_meta` at all under any message or turn. |
+| Echo `origin` (E5) | 7 of 1,383 envelopes carry it | See below. |
+
+Other host-specific paths worth knowing before E1:
+
+- **Same idea, different key.** A customization child's argument hint is `_meta.vscode.skill.argumentHint` here and `_meta.ahpd.argumentHint` on `ahpd`. E1 needs a per-host list of spellings, as the spec already says.
+- **Model prices**, on `initialize`'s agent models: `_meta.inputCost`, `outputCost`, `cacheCost`, `cacheWriteCost`, `priceCategory`, `discountPercent`, and `longContext*` variants.
+- **Usage**, on `chat/usage`: `_meta.cost` (a number, where `ahpd` sends `ahpd.cost.{amount,currency}`), `copilotUsage`, `quotaSnapshots.{chat,completions,premium_interactions}`, `turnTokenTotals[]`, `vscode.modelCall.*` and `contextAttribution` (a per-entry token breakdown of the context window; 14,777 entries in the snapshots).
+- **Session state**: `vscode.chatUsage.<key>`, `vscode.sandboxState`, `vscode.resolvedSandboxPolicy`, `vscode.promptCache.{cacheExpiresAt,modelId}`, `vscode.session.initiator.name`, `workingDirectoryKeys`, `workingDirectoryScopeIds`, `workspaceless`, `vscode.external`.
+- **Root, on `initialize`**: `vscode.*` capability flags (`importSession`, `sessionMove`, `readSavedChat`, `detachedWorktrees`, …), `hostBuild.{commit,date,quality,version}`, `vscode.agentHost.resources`, `vscode.agentCustomizationSettings[]`.
+
+Dropped by the generated types, outside `_meta` (all decoded without error):
+
+| Path | Where |
+|---|---|
+| `_vscodeEditAttribution` (object) | tool-call result content, in actions and snapshots |
+| `childEnablement` (object), `nonce` (string) | customizations, in actions and snapshots |
+| `chatMutable`, `sessionMutable` (booleans) | config schema properties on `initialize` and `subscribe` |
+| `chats[].archived` (boolean) | `listSessions` items (1 chat) |
+
+`chats[].archived` is the one that looks like state a person would want to see (an archived chat); nothing uses it yet.
+
+`notifications/tools/list_changed` is an MCP-style method, not an AHP one. `RootStore.applyNotification` returns `false` for any method it does not handle and `HostSession` ignores that, so these 26 frames do nothing; they are not counted as undecodable.
+
+**E5 on this host: suggestive only.** 7 envelopes carry `origin` and 1,376 do not. The probe sends no action, so the 7 are other clients' actions (the VS Code window using the session), which suggests the host sets `origin` on a client's dispatch; the 1,376 are actions the host started itself, which have no origin to send. Neither says what an echo of this app's own action looks like. The phone's `AhpWire` log is still the test.
+
+Across both hosts: branch data comes only from the VS Code host (`ahpd` sent none), and neither host sent a progress message or a hidden-from-transcript flag. E3 and E4 have no evidence yet.
+
 ### AC-E0.3: which generated types carry `_meta`
 
 From the library's sources (1.0.0), checked 2026-10-27:
