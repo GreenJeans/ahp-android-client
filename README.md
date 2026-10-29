@@ -160,7 +160,7 @@ the host reports as ready, no check), and `createSession`, `disposeSession` and 
 device check, looked up again after the prompt. Removing asks first and offers archiving as the gentler alternative. A new session
 can only use an agent the host lists and either no folder (nothing is sent for it and the host chooses where the agent works, which the device check says; it is the only choice on a host with no sessions yet) or a folder one of the host's own sessions already uses (most recent first, eight shown and the rest one tap away, never a working copy of a project: its project folder is offered instead), so nothing the host did not offer is
 sent. None of the controls exist on a connection that is not on the `MANAGE` tier. A session's main chat (and a lone chat) has no "Remove this chat…" menu item, because the host refuses it, but only after it has shut the chat down. The three switches (monitoring, acting,
-managing) are on a Settings screen, behind the gear on the session list.
+managing) are on a Settings screen, behind the Settings button in the side menu's action row.
 
 **A new session's settings** come from the host: once an agent and folder are chosen, the dialog asks it (`resolveSessionConfig`,
 the one query on the manage tier; the read and interact tiers refuse it) which settings it offers and shows each as a short list
