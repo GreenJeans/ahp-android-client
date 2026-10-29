@@ -101,6 +101,10 @@ class ToolDetailTest {
         val sub = """{"type":"subagent","resource":"ahp-chat:/s","title":"Explore","agentName":"explore","description":"Look around the repo"}"""
 
         assertEquals(ToolResultView.Subagent("Explore", "explore", "Look around the repo", "ahp-chat:/s"), detail(sub).results.single())
+
+        val fallback = """{"type":"subagent","resource":"ahp-chat:/s","title":"Explore"}"""
+        val meta = ""","_meta":{"subagentAgentName":"research","subagentDescription":"Search the docs"}"""
+        assertEquals(ToolResultView.Subagent("Explore", "research", "Search the docs", "ahp-chat:/s"), detail(fallback, extra = meta).results.single())
     }
 
     @Test

@@ -265,4 +265,31 @@ class HostExtrasTest {
         assertFalse(HostExtras.message(meta("""{"vscode.chat.hiddenFromTranscript":false}""")).hiddenFromTranscript)
         assertTrue(HostExtras.message(null).isEmpty)
     }
+
+    @Test
+    fun `toolKind, completed duration, mcp server, and subagent fields read from both hosts' tool-call _meta shapes`() {
+        val calls = Json.parseToJsonElement(fixture("live/ahpd-tool-meta.json")).jsonObject["toolCalls"]!!.jsonArray.map {
+            Ahp.json.decodeFromJsonElement(com.microsoft.agenthostprotocol.generated.ToolCallState.serializer(), it)
+        }
+        assertEquals(4, calls.size)
+
+        assertEquals(StepExtras(toolKind = "terminal"), calls[0].extras, "a running call has no completed duration")
+        assertNull(calls[0].extras.durationText)
+
+        assertEquals(StepExtras(toolKind = "terminal", durationMs = 4250L), calls[1].extras)
+        assertEquals("4s", calls[1].extras.durationText)
+
+        assertEquals(StepExtras(toolKind = "mcp", mcpServerName = "server-redacted-1"), calls[2].extras)
+        assertEquals(
+            StepExtras(toolKind = "subagent", subagentAgentName = "agent-redacted-1", subagentDescription = "lorem ipsum dolor"),
+            calls[3].extras,
+        )
+
+        val runningWithDuration = HostExtras.stepMeta(meta("""{"ahpd.durationMs":1200}"""), running = true, completed = false)
+        assertNull(runningWithDuration.durationMs, "durationMs is only meaningful once the call has completed")
+        val negativeDuration = HostExtras.stepMeta(meta("""{"ahpd.durationMs":-5}"""), running = false, completed = true)
+        assertNull(negativeDuration.durationMs)
+        val stringDuration = HostExtras.stepMeta(meta("""{"ahpd.durationMs":"1200"}"""), running = false, completed = true)
+        assertNull(stringDuration.durationMs)
+    }
 }

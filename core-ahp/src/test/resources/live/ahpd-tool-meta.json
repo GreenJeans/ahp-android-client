@@ -1,0 +1,70 @@
+{
+  "toolCalls": [
+    {
+      "status": "running",
+      "toolCallId": "00000000-0000-4000-8000-000000000001",
+      "toolName": "tool-redacted-1",
+      "displayName": "tool-redacted-1",
+      "invocationMessage": "lorem ipsum",
+      "toolInput": "{}",
+      "confirmed": "not-needed",
+      "_meta": {
+        "toolKind": "terminal",
+        "ahpd": {
+          "startedAt": "2026-10-28T10:00:00.000Z"
+        }
+      }
+    },
+    {
+      "status": "completed",
+      "toolCallId": "00000000-0000-4000-8000-000000000002",
+      "toolName": "tool-redacted-1",
+      "displayName": "tool-redacted-1",
+      "invocationMessage": "lorem ipsum",
+      "toolInput": "{}",
+      "confirmed": "not-needed",
+      "success": true,
+      "pastTenseMessage": "lorem ipsum",
+      "_meta": {
+        "toolKind": "terminal",
+        "ahpd": {
+          "startedAt": "2026-10-28T10:00:00.000Z",
+          "endedAt": "2026-10-28T10:00:04.250Z",
+          "durationMs": 4250
+        }
+      }
+    },
+    {
+      "status": "completed",
+      "toolCallId": "00000000-0000-4000-8000-000000000003",
+      "toolName": "tool-redacted-2",
+      "displayName": "tool-redacted-2",
+      "invocationMessage": "lorem ipsum",
+      "toolInput": "{}",
+      "confirmed": "not-needed",
+      "success": true,
+      "pastTenseMessage": "lorem ipsum",
+      "_meta": {
+        "toolKind": "mcp",
+        "mcpServerName": "server-redacted-1",
+        "mcpToolName": "tool-redacted-2"
+      }
+    },
+    {
+      "status": "completed",
+      "toolCallId": "00000000-0000-4000-8000-000000000004",
+      "toolName": "tool-redacted-3",
+      "displayName": "tool-redacted-3",
+      "invocationMessage": "lorem ipsum",
+      "toolInput": "{}",
+      "confirmed": "not-needed",
+      "success": true,
+      "pastTenseMessage": "lorem ipsum",
+      "_meta": {
+        "toolKind": "subagent",
+        "subagentAgentName": "agent-redacted-1",
+        "subagentDescription": "lorem ipsum dolor"
+      }
+    }
+  ]
+}

@@ -5,7 +5,13 @@ import com.microsoft.agenthostprotocol.generated.Message
 import com.microsoft.agenthostprotocol.generated.SessionState
 import com.microsoft.agenthostprotocol.generated.SessionSummary
 import com.microsoft.agenthostprotocol.generated.ToolCallState
+import com.microsoft.agenthostprotocol.generated.ToolCallStateAuthRequired
+import com.microsoft.agenthostprotocol.generated.ToolCallStateCancelled
+import com.microsoft.agenthostprotocol.generated.ToolCallStateCompleted
+import com.microsoft.agenthostprotocol.generated.ToolCallStatePendingConfirmation
+import com.microsoft.agenthostprotocol.generated.ToolCallStatePendingResultConfirmation
 import com.microsoft.agenthostprotocol.generated.ToolCallStateRunning
+import com.microsoft.agenthostprotocol.generated.ToolCallStateStreaming
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -78,8 +84,16 @@ data class SessionExtras(
  */
 data class StepExtras(
     val progressMessage: String? = null,
+    val toolKind: String? = null,
+    val durationMs: Long? = null,
+    val mcpServerName: String? = null,
+    val subagentAgentName: String? = null,
+    val subagentDescription: String? = null,
 ) {
     val isEmpty: Boolean get() = this == NONE
+
+    /** How long a finished tool call took ("4s", "1m 4s"), or null when the host did not say. */
+    val durationText: String? get() = TurnDuration.format(durationMs)
 
     companion object {
         val NONE = StepExtras()
@@ -111,8 +125,14 @@ object HostExtras {
     const val MAX_PULL_REQUESTS = 10
     private const val MAX_ROOTS = 16
     private const val MAX_COUNT = 1_000_000
+    private const val MAX_DURATION_MS = 86_400_000L
 
     private val PROGRESS_KEYS = listOf("progressMessage", "vscode.toolCall.progressMessage", "ahpd.progressMessage")
+    private val TOOL_KIND_KEYS = listOf("toolKind", "vscode.toolCall.toolKind", "ahpd.toolKind")
+    private val DURATION_KEYS = listOf("ahpd.durationMs", "durationMs")
+    private val MCP_SERVER_KEYS = listOf("mcpServerName", "vscode.toolCall.mcpServerName")
+    private val SUBAGENT_NAME_KEYS = listOf("subagentAgentName", "vscode.toolCall.subagentAgentName")
+    private val SUBAGENT_DESC_KEYS = listOf("subagentDescription", "vscode.toolCall.subagentDescription")
 
     private val HIDDEN_KEYS = listOf("vscode.chat.hiddenFromTranscript", "requestHiddenFromTranscript", "hiddenFromTranscript")
     private val WHITESPACE_RUN = Regex("""[\r\n\t ]+""")
@@ -143,17 +163,36 @@ object HostExtras {
      * [StepExtras.NONE] so a finished or cancelled call shows its final result.
      */
     fun step(call: ToolCallState): StepExtras = when (call) {
-        is ToolCallStateRunning -> stepRunning(call.value.meta)
+        is ToolCallStateStreaming -> stepMeta(call.value.meta, running = false, completed = false)
+        is ToolCallStatePendingConfirmation -> stepMeta(call.value.meta, running = false, completed = false)
+        is ToolCallStatePendingResultConfirmation -> stepMeta(call.value.meta, running = false, completed = false)
+        is ToolCallStateRunning -> stepMeta(call.value.meta, running = true, completed = false)
+        is ToolCallStateAuthRequired -> stepMeta(call.value.meta, running = false, completed = false)
+        is ToolCallStateCompleted -> stepMeta(call.value.meta, running = false, completed = true)
+        is ToolCallStateCancelled -> stepMeta(call.value.meta, running = false, completed = false)
         else -> StepExtras.NONE
     }
 
     /** Reads [StepExtras] from a running tool call's `_meta`. */
-    fun stepRunning(meta: Map<String, JsonElement>?): StepExtras {
+    fun stepRunning(meta: Map<String, JsonElement>?): StepExtras = stepMeta(meta, running = true, completed = false)
+
+    internal fun stepMeta(meta: Map<String, JsonElement>?, running: Boolean, completed: Boolean): StepExtras {
         if (meta.isNullOrEmpty()) return StepExtras.NONE
         val root = JsonObject(meta)
-        val raw = PROGRESS_KEYS.firstNotNullOfOrNull { root.oneLine(it) } ?: return StepExtras.NONE
-        val plain = MarkdownPlain.of(raw).take(MAX_TEXT).trim().ifEmpty { null } ?: return StepExtras.NONE
-        return StepExtras(progressMessage = plain)
+        val progress = if (running) {
+            PROGRESS_KEYS.firstNotNullOfOrNull { root.oneLine(it) }?.let { MarkdownPlain.of(it).take(MAX_TEXT).trim().ifEmpty { null } }
+        } else {
+            null
+        }
+        val duration = if (completed) DURATION_KEYS.firstNotNullOfOrNull { root.duration(it) } else null
+        return StepExtras(
+            progressMessage = progress,
+            toolKind = TOOL_KIND_KEYS.firstNotNullOfOrNull { root.text(it, MAX_STATE) },
+            durationMs = duration,
+            mcpServerName = MCP_SERVER_KEYS.firstNotNullOfOrNull { root.text(it) },
+            subagentAgentName = SUBAGENT_NAME_KEYS.firstNotNullOfOrNull { root.text(it) },
+            subagentDescription = SUBAGENT_DESC_KEYS.firstNotNullOfOrNull { root.oneLine(it)?.take(MAX_TEXT)?.trim()?.ifEmpty { null } },
+        )
     }
 
     /** Reads [MessageExtras] from a message's `_meta` (E4). */
@@ -190,6 +229,12 @@ object HostExtras {
         val primitive = at(key) as? JsonPrimitive ?: return null
         if (primitive.isString) return null
         return primitive.content.toIntOrNull()?.takeIf { it in 0..MAX_COUNT }
+    }
+
+    private fun JsonObject.duration(key: String): Long? {
+        val primitive = at(key) as? JsonPrimitive ?: return null
+        if (primitive.isString) return null
+        return primitive.content.toLongOrNull()?.takeIf { it in 0..MAX_DURATION_MS }
     }
 
     private fun JsonObject.flag(key: String): Boolean =
