@@ -73,6 +73,10 @@ data class ToolDetail(
     val moreInput: Int,
     val results: List<ToolResultView>,
     val error: String?,
+    /** How long a finished call took, formatted as `"840ms"` / `"1.2s"` / `"2m 5s"` (E5), or null while running or unreported. */
+    val durationText: String? = null,
+    /** The MCP server name the host reported for this tool call (E5), or null when unreported. */
+    val mcpServerName: String? = null,
 ) {
     val isEmpty: Boolean get() = waitingFor == null && input.isEmpty() && results.isEmpty() && error == null
 
@@ -107,16 +111,20 @@ data class ToolDetail(
 
         fun from(call: ToolCallState, limits: Limits = Limits.DEFAULT): ToolDetail = when (call) {
             is ToolCallStateStreaming -> call.value.partialInput?.takeIf { it.isNotBlank() }
-                ?.let { build(limits, input = rawInput(it, limits)) } ?: build(limits)
-            is ToolCallStatePendingConfirmation -> call.value.let { build(limits, waitingFor = plain(it.confirmationTitle) ?: "Waiting for approval.", toolInput = it.toolInput) }
+                ?.let { build(limits, input = rawInput(it, limits), extras = call.extras) } ?: build(limits, extras = call.extras)
+            is ToolCallStatePendingConfirmation -> call.value.let {
+                build(limits, waitingFor = plain(it.confirmationTitle) ?: "Waiting for approval.", toolInput = it.toolInput, extras = call.extras)
+            }
             is ToolCallStatePendingResultConfirmation -> call.value.let {
-                build(limits, waitingFor = "Waiting for approval of the result.", toolInput = it.toolInput, content = it.content, error = it.error)
+                build(limits, waitingFor = "Waiting for approval of the result.", toolInput = it.toolInput, content = it.content, error = it.error, extras = call.extras)
             }
             is ToolCallStateRunning -> call.value.let { build(limits, toolInput = it.toolInput, content = it.content, extras = call.extras) }
-            is ToolCallStateAuthRequired -> call.value.let { build(limits, waitingFor = "Sign-in required in VS Code.", toolInput = it.toolInput, content = it.content) }
+            is ToolCallStateAuthRequired -> call.value.let {
+                build(limits, waitingFor = "Sign-in required in VS Code.", toolInput = it.toolInput, content = it.content, extras = call.extras)
+            }
             is ToolCallStateCompleted -> call.value.let { build(limits, toolInput = it.toolInput, content = it.content, error = it.error, extras = call.extras) }
             is ToolCallStateCancelled -> call.value.let {
-                build(limits, toolInput = it.toolInput, cancelled = plain(it.reasonMessage) ?: reasonText(it.reason))
+                build(limits, toolInput = it.toolInput, cancelled = plain(it.reasonMessage) ?: reasonText(it.reason), extras = call.extras)
             }
             else -> build(limits)
         }
@@ -130,19 +138,22 @@ data class ToolDetail(
             error: JsonElement? = null,
             cancelled: String? = null,
             extras: StepExtras = StepExtras.NONE,
-
-
-
-
         ): ToolDetail {
             val (lines, more) = input ?: toolInput?.let { inputOf(it, limits) } ?: (emptyList<InputLine>() to 0)
-            return ToolDetail(waitingFor, lines, more, content.orEmpty().map { resultOf(it, limits, extras) }, cancelled ?: errorText(error, limits))
+            return ToolDetail(
+                waitingFor = waitingFor,
+                input = lines,
+                moreInput = more,
+                results = content.orEmpty().map { resultOf(it, limits, extras) },
+                error = cancelled ?: errorText(error, limits),
+                durationText = extras.durationText,
+                mcpServerName = extras.mcpServerName,
+            )
         }
 
         private fun inputOf(input: ToolInput, limits: Limits): Pair<List<InputLine>, Int> = when (input) {
             is ToolInput.Inline -> rawInput(input.value, limits)
             is ToolInput.ContentReference -> listOf(InputLine("input", Clipped("Stored separately on the host.", 29))) to 0
-            else -> emptyList<InputLine>() to 0
         }
 
         /** A JSON object becomes one line per field; anything else is shown as it came. */
@@ -207,7 +218,6 @@ data class ToolDetail(
             ToolCallCancellationReason.DENIED -> "Denied."
             ToolCallCancellationReason.SKIPPED -> "Skipped."
             ToolCallCancellationReason.RESULT_DENIED -> "The result was denied."
-            else -> "Cancelled."
         }
 
         private fun plain(text: StringOrMarkdown?): String? = SessionDetail.plain(text)?.takeIf { it.isNotBlank() }

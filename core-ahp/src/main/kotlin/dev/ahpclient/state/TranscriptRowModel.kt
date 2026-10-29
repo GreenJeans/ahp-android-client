@@ -22,6 +22,12 @@ sealed interface TranscriptRowModel {
 
         val failedCount: Int get() = tools.count { it.state == ToolState.FAILED }
 
+        /** Distinct MCP server names reported across the tool calls in this step group (E5), in order of appearance. */
+        val mcpServers: List<String> get() = tools.mapNotNull { it.mcpServerName?.takeIf(String::isNotBlank) }.distinct()
+
+        /** Formatted durations of completed tool calls in this step group (E5), in order. */
+        val durations: List<String> get() = tools.mapNotNull { it.durationText?.takeIf(String::isNotBlank) }
+
         /** The agent is still at it: a tool is running (or being prepared), or the last thing it does is think. */
         val running: Boolean
             get() = tools.any { it.state == ToolState.RUNNING || it.state == ToolState.STREAMING } ||

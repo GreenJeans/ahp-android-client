@@ -14,6 +14,7 @@ import com.microsoft.agenthostprotocol.generated.SessionInputRequestToolAuthenti
 import com.microsoft.agenthostprotocol.generated.SessionInputRequestToolClientExecution
 import com.microsoft.agenthostprotocol.generated.SessionInputRequestToolConfirmation
 import com.microsoft.agenthostprotocol.generated.SessionState
+import com.microsoft.agenthostprotocol.generated.SessionSummary
 import com.microsoft.agenthostprotocol.generated.StringOrMarkdown
 import com.microsoft.agenthostprotocol.generated.ToolCallConfirmationState
 import com.microsoft.agenthostprotocol.generated.ToolCallConfirmationStatePendingConfirmation
@@ -100,6 +101,10 @@ data class SessionDetail(
     val changesets: List<ChangesetEntry> = emptyList(),
     /** What the host says about the session's git state (E2); [SessionExtras.NONE] for a host that says nothing. */
     val extras: SessionExtras = SessionExtras.NONE,
+    /** The pull requests the host links to this session (E2), validated to HTTPS URLs only. */
+    val pullRequests: List<PullRequest> = extras.pullRequests,
+    /** The model id the host reports for this session (E6), or null when the host reports none. */
+    val model: String? = extras.model,
 ) {
     /** The chat to show first: the session's main chat, or else the first the host lists. Null while the host lists none. */
     val mainChat: ChatRow? get() = chats.firstOrNull { it.isMain } ?: chats.firstOrNull()
@@ -117,32 +122,47 @@ data class SessionDetail(
         /** The host refuses to remove a session's main chat, and a session's only chat is its main one; removing the session is the way. */
         fun canRemoveChat(state: SessionState, chatUri: String): Boolean = chatUri != state.defaultChat && state.chats.size > 1
 
-        fun from(state: SessionState, now: Instant): SessionDetail = SessionDetail(
-            title = state.title.ifBlank { SessionListModel.UNTITLED },
-            state = state.status.activityState,
-            provider = state.provider,
-            activity = state.activity?.takeIf { it.isNotBlank() },
-            project = state.project?.displayName?.takeIf { it.isNotBlank() },
-            workingDirectories = state.workingDirectories.orEmpty().map(::displayPath),
-            chats = state.chats.map { chat ->
-                ChatRow(
-                    uri = chat.resource,
-                    title = chat.title.ifBlank { SessionListModel.UNTITLED },
-                    state = chat.status.activityState,
-                    activity = chat.activity?.takeIf { it.isNotBlank() },
-                    whenText = RelativeTime.format(chat.modifiedAt, now),
-                    removable = canRemoveChat(state, chat.resource),
-                    isMain = chat.resource == state.defaultChat,
-                )
-            },
-            inputNeeded = state.inputNeeded.orEmpty().map(::describe),
-            isArchived = state.status.isArchived,
-            isRead = state.status.isRead,
-            phase = SessionPhase.of(state.lifecycle.rawValue),
-            creationError = state.creationError?.message?.take(MAX_ERROR_CHARS)?.takeIf { it.isNotBlank() },
-            changesets = state.changesets.orEmpty().take(MAX_CHANGESETS).map(ChangesetEntry::from),
-            extras = state.extras,
-        )
+        fun from(state: SessionState, now: Instant, summary: SessionSummary? = null): SessionDetail {
+            val stateExtras = state.extras
+            val summaryExtras = summary?.extras ?: SessionExtras.NONE
+            val mergedExtras = SessionExtras(
+                branch = stateExtras.branch ?: summaryExtras.branch,
+                outgoing = stateExtras.outgoing ?: summaryExtras.outgoing,
+                incoming = stateExtras.incoming ?: summaryExtras.incoming,
+                uncommitted = stateExtras.uncommitted ?: summaryExtras.uncommitted,
+                detachedHead = stateExtras.detachedHead || summaryExtras.detachedHead,
+                pullRequests = stateExtras.pullRequests.ifEmpty { summaryExtras.pullRequests },
+                model = stateExtras.model ?: summaryExtras.model,
+            )
+            return SessionDetail(
+                title = state.title.ifBlank { SessionListModel.UNTITLED },
+                state = state.status.activityState,
+                provider = state.provider,
+                activity = state.activity?.takeIf { it.isNotBlank() },
+                project = state.project?.displayName?.takeIf { it.isNotBlank() },
+                workingDirectories = state.workingDirectories.orEmpty().map(::displayPath),
+                chats = state.chats.map { chat ->
+                    ChatRow(
+                        uri = chat.resource,
+                        title = chat.title.ifBlank { SessionListModel.UNTITLED },
+                        state = chat.status.activityState,
+                        activity = chat.activity?.takeIf { it.isNotBlank() },
+                        whenText = RelativeTime.format(chat.modifiedAt, now),
+                        removable = canRemoveChat(state, chat.resource),
+                        isMain = chat.resource == state.defaultChat,
+                    )
+                },
+                inputNeeded = state.inputNeeded.orEmpty().map(::describe),
+                isArchived = state.status.isArchived,
+                isRead = state.status.isRead,
+                phase = SessionPhase.of(state.lifecycle.rawValue),
+                creationError = state.creationError?.message?.take(MAX_ERROR_CHARS)?.takeIf { it.isNotBlank() },
+                changesets = state.changesets.orEmpty().take(MAX_CHANGESETS).map(ChangesetEntry::from),
+                extras = mergedExtras,
+                pullRequests = mergedExtras.pullRequests,
+                model = mergedExtras.model,
+            )
+        }
 
         /** Total: a request kind this client does not know is still shown rather than dropped. */
         fun describe(request: SessionInputRequest): InputRequestView = when (request) {

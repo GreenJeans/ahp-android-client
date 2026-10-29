@@ -50,6 +50,8 @@ sealed interface TranscriptItem {
     /**
      * [source] is the host's own record of the call; the detail is built from it only when a block is opened. Null for a row made without one.
      * [progress] is the host's live "what it is doing now" line while the call is [ToolState.RUNNING] (E3); null once it finishes.
+     * [durationText] is how long a finished call took, formatted as `"840ms"` / `"1.2s"` / `"2m 5s"` (E5); null while running or unreported.
+     * [mcpServerName] is the MCP server the host attributes this call to (E5), or null when unreported.
      */
     data class Tool(
         override val key: String,
@@ -58,6 +60,8 @@ sealed interface TranscriptItem {
         val state: ToolState,
         val source: ToolCallState? = null,
         val progress: String? = null,
+        val durationText: String? = source?.extras?.durationText,
+        val mcpServerName: String? = source?.extras?.mcpServerName,
     ) : TranscriptItem
 
     data class Notice(override val key: String, val text: String, val isError: Boolean = false) : TranscriptItem
@@ -133,7 +137,17 @@ data class Transcript(
                 is ResponsePartMarkdown -> TranscriptItem.Markdown(key(part.value.id), part.value.content)
                 is ResponsePartReasoning -> TranscriptItem.Reasoning(key(part.value.id), part.value.content, isLastLive)
                 is ResponsePartToolCall -> tool(part.value.toolCall).let { facts ->
-                    TranscriptItem.Tool(key(facts.id), facts.name, facts.summary, facts.state, part.value.toolCall, facts.progress)
+                    val extras = part.value.toolCall.extras
+                    TranscriptItem.Tool(
+                        key = key(facts.id),
+                        name = facts.name,
+                        summary = facts.summary,
+                        state = facts.state,
+                        source = part.value.toolCall,
+                        progress = facts.progress,
+                        durationText = extras.durationText,
+                        mcpServerName = extras.mcpServerName,
+                    )
                 }
                 is ResponsePartSystemNotification -> TranscriptItem.Notice(key(null), plain(part.value.content).orEmpty())
                 is ResponsePartError -> TranscriptItem.Notice(key(null), part.value.error.message.ifBlank { "The agent reported an error." }, isError = true)

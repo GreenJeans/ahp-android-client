@@ -41,6 +41,7 @@ import dev.ahpclient.state.SessionManager
 import dev.ahpclient.state.SubagentLinks
 import dev.ahpclient.state.TerminalLinks
 import dev.ahpclient.state.displayPath
+import dev.ahpclient.state.extras
 import dev.ahpclient.tunnel.DevTunnelsClient
 import dev.ahpclient.tunnel.DevTunnelsException
 import dev.ahpclient.tunnel.TunnelInfo
@@ -631,7 +632,15 @@ class AppController(
             val open = (_state.value as? AppState.Connected)?.open
             ChatConfig.view(open?.store?.state?.value, uri, open?.store?.chatMutableKeys?.value.orEmpty(), store.ownConfig.value)
         },
+        sessionModel = { sessionModelFor(session) },
     )
+
+    /** The model the host reports on the open session's state or summary (E6), used when the chat itself has not named one yet. */
+    private fun sessionModelFor(session: HostSession): String? {
+        val open = (_state.value as? AppState.Connected)?.open ?: return null
+        return open.store.state.value?.extras?.model
+            ?: session.root.sessions.value.firstOrNull { it.resource == open.uri }?.extras?.model
+    }
 
     /** The models the host offers for the agent of the session on screen; none when no session is open or the agent is not listed. */
     private fun modelsFor(session: HostSession): List<ModelOption> {

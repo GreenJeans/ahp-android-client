@@ -3463,6 +3463,27 @@ class AppControllerTest {
             assertEquals(1, ran)
         }
     }
+
+    @Test
+    fun `an open chat's interactor resolves the session model from the session state or session summary when the chat has no turns`() = runTest {
+        val summaryWithModel = fixture("live/list-sessions.json").replace(
+            """"resource": "$SESSION_C",""",
+            """"_meta": {"ahpd.model": "claude-sonnet-5.5"}, "resource": "$SESSION_C",""",
+        )
+        withRig(script = { HostScript(listJson = summaryWithModel, sessionChats = "[${chatSummaryJson(CHAT_A)}]") }) {
+            connectToFirstHost()
+            val interactor = openChatInteractor(this)
+
+            assertEquals(dev.ahpclient.state.ModelChoice("claude-sonnet-5.5"), interactor.modelInUse())
+        }
+        val stateConfigAndModel = """{"schema":{"type":"object","properties":{}},"values":{}},"_meta":{"ahpd.model":"auto"}"""
+        withRig(script = { HostScript(listJson = summaryWithModel, sessionChats = "[${chatSummaryJson(CHAT_A)}]", sessionConfig = stateConfigAndModel) }) {
+            connectToFirstHost()
+            val interactor = openChatInteractor(this)
+
+            assertEquals(dev.ahpclient.state.ModelChoice("auto"), interactor.modelInUse(), "session state model takes precedence over summary model")
+        }
+    }
 }
 
 class SafeLinksTest {
