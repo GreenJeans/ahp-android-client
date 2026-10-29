@@ -1,6 +1,6 @@
 # AHP Android Client — Read-Only Monitor MVP → Agents Panel Replacement
 
-> **Status:** Approved for Phase 1 (2026-10-22). Phases 2–5 stay gated per the Roadmap.
+> **Status:** Approved for Phase 1 (2026-10-22). Phases 1 to 5 are built (see the README's Modules table for what is live-tested); later work is in the child specs: [`hardening-spec.md`](hardening-spec.md), [`extensions-spec.md`](extensions-spec.md) and [`navigation-spec.md`](navigation-spec.md). Updated 2026-10-29.
 > **Tracking:** This spec drives implementation: check off steps and acceptance criteria here. The acceptance criteria below are the source of truth, derived from the 2026-10-21/22 spike session.
 > **Date:** 2026-10-22
 
@@ -731,6 +731,7 @@ You asked for one place that shows where you are needed. Opened from the side me
 - Retire `demo/ahp-metrics-overlay` mock-feed path once the JVM probe exists, or keep it as the Node canary.
 - Reading the extension fields other hosts send (branch, pull request, progress message, hidden messages), matching echoes from hosts that omit `origin`, and a second, directly addressed host kind (`ahpd`) are specified in [`docs/extensions-spec.md`](extensions-spec.md).
 - Battery, network, memory and recovery hardening (network-aware reconnect, releasing subscriptions in the background, bounded buffers, coming back after process death, a session-list cache, a foreground service without the six-hour cut) is specified in [`docs/hardening-spec.md`](hardening-spec.md), with its own acceptance criteria and progress log.
+- The side menu as the home page, hosts in a sheet, host management in Settings, and links in the default browser with Share are specified in [`docs/navigation-spec.md`](navigation-spec.md) (built, merged as `6cd6615`; the on-phone pass is open).
 
 ## Progress Log
 
