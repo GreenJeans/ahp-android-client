@@ -230,9 +230,31 @@ class ToolDetailTest {
     fun `a cancelled call says why`() {
         val denied = call(""""status":"cancelled",$common,"invocationMessage":"Run it","toolInput":"{}","reason":"denied"""")
         val skipped = call(""""status":"cancelled",$common,"invocationMessage":"Run it","toolInput":"{}","reason":"skipped","reasonMessage":"Not needed"""")
+        val resultDenied = call(""""status":"cancelled",$common,"invocationMessage":"Run it","toolInput":"{}","reason":"result-denied"""")
 
         assertEquals("Denied.", ToolDetail.from(denied).error)
         assertEquals("Not needed", ToolDetail.from(skipped).error)
+        assertEquals("The result was denied.", ToolDetail.from(resultDenied).error)
+    }
+
+    @Test
+    fun `completed and running tool calls surface mcpServerName and completed calls surface durationText`() {
+        val completed = call(
+            """"status":"completed",$common,"invocationMessage":"Run it","pastTenseMessage":"Ran it","toolInput":"{}",
+                "confirmed":"not-needed","success":true,"_meta":{"ahpd.durationMs":4250,"mcpServerName":"github-mcp"}""",
+        )
+        val running = call(
+            """"status":"running",$common,"invocationMessage":"Run it","toolInput":"{}","confirmed":"not-needed",
+                "_meta":{"ahpd.durationMs":4250,"vscode.toolCall.mcpServerName":"github-mcp"}""",
+        )
+
+        val completedDetail = ToolDetail.from(completed)
+        assertEquals("4s", completedDetail.durationText)
+        assertEquals("github-mcp", completedDetail.mcpServerName)
+
+        val runningDetail = ToolDetail.from(running)
+        assertNull(runningDetail.durationText, "running calls never report a finished duration")
+        assertEquals("github-mcp", runningDetail.mcpServerName)
     }
 
     @Test
@@ -266,6 +288,7 @@ class ToolDetailTest {
         val kinds = details.flatMap { it.results }.groupingBy { it::class.simpleName.orEmpty() }.eachCount()
 
         assertEquals(mapOf("Text" to 12, "Terminal" to 3, "FileEdit" to 1, "Subagent" to 1, "Attachment" to 1), kinds)
+        assertEquals(listOf("mcp-server-1"), details.mapNotNull { it.mcpServerName })
         assertTrue(details.any { it.input.isNotEmpty() })
         assertTrue(details.any { it.error != null }, "the fixture holds a failed call")
         assertTrue(details.flatMap { it.results }.filterIsInstance<ToolResultView.Text>().all { it.body.text.length <= ToolDetail.MAX_TEXT })

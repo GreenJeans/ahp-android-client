@@ -233,4 +233,28 @@ class ModelOptionsTest {
             "the chat's turn wins over the session's model",
         )
     }
+
+    @Test
+    fun `a chat interactor reports the model in use from the chat or the session fallback`() {
+        var currentChat: com.microsoft.agenthostprotocol.generated.ChatState? = chatWith()
+        var currentSessionModel: String? = "sonnet"
+        val interactor = ChatInteractor(
+            chatUri = "ahp-chat:/c",
+            chat = { currentChat },
+            canInteract = { true },
+            dispatch = { _, _ -> DispatchOutcome.Accepted },
+            gate = ApprovalGate { false },
+            models = { offered },
+            sessionModel = { currentSessionModel },
+        )
+
+        assertEquals(ModelChoice("sonnet"), interactor.modelInUse())
+
+        currentChat = chatWith(turn("t1", """{"id":"auto"}"""))
+        assertEquals(ModelChoice("auto"), interactor.modelInUse())
+
+        currentChat = chatWith()
+        currentSessionModel = null
+        assertNull(interactor.modelInUse())
+    }
 }

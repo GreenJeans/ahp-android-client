@@ -4,6 +4,7 @@ import com.microsoft.agenthostprotocol.Ahp
 import com.microsoft.agenthostprotocol.generated.ListSessionsResult
 import com.microsoft.agenthostprotocol.generated.SessionState
 import com.microsoft.agenthostprotocol.generated.SessionStatus
+import com.microsoft.agenthostprotocol.generated.SessionSummary
 import java.time.Instant
 import java.time.ZoneId
 import java.util.Locale
@@ -458,5 +459,40 @@ class SessionDetailTest {
     @Test
     fun `the answer-elsewhere hint stays a constant the UI can show`() {
         assertEquals("Answer in VS Code.", SessionDetail.ANSWER_ELSEWHERE)
+    }
+
+    @Test
+    fun `session detail surfaces pull requests and model from session extras and falls back to summary extras`() {
+        val withStateExtras = state(
+            extra = ""","_meta":{"git":{"branchName":"feat/pr","outgoingChanges":2,"uncommittedChanges":3,
+                "pullRequests":[{"url":"https://github.com/org/repo/pull/42","state":"open","branchName":"feat/pr"}]},
+                "ahpd.model":"claude-sonnet-5.5"}""",
+        )
+        val detailFromState = SessionDetail.from(withStateExtras, now)
+        assertEquals("claude-sonnet-5.5", detailFromState.model)
+        assertEquals(
+            listOf(PullRequest(url = "https://github.com/org/repo/pull/42", state = "open", branch = "feat/pr")),
+            detailFromState.pullRequests,
+        )
+        assertEquals("feat/pr", detailFromState.extras.branch)
+
+        val summaryWithExtras = Ahp.json.decodeFromString(
+            SessionSummary.serializer(),
+            """{"resource":"ahp-session:/s1","provider":"copilotcli","title":"Fix the build","status":56,
+                "createdAt":"2026-10-26T10:00:00.000Z","modifiedAt":"2026-10-26T10:29:00.000Z","chats":[],
+                "_meta":{"git":{"branchName":"main","pullRequests":[{"url":"https://github.com/org/repo/pull/7","state":"merged"}]},
+                "ahpd.model":"auto"}}""",
+        )
+        val detailWithFallback = SessionDetail.from(state(), now, summary = summaryWithExtras)
+        assertEquals("auto", detailWithFallback.model)
+        assertEquals(
+            listOf(PullRequest(url = "https://github.com/org/repo/pull/7", state = "merged")),
+            detailWithFallback.pullRequests,
+        )
+        assertEquals("main", detailWithFallback.extras.branch)
+
+        val detailStateWins = SessionDetail.from(withStateExtras, now, summary = summaryWithExtras)
+        assertEquals("claude-sonnet-5.5", detailStateWins.model)
+        assertEquals(42, detailStateWins.pullRequests.single().number)
     }
 }

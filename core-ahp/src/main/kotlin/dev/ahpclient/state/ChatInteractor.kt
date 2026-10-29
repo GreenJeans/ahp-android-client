@@ -175,9 +175,14 @@ class ChatInteractor(
     private val agents: () -> List<AgentChoice> = { emptyList() },
     /** This chat's mode and approvals as the host reports them now, and which of them this app may change. */
     private val config: () -> ChatConfigView = { ChatConfigView.NONE },
+    /** The model id the host reports for this chat's session (E6), used when the chat itself has not named a model yet. */
+    private val sessionModel: () -> String? = { null },
 ) {
     /** The models a message in this chat may be sent with, as the host offers them now. */
     fun modelOptions(): List<ModelOption> = models()
+
+    /** The model in use in this chat now: from the running or latest turn, the chat's draft, or the session's model (E6). */
+    fun modelInUse(): ModelChoice? = ModelOptions.inUse(chat(), models(), sessionModel())
 
     /** The custom agents a message in this chat may be sent with, as the host offers them now. */
     fun agentChoices(): List<AgentChoice> = agents()

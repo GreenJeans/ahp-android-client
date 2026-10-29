@@ -180,4 +180,34 @@ class TranscriptRowModelTest {
         assertEquals("Running tests", withProgress.detail)
         assertEquals("Run in Terminal: Check the build", withoutProgress.detail)
     }
+
+    @Test
+    fun `tool items and step rows surface mcpServerName and durationText from step extras`() {
+        val t1 = TranscriptItem.Tool("t1", "Search", "Query", ToolState.DONE, durationText = "<1s", mcpServerName = "github")
+        val t2 = TranscriptItem.Tool("t2", "Fetch", "Read", ToolState.DONE, durationText = "4s", mcpServerName = "github")
+        val t3 = TranscriptItem.Tool("t3", "Run", null, ToolState.RUNNING, durationText = null, mcpServerName = "filesystem")
+        val run = steps(t1, t2, t3)
+
+        assertEquals(listOf("github", "filesystem"), run.mcpServers)
+        assertEquals(listOf("<1s", "4s"), run.durations)
+
+        val chatJson = """{"resource":"ahp-chat:/c","title":"Chat","status":1,"modifiedAt":"2026-10-26T10:00:00.000Z","turns":[
+            {"id":"turn-1","message":{"text":"hi","origin":{"kind":"user"}},"state":"complete","responseParts":[
+                {"kind":"toolCall","toolCall":{"status":"completed","toolCallId":"c1","toolName":"mcp_search","displayName":"Search",
+                    "invocationMessage":"Searching","pastTenseMessage":"Searched","toolInput":"{}","confirmed":"not-needed","success":true,
+                    "_meta":{"ahpd.durationMs":840,"mcpServerName":"github-mcp"}}},
+                {"kind":"toolCall","toolCall":{"status":"completed","toolCallId":"c2","toolName":"read_file","displayName":"Read file",
+                    "invocationMessage":"Reading","pastTenseMessage":"Read","toolInput":"{}","confirmed":"not-needed","success":true,
+                    "_meta":{"ahpd.durationMs":4250}}}
+            ]}]}"""
+        val chat = com.microsoft.agenthostprotocol.Ahp.json.decodeFromString(com.microsoft.agenthostprotocol.generated.ChatState.serializer(), chatJson)
+        val transcript = Transcript.from(chat)
+        val tools = transcript.items.filterIsInstance<TranscriptItem.Tool>()
+        assertEquals(listOf("1s", "4s"), tools.map { it.durationText })
+        assertEquals(listOf("github-mcp", null), tools.map { it.mcpServerName })
+
+        val folded = assertIs<TranscriptRowModel.Steps>(TranscriptRowModel.from(transcript.items)[1])
+        assertEquals(listOf("github-mcp"), folded.mcpServers)
+        assertEquals(listOf("1s", "4s"), folded.durations)
+    }
 }
