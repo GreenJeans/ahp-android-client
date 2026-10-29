@@ -161,11 +161,10 @@ class AccessibilityTest {
     }
 
     @Test
-    fun theInboxEntryAndTheMainPageButton() {
+    fun theInboxEntry() {
         checkEach(
             { DrawerFor(inboxCount = 2) },
             { DrawerFor(inboxCount = 0) },
-            { MainEmpty(connected = true, connection = ConnState.Online, manage = null, onConnect = {}, onOpenSessions = {}, onSessionCreated = {}, needYou = 2, onOpenInbox = {}) },
         )
     }
 
@@ -218,12 +217,28 @@ class AccessibilityTest {
     }
 
     @Test
-    fun emptyMainPage() {
-        checkEach(
-            { MainEmpty(connected = false, connection = null, manage = null, onConnect = {}, onOpenSessions = {}, onSessionCreated = {}) },
-            { MainEmpty(connected = true, connection = ConnState.Online, manage = null, onConnect = {}, onOpenSessions = {}, onSessionCreated = {}) },
-            { MainEmpty(connected = true, connection = ConnState.Online, manage = manageActions(), onConnect = {}, onOpenSessions = {}, onSessionCreated = {}) },
-        )
+    fun theHomeDrawerWithNoSessionInBothThemes() {
+        // The drawer held open over the empty background: with a host, and with none to choose yet.
+        var dark by mutableStateOf(false)
+        var connected by mutableStateOf<TunnelInfo?>(host)
+        rule.setContent {
+            AhpTheme(dark) {
+                val menu = rememberHomeMenu(session = null, pageOpen = false)
+                HomeDrawer(
+                    menu, session = null, pageOpen = false, overlayOpen = false, onCloseSession = {}, onClosePage = {}, onLeaveApp = {},
+                    drawerContent = { DrawerFor(connected = connected, manage = manageActions(), inboxCount = 2) },
+                    content = { androidx.compose.material3.Surface(Modifier, color = androidx.compose.material3.MaterialTheme.colorScheme.background) {} },
+                )
+            }
+        }
+        listOf(false, true).forEach { theme ->
+            dark = theme
+            listOf(host, null).forEach { shown ->
+                connected = shown
+                rule.waitForIdle()
+                check()
+            }
+        }
     }
 
     @Test

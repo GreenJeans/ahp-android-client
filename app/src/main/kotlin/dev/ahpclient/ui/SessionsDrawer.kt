@@ -22,6 +22,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -70,7 +71,7 @@ import java.time.Instant
 /**
  * The side menu: the host at the top (a way to the hosts sheet), one row of icon buttons (the inbox, the archived toggle, a button to
  * start a session only when the app may look after sessions, and Settings), then the host's sessions with those needing you
- * first. [host] is null while not connected.
+ * first. [host] is null while not connected: the menu then says so, with a button to the hosts sheet.
  * [selected] is the open session. [listState], [showArchived] and [query] are held by the caller so they survive the menu closing.
  * While [stale] the sessions are only what the phone saved last time, and say so.
  */
@@ -122,12 +123,10 @@ fun DrawerContent(
             }
             HorizontalDivider()
             if (host == null) {
-                Text(
-                    "Connect to a host to see its sessions.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f).padding(16.dp).testTag("drawer_no_host"),
-                )
+                Column(Modifier.weight(1f).fillMaxWidth().padding(16.dp).testTag("drawer_no_host"), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Connect to a host to see its sessions.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Button(onClick = onOpenHost, modifier = Modifier.heightIn(min = 48.dp).testTag("choose_host")) { Text("Choose a host") }
+                }
             } else {
                 SessionList(model, connection, stale, selected, query, onQueryChange, listState, watched, onOpenSession, Modifier.weight(1f))
             }
@@ -198,7 +197,7 @@ private fun ArchivedAction(showing: Boolean, hidden: Int, onToggle: () -> Unit) 
 @Composable
 private fun HostButton(host: HostRef?, connection: ConnState?, onOpenHost: () -> Unit) {
     val state = when {
-        host == null -> "Tap to connect"
+        host == null -> "Not connected"
         connection != null -> describe(connection)
         else -> ""
     }
@@ -215,7 +214,7 @@ private fun HostButton(host: HostRef?, connection: ConnState?, onOpenHost: () ->
     ) {
         Icon(AppIcons.Host, contentDescription = null)
         Column(Modifier.weight(1f)) {
-            Text(host?.name ?: "Not connected", style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("drawer_host_name"))
+            Text(host?.name ?: "Hosts", style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("drawer_host_name"))
             Text(state, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("connection_status"))
         }
         Icon(AppIcons.ChevronDown, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)

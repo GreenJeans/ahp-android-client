@@ -85,56 +85,6 @@ class InboxUiTest {
         }
     }
 
-    // ---- the way in from the main page --------------------------------------------------------------------------
-
-    private fun showMain(needYou: Int, onOpenInbox: (() -> Unit)? = {}, connected: Boolean = true) = rule.setContent {
-        AhpTheme {
-            MainEmpty(
-                connected = connected, connection = if (connected) dev.ahpclient.state.ConnState.Online else null, manage = null,
-                onConnect = {}, onOpenSessions = {}, onSessionCreated = {}, needYou = needYou, onOpenInbox = onOpenInbox,
-            )
-        }
-    }
-
-    @Test
-    fun theMainPageLeadsWithTheInboxWhenSessionsWaitOnYou() {
-        var opened = 0
-        showMain(2, onOpenInbox = { opened++ })
-
-        rule.onNodeWithTag("open_inbox").assertTextEquals("2 need you").assertHeightIsAtLeast(48.dp).performClick()
-
-        assertEquals(1, opened)
-    }
-
-    @Test
-    fun oneWaitingSessionSaysNeeds() {
-        showMain(1)
-
-        rule.onNodeWithTag("open_inbox").assertTextEquals("1 needs you")
-    }
-
-    @Test
-    fun withNobodyWaitingTheMainPageHasNoInboxButton() {
-        showMain(0)
-
-        rule.onAllNodesWithTag("open_inbox").assertCountEquals(0)
-        rule.onNodeWithTag("open_sessions").assertIsDisplayed()
-    }
-
-    @Test
-    fun withNoWayToOpenTheInboxThereIsNoButton() {
-        showMain(3, onOpenInbox = null)
-
-        rule.onAllNodesWithTag("open_inbox").assertCountEquals(0)
-    }
-
-    @Test
-    fun notConnectedThereIsNoInboxButtonEither() {
-        showMain(3, connected = false)
-
-        rule.onAllNodesWithTag("open_inbox").assertCountEquals(0)
-    }
-
     // ---- empty and structure -----------------------------------------------------------------------------------
 
     @Test

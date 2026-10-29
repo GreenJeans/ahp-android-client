@@ -8,11 +8,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Surface
-import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -64,6 +61,8 @@ fun AppRoot(
     notificationsAllowed: Boolean = true,
     onMonitorChange: (Boolean) -> Unit = {},
     alerts: FinishedAlertsUi = FinishedAlertsUi(),
+    /** How many notification taps asked for a session; each one closes the side menu, even when that session is already open. */
+    sessionRequests: Int = 0,
 ) {
     val state by controller.state.collectAsStateWithLifecycle()
     val catalog by controller.hosts.collectAsStateWithLifecycle()
@@ -76,19 +75,20 @@ fun AppRoot(
                 AppState.Restoring -> Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars).testTag("restoring"), contentAlignment = Alignment.Center) { Busy("Loading…") }
                 is AppState.SignedOut -> SignInScreen(current, controller::signIn, controller::cancelSignIn, onOpenGitHub, onCopyCode, onUseDirect = controller::useDirectHosts)
                 // One call for both, so that going from the host list to a host (and back) keeps the menu, and the sheet over it, as they are.
-                AppState.Hosts, is AppState.Connected -> Shell(controller, ui, catalog, current as? AppState.Connected, monitorEnabled, notificationsAllowed, onMonitorChange, alerts)
+                AppState.Hosts, is AppState.Connected -> Shell(controller, ui, catalog, current as? AppState.Connected, monitorEnabled, notificationsAllowed, onMonitorChange, alerts, sessionRequests)
             }
         }
     }
 }
 
-/** The screens a signed-in person moves between: the main page (an empty one, or a session) with the side menu, settings, and the inbox. */
+/** The screens a signed-in person moves between: the main page (the open session, or nothing but the side menu) with the side menu, settings, and the inbox. */
 private enum class Page { MAIN, SETTINGS, INBOX }
 
 /**
- * Everything once signed in: a side menu (the host, a new session, the sessions, Settings) over the main page, which is the open
- * session or an empty page that says what to do. The host row of the menu opens the hosts in a sheet over it; Settings is a screen of
- * its own, left by Back. [connected] is null while no host is connected, and [hosts] is what can be connected to either way.
+ * Everything once signed in: a side menu (the host, the inbox, a new session, Settings, the sessions) over the main page, which is the
+ * open session. With no session the menu is the home page: open, and held open, over an empty background. The host row of the menu
+ * opens the hosts in a sheet over it; Settings and the inbox are screens of their own, left by Back to the menu. [connected] is null
+ * while no host is connected, and [hosts] is what can be connected to either way.
  */
 @Composable
 private fun Shell(
@@ -100,6 +100,7 @@ private fun Shell(
     notificationsAllowed: Boolean,
     onMonitorChange: (Boolean) -> Unit,
     alerts: FinishedAlertsUi,
+    sessionRequests: Int,
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -108,7 +109,6 @@ private fun Shell(
     val textScale by ui.textScale.collectAsStateWithLifecycle()
     val theme by ui.theme.collectAsStateWithLifecycle()
     val keepAwake by ui.keepAwake.collectAsStateWithLifecycle()
-    val drawerState = rememberDrawerState(DrawerValue.Closed)
     var page by rememberSaveable { mutableStateOf(Page.MAIN) }
     var hostSheet by rememberSaveable { mutableStateOf(false) }
     var showArchived by rememberSaveable { mutableStateOf(false) }
@@ -125,15 +125,17 @@ private fun Shell(
     val diffOpen = open?.changeset?.diff != null
     val terminalOpen = open?.terminal != null
     val overlayOpen = subagentOpen || changesetOpen || diffOpen || terminalOpen
-    BackHandler(enabled = open != null && !overlayOpen) { controller.closeSession() }
+    // The screens over a session. Back from the session itself, from Settings and the inbox, and from the menu is in HomeDrawer.
     BackHandler(enabled = subagentOpen && !terminalOpen && !changesetOpen) { controller.closeChat() }
     BackHandler(enabled = terminalOpen) { controller.closeTerminal() }
     BackHandler(enabled = changesetOpen && !diffOpen) { controller.closeChangeset() }
     BackHandler(enabled = diffOpen) { controller.closeDiff() }
-    BackHandler(enabled = page != Page.MAIN) { page = Page.MAIN }
-    BackHandler(enabled = drawerState.isOpen) { scope.launch { drawerState.close() } }
-    // Connecting (from the hosts sheet) brings the main page back.
-    LaunchedEffect(connected != null) { if (connected != null) page = Page.MAIN }
+    val menu = rememberHomeMenu(open?.uri, page != Page.MAIN)
+    CloseMenuOnRequest(sessionRequests, menu)
+    // A host that connects, or goes (removing the connected host from Settings), brings the menu back: Settings and the inbox are of the
+    // host they were opened on.
+    OnConnectionChange(connected != null) { if (page != Page.MAIN) page = Page.MAIN }
+    OfferHostsOnce(connected != null, hosts) { hostSheet = true }
     // A host that connects under an open sheet (the cold-start auto-connect) leaves the sheet open: it lists hosts to choose from, shows the
     // one connected, and a typed address in its Add dialog is not lost. Only the person's own taps close it.
     // The menu's search, archived toggle and scroll are of the host they were made on: another host starts with a plain list.
@@ -147,8 +149,6 @@ private fun Shell(
             shownHost = id
         }
     }
-    // The inbox is of the host that is connected: leaving it (or losing it) leaves the inbox.
-    LaunchedEffect(connected == null) { if (connected == null && page == Page.INBOX) page = Page.MAIN }
 
     val connection = connected?.let { it.session.connection.collectAsStateWithLifecycle().value }
     val canManage = connected?.let { it.session.canManage.collectAsStateWithLifecycle().value } == true
@@ -177,9 +177,9 @@ private fun Shell(
     } else {
         null
     }
-    val closeDrawer = { scope.launch { drawerState.close() }; Unit }
-    val openDrawer = { scope.launch { drawerState.open() }; Unit }
-    val showSession = { uri: String -> closeDrawer(); controller.showSession(uri) }
+    // With no session the menu is held open, and the session that opens closes it (HomeMenu); over a session it is closed here, so that
+    // picking the session that is already open, or another, closes it too.
+    val showSession = { uri: String -> menu.close(); controller.showSession(uri) }
     val addHost: suspend (String, String, String) -> String? = { name, address, token ->
         when (val result = controller.addDirectHost(name, address, token)) {
             is AppController.AddHostResult.Added -> null
@@ -188,9 +188,14 @@ private fun Shell(
         }
     }
 
-    ModalNavigationDrawer(
-        drawerState = drawerState,
-        gesturesEnabled = page == Page.MAIN && !overlayOpen,
+    HomeDrawer(
+        menu = menu,
+        session = open?.uri,
+        pageOpen = page != Page.MAIN,
+        overlayOpen = overlayOpen,
+        onCloseSession = controller::closeSession,
+        onClosePage = { page = Page.MAIN },
+        onLeaveApp = { leaveApp(context) },
         drawerContent = {
             DrawerContent(
                 host = connected?.host,
@@ -207,10 +212,10 @@ private fun Shell(
                 watched = alerts.watch.sessions,
                 onOpenHost = { hostSheet = true },
                 onOpenSession = showSession,
-                onOpenSettings = { closeDrawer(); page = Page.SETTINGS },
+                onOpenSettings = { page = Page.SETTINGS; menu.close() },
                 onSessionCreated = showSession,
                 inboxCount = if (connected != null) inbox.waiting.size else null,
-                onOpenInbox = { closeDrawer(); page = Page.INBOX },
+                onOpenInbox = { page = Page.INBOX; menu.close() },
                 stale = stale,
             )
         },
@@ -268,19 +273,14 @@ private fun Shell(
                     stale = stale,
                 )
             }
-            Page.MAIN -> if (connected == null || connection == null) {
-                ScreenScaffold(title = "AHP Client", onMenu = { openDrawer() }) {
-                    MainEmpty(connected = false, connection = null, manage = null, onConnect = { hostSheet = true }, onOpenSessions = { openDrawer() }, onSessionCreated = {})
-                }
-            } else if (open == null) {
-                ScreenScaffold(title = connected.host.name, onMenu = { openDrawer() }) {
-                    MainEmpty(connected = true, connection = connection, manage = manageActions, onConnect = { hostSheet = true }, onOpenSessions = { openDrawer() }, onSessionCreated = showSession, needYou = inbox.waiting.size, onOpenInbox = { page = Page.INBOX })
-                }
-            } else {
+            Page.MAIN -> if (connected != null && connection != null && open != null) {
                 SessionPage(
                     controller, ui, connected, open, connection, rootState, canManage, manageActions, listed, changesetTitle,
-                    onChangesetTitle = { changesetTitle = it }, onMenu = { openDrawer() }, alerts = alerts,
+                    onChangesetTitle = { changesetTitle = it }, onMenu = menu::open, alerts = alerts,
                 )
+            } else {
+                // The menu is the page here, held open over this strip of background; there is nothing to say behind it.
+                Surface(modifier = Modifier.fillMaxSize().testTag("home_background"), color = MaterialTheme.colorScheme.background) {}
             }
         }
     }
@@ -294,7 +294,7 @@ private fun Shell(
             onSwitch = controller::switchHost,
             onDisconnect = controller::disconnect,
             // Settings is where hosts are managed; it opens over the menu as the gear does.
-            onManageHosts = { closeDrawer(); page = Page.SETTINGS },
+            onManageHosts = { page = Page.SETTINGS; menu.close() },
             onAddHost = addHost,
             // Signing in ends the screen the sheet is on, so it is offered only with no host to lose.
             onSignIn = if (connected == null) controller::signIn else null,

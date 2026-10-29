@@ -12,6 +12,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.fragment.app.FragmentActivity
@@ -27,6 +28,9 @@ import dev.ahpclient.ui.openInBrowser
 // A FragmentActivity because the device check that stands in front of tool approvals (BiometricPrompt) needs one.
 class MainActivity : FragmentActivity() {
     private var notificationsAllowed by mutableStateOf(true)
+
+    // Counts the notification taps that asked for a session, so the side menu can close for a tap on the session that is already open.
+    private var sessionRequests by mutableIntStateOf(0)
     private val container get() = (application as AhpApp).container
 
     // Set while the permission dialog is up; called once the user has answered, whichever way.
@@ -73,6 +77,7 @@ class MainActivity : FragmentActivity() {
                 notificationsAllowed = notificationsAllowed,
                 onMonitorChange = ::setMonitoring,
                 alerts = FinishedAlertsUi(finishedWatch, monitorEnabled, container::setWatchAll, container::setWatched),
+                sessionRequests = sessionRequests,
             )
         }
     }
@@ -122,5 +127,6 @@ class MainActivity : FragmentActivity() {
         val uri = intent?.getStringExtra(EXTRA_SESSION_URI) ?: return
         intent.removeExtra(EXTRA_SESSION_URI)
         container.controller.focusSession(uri)
+        sessionRequests++
     }
 }

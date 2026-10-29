@@ -77,6 +77,26 @@ private fun otherHosts(catalog: HostCatalog, connected: HostRef?): List<OtherHos
 }
 
 /**
+ * Calls [onOffer] once when the hosts sheet should open by itself: nothing is connected, the tunnel list has settled (the cold start's
+ * connection to the last host is tried when the first list arrives), and no host is marked as the last used, so there is nothing to
+ * connect to by itself. Never after a host has been connected, and never a second time (a rotation does not repeat it).
+ */
+@Composable
+internal fun OfferHostsOnce(connected: Boolean, catalog: HostCatalog, onOffer: () -> Unit) {
+    var offered by rememberSaveable { mutableStateOf(false) }
+    val nothingToConnectTo = !connected && catalog.list !is HostList.Loading &&
+        (catalog.list as? HostList.Loaded)?.hosts.orEmpty().none { it.isLastUsed } && catalog.direct.none { it.isLastUsed }
+    LaunchedEffect(connected, nothingToConnectTo) {
+        if (connected) {
+            offered = true
+        } else if (nothingToConnectTo && !offered) {
+            offered = true
+            onOffer()
+        }
+    }
+}
+
+/**
  * The hosts, in a sheet from the bottom over the side menu: the one connected (with a way to leave it), every other host to switch to
  * with one tap, a way to add a host by its address, and, with no GitHub sign-in, a way to sign in. [onRefresh] is called when the
  * sheet opens and by the button in its header. A tap on a host calls [onSwitch], Disconnect calls [onDisconnect] and Manage hosts calls

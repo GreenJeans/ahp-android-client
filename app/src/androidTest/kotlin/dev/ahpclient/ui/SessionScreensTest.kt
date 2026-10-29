@@ -298,14 +298,33 @@ class SessionScreensTest {
     }
 
     @Test
-    fun withNoHostTheDrawerSaysToConnectAndHasNoList() {
-        showSessions(emptyList(), connection = ConnState.Connecting, connectedHost = null)
+    fun withNoHostTheDrawerOffersToChooseOneAndHasNoList() {
+        var opened = 0
+        showSessions(emptyList(), connection = ConnState.Connecting, connectedHost = null, onOpenHost = { opened++ })
 
-        rule.onNodeWithTag("drawer_host_name", useUnmergedTree = true).assertTextEquals("Not connected")
+        rule.onNodeWithTag("drawer_host_name", useUnmergedTree = true).assertTextEquals("Hosts")
+        rule.onNodeWithTag("connection_status", useUnmergedTree = true).assertTextEquals("Not connected")
         rule.onNodeWithTag("drawer_no_host").assertIsDisplayed()
+        rule.onNodeWithText("Connect to a host to see its sessions.").assertIsDisplayed()
+        // One node says "Choose a host": the button. The row above it does not, so a screen reader meets one control of that name.
+        rule.onAllNodesWithText("Choose a host").assertCountEquals(1)
         rule.onAllNodesWithTag("session_list").assertCountEquals(0)
         rule.onAllNodesWithTag("new_session").assertCountEquals(0)
         rule.onNodeWithTag("settings").assertIsDisplayed()
+
+        rule.onNodeWithTag("choose_host").assertTextEquals("Choose a host").assertTouchTargetAtLeast(48.dp).performClick()
+        assertEquals(1, opened)
+        // The host row is the same way in, so there are two ways to the hosts sheet and the button is not the only one.
+        rule.onNodeWithTag("drawer_host").performClick()
+        assertEquals(2, opened)
+    }
+
+    @Test
+    fun withAHostTheDrawerHasNoChooseAHostButton() {
+        showSessions()
+
+        rule.onAllNodesWithTag("choose_host").assertCountEquals(0)
+        rule.onAllNodesWithTag("drawer_no_host").assertCountEquals(0)
     }
 
     @Test
