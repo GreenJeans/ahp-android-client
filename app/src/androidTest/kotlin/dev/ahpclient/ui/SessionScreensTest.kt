@@ -286,7 +286,7 @@ class SessionScreensTest {
     }
 
     @Test
-    fun theHostButtonNamesTheHostAndItsConnectionAndOpensTheHostScreen() {
+    fun theHostButtonNamesTheHostAndItsConnectionAndOpensTheHostSheet() {
         var opened = 0
         showSessions(onOpenHost = { opened++ })
 

@@ -68,7 +68,7 @@ import com.microsoft.agenthostprotocol.generated.SessionSummary
 import java.time.Instant
 
 /**
- * The side menu: the host at the top (a way to its screen), one row of icon buttons (the inbox, the archived toggle, a button to
+ * The side menu: the host at the top (a way to the hosts sheet), one row of icon buttons (the inbox, the archived toggle, a button to
  * start a session only when the app may look after sessions, and Settings), then the host's sessions with those needing you
  * first. [host] is null while not connected.
  * [selected] is the open session. [listState], [showArchived] and [query] are held by the caller so they survive the menu closing.
@@ -194,7 +194,7 @@ private fun ArchivedAction(showing: Boolean, hidden: Int, onToggle: () -> Unit) 
     }
 }
 
-/** The host's name and how the connection stands, as one button to the host screen. */
+/** The host's name and how the connection stands, as one button to the hosts sheet. */
 @Composable
 private fun HostButton(host: HostRef?, connection: ConnState?, onOpenHost: () -> Unit) {
     val state = when {
@@ -206,7 +206,7 @@ private fun HostButton(host: HostRef?, connection: ConnState?, onOpenHost: () ->
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 60.dp)
-            .clickable(onClickLabel = "Open host", role = Role.Button, onClick = onOpenHost)
+            .clickable(onClickLabel = "Show hosts", role = Role.Button, onClick = onOpenHost)
             .padding(horizontal = 16.dp, vertical = 8.dp)
             .semantics(mergeDescendants = true) {}
             .testTag("drawer_host"),

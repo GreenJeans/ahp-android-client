@@ -425,7 +425,8 @@ class AppController(
 
     /**
      * Loads the tunnel hosts again, from the host list or while connected (a load never changes [state]). A list already loaded stays in
-     * [hosts] while the new one loads, so that looking again shows no spinner; a failed or missing one is replaced by [HostList.Loading].
+     * [hosts] while the new one loads, so that looking again shows no spinner, and stays if the new one fails; a failed or missing one is
+     * replaced by [HostList.Loading].
      */
     @Synchronized
     fun refreshHosts() {
@@ -1086,7 +1087,8 @@ class AppController(
             HostList.Failed("Could not load your hosts (${e.javaClass.simpleName}).")
         }
         // Kept whether or not a host got connected meanwhile, since the list is read while connected; not after a sign-out, which emptied the catalog.
-        _hosts.update { if (token != null) it.copy(list = list, direct = directEntries()) else it }
+        // A refresh that fails leaves the list that was on show (it was good a moment ago); only a first load says why it failed.
+        _hosts.update { if (token != null) it.copy(list = if (list is HostList.Failed && it.list is HostList.Loaded) it.list else list, direct = directEntries()) else it }
         // Taken by the first list to finish, whatever it holds, so a later refresh or a return to the list never connects on its own.
         if (autoConnectPending.getAndSet(false) && _state.value is AppState.Hosts) connectToLastHost()
     }

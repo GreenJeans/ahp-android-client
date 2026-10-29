@@ -75,25 +75,26 @@ fun AppRoot(
             when (val current = state) {
                 AppState.Restoring -> Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars).testTag("restoring"), contentAlignment = Alignment.Center) { Busy("Loading…") }
                 is AppState.SignedOut -> SignInScreen(current, controller::signIn, controller::cancelSignIn, onOpenGitHub, onCopyCode, onUseDirect = controller::useDirectHosts)
-                AppState.Hosts -> Shell(controller, ui, catalog, null, monitorEnabled, notificationsAllowed, onMonitorChange, alerts)
-                is AppState.Connected -> Shell(controller, ui, null, current, monitorEnabled, notificationsAllowed, onMonitorChange, alerts)
+                // One call for both, so that going from the host list to a host (and back) keeps the menu, and the sheet over it, as they are.
+                AppState.Hosts, is AppState.Connected -> Shell(controller, ui, catalog, current as? AppState.Connected, monitorEnabled, notificationsAllowed, onMonitorChange, alerts)
             }
         }
     }
 }
 
-/** The screens a signed-in person moves between: the main page (an empty one, or a session) with the side menu, the host, and settings. */
-private enum class Page { MAIN, HOST, SETTINGS, INBOX }
+/** The screens a signed-in person moves between: the main page (an empty one, or a session) with the side menu, settings, and the inbox. */
+private enum class Page { MAIN, SETTINGS, INBOX }
 
 /**
  * Everything once signed in: a side menu (the host, a new session, the sessions, Settings) over the main page, which is the open
- * session or an empty page that says what to do. The host and Settings are screens of their own, left by Back.
+ * session or an empty page that says what to do. The host row of the menu opens the hosts in a sheet over it; Settings is a screen of
+ * its own, left by Back. [connected] is null while no host is connected, and [hosts] is what can be connected to either way.
  */
 @Composable
 private fun Shell(
     controller: AppController,
     ui: UiSettings,
-    hosts: HostCatalog?,
+    hosts: HostCatalog,
     connected: AppState.Connected?,
     monitorEnabled: Boolean,
     notificationsAllowed: Boolean,
@@ -109,6 +110,7 @@ private fun Shell(
     val keepAwake by ui.keepAwake.collectAsStateWithLifecycle()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     var page by rememberSaveable { mutableStateOf(Page.MAIN) }
+    var hostSheet by rememberSaveable { mutableStateOf(false) }
     var showArchived by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
     // The label of the changeset being opened, kept here so the screen can name it; the host's own title is not needed.
@@ -130,8 +132,21 @@ private fun Shell(
     BackHandler(enabled = diffOpen) { controller.closeDiff() }
     BackHandler(enabled = page != Page.MAIN) { page = Page.MAIN }
     BackHandler(enabled = drawerState.isOpen) { scope.launch { drawerState.close() } }
-    // Connecting from the host screen brings the main page back.
+    // Connecting (from the hosts sheet) brings the main page back.
     LaunchedEffect(connected != null) { if (connected != null) page = Page.MAIN }
+    // A host that connects under an open sheet (the cold-start auto-connect) leaves the sheet open: it lists hosts to choose from, shows the
+    // one connected, and a typed address in its Add dialog is not lost. Only the person's own taps close it.
+    // The menu's search, archived toggle and scroll are of the host they were made on: another host starts with a plain list.
+    var shownHost by rememberSaveable { mutableStateOf(connected?.host?.id) }
+    LaunchedEffect(connected?.host?.id) {
+        val id = connected?.host?.id
+        if (id != shownHost) {
+            query = ""
+            showArchived = false
+            listState.scrollToItem(0)
+            shownHost = id
+        }
+    }
     // The inbox is of the host that is connected: leaving it (or losing it) leaves the inbox.
     LaunchedEffect(connected == null) { if (connected == null && page == Page.INBOX) page = Page.MAIN }
 
@@ -165,6 +180,13 @@ private fun Shell(
     val closeDrawer = { scope.launch { drawerState.close() }; Unit }
     val openDrawer = { scope.launch { drawerState.open() }; Unit }
     val showSession = { uri: String -> closeDrawer(); controller.showSession(uri) }
+    val addHost: suspend (String, String, String) -> String? = { name, address, token ->
+        when (val result = controller.addDirectHost(name, address, token)) {
+            is AppController.AddHostResult.Added -> null
+            is AppController.AddHostResult.Invalid -> result.reason
+            AppController.AddHostResult.NotSaved -> "The host could not be saved on this phone."
+        }
+    }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -183,7 +205,7 @@ private fun Shell(
                 listState = listState,
                 manage = manageActions,
                 watched = alerts.watch.sessions,
-                onOpenHost = { closeDrawer(); page = Page.HOST },
+                onOpenHost = { hostSheet = true },
                 onOpenSession = showSession,
                 onOpenSettings = { closeDrawer(); page = Page.SETTINGS },
                 onSessionCreated = showSession,
@@ -194,34 +216,19 @@ private fun Shell(
         },
     ) {
         when (page) {
-            Page.HOST -> {
-                HostScreen(
-                    list = hosts?.list,
-                    connectedHost = connected?.host,
-                    connection = connection,
-                    onBack = { page = Page.MAIN },
-                    onRefresh = controller::refreshHosts,
-                    onConnect = { controller.connect(it) },
-                    onDisconnect = controller::disconnect,
-                    onSignOut = controller::signOut,
-                    direct = hosts?.direct.orEmpty(),
-                    onConnectDirect = { controller.connect(it) },
-                    onAddHost = { name, address, token ->
-                        when (val result = controller.addDirectHost(name, address, token)) {
-                            is AppController.AddHostResult.Added -> null
-                            is AppController.AddHostResult.Invalid -> result.reason
-                            AppController.AddHostResult.NotSaved -> "The host could not be saved on this phone."
-                        }
-                    },
-                    onRemoveHost = { host -> scope.launch { controller.removeDirectHost(host.id) } },
-                    signedIn = controller.isSignedIn,
-                    onSignIn = controller::signIn,
-                    tokenExpiresAt = hosts?.tokenExpiresAt,
-                    renews = hosts?.renews == true,
-                )
-            }
             Page.SETTINGS -> SettingsScreen(
                 onBack = { page = Page.MAIN },
+                signedIn = controller.isSignedIn,
+                tokenExpiresAt = hosts.tokenExpiresAt,
+                renews = hosts.renews,
+                // Signing in ends the screen it is started from, so it is offered only with no host to lose.
+                onSignIn = if (connected == null) controller::signIn else null,
+                onSignOut = controller::signOut,
+                direct = hosts.direct,
+                onAddHost = addHost,
+                // Removing the host that is connected ends its connection first (the controller does that).
+                onRemoveHost = { host -> scope.launch { controller.removeDirectHost(host.id) } },
+                connectedId = connected?.host?.id,
                 monitorEnabled = monitorEnabled,
                 notificationsAllowed = notificationsAllowed,
                 onMonitorChange = onMonitorChange,
@@ -263,11 +270,11 @@ private fun Shell(
             }
             Page.MAIN -> if (connected == null || connection == null) {
                 ScreenScaffold(title = "AHP Client", onMenu = { openDrawer() }) {
-                    MainEmpty(connected = false, connection = null, manage = null, onConnect = { page = Page.HOST }, onOpenSessions = { openDrawer() }, onSessionCreated = {})
+                    MainEmpty(connected = false, connection = null, manage = null, onConnect = { hostSheet = true }, onOpenSessions = { openDrawer() }, onSessionCreated = {})
                 }
             } else if (open == null) {
                 ScreenScaffold(title = connected.host.name, onMenu = { openDrawer() }) {
-                    MainEmpty(connected = true, connection = connection, manage = manageActions, onConnect = { page = Page.HOST }, onOpenSessions = { openDrawer() }, onSessionCreated = showSession, needYou = inbox.waiting.size, onOpenInbox = { page = Page.INBOX })
+                    MainEmpty(connected = true, connection = connection, manage = manageActions, onConnect = { hostSheet = true }, onOpenSessions = { openDrawer() }, onSessionCreated = showSession, needYou = inbox.waiting.size, onOpenInbox = { page = Page.INBOX })
                 }
             } else {
                 SessionPage(
@@ -276,6 +283,22 @@ private fun Shell(
                 )
             }
         }
+    }
+    if (hostSheet) {
+        HostSheet(
+            catalog = hosts,
+            connectedHost = connected?.host,
+            connection = connection,
+            onDismiss = { hostSheet = false },
+            onRefresh = controller::refreshHosts,
+            onSwitch = controller::switchHost,
+            onDisconnect = controller::disconnect,
+            // Settings is where hosts are managed; it opens over the menu as the gear does.
+            onManageHosts = { closeDrawer(); page = Page.SETTINGS },
+            onAddHost = addHost,
+            // Signing in ends the screen the sheet is on, so it is offered only with no host to lose.
+            onSignIn = if (connected == null) controller::signIn else null,
+        )
     }
 }
 

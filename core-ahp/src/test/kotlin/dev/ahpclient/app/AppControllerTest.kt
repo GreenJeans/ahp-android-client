@@ -1597,6 +1597,25 @@ class AppControllerTest {
     }
 
     @Test
+    fun `a refresh that fails while connected leaves the list that was on show`() = runTest {
+        withRig {
+            connectedToFirstOfTwo()
+            val shown = assertIs<HostList.Loaded>(controller.hosts.value.list)
+            server.json("{}", code = 503)
+
+            controller.refreshHosts()
+            // The failure shows nowhere in the catalog, so wait for the request to be answered and given time to finish.
+            withContext(Dispatchers.Default) {
+                while (server.requestCount < 2) delay(10)
+                delay(300)
+            }
+            runCurrent()
+
+            assertEquals(shown, controller.hosts.value.list, "a good list is not replaced by the failure of the next one")
+        }
+    }
+
+    @Test
     fun `a refresh keeps the list on show while the new one loads, but not a failed one`() = runTest {
         withRig {
             vault.save(savedToken)
