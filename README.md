@@ -108,7 +108,7 @@ You need VS Code running with Remote Tunnel Access on, signed in with the same G
 .\gradlew.bat -q --console=plain :core-ahp:probe --args="--watch 45 --capture captures/live-session.jsonl"
 ```
 
-Options: `--tunnel <name|id>`, `--instance <id>`, `--watch <seconds>` (print notifications for a while),
+Options: `--direct <ws-or-wss-url>` (with token in `AHPD_TOKEN`), `--tunnel <name|id>`, `--instance <id>`, `--ping-seconds <n>` (default 30; `0` disables WebSocket pings and logs the elapsed idle duration and close code/reason when the relay closes the socket), `--watch <seconds>` (print notifications for a while),
 `--session <title-or-uri>` (subscribe to one session and print which clients the host lists as active; this client
 must not be among them), `--chat <title-or-uri>` (subscribe to a session's chat, decode its snapshot and apply every chat
 action with the library's reducer, reporting counts and type names only), `--census` (with `--census-sessions <n>`, default 10, and `--census-out <file>`: subscribe to the newest sessions and the main chat of each, watch for `--watch` seconds, default 10, and report per kind of frame every path under `_meta` and every other path the generated types drop; paths, JSON types and counts only, never a value, and a key that looks like a title or an address is shown as `<key>`), `--capture <file>` (raw frames as JSON lines). Capture files contain session titles and local paths, so they stay
@@ -201,8 +201,8 @@ or else the host's own options in its own words (at most three, the refusal firs
 to decide; the live chat is what says whether it can still be decided, through the same `ChatInteractor` checks as on screen.
 Deny needs no check and works from the lock screen. Approve starts a screenless activity so the device check has somewhere to
 appear (after unlocking, on a locked phone), and the prompt names the tool before anything is sent. The activity and the Deny
-receiver are not exported and their intents are immutable, so only this app's own notification can reach them. A question,
-a session waiting on more than one thing (its notification says how many, and names the first, with no buttons), and a tool's output are decided in the app. An option is only sent if the host offers it now and means what the button says, and the device check names it ("Your choice: Allow in this session").
+receiver are not exported and their intents are immutable, so only this app's own notification can reach them. When a session waits on a single free-text question in a listed chat (with acting for the user on), the notification gets an **Answer** button with inline reply (`RemoteInput`, `AnswerReceiver`), which checks the live chat and form bounds through `ChatInteractor` without a biometric prompt and updates the notification to "Sent" (or the refusal reason) until the host's echo clears it; multi-field or choice questions,
+a session waiting on more than one thing (its notification says how many, and names the first, with no buttons), and a tool's output are decided in the app. An option is only sent if the host offers it now and means what the button says, and the device check names it ("Your choice: Allow in this session"). A Quick Settings tile (`MonitorTileService`) shows how many sessions wait on you while monitoring runs ("2 waiting", "Connected", or "Monitoring off") and opens the inbox when tapped.
 
 When the outcome of an action is unknown (no echo in time, or the connection dropped first) the message stays in the box
 with a warning not to send it twice, because resending would duplicate it.
