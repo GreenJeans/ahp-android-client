@@ -216,4 +216,21 @@ class ModelOptionsTest {
 
         assertTrue(ModelOptions.isOffered(offered, ModelOptions.inUse(chat, offered)!!))
     }
+
+    @Test
+    fun `a chat with no turn or draft model falls back to the session's model when offered`() {
+        assertEquals(ModelChoice("sonnet"), ModelOptions.inUse(chatWith(), offered, sessionModel = "sonnet"))
+        assertEquals(ModelChoice("sonnet"), ModelOptions.inUse(null, offered, sessionModel = "Claude Sonnet"))
+        assertNull(ModelOptions.inUse(chatWith(), offered, sessionModel = "unlisted"))
+        assertEquals(
+            ModelChoice("auto"),
+            ModelOptions.inUse(chatWith(draft = """{"text":"","origin":{"kind":"user"},"model":{"id":"auto"}}"""), offered, sessionModel = "sonnet"),
+            "the chat's draft wins over the session's model",
+        )
+        assertEquals(
+            ModelChoice("auto"),
+            ModelOptions.inUse(chatWith(turn("t1", """{"id":"auto"}""")), offered, sessionModel = "sonnet"),
+            "the chat's turn wins over the session's model",
+        )
+    }
 }

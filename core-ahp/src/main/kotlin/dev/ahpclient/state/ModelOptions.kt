@@ -68,14 +68,19 @@ object ModelOptions {
      * A message sent with no model leaves the chat on the model it has (the host changes it only when asked), but the screen shows
      * and sends this one anyway, so what is on it is always what is used.
      */
-    fun inUse(chat: ChatState?, options: List<ModelOption>): ModelChoice? {
-        chat ?: return null
+    fun inUse(chat: ChatState?, options: List<ModelOption>, sessionModel: String? = null): ModelChoice? {
+        chat ?: return resolveByName(sessionModel, options)
         for (turn in listOfNotNull(chat.activeTurn?.let { it.message to it.usage }, chat.turns.lastOrNull()?.let { it.message to it.usage })) {
             choiceOf(turn.first.model, options)?.let { return it }
             val reported = turn.second?.model?.takeIf { it.isNotBlank() }
-            reported?.let { name -> options.firstOrNull { it.id == name || it.name.equals(name, ignoreCase = true) }?.let { return ModelChoice(it.id) } }
+            resolveByName(reported, options)?.let { return it }
         }
-        return choiceOf(chat.draft?.model, options)
+        return choiceOf(chat.draft?.model, options) ?: resolveByName(sessionModel, options)
+    }
+
+    private fun resolveByName(raw: String?, options: List<ModelOption>): ModelChoice? {
+        val name = raw?.takeIf { it.isNotBlank() } ?: return null
+        return options.firstOrNull { it.id == name || it.name.equals(name, ignoreCase = true) }?.let { ModelChoice(it.id) }
     }
 
     private fun choiceOf(selection: ModelSelection?, options: List<ModelOption>): ModelChoice? {

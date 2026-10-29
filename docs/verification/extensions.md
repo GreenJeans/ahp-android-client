@@ -118,7 +118,24 @@ From the library's sources (1.0.0), checked 2026-10-27:
 
 So E1 can read `_meta` from the decoded state for sessions, chats, messages and tool calls, and needs the raw frame only for `ChatSummary` and `AgentInfo`. The census lists every path under `_meta` whether or not the type declares it, so it does not say which of those the decoder kept.
 
-**Still to do for AC-E0.2:** compare with the twelve fields in `ahpc`'s `CONFORMANCE.md`, which is not in this repository; the field names must be taken from that document, not from memory. Only `toolKind` is likely to match one of them by name, and that is unconfirmed.
+### AC-E0.2: twelve-field comparison across both hosts (2026-10-28, protocol 1.0.0)
+
+Both hosts chose protocol **`1.0.0`** when offered `[1.0.0, 0.9.0]` on **2026-10-28**. Each of the twelve extension fields named in [`docs/extensions-spec.md`](../extensions-spec.md) from the source `CONFORMANCE.md` summary is compared against the two live censuses above:
+
+| # | Extension field (`extensions-spec.md`) | VS Code tunnel host (`1.0.0`, 2026-10-28) | `ahpd` 0.14.0 (`1.0.0`, 2026-10-28) |
+|---|---|---|---|
+| 1 | Git branch (`branchName` / `branch`) | **Seen** (`_meta.git.branchName`, `_meta.gitData.<folder>.branchName`) | **Not seen** |
+| 2 | Git drift / working-tree counts (`ahead` / `behind` / `outgoingChanges` / `incomingChanges` / `uncommittedChanges` / `isDetachedHead`) | **Seen under another name** (`_meta.git.{outgoingChanges,incomingChanges,uncommittedChanges,isDetachedHead}`) | **Not seen** |
+| 3 | Session pull requests (`pullRequests` / `pullRequest`) | **Not seen by that name** (candidate `items[]._meta.<key>[]` with `type`, `link`, `isGitHub`) | **Not seen** |
+| 4 | Session model (`SessionState.model` / `_meta.model`) | **Not seen** on session `_meta` (sent on `Turn.usage.model` and `Message.model`) | **Seen under another name** (`changes._meta.ahpd.model` on `root/sessionSummaryChanged`) |
+| 5 | Running tool-call progress (`progressMessage`) | **Not seen** (in 18 tool starts) | **Not seen** |
+| 6 | Tool-call kind, timing, MCP & subagent metadata (`toolKind`, `durationMs`, `mcpServerName`, `subagentAgentName`) | **Seen** (`_meta.{toolKind,language,mcpServerName,mcpToolName,subagentAgentName,subagentDescription}`) | **Seen** (`_meta.toolKind`, `_meta.ahpd.{startedAt,endedAt,durationMs}`) |
+| 7 | Message hidden from transcript (`vscode.chat.hiddenFromTranscript` / `requestHiddenFromTranscript`) | **Not seen** (no `_meta` on messages or turns in the captured sessions) | **Not seen** |
+| 8 | Missing `ActionEnvelope.origin` on echoes | **Seen on host-started actions** (7 with `origin`, 1,376 without; client dispatches carry `origin`) | **Seen** on `chat/turnStarted` echoes when waking an unloaded session (`@ahpd/sdk` `host/chatactions.js`) |
+| 9 | Skill / customization child `argumentHint` | **Seen under another name** (`_meta.vscode.skill.argumentHint`) | **Seen** (`argumentHint` outside `_meta`, and `_meta.ahpd.argumentHint`) |
+| 10 | Customization `enabled`, `nonce`, `childEnablement` | **Seen** (`childEnablement` and `nonce` outside `_meta`, dropped by generated types; `enabled` is in the 1.0.0 schema) | **Not seen** (`enabled` is in the 1.0.0 schema; `nonce` and `childEnablement` absent) |
+| 11 | Config property mutability & scope (`sessionMutable`, `chatMutable`, `scope`) | **Seen** (`chatMutable` and `sessionMutable` on config schema properties, read via `ConfigFacts`; `scope` not seen) | **Not seen** |
+| 12 | Usage cost & token breakdown / completion attachments (`usage._meta.cost`, `contextAttribution`) | **Seen** (`_meta.cost`, `copilotUsage`, `quotaSnapshots`, `turnTokenTotals[]`, `contextAttribution`) | **Seen under another name** (`usage._meta.ahpd.{cacheWriteTokens,cost.amount,cost.currency}`) |
 
 ## E6: a directly addressed host
 

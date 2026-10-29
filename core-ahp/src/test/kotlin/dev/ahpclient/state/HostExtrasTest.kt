@@ -72,7 +72,7 @@ class HostExtrasTest {
     fun `a host that sends nothing gives the empty value`() {
         assertTrue(HostExtras.session(null).isEmpty)
         assertTrue(HostExtras.session(emptyMap()).isEmpty)
-        assertTrue(HostExtras.session(meta("""{"ahpd.model":"m","vscode.external":true}""")).isEmpty)
+        assertTrue(HostExtras.session(meta("""{"vscode.external":true,"workspaceless":false}""")).isEmpty)
     }
 
     @Test
@@ -291,5 +291,23 @@ class HostExtrasTest {
         assertNull(negativeDuration.durationMs)
         val stringDuration = HostExtras.stepMeta(meta("""{"ahpd.durationMs":"1200"}"""), running = false, completed = true)
         assertNull(stringDuration.durationMs)
+    }
+
+    @Test
+    fun `different host spellings for branch, counts, and model produce the same SessionExtras`() {
+        val vscodeShape = HostExtras.session(
+            meta("""{"git":{"branchName":"feat/x","outgoingChanges":2,"incomingChanges":1,"uncommittedChanges":3},"model":"claude-sonnet"}"""),
+        )
+        val conformanceShape = HostExtras.session(
+            meta("""{"git":{"branch":"feat/x","ahead":2,"behind":1,"uncommitted":3},"ahpd.model":"claude-sonnet"}"""),
+        )
+        val nestedAhpdShape = HostExtras.session(
+            meta("""{"branch":"feat/x","ahead":2,"behind":1,"uncommitted":3,"ahpd":{"model":"claude-sonnet"}}"""),
+        )
+
+        val expected = SessionExtras(branch = "feat/x", outgoing = 2, incoming = 1, uncommitted = 3, model = "claude-sonnet")
+        assertEquals(expected, vscodeShape)
+        assertEquals(expected, conformanceShape)
+        assertEquals(expected, nestedAhpdShape)
     }
 }
