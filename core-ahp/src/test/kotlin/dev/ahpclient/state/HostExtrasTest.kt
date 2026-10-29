@@ -198,4 +198,71 @@ class HostExtrasTest {
         store.apply(cleared)
         assertTrue(store.state.value!!.extras.isEmpty)
     }
+
+    @Test
+    fun `pull requests are read with their state and branch, and only plain github urls are openable`() {
+        val extras = HostExtras.session(
+            meta(
+                """{"git":{"branchName":"feat","pullRequests":[
+                    {"url":"https://github.com/org/repo/pull/42","state":"open","branchName":"feat"},
+                    {"link":"https://evil.example/org/repo/pull/42","status":"merged"},
+                    {"uri":"https://github.com","state":"closed"},
+                    {"url":"http://github.com/org/repo/pull/1","state":"open"},
+                    {"url":"https://user:pass@github.com/org/repo/pull/2"}
+                ]}}""",
+            ),
+        )
+
+        assertEquals(5, extras.pullRequests.size)
+        val first = extras.pullRequests[0]
+        assertEquals(PullRequest("https://github.com/org/repo/pull/42", "open", "feat"), first)
+        assertEquals(42, first.number)
+        assertEquals("PR #42 · open", first.label)
+        assertEquals("https://github.com/org/repo/pull/42", first.openableUrl)
+
+        assertEquals("PR #42 · merged", extras.pullRequests[1].label)
+        assertNull(extras.pullRequests[1].openableUrl, "non-github.com URLs are shown as text, never opened")
+        assertEquals("PR · closed", extras.pullRequests[2].label)
+        assertNull(extras.pullRequests[2].openableUrl, "bare github.com root is not a PR link")
+        assertNull(extras.pullRequests[3].openableUrl, "http is refused")
+        assertNull(extras.pullRequests[4].openableUrl, "embedded credentials are refused")
+        assertEquals("open", extras.pullRequests[4].state, "missing state defaults to open")
+
+        val single = HostExtras.session(meta("""{"pullRequest":{"url":"https://github.com/org/repo/pulls/7","state":"draft"}}"""))
+        assertEquals(listOf(PullRequest("https://github.com/org/repo/pulls/7", "draft")), single.pullRequests)
+    }
+
+    @Test
+    fun `a running tool call's progress message is cleaned to one plain line and ignored once finished`() {
+        val running = Ahp.json.decodeFromString(
+            com.microsoft.agenthostprotocol.generated.ToolCallState.serializer(),
+            """{"status":"running","toolCallId":"c1","toolName":"t","displayName":"Run","invocationMessage":"m","toolInput":"{}","confirmed":"not-needed",
+                "_meta":{"progressMessage":"Running `gradle test`\nin [core-ahp](file:///x)"}}""",
+        )
+        val completed = Ahp.json.decodeFromString(
+            com.microsoft.agenthostprotocol.generated.ToolCallState.serializer(),
+            """{"status":"completed","toolCallId":"c1","toolName":"t","displayName":"Run","invocationMessage":"m","toolInput":"{}","confirmed":"not-needed",
+                "success":true,"pastTenseMessage":"Done","_meta":{"progressMessage":"Running gradle test"}}""",
+        )
+        val vscode = HostExtras.stepRunning(meta("""{"vscode.toolCall.progressMessage":"Searching **files**"}"""))
+        val ahpd = HostExtras.stepRunning(meta("""{"ahpd.progressMessage":"Indexing"}"""))
+        val oversized = HostExtras.stepRunning(meta("""{"progressMessage":"${"x".repeat(1_000)}"}"""))
+
+        assertEquals(StepExtras("Running gradle test in core-ahp"), running.extras)
+        assertTrue(completed.extras.isEmpty, "once finished, the normal result view takes over")
+        assertEquals("Searching files", vscode.progressMessage)
+        assertEquals("Indexing", ahpd.progressMessage)
+        assertEquals(HostExtras.MAX_TEXT, oversized.progressMessage!!.length)
+        assertTrue(HostExtras.stepRunning(meta("""{"progressMessage":42}""")).isEmpty)
+    }
+
+    @Test
+    fun `a message flagged hidden by either spelling is marked hidden, and a string flag is ignored`() {
+        assertTrue(HostExtras.message(meta("""{"vscode.chat.hiddenFromTranscript":true}""")).hiddenFromTranscript)
+        assertTrue(HostExtras.message(meta("""{"vscode":{"chat":{"hiddenFromTranscript":true}}}""")).hiddenFromTranscript)
+        assertTrue(HostExtras.message(meta("""{"requestHiddenFromTranscript":true}""")).hiddenFromTranscript)
+        assertFalse(HostExtras.message(meta("""{"vscode.chat.hiddenFromTranscript":"true"}""")).hiddenFromTranscript)
+        assertFalse(HostExtras.message(meta("""{"vscode.chat.hiddenFromTranscript":false}""")).hiddenFromTranscript)
+        assertTrue(HostExtras.message(null).isEmpty)
+    }
 }

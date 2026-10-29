@@ -125,6 +125,7 @@ class HostSession(
     private val network: StateFlow<NetworkState> = NetworkState.ALWAYS_AVAILABLE,
     cache: SessionListCache? = null,
     cacheKey: String? = null,
+    private val note: (String) -> Unit = {},
 ) : ManagementCommands {
     val root = RootStore()
 
@@ -805,7 +806,9 @@ class HostSession(
         val seq = awaiting.entries
             .filter { (_, p) -> p.key.matches(key) && (key.anyChannel || p.channel == envelope.channel) }
             .minOfOrNull { it.key } ?: return
-        awaiting.remove(seq)?.reply?.complete(outcome)
+        if (awaiting.remove(seq)?.reply?.complete(outcome) == true) {
+            note("dispatch answered by echo without origin (seq $seq)")
+        }
     }
 
     private fun storeFor(uri: String): SessionStore? = synchronized(sessions) { sessions[uri] }

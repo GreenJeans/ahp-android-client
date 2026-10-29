@@ -40,11 +40,15 @@ sealed interface TranscriptRowModel {
                 else -> "Used $toolCount tools"
             }
 
-        /** Under the title: the step in progress, else which tools were used and how many failed. Null when there is nothing to add. */
+        /**
+         * Under the title: the step in progress (its live progress message from E3 when present, else the tool name and summary),
+         * else which tools were used and how many failed. Null when there is nothing to add.
+         */
         val detail: String?
             get() = when {
                 needsYou -> tools.lastOrNull { it.state == ToolState.WAITING_FOR_APPROVAL || it.state == ToolState.SIGN_IN_REQUIRED }?.let(::describe)
-                running -> items.lastOrNull()?.let { if (it is TranscriptItem.Tool) describe(it) else "Thinking…" }
+                running -> tools.lastOrNull { it.state == ToolState.RUNNING && !it.progress.isNullOrBlank() }?.progress
+                    ?: items.lastOrNull()?.let { if (it is TranscriptItem.Tool) describe(it) else "Thinking…" }
                 else -> listOfNotNull(
                     distinctNames().takeIf { it.isNotEmpty() },
                     failedCount.takeIf { it > 0 }?.let { "$it failed" },
