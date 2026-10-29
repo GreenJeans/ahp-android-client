@@ -224,6 +224,35 @@ class SessionScreensTest {
         assertEquals("On", rule.onNodeWithTag("archived_toggle").fetchSemanticsNode().config[state])
     }
 
+    // An icon button clips what it holds to its shape: with the badge inside it, the phone showed "30" for 305 archived sessions.
+    private fun assertBadgeOutsideButtonAndSilent(badgeTag: String, buttonTag: String, text: String) {
+        val badge = rule.onNodeWithTag(badgeTag, useUnmergedTree = true).assertTextEquals(text).fetchSemanticsNode()
+        var parent = badge.parent
+        while (parent != null) {
+            assertTrue("the $badgeTag badge is inside $buttonTag, which clips it", parent.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.TestTag) != buttonTag)
+            parent = parent.parent
+        }
+        assertTrue("the count is said by the button, not read again", androidx.compose.ui.semantics.SemanticsProperties.HideFromAccessibility in badge.config)
+    }
+
+    @Test
+    fun aThreeDigitArchivedCountIsNotClippedByTheToggle() {
+        showSessions(listOf(waiting) + (1..305).map { summary("ahp-session:/a$it", "Old $it", 97, "2026-10-26T09:30:00.000Z") })
+
+        assertBadgeOutsideButtonAndSilent("archived_count", "archived_toggle", "305")
+        assertEquals("Off, 305 hidden", rule.onNodeWithTag("archived_toggle").fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription])
+    }
+
+    @Test
+    fun aThreeDigitInboxCountIsNotClippedByTheButton() {
+        var opened = 0
+        showSessions(inboxCount = 305, onOpenInbox = { opened++ })
+
+        assertBadgeOutsideButtonAndSilent("inbox_badge", "drawer_inbox", "305")
+        rule.onNodeWithTag("drawer_inbox").assertContentDescriptionEquals("Inbox, 305 need you").performClick()
+        assertEquals("the badge over the button does not take its tap", 1, opened)
+    }
+
     @Test
     fun theArchivedToggleStaysWhileTheyAreShownEvenWhenNoneAreArchived() {
         showSessions(listOf(waiting, working), initialShowArchived = true)

@@ -52,6 +52,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.hideFromAccessibility
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
@@ -151,14 +152,35 @@ private fun Tooltip(label: String, content: @Composable () -> Unit) {
 private fun InboxAction(count: Int, onOpenInbox: () -> Unit) {
     val spoken = if (count > 0) "Inbox, $count ${if (count == 1) "needs" else "need"} you" else "Inbox"
     Tooltip("Inbox") {
-        IconButton(onClick = onOpenInbox, modifier = Modifier.semantics(mergeDescendants = true) { contentDescription = spoken }.testTag("drawer_inbox")) {
+        CountOver(
+            count = count.takeIf { it > 0 },
+            tag = "inbox_badge",
+            containerColor = MaterialTheme.colorScheme.tertiary,
+            contentColor = MaterialTheme.colorScheme.onTertiary,
+        ) {
+            IconButton(onClick = onOpenInbox, modifier = Modifier.semantics(mergeDescendants = true) { contentDescription = spoken }.testTag("drawer_inbox")) {
+                Icon(AppIcons.Inbox, contentDescription = null)
+            }
+        }
+    }
+}
+
+/**
+ * An icon button with a count on the corner of its icon. The badge is drawn over the button, not inside it: an icon button clips what
+ * it holds to its round shape, which cut a three-digit count to two ("30" for 305). The count is not read out on its own, since the
+ * button's own words already say it.
+ */
+@Composable
+private fun CountOver(count: Int?, tag: String, containerColor: Color, contentColor: Color, button: @Composable () -> Unit) {
+    Box(contentAlignment = Alignment.Center) {
+        button()
+        if (count != null) {
+            // Stands where the button's 24 dp icon is, so the badge sits where it did inside the button.
             BadgedBox(badge = {
-                if (count > 0) {
-                    Badge(containerColor = MaterialTheme.colorScheme.tertiary, contentColor = MaterialTheme.colorScheme.onTertiary) {
-                        Text("$count", modifier = Modifier.testTag("inbox_badge"))
-                    }
+                Badge(containerColor = containerColor, contentColor = contentColor) {
+                    Text("$count", modifier = Modifier.testTag(tag).semantics { hideFromAccessibility() })
                 }
-            }) { Icon(AppIcons.Inbox, contentDescription = null) }
+            }) { Spacer(Modifier.size(24.dp)) }
         }
     }
 }
@@ -170,25 +192,24 @@ private fun InboxAction(count: Int, onOpenInbox: () -> Unit) {
 @Composable
 private fun ArchivedAction(showing: Boolean, hidden: Int, onToggle: () -> Unit) {
     Tooltip("Show archived") {
-        IconToggleButton(
-            checked = showing,
-            onCheckedChange = { onToggle() },
-            modifier = Modifier.semantics(mergeDescendants = true) {
-                contentDescription = "Show archived"
-                stateDescription = if (showing) "On" else "Off, $hidden hidden"
-            }.testTag("archived_toggle"),
-            colors = IconButtonDefaults.iconToggleButtonColors(
-                checkedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
-                checkedContentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-            ),
+        CountOver(
+            count = hidden.takeIf { !showing },
+            tag = "archived_count",
+            containerColor = MaterialTheme.colorScheme.secondary,
+            contentColor = MaterialTheme.colorScheme.onSecondary,
         ) {
-            BadgedBox(badge = {
-                if (!showing) {
-                    Badge(containerColor = MaterialTheme.colorScheme.secondary, contentColor = MaterialTheme.colorScheme.onSecondary) {
-                        Text("$hidden", modifier = Modifier.testTag("archived_count"))
-                    }
-                }
-            }) { Icon(AppIcons.Archive, contentDescription = null) }
+            IconToggleButton(
+                checked = showing,
+                onCheckedChange = { onToggle() },
+                modifier = Modifier.semantics(mergeDescendants = true) {
+                    contentDescription = "Show archived"
+                    stateDescription = if (showing) "On" else "Off, $hidden hidden"
+                }.testTag("archived_toggle"),
+                colors = IconButtonDefaults.iconToggleButtonColors(
+                    checkedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    checkedContentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                ),
+            ) { Icon(AppIcons.Archive, contentDescription = null) }
         }
     }
 }
