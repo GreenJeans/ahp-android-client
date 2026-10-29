@@ -163,7 +163,7 @@ class ManageUiTest {
     // ---- a new session ----------------------------------------------------------------------------------------
 
     private fun showNewSession(calls: Calls, manage: ManageActionsUi = actions(calls), onCreated: (String) -> Unit = {}) {
-        rule.setContent { AhpTheme { NewSessionButton(manage, onCreated) } }
+        rule.setContent { AhpTheme { NewSessionIconButton(manage, onCreated) } }
         rule.onNodeWithTag("new_session").performClick()
     }
 
@@ -589,7 +589,7 @@ class ManageUiTest {
     fun theChoicesSurviveRotation() {
         val calls = Calls().apply { hostOffers() }
         val restoration = StateRestorationTester(rule)
-        restoration.setContent { AhpTheme { NewSessionButton(actions(calls), {}) } }
+        restoration.setContent { AhpTheme { NewSessionIconButton(actions(calls), {}) } }
         rule.onNodeWithTag("new_session").performClick()
         chooseClaudeInB()
         rule.waitUntil(5_000) { rule.onAllNodesCount("setting_title_thinking") == 1 }

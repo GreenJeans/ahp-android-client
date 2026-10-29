@@ -20,20 +20,26 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.IconToggleButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
-import androidx.compose.material3.Surface
+import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.Text
-import androidx.compose.material3.Surface
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.Surface
 import androidx.compose.material3.TextField
-import androidx.compose.material3.Surface
 import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.TooltipAnchorPosition
+import androidx.compose.material3.TooltipBox
+import androidx.compose.material3.TooltipDefaults
+import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -63,8 +69,9 @@ import com.microsoft.agenthostprotocol.generated.SessionSummary
 import java.time.Instant
 
 /**
- * The side menu: the host at the top (a way to its screen), a button to start a session (only when the app may look after
- * sessions), the host's sessions with those needing you first, and Settings at the bottom. [host] is null while not connected.
+ * The side menu: the host at the top (a way to the hosts sheet), one row of icon buttons (the inbox, the archived toggle, a button to
+ * start a session only when the app may look after sessions, and Settings), then the host's sessions with those needing you
+ * first. [host] is null while not connected: the menu then says so, with a button to the hosts sheet.
  * [selected] is the open session. [listState], [showArchived] and [query] are held by the caller so they survive the menu closing.
  * While [stale] the sessions are only what the phone saved last time, and say so.
  */
@@ -93,72 +100,104 @@ fun DrawerContent(
     onOpenInbox: () -> Unit = {},
     stale: Boolean = false,
 ) {
+    val model = remember(sessions, showArchived, now, query) { SessionListModel.from(SessionCatalog.sorted(sessions), showArchived, now, query) }
     ModalDrawerSheet(modifier = modifier.testTag("drawer")) {
         Column(Modifier.fillMaxSize()) {
             HostButton(host, connection, onOpenHost)
-            if (manage != null && host != null) {
-                NewSessionButton(manage, onSessionCreated, Modifier.padding(horizontal = 12.dp, vertical = 4.dp).fillMaxWidth())
-            }
-            if (inboxCount != null && host != null) InboxButton(inboxCount, onOpenInbox)
-            HorizontalDivider(Modifier.padding(top = 8.dp))
-            if (host == null) {
-                Text(
-                    "Connect to a host to see its sessions.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f).padding(16.dp).testTag("drawer_no_host"),
-                )
-            } else {
-                SessionList(sessions, connection, stale, now, selected, showArchived, onToggleArchived, query, onQueryChange, listState, watched, onOpenSession, Modifier.weight(1f))
-            }
-            HorizontalDivider()
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 52.dp)
-                    .clickable(onClickLabel = "Open settings", role = Role.Button, onClick = onOpenSettings)
-                    .padding(horizontal = 16.dp)
-                    .testTag("settings"),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(AppIcons.Settings, contentDescription = null)
-                Text("Settings", style = MaterialTheme.typography.titleSmall)
+                if (inboxCount != null && host != null) InboxAction(inboxCount, onOpenInbox)
+                if (host != null && (model.hiddenArchived > 0 || showArchived)) ArchivedAction(showArchived, model.hiddenArchived, onToggleArchived)
+                Spacer(Modifier.weight(1f))
+                if (manage != null && host != null) {
+                    Tooltip("New session") { NewSessionIconButton(manage, onSessionCreated) }
+                }
+                Tooltip("Settings") {
+                    IconButton(onClick = onOpenSettings, modifier = Modifier.testTag("settings")) {
+                        Icon(AppIcons.Settings, contentDescription = "Settings")
+                    }
+                }
+            }
+            HorizontalDivider()
+            if (host == null) {
+                Column(Modifier.weight(1f).fillMaxWidth().padding(16.dp).testTag("drawer_no_host"), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Connect to a host to see its sessions.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Button(onClick = onOpenHost, modifier = Modifier.heightIn(min = 48.dp).testTag("choose_host")) { Text("Choose a host") }
+                }
+            } else {
+                SessionList(model, connection, stale, selected, query, onQueryChange, listState, watched, onOpenSession, Modifier.weight(1f))
             }
         }
     }
+}
+
+/** A name shown on long press, for an icon button that has no words of its own. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun Tooltip(label: String, content: @Composable () -> Unit) {
+    TooltipBox(
+        positionProvider = TooltipDefaults.rememberTooltipPositionProvider(TooltipAnchorPosition.Below),
+        tooltip = { PlainTooltip { Text(label) } },
+        state = rememberTooltipState(),
+        content = content,
+    )
 }
 
 /** The way to the inbox, with how many sessions wait on you. Said as one item: "Inbox, 2 need you". */
 @Composable
-private fun InboxButton(count: Int, onOpenInbox: () -> Unit) {
+private fun InboxAction(count: Int, onOpenInbox: () -> Unit) {
     val spoken = if (count > 0) "Inbox, $count ${if (count == 1) "needs" else "need"} you" else "Inbox"
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 52.dp)
-            .clickable(onClickLabel = "Open inbox", role = Role.Button, onClick = onOpenInbox)
-            .padding(horizontal = 16.dp)
-            .semantics(mergeDescendants = true) { contentDescription = spoken }
-            .testTag("drawer_inbox"),
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(AppIcons.Inbox, contentDescription = null)
-        Text("Inbox", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-        if (count > 0) {
-            Surface(shape = CircleShape, color = MaterialTheme.colorScheme.tertiary, contentColor = MaterialTheme.colorScheme.onTertiary) {
-                Text("$count", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp).testTag("inbox_badge"))
-            }
+    Tooltip("Inbox") {
+        IconButton(onClick = onOpenInbox, modifier = Modifier.semantics(mergeDescendants = true) { contentDescription = spoken }.testTag("drawer_inbox")) {
+            BadgedBox(badge = {
+                if (count > 0) {
+                    Badge(containerColor = MaterialTheme.colorScheme.tertiary, contentColor = MaterialTheme.colorScheme.onTertiary) {
+                        Text("$count", modifier = Modifier.testTag("inbox_badge"))
+                    }
+                }
+            }) { Icon(AppIcons.Inbox, contentDescription = null) }
         }
     }
 }
 
-/** The host's name and how the connection stands, as one button to the host screen. */
+/**
+ * Shows or hides the archived sessions. Its name stays "Show archived" and its state says on or off (with how many are hidden while off),
+ * so that the name never says the opposite of the state. While they are hidden it carries the count; while shown it is filled.
+ */
+@Composable
+private fun ArchivedAction(showing: Boolean, hidden: Int, onToggle: () -> Unit) {
+    Tooltip("Show archived") {
+        IconToggleButton(
+            checked = showing,
+            onCheckedChange = { onToggle() },
+            modifier = Modifier.semantics(mergeDescendants = true) {
+                contentDescription = "Show archived"
+                stateDescription = if (showing) "On" else "Off, $hidden hidden"
+            }.testTag("archived_toggle"),
+            colors = IconButtonDefaults.iconToggleButtonColors(
+                checkedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
+                checkedContentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+            ),
+        ) {
+            BadgedBox(badge = {
+                if (!showing) {
+                    Badge(containerColor = MaterialTheme.colorScheme.secondary, contentColor = MaterialTheme.colorScheme.onSecondary) {
+                        Text("$hidden", modifier = Modifier.testTag("archived_count"))
+                    }
+                }
+            }) { Icon(AppIcons.Archive, contentDescription = null) }
+        }
+    }
+}
+
+/** The host's name and how the connection stands, as one button to the hosts sheet. */
 @Composable
 private fun HostButton(host: HostRef?, connection: ConnState?, onOpenHost: () -> Unit) {
     val state = when {
-        host == null -> "Tap to connect"
+        host == null -> "Not connected"
         connection != null -> describe(connection)
         else -> ""
     }
@@ -166,7 +205,7 @@ private fun HostButton(host: HostRef?, connection: ConnState?, onOpenHost: () ->
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 60.dp)
-            .clickable(onClickLabel = "Open host", role = Role.Button, onClick = onOpenHost)
+            .clickable(onClickLabel = "Show hosts", role = Role.Button, onClick = onOpenHost)
             .padding(horizontal = 16.dp, vertical = 8.dp)
             .semantics(mergeDescendants = true) {}
             .testTag("drawer_host"),
@@ -175,22 +214,19 @@ private fun HostButton(host: HostRef?, connection: ConnState?, onOpenHost: () ->
     ) {
         Icon(AppIcons.Host, contentDescription = null)
         Column(Modifier.weight(1f)) {
-            Text(host?.name ?: "Not connected", style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("drawer_host_name"))
+            Text(host?.name ?: "Hosts", style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("drawer_host_name"))
             Text(state, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("connection_status"))
         }
-        Icon(AppIcons.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Icon(AppIcons.ChevronDown, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
 @Composable
 private fun SessionList(
-    sessions: List<SessionSummary>,
+    model: SessionListModel,
     connection: ConnState?,
     stale: Boolean,
-    now: Instant,
     selected: String?,
-    showArchived: Boolean,
-    onToggleArchived: () -> Unit,
     query: String,
     onQueryChange: (String) -> Unit,
     listState: LazyListState,
@@ -198,17 +234,11 @@ private fun SessionList(
     onOpen: (String) -> Unit,
     modifier: Modifier,
 ) {
-    val model = remember(sessions, showArchived, now, query) { SessionListModel.from(SessionCatalog.sorted(sessions), showArchived, now, query) }
     LazyColumn(state = listState, modifier = modifier.fillMaxWidth().testTag("session_list")) {
         item(key = "header") {
-            Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Sessions", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f).semantics { heading() })
                 if (stale) UpdatingChip(Modifier.padding(end = 12.dp))
-                if (model.hiddenArchived > 0 || showArchived) {
-                    TextButton(onClick = onToggleArchived, modifier = Modifier.heightIn(min = 48.dp).testTag("archived_toggle")) {
-                        Text(if (showArchived) "Hide archived" else "Archived (${model.hiddenArchived})")
-                    }
-                }
             }
         }
         if (model.summary.isNotEmpty()) {

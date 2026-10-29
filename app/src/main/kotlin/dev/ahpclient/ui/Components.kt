@@ -81,7 +81,9 @@ fun ConnectionLine(connection: ConnState, modifier: Modifier = Modifier) {
     if (connection is ConnState.Failed) {
         ErrorText(describe(connection), modifier.testTag("connection_status"))
     } else {
-        Text(describe(connection), style = MaterialTheme.typography.bodyLarge, modifier = modifier.testTag("connection_status"))
+        // Connected is the state nothing needs saying about; every other one is said, politely, when it comes.
+        val announced = if (connection == ConnState.Online) Modifier else Modifier.semantics { liveRegion = LiveRegionMode.Polite }
+        Text(describe(connection), style = MaterialTheme.typography.bodyLarge, modifier = modifier.then(announced).testTag("connection_status"))
     }
 }
 

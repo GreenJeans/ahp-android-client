@@ -5,7 +5,6 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.widget.Toast
@@ -14,46 +13,15 @@ import androidx.core.net.toUri
 import dev.ahpclient.app.SafeLinks
 import dev.ahpclient.state.LinkTarget
 
-/** A browser installed on the phone, for the one links open in. */
-data class BrowserOption(val packageName: String, val label: String)
-
-object Browsers {
-    /** The browsers on the phone, by name: apps that handle web pages and call themselves a browser, not every app that can open a link. */
-    fun installed(context: Context): List<BrowserOption> {
-        val pm = context.packageManager
-        val view = Intent(Intent.ACTION_VIEW, "https://example.com".toUri()).addCategory(Intent.CATEGORY_BROWSABLE)
-        val browsers = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_APP_BROWSER)
-        val handlers = query(pm, view).map { it.activityInfo.packageName }.toSet()
-        val named = query(pm, browsers).map { it.activityInfo.packageName }.toSet()
-        // Where the phone does not say which apps are browsers, every handler of web pages is offered.
-        val wanted = if (named.isEmpty()) handlers else handlers.intersect(named)
-        return query(pm, view)
-            .filter { it.activityInfo.packageName in wanted }
-            .map { BrowserOption(it.activityInfo.packageName, it.loadLabel(pm).toString()) }
-            .distinctBy { it.packageName }
-            .sortedBy { it.label.lowercase() }
-    }
-
-    fun isInstalled(context: Context, packageName: String): Boolean = installed(context).any { it.packageName == packageName }
-
-    @Suppress("DEPRECATION")
-    private fun query(pm: PackageManager, intent: Intent) =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            pm.queryIntentActivities(intent, PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_ALL.toLong()))
-        } else {
-            pm.queryIntentActivities(intent, PackageManager.MATCH_ALL)
-        }
-}
-
 /**
- * Opens the GitHub device-flow page in [browser], or the system's choice when there is none or it is gone. Refuses anything that
- * is not an https github.com page, even though the caller already checked: this is the last line before a launch.
+ * Opens the GitHub device-flow page in the phone's default browser. Refuses anything that is not an https github.com page, even
+ * though the caller already checked: this is the last line before a launch.
  *
  * @return false when nothing could be opened, so the caller can tell the user.
  */
-fun openInBrowser(context: Context, url: String, browser: String? = null): Boolean {
+fun openInBrowser(context: Context, url: String): Boolean {
     if (!SafeLinks.isSafeVerificationUri(url)) return false
-    return launchWeb(context, url.toUri(), browser)
+    return launchWeb(context, url.toUri())
 }
 
 /**
@@ -63,25 +31,27 @@ fun openInBrowser(context: Context, url: String, browser: String? = null): Boole
  *
  * @return false when nothing could be opened, so the caller can tell the user.
  */
-fun openLink(context: Context, raw: String, browser: String? = null): Boolean = when (val target = LinkTarget.of(raw)) {
-    is LinkTarget.Web -> launchWeb(context, target.url.toUri(), browser)
+fun openLink(context: Context, raw: String): Boolean = when (val target = LinkTarget.of(raw)) {
+    is LinkTarget.Web -> launchWeb(context, target.url.toUri())
     is LinkTarget.Mail -> start(context, Intent(Intent.ACTION_SENDTO, Uri.fromParts("mailto", target.address, null)))
     is LinkTarget.Phone -> start(context, Intent(Intent.ACTION_DIAL, Uri.fromParts("tel", target.number, null)))
     null -> false
 }
 
-private fun launchWeb(context: Context, uri: Uri, browser: String?): Boolean {
-    val chosen = browser?.takeIf { Browsers.isInstalled(context, it) }
-    return try {
-        val tabs = CustomTabsIntent.Builder().build()
-        if (chosen != null) tabs.intent.setPackage(chosen)
-        tabs.launchUrl(context, uri)
-        true
-    } catch (_: ActivityNotFoundException) {
-        start(context, Intent(Intent.ACTION_VIEW, uri).addCategory(Intent.CATEGORY_BROWSABLE).also { if (chosen != null) it.setPackage(chosen) }) ||
-            (chosen != null && start(context, Intent(Intent.ACTION_VIEW, uri).addCategory(Intent.CATEGORY_BROWSABLE)))
-    }
+/** A Custom Tab with no package set, so the phone's default browser opens it; a plain view of the page when nothing handles Custom Tabs. */
+private fun launchWeb(context: Context, uri: Uri): Boolean = try {
+    CustomTabsIntent.Builder().build().launchUrl(context, uri)
+    true
+} catch (_: ActivityNotFoundException) {
+    start(context, Intent(Intent.ACTION_VIEW, uri).addCategory(Intent.CATEGORY_BROWSABLE))
 }
+
+/** The system share sheet's intent for [url]: it is where "open in another browser", copy and every messaging app already are. */
+fun shareIntent(url: String): Intent =
+    Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, url), null)
+
+/** @return false when nothing could be started, so the caller can tell the user. */
+fun shareLink(context: Context, url: String): Boolean = start(context, shareIntent(url))
 
 private fun start(context: Context, intent: Intent): Boolean = try {
     context.startActivity(intent)

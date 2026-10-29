@@ -9,19 +9,6 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- To list the browsers on the phone, for the one links open in. -->
-    <queries>
-        <intent>
-            <action android:name="android.intent.action.VIEW" />
-            <category android:name="android.intent.category.BROWSABLE" />
-            <data android:scheme="https" />
-        </intent>
-        <intent>
-            <action android:name="android.intent.action.MAIN" />
-            <category android:name="android.intent.category.APP_BROWSER" />
-        </intent>
-    </queries>
-
     <!--
         Cleartext is allowed because a network security configuration cannot name an address range, and a host added by address
         (ahpd on a laptop) is reached by a private IP. Which addresses may be used unencrypted is decided in code instead: HostAddress

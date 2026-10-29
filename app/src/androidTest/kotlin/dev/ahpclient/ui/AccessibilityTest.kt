@@ -22,8 +22,11 @@ import android.os.Build
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.ahpclient.app.HostRef
 import dev.ahpclient.app.AppState
+import dev.ahpclient.app.DirectEntry
+import dev.ahpclient.app.HostCatalog
 import dev.ahpclient.app.HostEntry
 import dev.ahpclient.app.HostList
+import dev.ahpclient.direct.DirectHost
 import dev.ahpclient.app.SignInStep
 import dev.ahpclient.state.ActivityState
 import dev.ahpclient.state.AgentChoice
@@ -124,15 +127,6 @@ class AccessibilityTest {
         checkEach(*states.map { state -> @Composable { SignInScreen(state, {}, {}, {}, {}) } }.toTypedArray())
     }
 
-    private val browsers = listOf(BrowserOption("com.android.chrome", "Chrome"), BrowserOption("org.mozilla.firefox", "Firefox"))
-
-    @Composable
-    private fun HostScreenFor(list: HostList? = null, connected: TunnelInfo? = null, connection: ConnState? = null, browser: String? = null, renews: Boolean = false) =
-        HostScreen(
-            list, connected?.let(HostRef::Tunnel), connection, onBack = {}, onRefresh = {}, onConnect = {}, onDisconnect = {}, onSignOut = {},
-            browsers = browsers, browser = browser, onBrowser = {}, tokenExpiresAt = now.plusSeconds(3600), renews = renews,
-        )
-
     @Composable
     private fun DrawerFor(
         connected: TunnelInfo? = host,
@@ -167,32 +161,84 @@ class AccessibilityTest {
     }
 
     @Test
-    fun theInboxEntryAndTheMainPageButton() {
+    fun theInboxEntry() {
         checkEach(
             { DrawerFor(inboxCount = 2) },
             { DrawerFor(inboxCount = 0) },
-            { MainEmpty(connected = true, connection = ConnState.Online, manage = null, onConnect = {}, onOpenSessions = {}, onSessionCreated = {}, needYou = 2, onOpenInbox = {}) },
         )
     }
 
     @Test
-    fun hostScreens() {
-        val entries = listOf(HostEntry(host, isLastUsed = true), HostEntry(TunnelInfo("t-off", "usw2", "old-laptop", 5, 0, listOf(31546)), isLastUsed = false))
-        val lists = listOf(HostList.Loading, HostList.Loaded(entries), HostList.Empty, HostList.Failed("Could not reach the Dev Tunnels service."))
-        checkEach(
-            *lists.map { list -> @Composable { HostScreenFor(list) } }.toTypedArray(),
-            { HostScreenFor(connected = host, connection = ConnState.Online, browser = "org.mozilla.firefox", renews = true) },
-            { HostScreenFor(connected = host, connection = ConnState.Reconnecting(2, null)) },
-        )
+    fun theDrawerActionRowInBothThemes() {
+        var dark by mutableStateOf(false)
+        var showArchived by mutableStateOf(false)
+        rule.setContent { AhpTheme(dark) { DrawerFor(manage = manageActions(), inboxCount = 2, showArchived = showArchived) } }
+        listOf(false, true).forEach { theme ->
+            dark = theme
+            listOf(false, true).forEach { archived ->
+                showArchived = archived
+                rule.waitForIdle()
+                check()
+            }
+        }
     }
 
     @Test
-    fun emptyMainPage() {
-        checkEach(
-            { MainEmpty(connected = false, connection = null, manage = null, onConnect = {}, onOpenSessions = {}, onSessionCreated = {}) },
-            { MainEmpty(connected = true, connection = ConnState.Online, manage = null, onConnect = {}, onOpenSessions = {}, onSessionCreated = {}) },
-            { MainEmpty(connected = true, connection = ConnState.Online, manage = manageActions(), onConnect = {}, onOpenSessions = {}, onSessionCreated = {}) },
+    fun theHostSheetInEveryStateInBothThemes() {
+        val offline = TunnelInfo("t-off", "usw2", "old-laptop", 5, 0, listOf(31546))
+        val laptop = DirectHost("direct:11111111-aaaa", "Laptop", "ws://192.168.1.20:9187")
+        val server = DirectHost("direct:22222222-bbbb", "Server", "wss://agents.example.com")
+        val direct = listOf(DirectEntry(laptop, isLastUsed = false), DirectEntry(server, isLastUsed = false))
+        val listed = HostCatalog(HostList.Loaded(listOf(HostEntry(host, isLastUsed = true), HostEntry(offline, isLastUsed = false))), direct)
+        fun sheet(catalog: HostCatalog, connected: HostRef? = null, connection: ConnState? = null, onSignIn: (() -> Unit)? = {}) = @Composable {
+            HostSheet(catalog, connected, connection, {}, {}, {}, {}, {}, onAddHost = { _, _, _ -> null }, onSignIn = onSignIn)
+        }
+        val screens = listOf(
+            sheet(listed, HostRef.Tunnel(host), ConnState.Online),
+            sheet(listed, HostRef.Direct(laptop), ConnState.Reconnecting(2, null)),
+            sheet(listed),
+            sheet(HostCatalog(HostList.Loading, direct)),
+            sheet(HostCatalog(HostList.Empty, direct)),
+            sheet(HostCatalog(HostList.NotSignedIn, direct)),
+            sheet(HostCatalog(HostList.NotSignedIn, direct), HostRef.Direct(laptop), ConnState.Online, onSignIn = null),
+            sheet(HostCatalog(HostList.Failed("Could not reach the Dev Tunnels service."), direct)),
         )
+        var dark by mutableStateOf(false)
+        var current by mutableStateOf<@Composable () -> Unit>({})
+        rule.setContent { AhpTheme(dark) { current() } }
+        listOf(false, true).forEach { theme ->
+            dark = theme
+            screens.forEach {
+                current = it
+                rule.waitForIdle()
+                check()
+            }
+        }
+    }
+
+    @Test
+    fun theHomeDrawerWithNoSessionInBothThemes() {
+        // The drawer held open over the empty background: with a host, and with none to choose yet.
+        var dark by mutableStateOf(false)
+        var connected by mutableStateOf<TunnelInfo?>(host)
+        rule.setContent {
+            AhpTheme(dark) {
+                val menu = rememberHomeMenu(session = null, pageOpen = false)
+                HomeDrawer(
+                    menu, session = null, pageOpen = false, overlayOpen = false, onCloseSession = {}, onClosePage = {}, onLeaveApp = {},
+                    drawerContent = { DrawerFor(connected = connected, manage = manageActions(), inboxCount = 2) },
+                    content = { androidx.compose.material3.Surface(Modifier, color = androidx.compose.material3.MaterialTheme.colorScheme.background) {} },
+                )
+            }
+        }
+        listOf(false, true).forEach { theme ->
+            dark = theme
+            listOf(host, null).forEach { shown ->
+                connected = shown
+                rule.waitForIdle()
+                check()
+            }
+        }
     }
 
     @Test
@@ -228,6 +274,33 @@ class AccessibilityTest {
             { SettingsScreen({}, monitorEnabled = true, finishedAll = true) },
             { SettingsScreen({}, monitorEnabled = false, finishedAll = true) },
         )
+    }
+
+    @Test
+    fun settingsHostsInEveryStateInBothThemes() {
+        val laptop = DirectHost("direct:11111111-aaaa", "Laptop", "ws://192.168.1.20:9187")
+        val server = DirectHost("direct:22222222-bbbb", "Server", "wss://agents.example.com")
+        val direct = listOf(DirectEntry(laptop, isLastUsed = true), DirectEntry(server, isLastUsed = false))
+        val add: suspend (String, String, String) -> String? = { _, _, _ -> null }
+        val screens = listOf<@Composable () -> Unit>(
+            { SettingsScreen({}, signedIn = true, renews = true, direct = direct, onAddHost = add) },
+            { SettingsScreen({}, signedIn = true, tokenExpiresAt = now.plusSeconds(3600), direct = direct, onAddHost = add) },
+            { SettingsScreen({}, signedIn = true) },
+            { SettingsScreen({}, signedIn = false, onSignIn = {}, direct = direct, onAddHost = add) },
+            { SettingsScreen({}, signedIn = false, onSignIn = null, direct = direct, onAddHost = add) },
+            { SettingsScreen({}, signedIn = false, onSignIn = {}, onAddHost = add) },
+        )
+        var dark by mutableStateOf(false)
+        var current by mutableStateOf<@Composable () -> Unit>({})
+        rule.setContent { AhpTheme(dark) { current() } }
+        listOf(false, true).forEach { theme ->
+            dark = theme
+            screens.forEach {
+                current = it
+                rule.waitForIdle()
+                check()
+            }
+        }
     }
 
     @Test
@@ -400,16 +473,6 @@ class AccessibilityTest {
             { SessionScreen(archived, null, ConnState.Online, now, {}) },
             { SessionScreen(starting, null, ConnState.Online, now, {}) },
         )
-    }
-
-    @Test
-    fun hostScreenWithTheBrowserPickerOpen() {
-        val list = HostList.Loaded(listOf(HostEntry(host, isLastUsed = true)))
-        rule.setContent { AhpTheme { HostScreenFor(list) } }
-        rule.onNodeWithTag("browser_row").performClick()
-        rule.waitForIdle()
-
-        check()
     }
 
     private fun manageActions() = ManageActionsUi(

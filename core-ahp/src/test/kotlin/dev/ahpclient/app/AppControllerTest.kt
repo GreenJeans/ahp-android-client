@@ -7,6 +7,7 @@ import dev.ahpclient.auth.GitHubToken
 import dev.ahpclient.auth.Secret
 import dev.ahpclient.ahp.error
 import dev.ahpclient.ahp.result
+import dev.ahpclient.security.BlobStore
 import dev.ahpclient.security.FakeBox
 import dev.ahpclient.security.FakeStore
 import dev.ahpclient.security.SessionListCache
@@ -72,6 +73,7 @@ import kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -121,6 +123,23 @@ private class RacingState(
             beforeFirstSwap()
         }
         return inner.compareAndSet(expect, update)
+    }
+}
+
+/** A blob store that counts what is written to it, to tell a save made at once from one made after a delay. */
+private class RecordingStore : BlobStore {
+    var blob: ByteArray? = null
+    var writes = 0
+
+    override suspend fun read(): ByteArray? = blob
+
+    override suspend fun write(blob: ByteArray) {
+        this.blob = blob
+        writes++
+    }
+
+    override suspend fun delete() {
+        blob = null
     }
 }
 
@@ -208,9 +227,12 @@ class AppControllerTest {
 
     private suspend fun Rig.await(match: (AppState) -> Boolean): AppState = controller.state.first(match)
 
-    private suspend fun Rig.awaitHosts(): HostList = (await { it is AppState.Hosts && it.list !is HostList.Loading } as AppState.Hosts).list
+    private suspend fun Rig.awaitHosts(): HostList {
+        await { it is AppState.Hosts }
+        return controller.hosts.first { it.list !is HostList.Loading }.list
+    }
 
-    private fun Rig.loaded(): List<HostEntry> = ((state as AppState.Hosts).list as HostList.Loaded).hosts
+    private fun Rig.loaded(): List<HostEntry> = (controller.hosts.value.list as HostList.Loaded).hosts
 
     /** Channels the app asked the host to stop sending, in order. */
     private fun Rig.unsubscribed(): List<String> = connectors.single().sockets.single().sent
@@ -379,7 +401,7 @@ class AppControllerTest {
             val saved = assertIs<VaultLoad.Present>(vault.load()).token
             assertEquals("ghu_secret", saved.access.reveal())
             assertEquals("ghr_secret", saved.refresh?.reveal())
-            assertEquals(Instant.parse("2026-10-22T20:00:00Z"), (state as AppState.Hosts).tokenExpiresAt)
+            assertEquals(Instant.parse("2026-10-22T20:00:00Z"), controller.hosts.value.tokenExpiresAt)
             assertFalse("$state".contains("ghu_secret"))
         }
     }
@@ -483,7 +505,7 @@ class AppControllerTest {
             val saved = assertIs<VaultLoad.Present>(vault.load()).token
             assertEquals("ghu_new", saved.access.reveal())
             assertEquals("ghr_new", saved.refresh?.reveal(), "the refresh token was spent, so the new one is what is kept")
-            val hosts = state as AppState.Hosts
+            val hosts = controller.hosts.value
             assertEquals(renewalNow.plusSeconds(28800), hosts.tokenExpiresAt)
             assertTrue(hosts.renews)
         }
@@ -529,12 +551,13 @@ class AppControllerTest {
             vault.save(GitHubToken(Secret("ghu_saved"), Secret("ghr_saved"), renewalNow.plusSeconds(120)))
             server.json(refreshRefused)
             server.json(fixture("list-tunnels.json"))
-            server.json(fixture("list-tunnels.json"))
+            // A different list, because the one on show stays while a refresh loads, so only a different one tells that it came.
+            server.json("""{"value":[]}""")
 
             controller.start()
             awaitHosts()
             controller.refreshHosts()
-            awaitHosts()
+            controller.hosts.first { it.list == HostList.Empty }
 
             assertEquals(
                 listOf("/login/oauth/access_token", "/tunnels", "/tunnels"),
@@ -607,7 +630,7 @@ class AppControllerTest {
             controller.start()
             awaitHosts()
 
-            val hosts = state as AppState.Hosts
+            val hosts = controller.hosts.value
             assertEquals(renewalNow.plusSeconds(3600), hosts.tokenExpiresAt)
             assertFalse(hosts.renews)
         }
@@ -799,6 +822,7 @@ class AppControllerTest {
         withRig {
             vault.save(savedToken)
             server.json(fixture("list-tunnels.json"))
+            server.json(fixture("list-tunnels.json"))
             controller.start()
             awaitHosts()
             val host = loaded().first().tunnel
@@ -806,7 +830,7 @@ class AppControllerTest {
             val field = AppController::class.java.getDeclaredField("_state").apply { isAccessible = true }
             @Suppress("UNCHECKED_CAST")
             val live = field.get(controller) as MutableStateFlow<AppState>
-            val racing = RacingState(live) { live.value = (live.value as AppState.Hosts).let { it.copy(renews = !it.renews) } }
+            val racing = RacingState(live) { controller.refreshHosts() }
             field.set(controller, racing)
 
             controller.connect(host)
@@ -1532,6 +1556,260 @@ class AppControllerTest {
             assertIs<HostList.Loaded>(list)
             assertEquals(ConnState.Stopped, created.single().connection.value)
             assertEquals(2, server.requestCount)
+        }
+    }
+
+    // ---- the host catalog, and switching hosts ---------------------------------------------------------------------
+
+    private fun Rig.tunnel(id: String): TunnelInfo = loaded().first { it.tunnel.tunnelId == id }.tunnel
+
+    /** Signs in from the vault, lists the hosts and connects to the first, online. */
+    private suspend fun Rig.connectedToFirstOfTwo(): AppState.Connected {
+        vault.save(savedToken)
+        server.json(fixture("list-tunnels.json"))
+        controller.start()
+        awaitHosts()
+        controller.connect(tunnel("test-tunnel-1"))
+        return assertIs<AppState.Connected>(state).also { it.session.connection.first { c -> c == ConnState.Online } }
+    }
+
+    /** Every state the controller takes from now on, recorded as it is set: a collector that runs later could be handed only the last of two quick ones. */
+    private fun TestScope.recordStates(controller: AppController): List<AppState> {
+        val seen = mutableListOf<AppState>()
+        backgroundScope.launch(Dispatchers.Unconfined) { controller.state.collect { seen += it } }
+        return seen
+    }
+
+    @Test
+    fun `refreshing while connected loads the tunnel hosts into the catalog and leaves the state as it is`() = runTest {
+        withRig {
+            val connected = connectedToFirstOfTwo()
+            val seen = recordStates(controller)
+            server.json("""{"value":[]}""")
+
+            controller.refreshHosts()
+            controller.hosts.first { it.list == HostList.Empty }
+
+            assertEquals(listOf<AppState>(connected), seen, "no state was set")
+            assertSame(connected, state)
+            assertEquals(2, server.requestCount)
+        }
+    }
+
+    @Test
+    fun `a refresh that fails while connected leaves the list that was on show`() = runTest {
+        withRig {
+            connectedToFirstOfTwo()
+            val shown = assertIs<HostList.Loaded>(controller.hosts.value.list)
+            server.json("{}", code = 503)
+
+            controller.refreshHosts()
+            // The failure shows nowhere in the catalog, so wait for the request to be answered and given time to finish.
+            withContext(Dispatchers.Default) {
+                while (server.requestCount < 2) delay(10)
+                delay(300)
+            }
+            runCurrent()
+
+            assertEquals(shown, controller.hosts.value.list, "a good list is not replaced by the failure of the next one")
+        }
+    }
+
+    @Test
+    fun `a refresh keeps the list on show while the new one loads, but not a failed one`() = runTest {
+        withRig {
+            vault.save(savedToken)
+            server.json("{}", code = 503)
+            server.json(fixture("list-tunnels.json"))
+            server.json(fixture("list-tunnels.json"))
+            controller.start()
+            assertIs<HostList.Failed>(awaitHosts())
+
+            controller.refreshHosts()
+            assertEquals(HostList.Loading, controller.hosts.value.list, "a failure is not a list to keep")
+            val loaded = assertIs<HostList.Loaded>(awaitHosts())
+
+            controller.refreshHosts()
+            assertEquals(loaded, controller.hosts.value.list, "the list on show stays while the next one loads")
+            runCurrent()
+        }
+    }
+
+    @Test
+    fun `a sign-in that the host list refuses while connected ends the sign-in and empties the catalog`() = runTest {
+        withRig {
+            val connected = connectedToFirstOfTwo()
+            server.json("{}", code = 401)
+
+            controller.refreshHosts()
+            val out = assertIs<AppState.SignedOut>(await { it is AppState.SignedOut })
+            runCurrent()
+
+            assertTrue(out.notice!!.contains("no longer accepts"))
+            assertEquals(ConnState.Stopped, connected.session.connection.value)
+            assertEquals(VaultLoad.Absent, vault.load())
+            assertEquals(HostList.NotSignedIn, controller.hosts.value.list)
+        }
+    }
+
+    @Test
+    fun `signing out empties the tunnel hosts of the catalog`() = runTest {
+        withRig {
+            connectedToFirstOfTwo()
+            assertIs<HostList.Loaded>(controller.hosts.value.list)
+
+            controller.signOut()
+            await { it is AppState.SignedOut }
+            runCurrent()
+
+            assertEquals(HostCatalog(HostList.NotSignedIn), controller.hosts.value)
+        }
+    }
+
+    @Test
+    fun `switching from one connected host to another goes straight across, with no host list between, and the old session is stopped`() = runTest {
+        withRig {
+            val a = connectedToFirstOfTwo()
+            controller.openSession(SESSION_C)
+            val beforeSwitch = state
+            val seen = recordStates(controller)
+            val target = tunnel("test-tunnel-2")
+
+            controller.switchHost(HostRef.Tunnel(target))
+            val b = assertIs<AppState.Connected>(state)
+            b.session.connection.first { it == ConnState.Online }
+            runCurrent()
+
+            assertEquals(listOf(beforeSwitch, b), seen, "Connected a, then Connected b: never the host list")
+            assertEquals(HostRef.Tunnel(target), b.host)
+            assertNotSame(a.session, b.session)
+            assertNull(b.open, "what was open on the old host is not carried over")
+            assertEquals(ConnState.Stopped, a.session.connection.value)
+            assertEquals(listOf("ghu_saved", "ghu_saved"), tokensSeenByHost)
+            assertEquals("test-tunnel-2", lastHost.id)
+            assertIs<HostList.Loaded>(controller.hosts.value.list)
+        }
+    }
+
+    @Test
+    fun `the session a switch leaves saves its list as it stops`() = runTest {
+        val listStore = RecordingStore()
+        withRig(sessionCache = SessionListCache(FakeBox(), listStore)) {
+            val a = connectedToFirstOfTwo()
+            assertTrue(a.session.root.hasLiveCatalog)
+            assertEquals(0, listStore.writes, "the debounce has not run yet, so only stopping can save it")
+
+            controller.switchHost(HostRef.Tunnel(tunnel("test-tunnel-2")))
+            runCurrent()
+
+            assertEquals(1, listStore.writes)
+        }
+    }
+
+    @Test
+    fun `switching to the host that is already connected does nothing`() = runTest {
+        withRig {
+            val a = connectedToFirstOfTwo()
+
+            controller.switchHost(HostRef.Tunnel(tunnel("test-tunnel-1")))
+            runCurrent()
+
+            assertSame(a, state)
+            assertEquals(1, created.size)
+            assertEquals(ConnState.Online, a.session.connection.value)
+        }
+    }
+
+    @Test
+    fun `switching is ignored unless the host list or a host is showing`() = runTest {
+        withRig {
+            controller.start()
+            runCurrent()
+
+            controller.switchHost(HostRef.Tunnel(TunnelInfo("t", "usw2", "n", 6, 1, emptyList())))
+
+            assertTrue(created.isEmpty())
+            assertIs<AppState.SignedOut>(state)
+        }
+    }
+
+    @Test
+    fun `switching from the host list connects as connecting does`() = runTest {
+        withRig {
+            vault.save(savedToken)
+            server.json(fixture("list-tunnels.json"))
+            controller.start()
+            awaitHosts()
+            val target = tunnel("test-tunnel-1")
+
+            controller.switchHost(HostRef.Tunnel(target))
+
+            assertEquals(HostRef.Tunnel(target), assertIs<AppState.Connected>(state).host)
+        }
+    }
+
+    @Test
+    fun `a sign-out that lands while a switch is making its session wins, and the session made for it is stopped`() = runTest {
+        var signOutInCreate = false
+        withRig(onCreate = {
+            if (signOutInCreate) {
+                controller.signOut()
+                runCurrent()
+            }
+        }) {
+            val a = connectedToFirstOfTwo()
+            signOutInCreate = true
+
+            controller.switchHost(HostRef.Tunnel(tunnel("test-tunnel-2")))
+            runCurrent()
+
+            assertEquals(AppState.SignedOut(SignInStep.Idle, null, offerRevoke = true), state)
+            assertEquals(VaultLoad.Absent, vault.load())
+            assertEquals(2, created.size)
+            assertEquals(listOf(ConnState.Stopped, ConnState.Stopped), created.map { it.connection.value })
+            assertSame(a.session, created.first())
+            assertEquals(listOf("ghu_saved"), tokensSeenByHost, "the session made for the switch never reached the host")
+            assertEquals("test-tunnel-1", lastHost.id)
+        }
+    }
+
+    @Test
+    fun `a switch made while a sign-out is wiping the token is stopped when the sign-out lands`() = runTest {
+        withRig {
+            connectedToFirstOfTwo()
+            val wipe = CompletableDeferred<Unit>()
+            store.deleteGate = wipe
+
+            controller.signOut()
+            runCurrent()
+            // The wipe is released first but resumes only at the next runCurrent, by which time the switch has been made.
+            wipe.complete(Unit)
+            controller.switchHost(HostRef.Tunnel(tunnel("test-tunnel-2")))
+            assertIs<AppState.Connected>(state)
+            runCurrent()
+
+            assertIs<AppState.SignedOut>(state)
+            assertEquals(VaultLoad.Absent, vault.load())
+            assertEquals(listOf(ConnState.Stopped, ConnState.Stopped), created.map { it.connection.value })
+        }
+    }
+
+    @Test
+    fun `a session switched to while the app is out of sight starts parked, and returning unparks it`() = runTest {
+        withRig {
+            val a = connectedToFirstOfTwo()
+            controller.setAppVisible(false)
+            advanceTimeBy(30_000)
+            runCurrent()
+            assertTrue(a.session.parked)
+
+            controller.switchHost(HostRef.Tunnel(tunnel("test-tunnel-2")))
+            val b = assertIs<AppState.Connected>(state)
+            assertTrue(b.session.parked, "the app is still away")
+
+            controller.setAppVisible(true)
+            runCurrent()
+            assertFalse(b.session.parked)
         }
     }
 

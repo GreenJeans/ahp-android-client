@@ -15,7 +15,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -149,16 +149,12 @@ fun ManagementToggle(allowed: Boolean, available: Boolean, onChange: (Boolean) -
     }
 }
 
-/** The button that starts the new-session dialog. [onCreated] gets the address of the session the host took. */
+/** The button that starts the new-session dialog: a tonal icon button, spoken "New session". [onCreated] gets the address of the session the host took. */
 @Composable
-fun NewSessionButton(manage: ManageActionsUi, onCreated: (String) -> Unit, modifier: Modifier = Modifier) {
+fun NewSessionIconButton(manage: ManageActionsUi, onCreated: (String) -> Unit, modifier: Modifier = Modifier) {
     var open by rememberSaveable { mutableStateOf(false) }
-    FilledTonalButton(
-        onClick = { open = true },
-        modifier = modifier.heightIn(min = 48.dp).testTag("new_session"),
-    ) {
-        Icon(AppIcons.Add, contentDescription = null, modifier = Modifier.padding(end = 8.dp))
-        Text("New session")
+    FilledTonalIconButton(onClick = { open = true }, modifier = modifier.testTag("new_session")) {
+        Icon(AppIcons.Add, contentDescription = "New session")
     }
     if (open) NewSessionDialog(manage, onDismiss = { open = false }, onCreated = { open = false; onCreated(it) })
 }

@@ -78,6 +78,7 @@ fun ChatScreen(
     onLoadOlder: () -> Unit,
     onOpenLink: (String) -> Unit,
     modifier: Modifier = Modifier,
+    onShareLink: ((String) -> Unit)? = null,
     expanded: Set<String> = emptySet(),
     onToggle: (String) -> Unit = {},
     actions: ChatActionsUi? = null,
@@ -97,14 +98,15 @@ fun ChatScreen(
         large = false,
         modifier = modifier,
     ) {
-        ChatPane(transcript, error, loadingOlder, olderError, connection, onLoadOlder, onOpenLink, Modifier, expanded, onToggle, actions, onOpenSubagent, onOpenTerminal, onRetry, textScale, onTextScale)
+        ChatPane(transcript, error, loadingOlder, olderError, connection, onLoadOlder, onOpenLink, Modifier, onShareLink, expanded, onToggle, actions, onOpenSubagent, onOpenTerminal, onRetry, textScale, onTextScale)
     }
 }
 
 /**
  * The conversation itself, with no bar of its own, for a screen that supplies one: the newest row at the bottom, the agent's
  * current activity above it, and the composer when the app may act. A link in the agent's text is only opened after the user
- * confirms it: [onOpenLink] is called with a link the user has already said yes to.
+ * confirms it: [onOpenLink] is called with a link the user has already said yes to, and [onShareLink] with a web link the user chose to
+ * share instead. Without an [onShareLink] the dialog has no Share button.
  */
 @Composable
 fun ChatPane(
@@ -116,6 +118,7 @@ fun ChatPane(
     onLoadOlder: () -> Unit,
     onOpenLink: (String) -> Unit,
     modifier: Modifier = Modifier,
+    onShareLink: ((String) -> Unit)? = null,
     expanded: Set<String> = emptySet(),
     onToggle: (String) -> Unit = {},
     actions: ChatActionsUi? = null,
@@ -161,7 +164,12 @@ fun ChatPane(
             if (actions != null && transcript != null) Composer(actions)
         }
         pendingLink?.let { target ->
-            LinkConfirmDialog(target = target, onOpen = { pendingRaw = null; onOpenLink(rawOf(target)) }, onDismiss = { pendingRaw = null })
+            LinkConfirmDialog(
+                target = target,
+                onOpen = { pendingRaw = null; onOpenLink(rawOf(target)) },
+                onShare = onShareLink?.let { share -> { pendingRaw = null; share(rawOf(target)) } },
+                onDismiss = { pendingRaw = null },
+            )
         }
     }
     }

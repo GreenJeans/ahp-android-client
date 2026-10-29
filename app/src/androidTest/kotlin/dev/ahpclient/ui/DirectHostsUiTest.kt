@@ -4,6 +4,7 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertHasClickAction
+import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.v2.createComposeRule
@@ -14,10 +15,8 @@ import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.ahpclient.app.AppState
 import dev.ahpclient.app.DirectEntry
-import dev.ahpclient.app.HostList
 import dev.ahpclient.app.SignInStep
 import dev.ahpclient.direct.DirectHost
-import dev.ahpclient.tunnel.TunnelInfo
 import dev.ahpclient.ui.theme.AhpTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -26,7 +25,10 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/** The host list's hosts added by address: listed, connected to, added with a token, removed after asking, and usable with no sign-in. */
+/**
+ * Settings' hosts added by address: listed with their address, added with a token, removed after asking, and usable with no sign-in.
+ * Choosing one of them to connect to is the hosts sheet's (HostSheetTest).
+ */
 @RunWith(AndroidJUnit4::class)
 class DirectHostsUiTest {
     @get:Rule
@@ -34,24 +36,20 @@ class DirectHostsUiTest {
 
     private val laptop = DirectHost("direct:11111111-aaaa", "Laptop", "ws://192.168.1.20:9187")
     private val server = DirectHost("direct:22222222-bbbb", "Server", "wss://agents.example.com")
-    private val tunnel = TunnelInfo("t-online", "usw2", "dev-box", 6, 1, listOf(31546))
-    private val browsers = listOf(BrowserOption("com.android.chrome", "Chrome"))
 
     private fun show(
-        list: HostList? = HostList.NotSignedIn,
         direct: List<DirectEntry> = listOf(DirectEntry(laptop, isLastUsed = true), DirectEntry(server, isLastUsed = false)),
-        onConnectDirect: (DirectHost) -> Unit = {},
         onAddHost: (suspend (String, String, String) -> String?)? = { _, _, _ -> null },
         onRemoveHost: (DirectHost) -> Unit = {},
         signedIn: Boolean = false,
-        onSignIn: () -> Unit = {},
+        onSignIn: (() -> Unit)? = {},
         onSignOut: () -> Unit = {},
+        connectedId: String? = null,
     ) = rule.setContent {
         AhpTheme {
-            HostScreen(
-                list, null, null, onBack = {}, onRefresh = {}, onConnect = {}, onDisconnect = {}, onSignOut = onSignOut,
-                browsers = browsers, browser = null, onBrowser = {},
-                direct = direct, onConnectDirect = onConnectDirect, onAddHost = onAddHost, onRemoveHost = onRemoveHost, signedIn = signedIn, onSignIn = onSignIn,
+            SettingsScreen(
+                onBack = {}, signedIn = signedIn, onSignIn = onSignIn, onSignOut = onSignOut,
+                direct = direct, onAddHost = onAddHost, onRemoveHost = onRemoveHost, connectedId = connectedId,
             )
         }
     }
@@ -67,13 +65,26 @@ class DirectHostsUiTest {
     }
 
     @Test
-    fun tappingAnAddedHostConnectsToIt() {
-        var connected: DirectHost? = null
-        show(onConnectDirect = { connected = it })
+    fun anAddedHostIsManagedHereNotConnectedToSoOnlyItsRemoveButtonActs() {
+        show()
 
-        rule.onNodeWithTag("direct_${server.id}").assertHasClickAction().performClick()
+        rule.onNodeWithTag("direct_${server.id}").assertHasNoClickAction()
+        rule.onNodeWithTag("remove_${server.id}").assertHasClickAction()
+    }
 
-        assertEquals(server, connected)
+    @Test
+    fun withNoHostsAddedSettingsSaysSoAndStillOffersToAddOne() {
+        show(direct = emptyList())
+
+        rule.onNodeWithTag("no_direct_hosts").assertIsDisplayed()
+        rule.onNodeWithTag("add_host").assertIsDisplayed()
+    }
+
+    @Test
+    fun withoutAWayToAddThereIsNoAddButton() {
+        show(onAddHost = null)
+
+        rule.onNodeWithTag("add_host").assertDoesNotExist()
     }
 
     @Test
@@ -139,25 +150,62 @@ class DirectHostsUiTest {
     }
 
     @Test
-    fun withoutASignInTheTunnelHostsAskForOneAndThereIsNothingToSignOutOf() {
+    fun withoutASignInSettingsOffersOneAndTheAddedHostsAreStillThere() {
         var signedIn = 0
         show(onSignIn = { signedIn++ })
 
-        rule.onNodeWithTag("hosts_not_signed_in").assertIsDisplayed()
         rule.onNodeWithTag("sign_out").assertDoesNotExist()
-        rule.onNodeWithTag("sign_in_from_hosts").performClick()
+        rule.onNodeWithTag("sign_in").performClick()
         assertEquals(1, signedIn)
         rule.onNodeWithText("Laptop").assertIsDisplayed()
     }
 
     @Test
-    fun signedInTheTunnelHostsAndTheAddedOnesShareTheList() {
-        show(list = HostList.Loaded(listOf(dev.ahpclient.app.HostEntry(tunnel, isLastUsed = false))), signedIn = true)
+    fun signedInTheAddedHostsAreListedBesideTheSignOut() {
+        show(signedIn = true)
 
-        rule.onNodeWithText("dev-box").assertIsDisplayed()
         rule.onNodeWithText("Hosts you added").assertIsDisplayed()
         rule.onNodeWithText("Laptop").assertIsDisplayed()
         rule.onNodeWithTag("sign_out").assertExists()
+        rule.onNodeWithTag("sign_in").assertDoesNotExist()
+    }
+
+    @Test
+    fun theSignOutQuestionNamesOnlyTheGitHubSignIn() {
+        var signedOut = 0
+        show(signedIn = true, onSignOut = { signedOut++ })
+
+        rule.onNodeWithTag("sign_out").performClick()
+        rule.onNodeWithTag("sign_out_dialog").assertIsDisplayed()
+        rule.onNodeWithText("GitHub sign-in", substring = true).assertIsDisplayed()
+        rule.onNodeWithText("token", substring = true).assertDoesNotExist()
+        rule.onNodeWithTag("sign_out_confirm").performClick()
+
+        assertEquals(1, signedOut)
+    }
+
+    @Test
+    fun theSignOutQuestionSaysThatTheConnectedHostIsLeftToo() {
+        show(signedIn = true, connectedId = laptop.id)
+
+        rule.onNodeWithTag("sign_out").performClick()
+
+        rule.onNodeWithText("connected now", substring = true).assertIsDisplayed()
+        rule.onNodeWithText("sign-in screen", substring = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun removingTheConnectedHostSaysItsConnectionEndsAndRemovingAnotherDoesNot() {
+        show(connectedId = laptop.id)
+
+        rule.onNodeWithText("192.168.1.20:9187 · not encrypted · connected · last used").assertIsDisplayed()
+        rule.onNodeWithTag("remove_${laptop.id}").performClick()
+        rule.onNodeWithText("connection ends too", substring = true).assertIsDisplayed()
+        rule.onNodeWithTag("remove_host_cancel").performClick()
+
+        rule.onNodeWithTag("remove_${server.id}").performClick()
+        rule.onNodeWithTag("remove_host_dialog").assertIsDisplayed()
+        rule.onNodeWithText("connection ends too", substring = true).assertDoesNotExist()
     }
 
     @Test
