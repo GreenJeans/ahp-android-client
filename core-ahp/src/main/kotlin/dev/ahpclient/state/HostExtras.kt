@@ -58,6 +58,7 @@ data class SessionExtras(
     val uncommitted: Int? = null,
     val detachedHead: Boolean = false,
     val pullRequests: List<PullRequest> = emptyList(),
+    val model: String? = null,
 ) {
     val isEmpty: Boolean get() = this == NONE
 
@@ -134,6 +135,7 @@ object HostExtras {
     private val SUBAGENT_NAME_KEYS = listOf("subagentAgentName", "vscode.toolCall.subagentAgentName")
     private val SUBAGENT_DESC_KEYS = listOf("subagentDescription", "vscode.toolCall.subagentDescription")
 
+    private val MODEL_KEYS = listOf("model", "ahpd.model", "vscode.model")
     private val HIDDEN_KEYS = listOf("vscode.chat.hiddenFromTranscript", "requestHiddenFromTranscript", "hiddenFromTranscript")
     private val WHITESPACE_RUN = Regex("""[\r\n\t ]+""")
 
@@ -144,17 +146,18 @@ object HostExtras {
         // `git` for a single folder; `gitData.<folder>` for a multi-root workspace, one object per folder.
         val folders = (root.at("gitData") as? JsonObject)?.values.orEmpty().asSequence().take(MAX_ROOTS).mapNotNull { it as? JsonObject }.map { it to "" }
         val candidates = (if (root.at("git") is JsonObject || root.keys.any { it.startsWith("git.") }) sequenceOf(root to "git.") else emptySequence()) + folders
-        val picked = candidates.firstOrNull { (from, where) -> from.text("${where}branchName") != null } ?: candidates.firstOrNull()
+        val picked = candidates.firstOrNull { (from, where) -> (from.text("${where}branchName") ?: from.text("${where}branch")) != null } ?: candidates.firstOrNull()
         val prs = picked?.let { (from, where) -> from.pullRequests(where) }.orEmpty().ifEmpty { root.pullRequests("") }
-        if (picked == null) return if (prs.isEmpty()) SessionExtras.NONE else SessionExtras(pullRequests = prs)
-        val (source, prefix) = picked
+        val model = MODEL_KEYS.firstNotNullOfOrNull { root.text(it) }
+        val (source, prefix) = picked ?: (root to "")
         return SessionExtras(
-            branch = source.text("${prefix}branchName"),
-            outgoing = source.count("${prefix}outgoingChanges"),
-            incoming = source.count("${prefix}incomingChanges"),
-            uncommitted = source.count("${prefix}uncommittedChanges"),
-            detachedHead = source.flag("${prefix}isDetachedHead"),
+            branch = source.text("${prefix}branchName") ?: source.text("${prefix}branch") ?: root.text("branchName") ?: root.text("branch"),
+            outgoing = source.count("${prefix}outgoingChanges") ?: source.count("${prefix}ahead") ?: root.count("outgoingChanges") ?: root.count("ahead"),
+            incoming = source.count("${prefix}incomingChanges") ?: source.count("${prefix}behind") ?: root.count("incomingChanges") ?: root.count("behind"),
+            uncommitted = source.count("${prefix}uncommittedChanges") ?: source.count("${prefix}uncommitted") ?: root.count("uncommittedChanges") ?: root.count("uncommitted"),
+            detachedHead = source.flag("${prefix}isDetachedHead") || root.flag("isDetachedHead"),
             pullRequests = prs,
+            model = model,
         )
     }
 
