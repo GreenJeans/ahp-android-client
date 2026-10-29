@@ -95,6 +95,7 @@ class AppContainer(context: Context) {
                 HostSession(
                     TunnelHostConnector(devTunnels, gateway, tunnel, accessToken, policy = interaction::policy), appScope, clientInfo,
                     network = network.state, cache = sessionList, cacheKey = tunnel.tunnelId,
+                    note = { if (debuggable) Log.i(CONN_TAG, it) },
                 ).also { if (debuggable) logConnection(it) }
             },
             scope = appScope,
@@ -113,6 +114,7 @@ class AppContainer(context: Context) {
                 HostSession(
                     DirectHostConnector(directOpener, host, token, policy = consent::policy), appScope, clientInfo,
                     network = network.state, cache = sessionList, cacheKey = host.id,
+                    note = { if (debuggable) Log.i(CONN_TAG, it) },
                 ).also { if (debuggable) logConnection(it) }
             },
             // Each direct host is allowed (or not) to act on its own; a new one starts with neither, whatever is allowed for the tunnel hosts.

@@ -47,8 +47,18 @@ sealed interface TranscriptItem {
     /** [live] is set while the agent is still thinking: this is the last part of the turn that is running. */
     data class Reasoning(override val key: String, val text: String, val live: Boolean) : TranscriptItem
 
-    /** [source] is the host's own record of the call; the detail is built from it only when a block is opened. Null for a row made without one. */
-    data class Tool(override val key: String, val name: String, val summary: String?, val state: ToolState, val source: ToolCallState? = null) : TranscriptItem
+    /**
+     * [source] is the host's own record of the call; the detail is built from it only when a block is opened. Null for a row made without one.
+     * [progress] is the host's live "what it is doing now" line while the call is [ToolState.RUNNING] (E3); null once it finishes.
+     */
+    data class Tool(
+        override val key: String,
+        val name: String,
+        val summary: String?,
+        val state: ToolState,
+        val source: ToolCallState? = null,
+        val progress: String? = null,
+    ) : TranscriptItem
 
     data class Notice(override val key: String, val text: String, val isError: Boolean = false) : TranscriptItem
 
@@ -77,7 +87,7 @@ data class Transcript(
 ) {
     /** The turn that is running has stopped for the person: a call waiting to be approved or signed in, or a question to answer. Nothing is being worked on then. */
     val waitingOnYou: Boolean
-        get() = running && items.takeLastWhile { it !is TranscriptItem.User }.any {
+        get() = running && items.takeLastWhile { it !is TranscriptItem.User && it !is TranscriptItem.TurnEnd }.any {
             (it is TranscriptItem.Tool && (it.state == ToolState.WAITING_FOR_APPROVAL || it.state == ToolState.SIGN_IN_REQUIRED)) ||
                 (it is TranscriptItem.Question && !it.answered)
         }
@@ -89,13 +99,14 @@ data class Transcript(
             val keys = KeyBook()
             val items = ArrayList<TranscriptItem>()
             for (turn in chat.turns) {
-                addTurn(items, keys, turn.id, turn.message, turn.responseParts, live = false)
-                val outcome = when (turn.state) {
-                    TurnState.CANCELLED -> TurnOutcome.STOPPED
-                    TurnState.ERROR -> TurnOutcome.FAILED
-                    else -> TurnOutcome.DONE
+                if (addTurn(items, keys, turn.id, turn.message, turn.responseParts, live = false)) {
+                    val outcome = when (turn.state) {
+                        TurnState.CANCELLED -> TurnOutcome.STOPPED
+                        TurnState.ERROR -> TurnOutcome.FAILED
+                        else -> TurnOutcome.DONE
+                    }
+                    items += TranscriptItem.TurnEnd(keys.unique("${turn.id}/end"), outcome, turn.duration?.takeIf { it >= 0 })
                 }
-                items += TranscriptItem.TurnEnd(keys.unique("${turn.id}/end"), outcome, turn.duration?.takeIf { it >= 0 })
             }
             chat.activeTurn?.let { addTurn(items, keys, it.id, it.message, it.responseParts, live = true) }
             return Transcript(
@@ -108,9 +119,12 @@ data class Transcript(
             )
         }
 
-        private fun addTurn(items: MutableList<TranscriptItem>, keys: KeyBook, turnId: String, message: Message, parts: List<ResponsePart>, live: Boolean) {
-            items += TranscriptItem.User(keys.unique("$turnId/user"), message.text)
+        /** Adds a turn's user message (unless hidden from the transcript, E4) and its response parts. Returns false when the turn left no rows. */
+        private fun addTurn(items: MutableList<TranscriptItem>, keys: KeyBook, turnId: String, message: Message, parts: List<ResponsePart>, live: Boolean): Boolean {
+            val hidden = message.extras.hiddenFromTranscript
+            if (!hidden) items += TranscriptItem.User(keys.unique("$turnId/user"), message.text)
             parts.forEachIndexed { index, part -> items += item(keys, turnId, index, part, live && index == parts.lastIndex) }
+            return !hidden || parts.isNotEmpty()
         }
 
         private fun item(keys: KeyBook, turnId: String, index: Int, part: ResponsePart, isLastLive: Boolean): TranscriptItem {
@@ -118,7 +132,9 @@ data class Transcript(
             return when (part) {
                 is ResponsePartMarkdown -> TranscriptItem.Markdown(key(part.value.id), part.value.content)
                 is ResponsePartReasoning -> TranscriptItem.Reasoning(key(part.value.id), part.value.content, isLastLive)
-                is ResponsePartToolCall -> tool(part.value.toolCall).let { facts -> TranscriptItem.Tool(key(facts.id), facts.name, facts.summary, facts.state, part.value.toolCall) }
+                is ResponsePartToolCall -> tool(part.value.toolCall).let { facts ->
+                    TranscriptItem.Tool(key(facts.id), facts.name, facts.summary, facts.state, part.value.toolCall, facts.progress)
+                }
                 is ResponsePartSystemNotification -> TranscriptItem.Notice(key(null), plain(part.value.content).orEmpty())
                 is ResponsePartError -> TranscriptItem.Notice(key(null), part.value.error.message.ifBlank { "The agent reported an error." }, isError = true)
                 is ResponsePartInputRequest -> {
@@ -136,16 +152,22 @@ data class Transcript(
             }
         }
 
-        private class ToolFacts(val id: String?, val name: String, val summary: String?, val state: ToolState)
+        private class ToolFacts(val id: String?, val name: String, val summary: String?, val state: ToolState, val progress: String? = null)
 
-        private fun facts(id: String, displayName: String, toolName: String, intention: String?, message: StringOrMarkdown?, state: ToolState) =
-            ToolFacts(id, displayName.ifBlank { toolName }, intention?.takeIf { it.isNotBlank() } ?: plain(message)?.takeIf { it.isNotBlank() }, state)
+        private fun facts(id: String, displayName: String, toolName: String, intention: String?, message: StringOrMarkdown?, state: ToolState, progress: String? = null) =
+            ToolFacts(
+                id,
+                displayName.ifBlank { toolName },
+                progress ?: intention?.takeIf { it.isNotBlank() } ?: plain(message)?.takeIf { it.isNotBlank() },
+                state,
+                progress,
+            )
 
         private fun tool(call: ToolCallState): ToolFacts = when (call) {
             is ToolCallStateStreaming -> call.value.run { facts(toolCallId, displayName, toolName, intention, invocationMessage, ToolState.STREAMING) }
             is ToolCallStatePendingConfirmation -> call.value.run { facts(toolCallId, displayName, toolName, intention, invocationMessage, ToolState.WAITING_FOR_APPROVAL) }
             is ToolCallStatePendingResultConfirmation -> call.value.run { facts(toolCallId, displayName, toolName, intention, invocationMessage, ToolState.WAITING_FOR_APPROVAL) }
-            is ToolCallStateRunning -> call.value.run { facts(toolCallId, displayName, toolName, intention, invocationMessage, ToolState.RUNNING) }
+            is ToolCallStateRunning -> call.value.run { facts(toolCallId, displayName, toolName, intention, invocationMessage, ToolState.RUNNING, call.extras.progressMessage) }
             is ToolCallStateAuthRequired -> call.value.run { facts(toolCallId, displayName, toolName, intention, invocationMessage, ToolState.SIGN_IN_REQUIRED) }
             is ToolCallStateCompleted -> call.value.run {
                 facts(toolCallId, displayName, toolName, intention, pastTenseMessage, if (success) ToolState.DONE else ToolState.FAILED)

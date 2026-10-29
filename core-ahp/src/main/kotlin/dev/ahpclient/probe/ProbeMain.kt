@@ -79,7 +79,7 @@ internal data class ProbeArgs(
                     "--instance" -> result = result.copy(instance = value(flag))
                     "--capture" -> result = result.copy(capture = Paths.get(value(flag)))
                     "--watch" -> result = result.copy(watchSeconds = value(flag).toIntOrNull()?.takeIf { it >= 0 } ?: throw IllegalArgumentException("--watch needs a number of seconds\n$USAGE"))
-                    "--ping-seconds" -> result = result.copy(pingSeconds = value(flag).toIntOrNull()?.takeIf { it >= 1 } ?: throw IllegalArgumentException("--ping-seconds needs a positive number of seconds\n$USAGE"))
+                    "--ping-seconds" -> result = result.copy(pingSeconds = value(flag).toIntOrNull()?.takeIf { it >= 0 } ?: throw IllegalArgumentException("--ping-seconds needs a number of seconds (0 turns pings off)\n$USAGE"))
                     "--session" -> result = result.copy(session = value(flag))
                     "--chat" -> result = result.copy(chat = value(flag))
                     "--direct" -> result = result.copy(direct = value(flag))
@@ -328,8 +328,12 @@ internal class Probe(private val args: ProbeArgs, private val out: (String) -> U
         return all
     }
 
-    private suspend fun watch(ahp: AhpConnection, seconds: Int) {
-        log("info", "watching notifications for ${seconds}s (start or answer something in VS Code)")
+    internal suspend fun watch(ahp: AhpConnection, seconds: Int, nowNs: () -> Long = System::nanoTime) {
+        val pingText = if (args.pingSeconds == 0) "off" else "${args.pingSeconds}s"
+        log("info", "watching notifications for ${seconds}s (ping=$pingText; start or answer something in VS Code)")
+        val startedAtNs = nowNs()
+        try {
+
         withTimeoutOrNull(seconds * 1000L) {
             ahp.notifications.collect { note ->
                 when (note) {
@@ -339,7 +343,12 @@ internal class Probe(private val args: ProbeArgs, private val out: (String) -> U
                 }
             }
         }
-        log("info", "watch finished")
+            log("info", "watch finished")
+        } catch (e: AhpException.ConnectionClosed) {
+            val elapsedSec = TimeUnit.NANOSECONDS.toSeconds(nowNs() - startedAtNs)
+            val detail = generateSequence<Throwable>(e) { it.cause?.takeIf { cause -> cause !== it } }.firstOrNull { it !is AhpException.ConnectionClosed }?.message ?: e.message
+            log("info", "socket closed after ${elapsedSec}s: $detail")
+        }
     }
 
     private fun actionType(action: StateAction): String = try {

@@ -12,8 +12,8 @@ class TranscriptRowModelTest {
 
     private fun text(n: Int) = TranscriptItem.Markdown("m$n", "answer $n")
 
-    private fun tool(n: Int, name: String = "Read file", state: ToolState = ToolState.DONE, summary: String? = null) =
-        TranscriptItem.Tool("t$n", name, summary, state)
+    private fun tool(n: Int, name: String = "Read file", state: ToolState = ToolState.DONE, summary: String? = null, progress: String? = null) =
+        TranscriptItem.Tool("t$n", name, summary, state, progress = progress)
 
     private fun thought(n: Int, live: Boolean = false) = TranscriptItem.Reasoning("r$n", "thinking $n", live)
 
@@ -163,5 +163,21 @@ class TranscriptRowModelTest {
         assertFalse(run.needsYou)
         assertEquals(0, run.failedCount)
         assertEquals("Used 2 tools", run.title)
+    }
+
+    @Test
+    fun `the collapsed steps row shows the newest running step's progress message, and falls back when there is none`() {
+        val withProgress = steps(
+            tool(1, "Read file", ToolState.RUNNING, summary = "Searching the repo", progress = "Searching the repo"),
+            tool(2, "Run in Terminal", ToolState.RUNNING, summary = "Running tests", progress = "Running tests"),
+            thought(1, live = true),
+        )
+        val withoutProgress = steps(
+            tool(1, "Read file", ToolState.DONE, summary = "Read a.kt"),
+            tool(2, "Run in Terminal", ToolState.RUNNING, summary = "Check the build", progress = null),
+        )
+
+        assertEquals("Running tests", withProgress.detail)
+        assertEquals("Run in Terminal: Check the build", withoutProgress.detail)
     }
 }

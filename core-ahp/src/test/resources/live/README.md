@@ -16,6 +16,7 @@ node tools/redact-capture.mjs captures/live-session.jsonl
 | `chat-subscribe-result.json` | A chat `subscribe` result: 7 of a live chat's 44 turns, chosen to cover every part kind and tool-result content type in the capture, plus the active turn. Real shapes; all text is placeholder words. |
 | `chat-actions.json` | The 67 `chat/*` actions that streamed in after that snapshot, as action envelopes (`channel`, `serverSeq`, `action`), in order and on the snapshot's active turn. |
 | `vscode-session-meta.json` | Twelve listed sessions' git `_meta` from the VS Code host (2026-10-28, protocol 1.0.0), one per distinct set of keys: a single-folder `git` object, a multi-root `gitData` object, and sessions with none. Branch names are placeholders; counts and flags are real. Made by `tools/redact-meta.mjs` (see below). |
+| `ahpd-tool-meta.json` | Redacted tool-call `_meta` shapes from `ahpd` 0.14.0 (`toolKind`, `ahpd.startedAt`, `ahpd.endedAt`, `ahpd.durationMs`) and the VS Code host (`toolKind`, `mcpServerName`, `subagentAgentName`, `subagentDescription`), verified by `findLeaks`. |
 
 Titles, project names, paths, ids, turn ids and git metadata are replaced with neutral values. The script builds each file
 from a whitelist of fields and refuses to write anything if an original string, a home-directory path or the OS username

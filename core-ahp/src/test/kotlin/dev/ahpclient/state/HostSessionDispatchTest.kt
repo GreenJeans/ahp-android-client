@@ -285,4 +285,32 @@ class HostSessionDispatchTest {
         assertEquals(1L, first)
         assertEquals(2L, second, "a reconnect reuses the client id, so the sequence must not start over")
     }
+
+    @Test
+    fun `an echo without origin logs to the connection note and requires non-turn actions to match their JSON`() = runTest {
+        val notes = mutableListOf<String>()
+        val cancelOne = """{"type":"chat/turnCancelled","turnId":"t1","duration":0}"""
+        val cancelTwo = """{"type":"chat/turnCancelled","turnId":"t2","duration":0}"""
+        val connector = ScriptedConnector(HostScript(), policy = CapabilityPolicy.INTERACT)
+        val host = HostSession(connector, backgroundScope, info, Backoff(), "client-1", note = notes::add)
+        host.start()
+        host.awaitState { it == ConnState.Online }
+
+        val pending = async {
+            host.dispatch(CHAT_A, Ahp.json.decodeFromString(StateAction.serializer(), cancelOne), timeoutMs = 5_000)
+        }
+        runCurrent()
+
+        // Different action payload on the same channel must not resolve the pending dispatch.
+        connector.sockets.last().serverSends(notification("action", """{"channel":"$CHAT_A","action":$cancelTwo,"serverSeq":${SNAPSHOT_SEQ + 1}}"""))
+        runCurrent()
+        assertTrue(pending.isActive, "a different action on the same channel must not match")
+        assertTrue(notes.isEmpty())
+
+        // Exact matching action without origin resolves it and surfaces the fallback in the log note.
+        connector.sockets.last().serverSends(notification("action", """{"channel":"$CHAT_A","action":$cancelOne,"serverSeq":${SNAPSHOT_SEQ + 2}}"""))
+        runCurrent()
+        assertEquals(DispatchOutcome.Accepted, pending.await())
+        assertEquals(listOf("dispatch answered by echo without origin (seq 1)"), notes)
+    }
 }

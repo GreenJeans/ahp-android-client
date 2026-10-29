@@ -112,9 +112,9 @@ data class ToolDetail(
             is ToolCallStatePendingResultConfirmation -> call.value.let {
                 build(limits, waitingFor = "Waiting for approval of the result.", toolInput = it.toolInput, content = it.content, error = it.error)
             }
-            is ToolCallStateRunning -> call.value.let { build(limits, toolInput = it.toolInput, content = it.content) }
+            is ToolCallStateRunning -> call.value.let { build(limits, toolInput = it.toolInput, content = it.content, extras = call.extras) }
             is ToolCallStateAuthRequired -> call.value.let { build(limits, waitingFor = "Sign-in required in VS Code.", toolInput = it.toolInput, content = it.content) }
-            is ToolCallStateCompleted -> call.value.let { build(limits, toolInput = it.toolInput, content = it.content, error = it.error) }
+            is ToolCallStateCompleted -> call.value.let { build(limits, toolInput = it.toolInput, content = it.content, error = it.error, extras = call.extras) }
             is ToolCallStateCancelled -> call.value.let {
                 build(limits, toolInput = it.toolInput, cancelled = plain(it.reasonMessage) ?: reasonText(it.reason))
             }
@@ -129,9 +129,14 @@ data class ToolDetail(
             content: List<ToolResultContent>? = null,
             error: JsonElement? = null,
             cancelled: String? = null,
+            extras: StepExtras = StepExtras.NONE,
+
+
+
+
         ): ToolDetail {
             val (lines, more) = input ?: toolInput?.let { inputOf(it, limits) } ?: (emptyList<InputLine>() to 0)
-            return ToolDetail(waitingFor, lines, more, content.orEmpty().map { resultOf(it, limits) }, cancelled ?: errorText(error, limits))
+            return ToolDetail(waitingFor, lines, more, content.orEmpty().map { resultOf(it, limits, extras) }, cancelled ?: errorText(error, limits))
         }
 
         private fun inputOf(input: ToolInput, limits: Limits): Pair<List<InputLine>, Int> = when (input) {
@@ -157,7 +162,7 @@ data class ToolDetail(
 
         private fun shown(value: JsonElement): String = (value as? JsonPrimitive)?.let { it.contentOrNull ?: "null" } ?: value.toString()
 
-        private fun resultOf(content: ToolResultContent, limits: Limits): ToolResultView = when (content) {
+        private fun resultOf(content: ToolResultContent, limits: Limits, extras: StepExtras = StepExtras.NONE): ToolResultView = when (content) {
             is ToolResultContent.Text -> ToolResultView.Text(Clipped.of(content.value.text, limits.text))
             is ToolResultContent.Terminal -> content.value.let { terminal ->
                 ToolResultView.Terminal(
@@ -176,7 +181,12 @@ data class ToolDetail(
                 )
             }
             is ToolResultContent.Subagent -> content.value.let {
-                ToolResultView.Subagent(it.title.orEmpty().ifBlank { "Subagent" }, it.agentName.orEmpty(), it.description.orEmpty(), chatUriOf(it.resource))
+                ToolResultView.Subagent(
+                    it.title.orEmpty().ifBlank { "Subagent" },
+                    it.agentName.orEmpty().ifBlank { extras.subagentAgentName.orEmpty() },
+                    it.description.orEmpty().ifBlank { extras.subagentDescription.orEmpty() },
+                    chatUriOf(it.resource),
+                )
             }
             is ToolResultContent.EmbeddedResource -> ToolResultView.Attachment("Attachment: ${content.value.contentType}")
             is ToolResultContent.Resource -> ToolResultView.Attachment("Attachment: ${content.value.contentType ?: "unknown type"}")

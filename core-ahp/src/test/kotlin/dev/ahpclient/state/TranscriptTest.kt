@@ -306,4 +306,61 @@ class TranscriptTest {
         assertTrue(Transcript.from(chat(markdown("m1", "x"), active = activeTurn(unanswered))).waitingOnYou)
         assertFalse(Transcript.from(chat(markdown("m1", "x"), active = activeTurn(answered))).waitingOnYou)
     }
+
+    @Test
+    fun `a running tool call with a progress message shows it on its row, and a finished one does not`() {
+        val running = toolCall(""""status":"running",$common,"intention":"Run command","invocationMessage":"ls","toolInput":"{}","confirmed":"not-needed","_meta":{"progressMessage":"Running `unit` tests\nline 2"}""")
+        val finished = toolCall(""""status":"completed",$common,"intention":"Run command","invocationMessage":"ls","toolInput":"{}","confirmed":"not-needed","success":true,"pastTenseMessage":"Ran tests","_meta":{"progressMessage":"Running unit tests"}""")
+
+        val tools = Transcript.from(chat("$running,$finished")).items.filterIsInstance<TranscriptItem.Tool>()
+
+        assertEquals("Running unit tests line 2", tools[0].summary)
+        assertEquals("Running unit tests line 2", tools[0].progress)
+        assertEquals("Run command", tools[1].summary, "once finished, the progress message does not override the result summary")
+        assertNull(tools[1].progress)
+    }
+
+    @Test
+    fun `a hidden message is omitted and a turn whose only content is hidden leaves no empty bubble or end marker`() {
+        val state = Ahp.json.decodeFromString(
+            ChatState.serializer(),
+            """{"resource":"ahp-chat:/c","title":"Chat","status":8,"modifiedAt":"2026-10-22T10:00:00.000Z","turnsNextCursor":"older-1",
+                "turns":[
+                  {"id":"t1","message":{"text":"synthetic empty","origin":{"kind":"user"},"_meta":{"vscode.chat.hiddenFromTranscript":true}},"responseParts":[],"startedAt":"2026-10-22T10:00:00.000Z","state":"complete"},
+                  {"id":"t2","message":{"text":"synthetic prompt","origin":{"kind":"user"},"_meta":{"requestHiddenFromTranscript":true}},"responseParts":[${markdown("m1", "visible reply")}],"startedAt":"2026-10-22T10:01:00.000Z","state":"complete"},
+                  {"id":"t3","message":{"text":"visible user","origin":{"kind":"user"}},"responseParts":[${markdown("m2", "second reply")}],"startedAt":"2026-10-22T10:02:00.000Z","state":"cancelled"}
+                ],
+                "activeTurn":{"id":"t4","message":{"text":"hidden active","origin":{"kind":"user"},"_meta":{"vscode.chat.hiddenFromTranscript":true}},
+                  "responseParts":[${toolCall(""""status":"pending-confirmation",$common,"invocationMessage":"Run it","toolInput":"{}","confirmationTitle":"Run?","options":[]""")}],
+                  "startedAt":"2026-10-22T10:03:00.000Z"}}""",
+        )
+
+        val t = Transcript.from(state)
+
+        assertEquals(listOf("visible user"), t.items.filterIsInstance<TranscriptItem.User>().map { it.text })
+        assertEquals(listOf("visible reply", "second reply"), t.items.filterIsInstance<TranscriptItem.Markdown>().map { it.text })
+        assertEquals(
+            listOf(
+                TranscriptItem.TurnEnd("t2/end", TurnOutcome.DONE, null),
+                TranscriptItem.TurnEnd("t3/end", TurnOutcome.STOPPED, null),
+            ),
+            t.items.filterIsInstance<TranscriptItem.TurnEnd>(),
+            "empty hidden turn t1 leaves no TurnEnd marker",
+        )
+        assertTrue(t.hasOlder, "paging cursor is unaffected by hidden messages")
+        assertTrue(t.running, "active turn still marks the transcript as running")
+        assertTrue(t.waitingOnYou, "waitingOnYou still detects a pending confirmation when the active turn's user message is hidden")
+
+        // Also check that an earlier turn's waiting call does not leak into an active turn whose user message is hidden.
+        val earlierWaiting = Ahp.json.decodeFromString(
+            ChatState.serializer(),
+            """{"resource":"ahp-chat:/c","title":"Chat","status":8,"modifiedAt":"2026-10-22T10:00:00.000Z",
+                "turns":[
+                  {"id":"t1","message":{"text":"old","origin":{"kind":"user"}},"responseParts":[${toolCall(""""status":"pending-confirmation",$common,"invocationMessage":"Run it","toolInput":"{}","confirmationTitle":"Run?","options":[]""")}],"startedAt":"2026-10-22T10:00:00.000Z","state":"complete"}
+                ],
+                "activeTurn":{"id":"t2","message":{"text":"hidden active","origin":{"kind":"user"},"_meta":{"vscode.chat.hiddenFromTranscript":true}},
+                  "responseParts":[${markdown("m1", "working")}],"startedAt":"2026-10-22T10:03:00.000Z"}}""",
+        )
+        assertFalse(Transcript.from(earlierWaiting).waitingOnYou, "TurnEnd stops the backward scan even when the active turn has no User row")
+    }
 }

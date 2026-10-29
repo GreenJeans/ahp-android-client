@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { findLeaks } from "./redaction-check.mjs";
 
 const out = (body) => ({ "fixture.json": JSON.stringify(body) });
@@ -71,4 +74,34 @@ test("a leak report never repeats the leaked text", () => {
   const problems = findLeaks({ ...base, outputs: out({ content: secret }), originals: [secret] });
   assert.ok(problems.length > 0);
   assert.ok(problems.every((p) => !p.includes("hunter2")));
+
+});
+
+test("checked-in extension meta fixtures pass findLeaks", () => {
+  const liveDir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "core-ahp", "src", "test", "resources", "live");
+  const vscodeMeta = readFileSync(resolve(liveDir, "vscode-session-meta.json"), "utf8");
+  const ahpdToolMeta = readFileSync(resolve(liveDir, "ahpd-tool-meta.json"), "utf8");
+  assert.deepEqual(
+    findLeaks({
+      ...base,
+      labels: new Set([...base.labels, "running", "not-needed", "terminal", "mcp", "subagent"]),
+      outputs: {
+        "vscode-session-meta.json": vscodeMeta,
+        "ahpd-tool-meta.json": ahpdToolMeta,
+      },
+      originals: [],
+      extraWords: [
+        ...base.extraWords,
+        "redacted",
+        "folder",
+        "branch",
+        "base",
+        "default",
+        "defaultRemote",
+        "upstream",
+        "server",
+      ],
+    }),
+    [],
+  );
 });
