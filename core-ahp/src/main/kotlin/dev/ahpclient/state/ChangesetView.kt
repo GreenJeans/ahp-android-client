@@ -13,7 +13,15 @@ data class ChangeRow(
     val added: Long?,
     val removed: Long?,
     val reviewed: Boolean,
-)
+) {
+    /** The file's own name (e.g. `mcp-tool-cache.ts` for `c:/.../src/mcp/mcp-tool-cache.ts`), so the row leads with what changed. */
+    val fileName: String
+        get() = path.trimEnd('/').substringAfterLast('/').ifEmpty { path }
+
+    /** The folder holding the file (e.g. `c:/.../src/mcp`), or null when [path] has no folder part. */
+    val directory: String?
+        get() = path.trimEnd('/').substringBeforeLast('/', "").takeIf { it.isNotEmpty() }
+}
 
 /** Where the host is in working out a changeset. A word this client does not know is [OTHER], never taken as ready. */
 enum class ChangesetPhase {

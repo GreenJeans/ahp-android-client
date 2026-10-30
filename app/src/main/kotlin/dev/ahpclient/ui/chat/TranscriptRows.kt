@@ -364,15 +364,16 @@ private fun RowScope.ToolHeader(item: TranscriptItem.Tool, modifier: Modifier, a
             maxLines = lines,
             overflow = TextOverflow.Ellipsis,
         )
-        if (waiting) ToolBadge(item.state, approveHere, Modifier.padding(top = 2.dp))
+        if (waiting) ToolBadge(item.state, approveHere, Modifier.padding(top = 2.dp), item.durationText)
     }
-    if (!waiting) ToolBadge(item.state, approveHere, Modifier.padding(start = 4.dp))
+    if (!waiting) ToolBadge(item.state, approveHere, Modifier.padding(start = 4.dp), item.durationText)
 }
 
 /** The state in words, in a quiet label tinted by role. The word carries the meaning, so colour is never the only cue. */
 @Composable
-private fun ToolBadge(state: ToolState, approveHere: Boolean, modifier: Modifier) {
-    val label = if (approveHere && state == ToolState.WAITING_FOR_APPROVAL) "Waiting for your approval" else state.label
+private fun ToolBadge(state: ToolState, approveHere: Boolean, modifier: Modifier, durationText: String? = null) {
+    val base = if (approveHere && state == ToolState.WAITING_FOR_APPROVAL) "Waiting for your approval" else state.label
+    val label = listOfNotNull(base, durationText?.takeIf { it.isNotBlank() }).joinToString(" \u00b7 ")
     Text(label, style = MaterialTheme.typography.labelSmall, color = state.glyph().tint(), modifier = modifier.testTag("tool_badge"))
 }
 

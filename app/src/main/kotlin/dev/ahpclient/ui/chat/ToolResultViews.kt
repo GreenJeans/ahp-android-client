@@ -21,6 +21,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.ahpclient.state.Clipped
 import dev.ahpclient.state.InputLine
@@ -45,6 +46,18 @@ internal fun ToolDetailBody(
 ) {
     SelectionContainer {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            val meta = listOfNotNull(
+                detail.mcpServerName?.let { "MCP: $it" },
+                detail.durationText?.let { "Duration: $it" },
+            ).joinToString(" \u00b7 ")
+            if (meta.isNotEmpty()) {
+                Text(
+                    meta,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.testTag("tool_meta"),
+                )
+            }
             detail.waitingFor?.let { waiting ->
                 Column(modifier = Modifier.semantics(mergeDescendants = true) {}.testTag("tool_waiting"), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(waiting, style = MaterialTheme.typography.titleSmall)
@@ -148,7 +161,7 @@ private fun FileEditResult(result: ToolResultView.FileEdit) {
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(result.path, style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace, modifier = Modifier.weight(1f))
+        Text(result.path, style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace, maxLines = 2, overflow = TextOverflow.MiddleEllipsis, modifier = Modifier.weight(1f))
         if (result.added != null || result.removed != null) {
             val added = result.added ?: 0
             val removed = result.removed ?: 0

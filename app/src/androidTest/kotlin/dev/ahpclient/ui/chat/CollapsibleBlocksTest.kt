@@ -207,6 +207,18 @@ class CollapsibleBlocksTest {
     }
 
     @Test
+    fun aToolCallWithStepExtrasShowsDurationInTheBadgeAndMcpServerInTheExpandedBody() {
+        val source = completed(
+            """{"type":"text","text":"ok"}""",
+            extra = ""","_meta":{"ahpd.durationMs":4250,"mcpServerName":"github-mcp"}""",
+        )
+        show(transcript(tool("t1", source)), expanded = setOf("t1"))
+
+        rule.onNode(headerOf("Run in Terminal")).assertTextContains("Done \u00b7 4s", substring = true)
+        rule.onNodeWithTag("tool_meta", useUnmergedTree = true).assertTextEquals("MCP: github-mcp \u00b7 Duration: 4s")
+    }
+
+    @Test
     fun aFileEditSaysInWordsHowManyLinesChanged() {
         val source = completed("""{"type":"fileEdit","after":{"uri":"file:///work/repo/a.txt","content":{"uri":"ahp-content:/2"}},"diff":{"added":12,"removed":3}}""")
         show(transcript(tool("t1", source)), expanded = setOf("t1"))

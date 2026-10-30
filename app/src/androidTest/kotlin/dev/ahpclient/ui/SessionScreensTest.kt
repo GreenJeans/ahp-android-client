@@ -703,6 +703,50 @@ class SessionScreensTest {
     }
 
     @Test
+    fun detailsShowTheModelAndPullRequestsAndConfirmGitHubLinksOnly() {
+        val opened = mutableListOf<String>()
+        val shared = mutableListOf<String>()
+        val meta = """{"model":"claude-sonnet-4","git":{"branchName":"feature/phone","pullRequests":[
+            {"url":"https://github.com/org/repo/pull/42","state":"open","branchName":"feature/phone"},
+            {"url":"https://evil.example/pull/9","state":"merged"}]}}"""
+        rule.setContent {
+            AhpTheme {
+                SessionScreen(
+                    detailState(),
+                    null,
+                    ConnState.Online,
+                    now,
+                    {},
+                    shownChat = mainChatUri,
+                    summary = summary("ahp-session:/s", "Fix the build", 56, "2026-10-26T10:00:00.000Z", ""","_meta":$meta"""),
+                    onOpenLink = opened::add,
+                    onShareLink = shared::add,
+                )
+            }
+        }
+        openDetails()
+
+        rule.onNodeWithText("Model").assertIsDisplayed()
+        rule.onNodeWithText("claude-sonnet-4").assertIsDisplayed()
+        val chips = rule.onAllNodesWithTag("pr_chip")
+        chips.assertCountEquals(2)
+        chips[0].assertTextContains("PR #42 · open · feature/phone").assertHasClickAction().assertTouchTargetAtLeast(48.dp)
+        // A non-github.com PR URL is rendered as plain text, not a tappable button.
+        assertTrue(chips[1].fetchSemanticsNode().config.contains(androidx.compose.ui.semantics.SemanticsActions.OnClick).not())
+        chips[1].assertTextContains("PR #9 · merged").assertTextContains("https://evil.example/pull/9")
+
+        chips[0].performClick()
+        rule.onNodeWithTag("link_dialog").assertIsDisplayed()
+        rule.onNodeWithTag("link_host").assertTextEquals("github.com")
+        rule.onNodeWithTag("link_url").assertTextContains("https://github.com/org/repo/pull/42")
+        rule.onNodeWithTag("link_open").performClick()
+        rule.waitForIdle()
+
+        assertEquals(listOf("https://github.com/org/repo/pull/42"), opened)
+        assertTrue(shared.isEmpty())
+    }
+
+    @Test
     fun detailsOfASessionWithNoGitDataHaveNoBranchTile() {
         showDetail(detailState())
         openDetails()
