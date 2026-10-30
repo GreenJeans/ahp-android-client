@@ -25,6 +25,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -65,6 +66,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -128,6 +130,8 @@ class ChatActionsUi(
 
 /** The host's own words on a button or a field are untrusted display text: shown as plain text and cut to a sane length. */
 private const val MAX_LABEL = 80
+private const val MAX_QUESTION_TEXT = 4_000
+private const val MAX_OPTION_TEXT = 1_000
 
 /** How long a form waits after the last change before it tells the host what has been entered. */
 private const val DRAFT_PAUSE_MS = 700L
@@ -616,71 +620,96 @@ internal fun QuestionForm(form: InputForm, actions: ChatActionsUi, modifier: Mod
             busy = false
         }
     }
-    Column(modifier = modifier.fillMaxWidth().testTag("question_form"), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        form.questions.forEach { question ->
-            QuestionField(question, values[question.id] ?: form.initial(question), problems[question.id]) {
-                values[question.id] = it
-                problems = problems - question.id
+    val message = form.message?.take(MAX_QUESTION_TEXT)?.takeIf {
+        it.isNotBlank() && (form.questions.size > 1 || (it != form.questions.firstOrNull()?.title && it != form.questions.firstOrNull()?.heading))
+    }
+    Card(modifier = modifier.fillMaxWidth().testTag("question_form")) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Question", style = MaterialTheme.typography.labelLarge)
+            if (message != null) {
+                Text(message, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.testTag("question_message"))
             }
-        }
-        Notice(notice, "question_notice")
-        Button(
-            onClick = {
-                when (val check = form.check(values)) {
-                    is FormCheck.Problems -> problems = check.byQuestion
-                    is FormCheck.Ready -> finish { actions.answer(form.requestId, check.answers) }
+            form.questions.forEachIndexed { index, question ->
+                if (index > 0 || message != null) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
-            },
-            enabled = !busy,
-            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("question_submit"),
-        ) { Text("Send answer") }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = { finish { actions.decline(form.requestId) } }, enabled = !busy, modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("question_decline")) { Text("Decline") }
-            OutlinedButton(onClick = { finish { actions.dismiss(form.requestId) } }, enabled = !busy, modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("question_dismiss")) { Text("Dismiss") }
+                QuestionField(question, values[question.id] ?: form.initial(question), problems[question.id]) {
+                    values[question.id] = it
+                    problems = problems - question.id
+                }
+            }
+            Notice(notice, "question_notice")
+            Button(
+                onClick = {
+                    when (val check = form.check(values)) {
+                        is FormCheck.Problems -> problems = check.byQuestion
+                        is FormCheck.Ready -> finish { actions.answer(form.requestId, check.answers) }
+                    }
+                },
+                enabled = !busy,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("question_submit"),
+            ) { Text("Send answer") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { finish { actions.decline(form.requestId) } }, enabled = !busy, modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("question_decline")) { Text("Decline") }
+                OutlinedButton(onClick = { finish { actions.dismiss(form.requestId) } }, enabled = !busy, modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("question_dismiss")) { Text("Dismiss") }
+            }
         }
     }
 }
 
 @Composable
 private fun QuestionField(question: FormQuestion, value: FormValue, problem: String?, onChange: (FormValue) -> Unit) {
-    val title = question.title.take(MAX_LABEL * 3).ifBlank { "Question" }
+    val title = question.title.take(MAX_QUESTION_TEXT).ifBlank { "Question" }
+    val heading = question.heading?.take(MAX_OPTION_TEXT)?.takeIf { it.isNotBlank() }
     when (question.kind) {
-        QuestionKind.TEXT, QuestionKind.NUMBER -> OutlinedTextField(
-            value = (value as? FormValue.Text)?.text.orEmpty(),
-            onValueChange = { onChange(FormValue.Text(it)) },
-            label = { Text(title) },
-            isError = problem != null,
-            supportingText = problem?.let { { Text(it) } },
-            keyboardOptions = if (question.kind == QuestionKind.NUMBER) KeyboardOptions(keyboardType = KeyboardType.Decimal) else KeyboardOptions.Default,
-            modifier = Modifier.fillMaxWidth().testTag("field_${question.id}"),
-        )
+        QuestionKind.TEXT, QuestionKind.NUMBER -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            heading?.let { Text(it, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold) }
+            OutlinedTextField(
+                value = (value as? FormValue.Text)?.text.orEmpty(),
+                onValueChange = { onChange(FormValue.Text(it)) },
+                label = { Text(title) },
+                isError = problem != null,
+                supportingText = problem?.let { { Text(it) } },
+                keyboardOptions = if (question.kind == QuestionKind.NUMBER) KeyboardOptions(keyboardType = KeyboardType.Decimal) else KeyboardOptions.Default,
+                modifier = Modifier.fillMaxWidth().testTag("field_${question.id}"),
+            )
+        }
         QuestionKind.BOOLEAN -> {
             val on = (value as? FormValue.Bool)?.value ?: false
             Row(
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(vertical = 4.dp)
                     .toggleable(value = on, role = Role.Switch, onValueChange = { onChange(FormValue.Bool(it)) })
                     .testTag("field_${question.id}"),
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(title, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    heading?.let { Text(it, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold) }
+                    Text(title, style = MaterialTheme.typography.bodyLarge)
+                }
                 Switch(checked = on, onCheckedChange = null)
             }
         }
         QuestionKind.SINGLE -> {
             val choice = value as? FormValue.Choice ?: FormValue.Choice(null)
-            Column(modifier = Modifier.fillMaxWidth().testTag("field_${question.id}")) {
-                Text(title, style = MaterialTheme.typography.titleSmall)
+            Column(modifier = Modifier.fillMaxWidth().testTag("field_${question.id}"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                heading?.let { Text(it, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold) }
+                Text(title, style = if (heading != null) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.titleSmall)
                 question.options.forEach { option ->
+                    val optionLabel = option.label.take(MAX_OPTION_TEXT) + if (option.recommended) " (recommended)" else ""
+                    val optionDesc = option.description?.take(MAX_OPTION_TEXT)?.takeIf { it.isNotBlank() }
                     Row(
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(vertical = 4.dp)
                             .selectable(selected = choice.optionId == option.id, role = Role.RadioButton, onClick = { onChange(choice.copy(optionId = option.id)) })
                             .testTag("option_${question.id}_${option.id}"),
                         horizontalArrangement = Arrangement.spacedBy(16.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         RadioButton(selected = choice.optionId == option.id, onClick = null)
-                        Text(option.label.take(MAX_LABEL), style = MaterialTheme.typography.bodyLarge)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(optionLabel, style = MaterialTheme.typography.bodyLarge)
+                            optionDesc?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                        }
                     }
                 }
                 if (question.allowFreeform) {
@@ -696,12 +725,15 @@ private fun QuestionField(question: FormQuestion, value: FormValue, problem: Str
         }
         QuestionKind.MULTI -> {
             val choices = value as? FormValue.Choices ?: FormValue.Choices(emptySet())
-            Column(modifier = Modifier.fillMaxWidth().testTag("field_${question.id}")) {
-                Text(title, style = MaterialTheme.typography.titleSmall)
+            Column(modifier = Modifier.fillMaxWidth().testTag("field_${question.id}"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                heading?.let { Text(it, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold) }
+                Text(title, style = if (heading != null) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.titleSmall)
                 question.options.forEach { option ->
                     val checked = option.id in choices.optionIds
+                    val optionLabel = option.label.take(MAX_OPTION_TEXT) + if (option.recommended) " (recommended)" else ""
+                    val optionDesc = option.description?.take(MAX_OPTION_TEXT)?.takeIf { it.isNotBlank() }
                     Row(
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(vertical = 4.dp)
                             .toggleable(
                                 value = checked,
                                 role = Role.Checkbox,
@@ -712,7 +744,10 @@ private fun QuestionField(question: FormQuestion, value: FormValue, problem: Str
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Checkbox(checked = checked, onCheckedChange = null)
-                        Text(option.label.take(MAX_LABEL), style = MaterialTheme.typography.bodyLarge)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(optionLabel, style = MaterialTheme.typography.bodyLarge)
+                            optionDesc?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                        }
                     }
                 }
                 if (question.allowFreeform) {

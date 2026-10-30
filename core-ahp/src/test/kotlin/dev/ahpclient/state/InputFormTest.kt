@@ -40,6 +40,7 @@ class InputFormTest {
         assertEquals(listOf("t", "n", "b", "s", "m"), built.questions.map { it.id })
         assertEquals(listOf(QuestionKind.TEXT, QuestionKind.NUMBER, QuestionKind.BOOLEAN, QuestionKind.SINGLE, QuestionKind.MULTI), built.questions.map { it.kind })
         assertEquals("Message t", built.questions[0].title)
+        assertEquals("Title t", built.questions[0].heading)
         assertEquals(2.0, built.questions[0].min)
         assertEquals("hi", built.questions[0].defaultText)
         assertEquals("3", built.questions[1].defaultText, "a whole number reads as 3, not 3.0")
@@ -48,6 +49,35 @@ class InputFormTest {
         assertTrue(built.questions[3].allowFreeform)
         assertEquals(1.0, built.questions[4].min)
         assertEquals(2.0, built.questions[4].max)
+    }
+
+    @Test
+    fun `a question keeps its title as a heading when distinct from its message, and options keep their description and recommendation`() {
+        val built = InputForm.from(
+            request(
+                """{"kind":"single-select","id":"s1","title":"Post third comment","message":"A third comment on story 2656310 only if qa does not change the picture.","options":[
+                    {"id":"True","label":"True","description":"Post immediately","recommended":false},
+                    {"id":"False","label":"False","description":"Wait for qa","recommended":true}
+                ]}""",
+                """{"kind":"text","id":"t1","title":"Same","message":"Same"}""",
+                """{"kind":"text","id":"t2","title":"Only title","message":""}""",
+                message = "The agent has a question",
+            ),
+        )!!
+
+        assertNull(built.message, "the generic placeholder message is not kept as a separate form message")
+        assertEquals("Post third comment", built.questions[0].heading)
+        assertEquals("A third comment on story 2656310 only if qa does not change the picture.", built.questions[0].title)
+        assertEquals(
+            listOf(
+                FormOption("True", "True", description = "Post immediately", recommended = false),
+                FormOption("False", "False", description = "Wait for qa", recommended = true),
+            ),
+            built.questions[0].options,
+        )
+        assertNull(built.questions[1].heading, "an identical title and message does not repeat the heading")
+        assertNull(built.questions[2].heading, "when message is blank, title becomes the main prompt with no extra heading")
+        assertEquals("Only title", built.questions[2].title)
     }
 
     @Test

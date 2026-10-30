@@ -317,6 +317,29 @@ class SessionDetailTest {
     }
 
     @Test
+    fun `a question with both a title and a message keeps the title as its heading`() {
+        val request = """[{"kind":"chatInput","id":"r1","chat":"c","request":{"id":"q","message":"The agent has a question","questions":[
+            {"kind":"single-select","id":"a","title":"Branch policy","message":"Pick a branch policy for CI","options":[{"id":"m","label":"main"}]},
+            {"kind":"boolean","id":"b","title":"Third comment","message":"A third comment on story 2656310 only if qa does not change the picture."}]}}]"""
+
+        val view = SessionDetail.from(state(request), now).inputNeeded.single()
+
+        assertEquals("Pick a branch policy for CI", view.text)
+        assertEquals(
+            listOf(
+                QuestionView(prompt = null, answerKind = "Pick one", options = listOf("main"), heading = "Branch policy"),
+                QuestionView(
+                    prompt = "A third comment on story 2656310 only if qa does not change the picture.",
+                    answerKind = "Yes or no",
+                    options = emptyList(),
+                    heading = "Third comment",
+                ),
+            ),
+            view.questions,
+        )
+    }
+
+    @Test
     fun `an option with no label falls back to its id`() {
         val request = """[{"kind":"chatInput","id":"r1","chat":"c","request":{"id":"q","questions":[
             {"kind":"single-select","id":"a","message":"Pick","options":[{"id":"opt-1","label":""}]}]}}]"""
