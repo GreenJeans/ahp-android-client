@@ -23,6 +23,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.ahpclient.app.DiffLoad
 import dev.ahpclient.state.ConnState
@@ -62,6 +63,8 @@ fun FileDiffScreen(path: String, load: DiffLoad, connection: ConnState, onBack: 
                     style = MaterialTheme.typography.bodySmall,
                     fontFamily = FontFamily.Monospace,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.MiddleEllipsis,
                     modifier = Modifier.semantics { heading() }.testTag("diff_title"),
                 )
             }

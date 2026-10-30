@@ -25,6 +25,8 @@ class ChangesetViewTest {
 
         assertEquals(listOf(ChangeKind.MODIFIED, ChangeKind.ADDED, ChangeKind.DELETED), view.rows.map { it.kind })
         assertEquals(listOf("/work/a.kt", "/work/new.kt", "/work/old.kt"), view.rows.map { it.path })
+        assertEquals(listOf("a.kt", "new.kt", "old.kt"), view.rows.map { it.fileName })
+        assertEquals(listOf("/work", "/work", "/work"), view.rows.map { it.directory })
     }
 
     @Test
@@ -92,6 +94,20 @@ class ChangesetViewTest {
         assertNull(entry("").uri)
         assertNull(entry("ahp-changeset:/" + "x".repeat(600)).uri)
         assertEquals("Changes", entry("ahp-changeset:/c", label = "").label)
+    }
+
+    @Test
+    fun `a change row separates the file name from its directory and handles a bare file name`() {
+        val deep = ChangeRow("1", "c:/Users/me/vscode-agent-host/src/mcp/mcp-tool-cache.ts", ChangeKind.ADDED, 192, 0, false)
+        val bare = ChangeRow("2", "README.md", ChangeKind.MODIFIED, 1, 1, false)
+        val root = ChangeRow("3", "/a.kt", ChangeKind.MODIFIED, 1, 0, false)
+
+        assertEquals("mcp-tool-cache.ts", deep.fileName)
+        assertEquals("c:/Users/me/vscode-agent-host/src/mcp", deep.directory)
+        assertEquals("README.md", bare.fileName)
+        assertNull(bare.directory)
+        assertEquals("a.kt", root.fileName)
+        assertNull(root.directory)
     }
 
     private fun entry(template: String, label: String = "Uncommitted") = ChangesetEntry.from(

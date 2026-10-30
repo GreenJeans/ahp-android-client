@@ -18,7 +18,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$sdk = if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { Join-Path $env:LOCALAPPDATA 'Android\Sdk' }
+$sdk = if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { Join-Path $env:LOCALAPPDATA 'Android\Sdk' }; $env:ANDROID_HOME = $sdk
 $adb = Join-Path $sdk 'platform-tools\adb.exe'
 
 if ($Serial -notmatch '^emulator-\d+$' -and -not $AllowPhysical) {

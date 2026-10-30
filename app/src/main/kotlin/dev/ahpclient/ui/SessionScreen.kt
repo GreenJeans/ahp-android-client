@@ -53,11 +53,15 @@ import dev.ahpclient.state.ChangeStats
 import dev.ahpclient.state.ChangesetEntry
 import dev.ahpclient.state.ChatRow
 import dev.ahpclient.state.ConnState
+import dev.ahpclient.state.LinkTarget
+import dev.ahpclient.state.PullRequest
 import dev.ahpclient.state.SessionDetail
 import dev.ahpclient.state.SessionGoneException
 import dev.ahpclient.state.SessionPhase
 import dev.ahpclient.state.label
+import dev.ahpclient.ui.chat.LinkConfirmDialog
 import com.microsoft.agenthostprotocol.generated.SessionState
+import com.microsoft.agenthostprotocol.generated.SessionSummary
 import java.time.Instant
 
 /**
@@ -89,9 +93,12 @@ fun SessionScreen(
     onOpenChangeset: (uri: String, label: String) -> Unit = { _, _ -> },
     /** The choice of sessions to be alerted about when they finish; the menu has no such item without it. */
     alerts: FinishedAlertsUi? = null,
+    summary: SessionSummary? = null,
+    onOpenLink: (String) -> Unit = {},
+    onShareLink: ((String) -> Unit)? = null,
     chat: @Composable () -> Unit = {},
 ) {
-    val detail = remember(state, now) { state?.let { SessionDetail.from(it, now) } }
+    val detail = remember(state, now, summary) { state?.let { SessionDetail.from(it, now, summary) } }
     var showDetails by rememberSaveable { mutableStateOf(false) }
     var notice by remember { mutableStateOf<String?>(null) }
     // A chat the user has just started is not in the host's list until the host echoes it, so the tab is brought forward then.
@@ -158,7 +165,7 @@ fun SessionScreen(
         }
     }
     if (showDetails && detail != null) {
-        DetailsSheet(detail, onDismiss = { showDetails = false })
+        DetailsSheet(detail, onDismiss = { showDetails = false }, onOpenLink = onOpenLink, onShareLink = onShareLink)
     }
 }
 
@@ -192,6 +199,7 @@ private fun ChangesChip(stats: ChangeStats?, changesets: List<ChangesetEntry>, o
         }
     }
 }
+
 /** What the person needs to know before the chat: the session is archived, is still starting, failed to start, or an action went wrong. */
 @Composable
 private fun SessionBanners(detail: SessionDetail, notice: String?) {
@@ -254,7 +262,9 @@ private fun ChatTabs(chats: List<ChatRow>, shownChat: String?, onSelect: (String
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DetailsSheet(detail: SessionDetail, onDismiss: () -> Unit) {
+private fun DetailsSheet(detail: SessionDetail, onDismiss: () -> Unit, onOpenLink: (String) -> Unit = {}, onShareLink: ((String) -> Unit)? = null) {
+    var pendingPrUrl by rememberSaveable { mutableStateOf<String?>(null) }
+    val pendingTarget = pendingPrUrl?.let(LinkTarget::of)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -287,7 +297,59 @@ private fun DetailsSheet(detail: SessionDetail, onDismiss: () -> Unit) {
                 }
             }
 
+            if (detail.pullRequests.isNotEmpty()) {
+                PullRequestsSection(detail.pullRequests, onSelectUrl = { pendingPrUrl = it })
+            }
+
             Facts(detail)
+        }
+    }
+    pendingTarget?.let { target ->
+        LinkConfirmDialog(
+            target = target,
+            onOpen = {
+                val url = pendingPrUrl
+                pendingPrUrl = null
+                if (url != null) onOpenLink(url)
+            },
+            onShare = onShareLink?.let { share ->
+                {
+                    val url = pendingPrUrl
+                    pendingPrUrl = null
+                    if (url != null) share(url)
+                }
+            },
+            onDismiss = { pendingPrUrl = null },
+        )
+    }
+}
+
+@Composable
+private fun PullRequestsSection(pullRequests: List<PullRequest>, onSelectUrl: (String) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.testTag("pull_requests")) {
+        Text("Pull requests", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
+        pullRequests.forEach { pr ->
+            val openable = pr.openableUrl
+            val text = listOfNotNull(pr.label, pr.branch).joinToString(" · ")
+            if (openable != null) {
+                OutlinedButton(
+                    onClick = { onSelectUrl(openable) },
+                    modifier = Modifier.heightIn(min = 48.dp).testTag("pr_chip"),
+                ) {
+                    Text(text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            } else {
+                Surface(
+                    shape = MaterialTheme.shapes.small,
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier.semantics(mergeDescendants = true) {}.testTag("pr_chip"),
+                ) {
+                    Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(text, style = MaterialTheme.typography.labelLarge)
+                        Text(pr.url, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.MiddleEllipsis)
+                    }
+                }
+            }
         }
     }
 }
@@ -296,6 +358,7 @@ private fun DetailsSheet(detail: SessionDetail, onDismiss: () -> Unit) {
 private fun Facts(detail: SessionDetail) {
     val facts = buildList {
         add("Agent" to detail.provider)
+        detail.model?.let { add("Model" to it) }
         detail.project?.let { add("Project" to it) }
         detail.workingDirectories.forEach { add("Folder" to it) }
         detail.extras.branchLabel?.let { add("Branch" to it) }

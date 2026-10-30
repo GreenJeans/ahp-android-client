@@ -354,7 +354,9 @@ private fun SessionPage(
         val now by rememberNow()
     // Where the person is needed, from the same list as the side menu: what waits on them, and what finished unread.
     val inbox = remember(listed, now) { Inbox.from(listed, now) }
-        val changes = remember(listed, open.uri) { ChangeStats.of(listed.firstOrNull { it.resource == open.uri }?.changes) }
+        val context = LocalContext.current
+        val summary = remember(listed, open.uri) { listed.firstOrNull { it.resource == open.uri } }
+        val changes = remember(summary) { ChangeStats.of(summary?.changes) }
         SessionScreen(
             state = sessionState,
             error = error,
@@ -370,6 +372,9 @@ private fun SessionPage(
             onRemoved = controller::closeSession,
             onOpenChangeset = { uri, label -> onChangesetTitle(label); controller.openChangeset(uri) },
             alerts = alerts,
+            summary = summary,
+            onOpenLink = { link -> if (!openLink(context, link)) Toast.makeText(context, "Nothing can open this link", Toast.LENGTH_SHORT).show() },
+            onShareLink = { link -> if (!shareLink(context, link)) Toast.makeText(context, "Nothing can share this link", Toast.LENGTH_SHORT).show() },
         ) {
             if (chat != null) OpenChatView(chat, connected.session, connection, rootState, sessionState, chatMutable, controller, ui, screen = false, modifier = Modifier)
         }

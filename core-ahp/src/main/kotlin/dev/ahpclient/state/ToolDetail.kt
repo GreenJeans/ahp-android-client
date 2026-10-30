@@ -78,7 +78,7 @@ data class ToolDetail(
     /** The MCP server name the host reported for this tool call (E5), or null when unreported. */
     val mcpServerName: String? = null,
 ) {
-    val isEmpty: Boolean get() = waitingFor == null && input.isEmpty() && results.isEmpty() && error == null
+    val isEmpty: Boolean get() = waitingFor == null && input.isEmpty() && results.isEmpty() && error == null && mcpServerName == null && durationText == null
 
     /** True when something was left out for length, so the block can offer to show more. */
     val hasMore: Boolean

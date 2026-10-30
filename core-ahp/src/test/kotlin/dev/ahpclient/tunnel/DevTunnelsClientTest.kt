@@ -153,4 +153,17 @@ class DevTunnelsClientTest {
 
         assertFalse("$target".contains("connect-token-value"))
     }
+
+    @Test
+    fun `parseTunnel uses description when label and name are absent or blank`() {
+        fun parse(extra: String) = DevTunnelsClient.parseTunnel(
+            kotlinx.serialization.json.Json.parseToJsonElement(
+                """{"tunnelId":"re1lw1zrrff4","clusterId":"usw2","labels":["vscode-server-launcher","protocolv6"]$extra}""",
+            ) as kotlinx.serialization.json.JsonObject,
+        )!!
+
+        assertEquals("work-laptop", parse(""","name":"work-laptop"""").name)
+        assertEquals("work-laptop", parse(""","name":"","description":"work-laptop"""").name)
+        assertEquals("re1lw1zrrff4", parse(""","name":"  ","description":""""" ).name)
+    }
 }

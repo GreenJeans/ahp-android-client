@@ -33,6 +33,8 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.ahpclient.state.ChangeKind
 import dev.ahpclient.state.ChangeRow
@@ -170,7 +172,23 @@ private fun ChangeRowItem(row: ChangeRow, onOpen: (() -> Unit)?, reviewEnabled: 
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f).padding(vertical = 4.dp)) {
-                Text(row.path, style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace)
+                Text(
+                    row.fileName,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (row.fileName != row.path) {
+                    Text(
+                        row.path,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.MiddleEllipsis,
+                    )
+                }
                 Text(
                     listOfNotNull(kind, if (row.reviewed) "Reviewed" else null).joinToString(" · "),
                     style = MaterialTheme.typography.labelMedium,

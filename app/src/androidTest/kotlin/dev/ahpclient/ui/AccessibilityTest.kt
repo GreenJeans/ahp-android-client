@@ -90,7 +90,7 @@ class AccessibilityTest {
     )
 
     private val sessions = listOf(
-        summary("ahp-session:/w", "Needs answer", 56, ""","project":{"uri":"file:///w","displayName":"repo-w"}"""),
+        summary("ahp-session:/w", "Needs answer", 56, ""","project":{"uri":"file:///w","displayName":"repo-w"},"_meta":{"git":{"branchName":"feature/phone","outgoingChanges":2}}"""),
         summary("ahp-session:/k", "Working", 40, ""","activity":"Running tests""""),
         summary("ahp-session:/e", "Failed run", 2),
         summary("ahp-session:/u", "Unread one", 1),
@@ -103,7 +103,10 @@ class AccessibilityTest {
             "project":{"uri":"file:///work/repo","displayName":"repo"},"workingDirectories":["file:///work/repo"],
             "chats":[{"resource":"ahp-chat://default/x","title":"Main chat","status":56,"modifiedAt":"2026-10-26T10:29:00.000Z"}],
             "inputNeeded":[{"kind":"chatInput","id":"r1","chat":"c","request":{"id":"q","message":"Which branch?","questions":[
-                {"kind":"single-select","id":"a","message":"Which branch?","options":[{"id":"m","label":"main","recommended":true},{"id":"d","label":"develop"}]}]}}]}""",
+                {"kind":"single-select","id":"a","message":"Which branch?","options":[{"id":"m","label":"main","recommended":true},{"id":"d","label":"develop"}]}]}}],
+            "_meta":{"model":"claude-sonnet-4","git":{"branchName":"feature/phone","outgoingChanges":2,"uncommittedChanges":3,"pullRequests":[
+                {"url":"https://github.com/org/repo/pull/42","state":"open","branchName":"feature/phone"},
+                {"url":"https://evil.example/pull/9","state":"merged"}]}}}""",
     )
 
     @Before
@@ -401,20 +404,28 @@ class AccessibilityTest {
 
     @Test
     fun sessionScreenWithTabsAndAChat() {
+        val chat = Transcript(
+            "Fix the build",
+            ActivityState.IN_PROGRESS,
+            "Running tests",
+            listOf(TranscriptItem.User("u1", "Please fix the failing build."), TranscriptItem.Markdown("m0", "All done.")),
+            hasOlder = false,
+            running = true,
+        )
         checkEach(
             {
                 SessionScreen(twoChatSession, null, ConnState.Online, now, {}, shownChat = "ahp-chat://default/x") {
-                    ChatPane(everyRow, null, false, null, ConnState.Online, {}, {})
+                    ChatPane(chat, null, false, null, ConnState.Online, {}, {})
                 }
             },
             {
                 SessionScreen(twoChatSession, null, ConnState.Online, now, {}, shownChat = "ahp-chat://default/y") {
-                    ChatPane(everyRow, null, false, null, ConnState.Reconnecting(1, null), {}, {}, actions = chatActions())
+                    ChatPane(chat, null, false, null, ConnState.Reconnecting(1, null), {}, {}, actions = chatActions())
                 }
             },
             {
                 SessionScreen(twoChatSession, null, ConnState.Online, now, {}, shownChat = "ahp-chat://default/x") {
-                    ChatPane(everyRow, null, false, null, ConnState.Online, {}, {}, actions = chatActions(running = true))
+                    ChatPane(chat, null, false, null, ConnState.Online, {}, {}, actions = chatActions(running = true))
                 }
             },
         )
@@ -451,12 +462,15 @@ class AccessibilityTest {
 
     @Test
     fun sessionScreenWithItsDetailsSheetOpen() {
-        rule.setContent { AhpTheme { SessionScreen(detail(), null, ConnState.Online, now, {}, shownChat = "ahp-chat://default/x") {} } }
+        var dark by mutableStateOf(false)
+        rule.setContent { AhpTheme(dark) { SessionScreen(detail(), null, ConnState.Online, now, {}, shownChat = "ahp-chat://default/x") {} } }
         rule.onNodeWithTag("session_menu").performClick()
         rule.onNodeWithTag("menu_details").performClick()
-        rule.waitForIdle()
-
-        check()
+        listOf(false, true).forEach { theme ->
+            dark = theme
+            rule.waitForIdle()
+            check()
+        }
     }
 
     @Test

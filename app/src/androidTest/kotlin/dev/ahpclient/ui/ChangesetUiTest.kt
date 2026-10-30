@@ -261,6 +261,8 @@ class ChangesetUiTest {
         assertEquals(listOf("file:///work/b.kt"), opened)
         rule.onNodeWithTag("changeset_note").assertTextContains("Tap a file", substring = true)
         rule.onAllNodesWithTag("change_row")[0].assertHeightIsAtLeast(48.dp)
+        // A row leads with the file's own name and keeps the path under it.
+        rule.onAllNodesWithTag("change_row")[0].assertTextContains("a.kt", substring = true).assertTextContains("/work/a.kt", substring = true)
     }
 
     @Test

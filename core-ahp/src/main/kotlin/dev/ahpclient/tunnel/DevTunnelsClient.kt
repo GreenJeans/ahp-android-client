@@ -128,7 +128,7 @@ class DevTunnelsClient(
             return TunnelInfo(
                 tunnelId = tunnelId,
                 clusterId = clusterId,
-                name = tags.name ?: tunnel.string("name") ?: tunnelId,
+                name = listOfNotNull(tags.name, tunnel.string("name"), tunnel.string("description")).firstOrNull { it.isNotBlank() } ?: tunnelId,
                 protocolVersion = tags.protocolVersion,
                 hostConnectionCount = count,
                 ports = ports,
