@@ -37,6 +37,7 @@ data class QuestionView(
     val prompt: String?,
     val answerKind: String,
     val options: List<String>,
+    val heading: String? = null,
 )
 
 /** Where a session is in starting up, as the host reports it. A word this client does not know is [OTHER], never treated as ready. */
@@ -184,7 +185,7 @@ data class SessionDetail(
         /** A question the agent asked in a chat, in words; shared by the session detail and the transcript. */
         fun describeChatInput(input: ChatInputRequest): InputRequestView {
             val questions = input.questions.orEmpty()
-            val headline = input.message?.takeIf { it.isNotBlank() }
+            val headline = input.message?.takeIf { it.isNotBlank() && it != "The agent has a question" }
                 ?: questions.firstNotNullOfOrNull(::questionText)
                 ?: "The agent has a question."
             return InputRequestView("Question", headline, questions.map { questionView(it, headline) })
@@ -193,13 +194,14 @@ data class SessionDetail(
         private fun questionView(question: ChatInputQuestion, headline: String): QuestionView {
             val text = questionText(question)
             val prompt = if (text == null) "A question this app cannot show." else text.takeIf { it != headline }
+            val heading = questionHeading(question, headline)
             return when (question) {
-                is ChatInputQuestionText -> QuestionView(prompt, "Free text", emptyList())
-                is ChatInputQuestionNumber -> QuestionView(prompt, "Number", emptyList())
-                is ChatInputQuestionBoolean -> QuestionView(prompt, "Yes or no", emptyList())
-                is ChatInputQuestionSingleSelect -> QuestionView(prompt, "Pick one", question.value.options.orEmpty().map(::optionText))
-                is ChatInputQuestionMultiSelect -> QuestionView(prompt, "Pick any", question.value.options.orEmpty().map(::optionText))
-                else -> QuestionView(prompt, "Unknown", emptyList())
+                is ChatInputQuestionText -> QuestionView(prompt, "Free text", emptyList(), heading)
+                is ChatInputQuestionNumber -> QuestionView(prompt, "Number", emptyList(), heading)
+                is ChatInputQuestionBoolean -> QuestionView(prompt, "Yes or no", emptyList(), heading)
+                is ChatInputQuestionSingleSelect -> QuestionView(prompt, "Pick one", question.value.options.orEmpty().map(::optionText), heading)
+                is ChatInputQuestionMultiSelect -> QuestionView(prompt, "Pick any", question.value.options.orEmpty().map(::optionText), heading)
+                else -> QuestionView(prompt, "Unknown", emptyList(), heading)
             }
         }
 
@@ -207,6 +209,18 @@ data class SessionDetail(
             append(option.label.ifBlank { option.id })
             option.description?.takeIf { it.isNotBlank() }?.let { append(" — ").append(it) }
             if (option.recommended == true) append(" (recommended)")
+        }
+
+        private fun questionHeading(question: ChatInputQuestion, headline: String): String? {
+            val (title, message) = when (question) {
+                is ChatInputQuestionText -> question.value.run { title to message }
+                is ChatInputQuestionSingleSelect -> question.value.run { title to message }
+                is ChatInputQuestionMultiSelect -> question.value.run { title to message }
+                is ChatInputQuestionNumber -> question.value.run { title to message }
+                is ChatInputQuestionBoolean -> question.value.run { title to message }
+                else -> return null
+            }
+            return title?.takeIf { it.isNotBlank() && message.isNotBlank() && it != message && it != headline }
         }
 
         private fun questionText(question: ChatInputQuestion): String? = when (question) {

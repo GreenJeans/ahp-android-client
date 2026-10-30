@@ -17,7 +17,12 @@ import com.microsoft.agenthostprotocol.generated.ChatInputRequest
 
 enum class QuestionKind { TEXT, NUMBER, BOOLEAN, SINGLE, MULTI }
 
-data class FormOption(val id: String, val label: String)
+data class FormOption(
+    val id: String,
+    val label: String,
+    val description: String? = null,
+    val recommended: Boolean = false,
+)
 
 /** One question as a form field. [min] and [max] bound a text's length, a number's value, or how many options may be picked. */
 data class FormQuestion(
@@ -31,6 +36,7 @@ data class FormQuestion(
     val max: Double? = null,
     val defaultText: String? = null,
     val defaultBool: Boolean? = null,
+    val heading: String? = null,
 )
 
 /** What the person has entered for one question. */
@@ -170,7 +176,8 @@ data class InputForm(
         /** Null when there are no questions, or any is of a kind this app does not know. */
         fun from(request: ChatInputRequest): InputForm? {
             val questions = request.questions.orEmpty().ifEmpty { return null }.map { question(it) ?: return null }
-            return InputForm(request.id, request.message?.takeIf { it.isNotBlank() }, questions, draftsOf(request, questions))
+            val message = request.message?.takeIf { it.isNotBlank() && it != "The agent has a question" }
+            return InputForm(request.id, message, questions, draftsOf(request, questions))
         }
 
         /** What the host holds as in-progress answers, kept only where it fits the question it belongs to. */
@@ -199,29 +206,37 @@ data class InputForm(
 
         private fun question(q: com.microsoft.agenthostprotocol.generated.ChatInputQuestion): FormQuestion? = when (q) {
             is ChatInputQuestionText -> q.value.run {
-                FormQuestion(id, label(title, message), QuestionKind.TEXT, required != false, min = min?.toDouble(), max = max?.toDouble(), defaultText = defaultValue)
+                FormQuestion(id, label(title, message), QuestionKind.TEXT, required != false, min = min?.toDouble(), max = max?.toDouble(), defaultText = defaultValue, heading = heading(title, message))
             }
             is ChatInputQuestionNumber -> q.value.run {
-                FormQuestion(id, label(title, message), QuestionKind.NUMBER, required != false, min = min, max = max, defaultText = defaultValue?.let(::formatNumber))
+                FormQuestion(id, label(title, message), QuestionKind.NUMBER, required != false, min = min, max = max, defaultText = defaultValue?.let(::formatNumber), heading = heading(title, message))
             }
             is ChatInputQuestionBoolean -> q.value.run {
-                FormQuestion(id, label(title, message), QuestionKind.BOOLEAN, required != false, defaultBool = defaultValue)
+                FormQuestion(id, label(title, message), QuestionKind.BOOLEAN, required != false, defaultBool = defaultValue, heading = heading(title, message))
             }
             is ChatInputQuestionSingleSelect -> q.value.run {
-                FormQuestion(id, label(title, message), QuestionKind.SINGLE, required != false, options.orEmpty().map(::option), allowFreeformInput == true)
+                FormQuestion(id, label(title, message), QuestionKind.SINGLE, required != false, options.orEmpty().map(::option), allowFreeformInput == true, heading = heading(title, message))
             }
             is ChatInputQuestionMultiSelect -> q.value.run {
                 FormQuestion(
                     id, label(title, message), QuestionKind.MULTI, required != false, options.orEmpty().map(::option), allowFreeformInput == true,
-                    min = min?.toDouble(), max = max?.toDouble(),
+                    min = min?.toDouble(), max = max?.toDouble(), heading = heading(title, message),
                 )
             }
             else -> null
         }
 
-        private fun option(o: ChatInputOption) = FormOption(o.id, o.label.ifBlank { o.id })
+        private fun option(o: ChatInputOption) = FormOption(
+            id = o.id,
+            label = o.label.ifBlank { o.id },
+            description = o.description?.takeIf { it.isNotBlank() },
+            recommended = o.recommended == true,
+        )
 
         private fun label(title: String?, message: String?): String = message?.takeIf { it.isNotBlank() } ?: title.orEmpty()
+
+        private fun heading(title: String?, message: String?): String? =
+            title?.takeIf { it.isNotBlank() && !message.isNullOrBlank() && it != message }
     }
 }
 

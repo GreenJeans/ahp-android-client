@@ -95,17 +95,19 @@ private fun ItemRow(
         is TranscriptItem.Tool -> ToolCallBlock(item, expanded, onToggle, actions, onOpenSubagent, onOpenTerminal, modifier)
         is TranscriptItem.Notice -> NoticeRow(item, modifier)
         is TranscriptItem.TurnEnd -> TurnEndRow(item, modifier)
-        is TranscriptItem.Question -> Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            InputRequestCard(item.request)
+        is TranscriptItem.Question -> {
             val form = item.form
             if (actions != null && form != null && !item.answered) {
-                QuestionForm(form, actions)
+                QuestionForm(form, actions, modifier)
             } else {
-                Text(
-                    if (item.answered) "Answered." else SessionDetail.ANSWER_ELSEWHERE,
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.testTag("row_question_note"),
-                )
+                Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    InputRequestCard(item.request)
+                    Text(
+                        if (item.answered) "Answered." else SessionDetail.ANSWER_ELSEWHERE,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.testTag("row_question_note"),
+                    )
+                }
             }
         }
         is TranscriptItem.Other -> Text(

@@ -863,7 +863,42 @@ class InteractionUiTest {
         show(transcript(question(null)), actions(Calls()))
 
         rule.onNodeWithTag("question_form").assertDoesNotExist()
+        rule.onNodeWithTag("input_request").assertIsDisplayed()
         rule.onNodeWithTag("row_question_note").assertTextContains("Answer in VS Code", substring = true)
+    }
+
+    @Test
+    fun anAnswerableQuestionShowsTheFormWithoutDuplicatingTheReadOnlyCardAndShowsFullPromptsHeadingsAndOptions() {
+        val longPrompt = "The spec has already passed on f3 (1 passed, 59.5s) and failed on qa in earlier CI runs. " +
+            "It only creates a user and custom attributes via API and checks the Reports UI, so it cannot explain why Publish disappeared."
+        val longOption = "Exclude the spec from the gate via excludeSpecs, keep it runnable on demand, and document the follow-up ticket."
+        val richForm = InputForm(
+            requestId = "req-rich",
+            message = "The CI check says the Publish loss is deterministic. Nothing is queued or pushed until you answer.",
+            questions = listOf(
+                FormQuestion(
+                    id = "policy",
+                    title = longPrompt,
+                    heading = "reports-custom-attributes policy",
+                    kind = QuestionKind.SINGLE,
+                    required = true,
+                    options = listOf(
+                        FormOption("exclude", longOption, description = "Keeps CI green while preserving manual runs", recommended = true),
+                        FormOption("keep", "Keep it in the gate"),
+                    ),
+                ),
+            ),
+        )
+
+        show(transcript(question(richForm)), actions(Calls()))
+
+        rule.onNodeWithTag("question_form").assertIsDisplayed()
+        rule.onNodeWithTag("input_request").assertDoesNotExist()
+        rule.onNodeWithTag("question_message").assertTextContains("Nothing is queued or pushed until you answer.")
+        rule.onNodeWithText("reports-custom-attributes policy").assertIsDisplayed()
+        rule.onNodeWithText(longPrompt).assertIsDisplayed()
+        rule.onNodeWithTag("option_policy_exclude").assertTextContains("$longOption (recommended)", substring = true)
+        rule.onNodeWithTag("option_policy_exclude").assertTextContains("Keeps CI green while preserving manual runs", substring = true)
     }
 
     // ---- steering -----------------------------------------------------------------------------------------------

@@ -11,6 +11,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.ahpclient.state.InputRequestView
 import dev.ahpclient.state.QuestionView
@@ -30,6 +31,7 @@ internal fun InputRequestCard(request: InputRequestView, modifier: Modifier = Mo
 @Composable
 private fun QuestionBlock(question: QuestionView) {
     Column(modifier = Modifier.padding(top = 8.dp).testTag("question"), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        question.heading?.let { Text(it, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold) }
         question.prompt?.let { Text(it, style = MaterialTheme.typography.bodyLarge) }
         Text(question.answerKind, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         question.options.forEach { option ->
