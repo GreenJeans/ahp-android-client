@@ -228,7 +228,7 @@ class AccessibilityTest {
             AhpTheme(dark) {
                 val menu = rememberHomeMenu(session = null, pageOpen = false)
                 HomeDrawer(
-                    menu, session = null, pageOpen = false, overlayOpen = false, onCloseSession = {}, onClosePage = {}, onLeaveApp = {},
+                    menu, session = null, pageOpen = false, overlayOpen = false, onClosePage = {}, onLeaveApp = {},
                     drawerContent = { DrawerFor(connected = connected, manage = manageActions(), inboxCount = 2) },
                     content = { androidx.compose.material3.Surface(Modifier, color = androidx.compose.material3.MaterialTheme.colorScheme.background) {} },
                 )
