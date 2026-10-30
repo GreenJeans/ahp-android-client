@@ -193,7 +193,6 @@ private fun Shell(
         session = open?.uri,
         pageOpen = page != Page.MAIN,
         overlayOpen = overlayOpen,
-        onCloseSession = controller::closeSession,
         onClosePage = { page = Page.MAIN },
         onLeaveApp = { leaveApp(context) },
         drawerContent = {

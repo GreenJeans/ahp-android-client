@@ -64,7 +64,6 @@ class HomeDrawerTest {
         var setRequests: (Int) -> Unit = {}
         lateinit var menu: HomeMenu
         var session: () -> String? = { null }
-        var closedSessions = 0
         var leaves = 0
     }
 
@@ -91,7 +90,6 @@ class HomeDrawerTest {
                     session = session,
                     pageOpen = page,
                     overlayOpen = overlay,
-                    onCloseSession = { nav.closedSessions++; session = null },
                     onClosePage = { page = false },
                     onLeaveApp = { nav.leaves++; if (realLeave) leaveApp(context) },
                     drawerContent = {
@@ -281,15 +279,19 @@ class HomeDrawerTest {
     // ---- Back --------------------------------------------------------------------------------------------------
 
     @Test
-    fun backFromASessionClosesItAndTheMenuOpens() {
+    fun backFromASessionOpensTheMenuAndKeepsTheSession() {
         show(initialSession = "ahp-session:/a")
 
         back()
 
-        assertEquals(1, nav.closedSessions)
-        assertEquals(null, session())
+        assertEquals("ahp-session:/a", session())
         assertEquals(DrawerValue.Open, drawer())
         assertEquals(0, nav.leaves)
+        // Swiping the menu back closed returns to the open session.
+        rule.onNodeWithTag("drawer").performTouchInput { swipeLeft() }
+        assertEquals(DrawerValue.Closed, drawer())
+        assertEquals("ahp-session:/a", session())
+        rule.onNodeWithTag("session_page").assertIsDisplayed()
     }
 
     @Test
@@ -301,10 +303,9 @@ class HomeDrawerTest {
         assertEquals(1, nav.leaves)
         assertEquals(DrawerValue.Open, drawer())
         rule.onNodeWithTag("drawer").assertIsDisplayed()
-        // And again: it is the same each time, and it never closes the session that is not there.
+        // And again: it is the same each time.
         back()
         assertEquals(2, nav.leaves)
-        assertEquals(0, nav.closedSessions)
         assertFalse(rule.activity.isFinishing)
     }
 
@@ -318,7 +319,6 @@ class HomeDrawerTest {
 
         assertEquals(DrawerValue.Closed, drawer())
         assertEquals("ahp-session:/a", session())
-        assertEquals(0, nav.closedSessions)
         assertEquals(0, nav.leaves)
     }
 
@@ -350,7 +350,6 @@ class HomeDrawerTest {
         rule.onNodeWithTag("page").assertDoesNotExist()
         assertEquals(DrawerValue.Closed, drawer())
         assertEquals("ahp-session:/a", session())
-        assertEquals(0, nav.closedSessions)
     }
 
     @Test
@@ -361,8 +360,8 @@ class HomeDrawerTest {
 
         back()
 
-        // The screen over the session closes itself in Shell; the session is not closed under it, nor the app left.
-        assertEquals(0, nav.closedSessions)
+        // The screen over the session closes itself in Shell; the menu is not opened under it, nor the app left.
+        assertEquals(DrawerValue.Closed, drawer())
         assertEquals(0, nav.leaves)
         assertEquals("ahp-session:/a", session())
     }
@@ -416,7 +415,7 @@ class HomeDrawerTest {
         show(initialSession = "ahp-session:/a", restoration = restoration)
         assertEquals(DrawerValue.Closed, drawer())
 
-        // Back from the session starts the menu opening; the activity is recreated before it has settled.
+        // Removing the session starts the menu opening; the activity is recreated before it has settled.
         rule.mainClock.autoAdvance = false
         rule.runOnUiThread { nav.setSession(null) }
         rule.mainClock.advanceTimeBy(64)

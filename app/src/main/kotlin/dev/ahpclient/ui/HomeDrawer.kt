@@ -87,8 +87,9 @@ internal class HomeMenu(
 
 /**
  * The side menu over the main page, and what Back does around it. With no session and no page the menu is the home page and Back puts
- * the app in the background ([onLeaveApp]); over a session it closes the menu; otherwise it leaves a page ([onClosePage]) or the
- * session ([onCloseSession]). A screen over the session ([overlayOpen]: a diff, a terminal, a subagent) has its own Back, in the caller.
+ * the app in the background ([onLeaveApp]); over a session it closes the menu, and from the session it opens the menu, leaving the
+ * session open behind it; otherwise it leaves a page ([onClosePage]). A screen over the session ([overlayOpen]: a diff, a terminal, a
+ * subagent) has its own Back, in the caller.
  */
 @Composable
 internal fun HomeDrawer(
@@ -96,13 +97,12 @@ internal fun HomeDrawer(
     session: String?,
     pageOpen: Boolean,
     overlayOpen: Boolean,
-    onCloseSession: () -> Unit,
     onClosePage: () -> Unit,
     onLeaveApp: () -> Unit,
     drawerContent: @Composable () -> Unit,
     content: @Composable () -> Unit,
 ) {
-    BackHandler(enabled = session != null && !overlayOpen, onBack = onCloseSession)
+    BackHandler(enabled = session != null && !overlayOpen) { menu.open() }
     BackHandler(enabled = pageOpen, onBack = onClosePage)
     BackHandler(enabled = !isHome(session, pageOpen) && menu.drawer.isOpen) { menu.close() }
     // Said when a close of the held-open menu is refused (see rememberHomeMenu): the dismiss affordances do nothing, and not silently.
