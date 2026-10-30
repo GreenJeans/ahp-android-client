@@ -526,6 +526,35 @@ class HomeDrawerTest {
     }
 
     @Test
+    fun thereIsNoOfferWhileAutoConnectIsPendingOnAFailedList() {
+        var catalog by mutableStateOf(HostCatalog(HostList.Failed("down"), emptyList(), autoConnectPending = true))
+        var connected by mutableStateOf(false)
+        var offered = 0
+        rule.setContent { OfferHostsOnce(connected, catalog) { offered++ } }
+        rule.waitForIdle()
+        assertEquals(0, offered)
+
+        // The retry loads the list and connects to the last host: the sheet never opens.
+        connected = true
+        catalog = HostCatalog(HostList.Loaded(listOf(HostEntry(tunnel, isLastUsed = true))), emptyList(), autoConnectPending = false)
+        rule.waitForIdle()
+        assertEquals(0, offered)
+    }
+
+    @Test
+    fun whenAPendingAutoConnectEndsWithNoLastHostTheSheetIsOfferedOnce() {
+        var catalog by mutableStateOf(HostCatalog(HostList.Failed("down"), emptyList(), autoConnectPending = true))
+        var offered = 0
+        rule.setContent { OfferHostsOnce(false, catalog) { offered++ } }
+        rule.waitForIdle()
+        assertEquals(0, offered)
+
+        catalog = HostCatalog(HostList.Loaded(listOf(HostEntry(tunnel, isLastUsed = false))), emptyList(), autoConnectPending = false)
+        rule.waitForIdle()
+        assertEquals(1, offered)
+    }
+
+    @Test
     fun withNoLastHostAndNoSignInTheHostsAddedByAddressOfferTheSheetOnce() {
         assertEquals(1, offers(HostCatalog(HostList.NotSignedIn, listOf(DirectEntry(direct, isLastUsed = false)))))
     }

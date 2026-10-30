@@ -17,6 +17,7 @@ import dev.ahpclient.security.SessionListCache
 import dev.ahpclient.security.TokenVault
 import dev.ahpclient.security.VaultCryptoException
 import dev.ahpclient.security.VaultLoad
+import dev.ahpclient.state.Backoff
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.CustomAgents
 import dev.ahpclient.state.ApprovalGate
@@ -53,6 +54,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -120,6 +122,8 @@ class AppController(
     private val directSessions: DirectSessionFactory? = null,
     /** The permission of one direct host, kept apart from every other host's. Read once per host, so loading it makes it stick. */
     private val directConsent: (DirectHost) -> InteractionConsent = { InteractionConsent() },
+    /** How long to wait between retries when the cold-start host list fails to load while [autoConnect] is pending. */
+    private val backoff: Backoff = Backoff(),
 ) {
     private val _state = MutableStateFlow<AppState>(AppState.Restoring)
     val state: StateFlow<AppState> = _state.asStateFlow()
@@ -492,6 +496,7 @@ class AppController(
         }
         // The app may have gone out of sight before this session existed: it starts parked rather than waiting for another trip away.
         parking.ifParked(session::park)
+        autoConnectPending.set(false)
         lastId = host.id
         republishLastUsed()
         scope.launch {
@@ -802,8 +807,8 @@ class AppController(
     suspend fun ensureConnected(timeoutMs: Long): Boolean = withTimeoutOrNull(timeoutMs) { reachOnline() } ?: false
 
     private suspend fun reachOnline(): Boolean {
-        var current = combine(_state, _hosts) { state, catalog -> state to catalog.list }
-            .first { (state, list) -> state !is AppState.Restoring && !(state is AppState.Hosts && list is HostList.Loading) }
+        var current = combine(_state, _hosts) { state, catalog -> state to catalog }
+            .first { (state, catalog) -> state !is AppState.Restoring && !(state is AppState.Hosts && (catalog.list is HostList.Loading || catalog.autoConnectPending)) }
             .first
         if (current is AppState.Hosts) {
             if (!connectToLastHost()) return false
@@ -910,8 +915,8 @@ class AppController(
                     _state.value = AppState.SignedOut(SignInStep.Idle, "Your GitHub sign-in expired. Sign in again.")
                 } else {
                     token = saved
-                    // Once per process start: the first list that loads after this may connect to the last host by itself.
-                    autoConnectPending.set(true)
+                    // Once per process start: when a last host is saved and autoConnect allows, the first list that loads connects to it.
+                    autoConnectPending.set(lastId != null && autoConnect())
                     showHosts()
                 }
             }
@@ -1050,7 +1055,7 @@ class AppController(
                 HostCatalog(HostList.NotSignedIn, directEntries())
             } else {
                 val shown = if (keepList && (it.list is HostList.Loaded || it.list is HostList.Empty)) it.list else HostList.Loading
-                HostCatalog(shown, directEntries(), signedIn.expiresAt, signedIn.refresh != null)
+                HostCatalog(shown, directEntries(), signedIn.expiresAt, signedIn.refresh != null, autoConnectPending.get())
             }
         }
     }
@@ -1062,35 +1067,63 @@ class AppController(
     }
 
     private suspend fun loadHosts() {
-        val list = try {
-            val tunnels = devTunnels.listAgentHostTunnels(freshToken().access)
-            val last = try {
-                lastHost.get()
-            } catch (_: IOException) {
-                null
+        var attempt = 0
+        while (true) {
+            val list = try {
+                val tunnels = devTunnels.listAgentHostTunnels(freshToken().access)
+                val last = try {
+                    lastHost.get()
+                } catch (_: IOException) {
+                    null
+                }
+                val hosts = ordered(tunnels, last)
+                if (hosts.isEmpty()) HostList.Empty else HostList.Loaded(hosts)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: DevTunnelsException.AuthExpired) {
+                // A direct host needs no GitHub sign-in, so one that is connected stays up; its screen is not the sign-in's to take.
+                if ((_state.value as? AppState.Connected)?.host is HostRef.Direct) dropSignInKeepingConnection() else endSignIn("GitHub no longer accepts this sign-in. Sign in again.")
+                return
+            } catch (e: DevTunnelsException.Forbidden) {
+                HostList.Failed("GitHub refused access (403). If your organization uses SSO, authorize this app for it, then try again.")
+            } catch (e: DevTunnelsException) {
+                HostList.Failed(e.message ?: "The Dev Tunnels service returned an unexpected response.")
+            } catch (e: IOException) {
+                HostList.Failed("Could not reach the Dev Tunnels service. Check the connection and try again.")
+            } catch (e: Exception) {
+                HostList.Failed("Could not load your hosts (${e.javaClass.simpleName}).")
             }
-            val hosts = ordered(tunnels, last)
-            if (hosts.isEmpty()) HostList.Empty else HostList.Loaded(hosts)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: DevTunnelsException.AuthExpired) {
-            // A direct host needs no GitHub sign-in, so one that is connected stays up; its screen is not the sign-in's to take.
-            if ((_state.value as? AppState.Connected)?.host is HostRef.Direct) dropSignInKeepingConnection() else endSignIn("GitHub no longer accepts this sign-in. Sign in again.")
-            return
-        } catch (e: DevTunnelsException.Forbidden) {
-            HostList.Failed("GitHub refused access (403). If your organization uses SSO, authorize this app for it, then try again.")
-        } catch (e: DevTunnelsException) {
-            HostList.Failed(e.message ?: "The Dev Tunnels service returned an unexpected response.")
-        } catch (e: IOException) {
-            HostList.Failed("Could not reach the Dev Tunnels service. Check the connection and try again.")
-        } catch (e: Exception) {
-            HostList.Failed("Could not load your hosts (${e.javaClass.simpleName}).")
+            val direct = directEntries()
+            // While the cold start still needs the tunnel list to reach the last host, a failed load stays pending and is retried with backoff.
+            val retryAutoConnect = list is HostList.Failed && autoConnectPending.get() && _state.value is AppState.Hosts && direct.none { it.isLastUsed }
+            if (!retryAutoConnect) {
+                // Taken by the first list that loads (or when a direct host is the last used), so a later refresh or a return to the list never connects on its own.
+                val connectNow = autoConnectPending.getAndSet(false) && _state.value is AppState.Hosts
+                // Kept whether or not a host got connected meanwhile, since the list is read while connected; not after a sign-out, which emptied the catalog.
+                // A refresh that fails leaves the list that was on show (it was good a moment ago); only a first load says why it failed.
+                _hosts.update {
+                    if (token != null) {
+                        it.copy(list = if (list is HostList.Failed && it.list is HostList.Loaded) it.list else list, direct = direct, autoConnectPending = connectNow)
+                    } else {
+                        it
+                    }
+                }
+                if (connectNow && !connectToLastHost()) {
+                    _hosts.update { it.copy(autoConnectPending = false) }
+                }
+                return
+            }
+            _hosts.update {
+                if (token != null) {
+                    it.copy(list = if (it.list is HostList.Loaded) it.list else list, direct = direct, autoConnectPending = autoConnectPending.get())
+                } else {
+                    it
+                }
+            }
+            attempt++
+            delay(backoff.delayMs(attempt))
+            if (!autoConnectPending.get() || _state.value !is AppState.Hosts || token == null) return
         }
-        // Kept whether or not a host got connected meanwhile, since the list is read while connected; not after a sign-out, which emptied the catalog.
-        // A refresh that fails leaves the list that was on show (it was good a moment ago); only a first load says why it failed.
-        _hosts.update { if (token != null) it.copy(list = if (list is HostList.Failed && it.list is HostList.Loaded) it.list else list, direct = directEntries()) else it }
-        // Taken by the first list to finish, whatever it holds, so a later refresh or a return to the list never connects on its own.
-        if (autoConnectPending.getAndSet(false) && _state.value is AppState.Hosts) connectToLastHost()
     }
 
     /** The tunnel hosts as the catalog lists them: the last used first, then the online ones, then by name. */
@@ -1104,7 +1137,7 @@ class AppController(
         _hosts.update { catalog ->
             val list = catalog.list
             val remarked = if (list is HostList.Loaded) HostList.Loaded(ordered(list.hosts.map { it.tunnel }, lastId)) else list
-            catalog.copy(list = remarked, direct = directEntries())
+            catalog.copy(list = remarked, direct = directEntries(), autoConnectPending = autoConnectPending.get())
         }
     }
 
