@@ -3385,7 +3385,7 @@ class AppControllerTest {
     }
 
     @Test
-    fun `a host list that cannot be loaded does not connect, and a later refresh does not either`() = runTest {
+    fun `when the first host-list load fails at start, it retries by itself and connects to the last host`() = runTest {
         withRig(autoConnect = { true }) {
             vault.save(savedToken)
             lastHost.id = "test-tunnel-1"
@@ -3394,6 +3394,52 @@ class AppControllerTest {
 
             controller.start()
             assertIs<HostList.Failed>(awaitHosts())
+            assertTrue(controller.hosts.value.autoConnectPending)
+            val connected = assertIs<AppState.Connected>(await { it is AppState.Connected })
+            connected.session.connection.first { it == ConnState.Online }
+            runCurrent()
+
+            assertEquals("test-tunnel-1", connected.host.id)
+            assertFalse(controller.hosts.value.autoConnectPending)
+            assertEquals(1, created.size)
+            assertEquals(2, server.requestCount)
+        }
+    }
+
+    @Test
+    fun `a refresh while the first host-list load has failed also connects to the last host`() = runTest {
+        withRig(autoConnect = { true }) {
+            vault.save(savedToken)
+            lastHost.id = "test-tunnel-1"
+            server.json("{}", code = 500)
+            server.json(fixture("list-tunnels.json"))
+
+            controller.start()
+            assertIs<HostList.Failed>(awaitHosts())
+            controller.refreshHosts()
+            val connected = assertIs<AppState.Connected>(await { it is AppState.Connected })
+            connected.session.connection.first { it == ConnState.Online }
+            runCurrent()
+
+            assertEquals("test-tunnel-1", connected.host.id)
+            assertFalse(controller.hosts.value.autoConnectPending)
+            assertEquals(1, created.size)
+        }
+    }
+
+    @Test
+    fun `with monitoring off, a failed host-list load is not retried and a later refresh does not connect`() = runTest {
+        withRig(autoConnect = { false }) {
+            vault.save(savedToken)
+            lastHost.id = "test-tunnel-1"
+            server.json("{}", code = 500)
+            server.json(fixture("list-tunnels.json"))
+
+            controller.start()
+            assertIs<HostList.Failed>(awaitHosts())
+            assertFalse(controller.hosts.value.autoConnectPending)
+            advanceTimeBy(60_000)
+            assertEquals(1, server.requestCount, "not retried with monitoring off")
             controller.refreshHosts()
             assertIs<HostList.Loaded>(awaitHosts())
             runCurrent()

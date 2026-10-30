@@ -37,7 +37,7 @@ Runs against [`docs/navigation-spec.md`](../navigation-spec.md). Each run: date,
 4. **The added-line count differs between list and diff.** The list says `+192 −0` for a file whose diff says `+191 −0 lines` (lines 1–191). This is probably the trailing newline. Small, but it is the kind of mismatch a reviewer notices.
 5. **Opening a session receives a 580,726-character frame** (logcat, twice for the same session). It is not a navigation problem, but it is a cost on mobile data each time a session is opened.
 
-6. **A cold start whose first tunnel-list load fails doesn't connect.** After the fixed build was installed over the old one on the Pixel (process restarted, monitoring on, the tunnel host last used), the app came up with the hosts sheet open, saying "Could not reach the Dev Tunnels service. Check the connection and try again." The phone's network was fine (a ping to the tunnel relay answered). One tap on refresh listed the host, and a tap on it connected. So one transient failure right after start leaves the person on the sheet, with no auto-connect and no retry. Bears on AC-H6.1 and AC-N6.4.
+6. **A cold start whose first tunnel-list load fails doesn't connect.** After the fixed build was installed over the old one on the Pixel (process restarted, monitoring on, the tunnel host last used), the app came up with the hosts sheet open, saying "Could not reach the Dev Tunnels service. Check the connection and try again." The phone's network was fine (a ping to the tunnel relay answered). One tap on refresh listed the host, and a tap on it connected. So one transient failure right after start leaves the person on the sheet, with no auto-connect and no retry. Bears on AC-H6.1 and AC-N6.4. **Fixed 2026-10-30:** `restore()` sets `autoConnectPending` only when a last host is saved and `autoConnect()` allows; while `autoConnectPending` still needs the tunnel list, a failed load in `loadHosts()` keeps `autoConnectPending` (published on `HostCatalog.autoConnectPending`) and retries with `Backoff` until the list settles (or a manual refresh loads it); `OfferHostsOnce` holds off while `catalog.autoConnectPending` is true. Covered by `AppControllerTest` and `HomeDrawerTest`, and verified on the emulator below.
 
 ### Not done in this pass
 
@@ -72,3 +72,16 @@ Runs against [`docs/navigation-spec.md`](../navigation-spec.md). Each run: date,
 **Two reconnects during rotation were the emulator's network, not the app.** "Connecting…" showed after two rotations. logcat at the same moment has the emulator's virtual Wi-Fi dropping (`CTRL-EVENT-BEACON-LOSS`, `wlan0` link down), and the app went `WaitingForNetwork` → `Connecting` → `Online` within about 3 s. A rotation back with no Wi-Fi event caused no reconnect, and 20 s idle caused none.
 
 **Not done:** links (no web link was found in the chats looked at; markdown links don't show their address to `uiautomator`, so finding one needs a screen-by-screen look), a subagent transcript, switching between two hosts (still only one host known), the notification tap, sign-out and removal, TalkBack, and predictive back's animation.
+
+## 2026-10-30: cold-start auto-connect and transient list failure on the emulator
+
+- **Build:** debug on `users/tyler/fix-autoconnect-failed-load` (from `37fce83`), with the cold-start auto-connect retry and `OfferHostsOnce` hold-off fix.
+- **Device:** emulator `ahp-api36` (API 36), windowed, `-no-boot-anim -gpu swiftshader_indirect -no-snapshot-load`, light theme, gesture navigation.
+- **Host:** the VS Code tunnel host (`re1lw1zrrff4`) marked last used, Monitoring on, read tier only (`AhpWire` showed `gateway.select`, `initialize` and `listSessions`, and no `dispatchAction`).
+- **Method:** `adb -s emulator-5554` (`am force-stop`, `am start`, `cmd connectivity airplane-mode`, `uiautomator dump`, `dumpsys activity services dev.ahpclient`, `logcat -d -s AhpConn AhpWire AhpAuth`).
+
+| Step | Seen | Criterion |
+|---|---|---|
+| Cold start (`am force-stop dev.ahpclient` then `am start`) with network online | Went to the open home menu with `re1lw1zrrff4` "Connected" and its sessions listed without a tap; `MonitorService` running with `isForeground=true`, `foregroundId=100`, `types=0x40000000` | AC-H6.1 ([hardening-spec](../hardening-spec.md)), AC-N6.4 |
+| Enable airplane mode (`cmd connectivity airplane-mode enable`), `am force-stop dev.ahpclient`, then `am start`; inspect after 3 s | The home menu showed "Hosts" / "Not connected", "Connect to a host to see its sessions." and the **Choose a host** button; the Hosts sheet did **not** open by itself while auto-connect was pending | AC-N6.4, Finding 6 |
+| Restore the network (`cmd connectivity airplane-mode disable`) with no tap | The tunnel list was retried by itself and connected to `re1lw1zrrff4` (`AhpConn: Connecting` → `AhpWire: gateway.select` → `initialize` → `listSessions` → `AhpConn: Online`); the home menu showed `re1lw1zrrff4` "Connected" with its sessions listed and no Hosts sheet open, and `MonitorService` was in the foreground (`isForeground=true`, `foregroundId=100`, `types=0x40000000`) | AC-H6.1, AC-N6.4, Finding 6 fixed |

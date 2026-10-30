@@ -85,13 +85,15 @@ sealed interface HostList {
  * The hosts that can be connected to, kept apart from [AppState] so that they can be listed while a host is connected too.
  * [list] is the tunnel hosts of the signed-in account; [direct] the hosts added by address, which are listed whether or not anyone is
  * signed in and whether or not [list] loaded. [tokenExpiresAt] is when the current access token runs out; with [renews] the app trades
- * it for a new one on its own before then.
+ * it for a new one on its own before then. [autoConnectPending] is true while the cold start is still trying to connect to the last host
+ * by itself (while [list] loads or is retried after a failure).
  */
 data class HostCatalog(
     val list: HostList,
     val direct: List<DirectEntry> = emptyList(),
     val tokenExpiresAt: Instant? = null,
     val renews: Boolean = false,
+    val autoConnectPending: Boolean = false,
 )
 
 /** What the app is showing, as one value. Screens are a pure function of this. */
