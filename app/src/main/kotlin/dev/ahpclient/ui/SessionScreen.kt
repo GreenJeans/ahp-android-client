@@ -96,6 +96,7 @@ fun SessionScreen(
     summary: SessionSummary? = null,
     onOpenLink: (String) -> Unit = {},
     onShareLink: ((String) -> Unit)? = null,
+    requestedChat: String? = null,
     chat: @Composable () -> Unit = {},
 ) {
     val detail = remember(state, now, summary) { state?.let { SessionDetail.from(it, now, summary) } }
@@ -103,6 +104,9 @@ fun SessionScreen(
     var notice by remember { mutableStateOf<String?>(null) }
     // A chat the user has just started is not in the host's list until the host echoes it, so the tab is brought forward then.
     var pendingChat by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(requestedChat) {
+        if (requestedChat != null) pendingChat = requestedChat
+    }
 
     val tabUris = detail?.tabs?.map { it.uri }.orEmpty()
     val canShowChat = detail != null && detail.phase != SessionPhase.FAILED

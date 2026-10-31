@@ -10,7 +10,9 @@ import dev.ahpclient.tunnel.UpgradeRejectedException
 import com.microsoft.agenthostprotocol.generated.ActionEnvelope
 import com.microsoft.agenthostprotocol.generated.AhpErrorCodes
 import com.microsoft.agenthostprotocol.generated.ChangesetState
+import com.microsoft.agenthostprotocol.generated.ChatSource
 import com.microsoft.agenthostprotocol.generated.Implementation
+import com.microsoft.agenthostprotocol.generated.Message
 import com.microsoft.agenthostprotocol.generated.ReconnectResult
 import com.microsoft.agenthostprotocol.generated.ReconnectResultReplay
 import com.microsoft.agenthostprotocol.generated.ReconnectResultSnapshot
@@ -480,7 +482,8 @@ class HostSession(
     override suspend fun resolveSessionConfig(provider: String, workingDirectory: String?, config: Map<String, JsonElement>?): ResolveSessionConfigResult =
         live().resolveSessionConfig(provider, workingDirectory, config)
 
-    override suspend fun createChat(sessionUri: String, chatUri: String) = live().createChat(sessionUri, chatUri)
+    override suspend fun createChat(sessionUri: String, chatUri: String, source: ChatSource?, initialMessage: Message?) =
+        live().createChat(sessionUri, chatUri, source, initialMessage)
 
     override suspend fun disposeSession(uri: String) = live().disposeSession(uri)
 

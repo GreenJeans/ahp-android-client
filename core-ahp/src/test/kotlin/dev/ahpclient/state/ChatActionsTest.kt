@@ -9,9 +9,12 @@ import com.microsoft.agenthostprotocol.generated.StateActionChatInputAnswerChang
 import com.microsoft.agenthostprotocol.generated.StateActionChatInputCompleted
 import com.microsoft.agenthostprotocol.generated.StateActionChatPendingMessageRemoved
 import com.microsoft.agenthostprotocol.generated.StateActionChatPendingMessageSet
+import com.microsoft.agenthostprotocol.generated.StateActionChatQueuedMessagesReordered
 import com.microsoft.agenthostprotocol.generated.StateActionChatToolCallConfirmed
 import com.microsoft.agenthostprotocol.generated.StateActionChatToolCallResultConfirmed
+import com.microsoft.agenthostprotocol.generated.StateActionChatTruncated
 import com.microsoft.agenthostprotocol.generated.StateActionChatTurnCancelled
+import com.microsoft.agenthostprotocol.generated.StateActionChatTurnResume
 import com.microsoft.agenthostprotocol.generated.StateActionChatTurnStarted
 import java.time.Instant
 import kotlin.test.Test
@@ -187,13 +190,46 @@ class ChatActionsTest {
     @Test
     fun `a steering message is a pending message of the steering kind`() {
         val action = ChatActions.steerTurn("s-1", "go left")
+        val removed = ChatActions.removeSteeringMessage("s-1")
 
         assertIs<StateActionChatPendingMessageSet>(action)
+        assertIs<StateActionChatPendingMessageRemoved>(removed)
         val json = wire(action)
         assertEquals("steering", json.str("kind"))
         assertEquals("s-1", json.str("id"))
         assertEquals("go left", json.getValue("message").jsonObject.str("text"))
         assertEquals("user", json.getValue("message").jsonObject.getValue("origin").jsonObject.str("kind"))
+        assertEquals("steering", wire(removed).str("kind"))
+        assertEquals("s-1", wire(removed).str("id"))
+    }
+
+    @Test
+    fun `truncate and resumeTurn and reorderQueuedMessages and message build exact wire shapes`() {
+        val truncatedToTurn = ChatActions.truncate("turn-1")
+        val startOver = ChatActions.truncate(null)
+        val resume = ChatActions.resumeTurn("turn-2")
+        val reordered = ChatActions.reorderQueuedMessages(listOf("q-2", "q-1"))
+        val initialMsg = ChatActions.message("forked prompt", ModelChoice("m-1"), "agent://1")
+
+        assertIs<StateActionChatTruncated>(truncatedToTurn)
+        assertIs<StateActionChatTruncated>(startOver)
+        assertIs<StateActionChatTurnResume>(resume)
+        assertIs<StateActionChatQueuedMessagesReordered>(reordered)
+
+        assertEquals("chat/truncated", wire(truncatedToTurn).str("type"))
+        assertEquals("turn-1", wire(truncatedToTurn).str("turnId"))
+        assertEquals("chat/truncated", wire(startOver).str("type"))
+        assertNull(wire(startOver)["turnId"])
+
+        assertEquals("chat/turnResume", wire(resume).str("type"))
+        assertEquals("turn-2", wire(resume).str("turnId"))
+
+        assertEquals("chat/queuedMessagesReordered", wire(reordered).str("type"))
+        assertEquals(listOf("q-2", "q-1"), wire(reordered).getValue("order").jsonArray.map { it.jsonPrimitive.content })
+
+        assertEquals("forked prompt", initialMsg.text)
+        assertEquals("m-1", initialMsg.model?.id)
+        assertEquals("agent://1", initialMsg.agent?.uri)
     }
 
     @Test
@@ -236,7 +272,12 @@ class ChatActionsTest {
             ChatActions.startTurn("t", at, "x"),
             ChatActions.queueMessage("q", "x"),
             ChatActions.removeQueuedMessage("q"),
+            ChatActions.removeSteeringMessage("s"),
+            ChatActions.reorderQueuedMessages(listOf("q")),
             ChatActions.cancelTurn("t"),
+            ChatActions.resumeTurn("t"),
+            ChatActions.truncate("t"),
+            ChatActions.truncate(null),
             ChatActions.completeInput("r", InputResponse.ACCEPT, mapOf("q" to AnswerValue.Text("x"))),
             ChatActions.approveTool("t", "c"),
             ChatActions.denyTool("t", "c"),

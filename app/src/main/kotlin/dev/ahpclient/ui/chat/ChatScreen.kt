@@ -298,6 +298,7 @@ private fun TranscriptList(
 ) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+    var composerDraft by rememberSaveable { mutableStateOf<String?>(null) }
     val newestFirst = remember(transcript.items) { TranscriptRowModel.from(transcript.items).asReversed() }
 
     // Whether the user is at the newest row. It changes only when the position moves while the rows stay the same: a row arriving
@@ -355,6 +356,11 @@ private fun TranscriptList(
                     onOpenTerminal = onOpenTerminal,
                     allowHostFiles = allowHostFiles,
                     onOpenRich = onOpenRich,
+                    hasOlder = transcript.hasOlder,
+                    onLoadDraft = { draft ->
+                        composerDraft = draft
+                        scope.launch { listState.scrollToItem(0) }
+                    },
                 )
             }
             if (loadingOlder || olderError != null || transcript.hasOlder) {
@@ -386,7 +392,13 @@ private fun TranscriptList(
                     .onSizeChanged { if (it.height > 0) composerHeightPx = it.height },
             ) {
                 saveableHolder.SaveableStateProvider("composer") {
-                    Composer(actions)
+                    Composer(
+                        actions = actions,
+                        pendingMessages = transcript.pendingMessages,
+                        activeTurnId = transcript.activeTurnId ?: transcript.lastTurnId,
+                        draftToLoad = composerDraft,
+                        onDraftLoaded = { composerDraft = null },
+                    )
                 }
             }
         }
