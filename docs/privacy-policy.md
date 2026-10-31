@@ -52,8 +52,8 @@ AHP Client is an independent third-party client for the open [Agent Host Protoco
 
 ## 7. Changes to This Policy
 
-If this Privacy Policy is updated, the revised version and effective date will be posted in the project repository (`docs/privacy-policy.md`).
+If this Privacy Policy is updated, the revised version and effective date will be posted on this page and in the App's **About -> Privacy** sheet.
 
 ## 8. Contact
 
-For questions about this Privacy Policy or AHP Client, please open an issue in the project's GitHub repository.
+For questions about this Privacy Policy or AHP Client, please open an issue in the [ahp-client-legal](https://github.com/GreenJeans/ahp-client-legal) repository or contact the developer via the support email address listed on the Google Play Store page.

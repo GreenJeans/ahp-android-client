@@ -105,30 +105,12 @@ In **Play Console -> Policy and programs -> App content -> Data safety**:
    - Select **No**.
    - *Reason:* All authentication tokens (`GitHub` OAuth device token, direct host bearer tokens) and session data remain exclusively on the user's device (encrypted in `AndroidKeyStore`) and are transmitted only directly between the user's device and the user's own configured host endpoints. No data is sent to the developer or any third-party analytics/ad service.
 2. **Privacy Policy URL:**
-   - Host [`docs/privacy-policy.md`](privacy-policy.md) via GitHub Pages (or raw document URL) and paste the URL under **Policy and programs -> App content -> Privacy policy**. (The full Privacy Policy and Open-Source Licenses are also built into the app on the Sign-In and Settings screens.)
+   - Publish [`docs/privacy-policy.md`](privacy-policy.md) to the standalone public [`GreenJeans/ahp-client-legal`](https://github.com/GreenJeans/ahp-client-legal) repo using [`tools/publish-legal-docs.ps1`](../tools/publish-legal-docs.ps1), enable GitHub Pages on `ahp-client-legal`, and paste `https://greenjeans.github.io/ahp-client-legal/privacy-policy` under **Policy and programs -> App content -> Privacy policy**. (The full Privacy Policy and Open-Source Licenses are also built into the app behind the **About** button on the Sign-In and Settings screens.)
 3. **App Access Instructions for Play Reviewers:**
    - Under **App content -> App access**, explain that the app connects to a user's self-hosted Agent Host Protocol server (`ahpd`) or VS Code Remote Tunnel, and provide either:
-     - Instructions for exploring the sign-in / direct-host setup (`Connect to a host by address`) and Settings UI without an external host, or
+     - Instructions for exploring the sign-in / direct-host setup (`Connect to a host directly`) and Settings UI without an external host, or
      - A read-only demo `wss://` direct host address + bearer token running a sample session during review.
    - Note for reviewers regarding GitHub Sign-In:
      ```text
-     AHP Client is an independent client for the open Agent Host Protocol (https://github.com/microsoft/agent-host-protocol). Users can either connect directly to an ahpd WebSocket host by address ("Connect to a host by address" — no GitHub account required) or sign in with GitHub via OAuth Device Flow to discover their own VS Code Remote Tunnel Access hosts, which requests authorization for Microsoft's "Visual Studio Tunnel Service" GitHub app used by VS Code Remote Tunnel Access.
+     AHP Client is an independent client for the open Agent Host Protocol (https://github.com/microsoft/agent-host-protocol). Users can either connect directly to an ahpd WebSocket host by address ("Connect to a host directly" — no GitHub account required) or sign in with GitHub via OAuth Device Flow to discover their own VS Code Remote Tunnel Access hosts, which requests authorization for Microsoft's "Visual Studio Tunnel Service" GitHub app used by VS Code Remote Tunnel Access.
      ```
-
----
-
-## 6. Dev Tunnels GitHub App Client ID Confirmation (`P2` Gate)
-
-Before flipping the Play Console listing from Internal/Closed testing to public commercial Production, send the following inquiry to the VS Code / Dev Tunnels team (e.g. via an issue on `microsoft/dev-tunnels` or `microsoft/agent-host-protocol`):
-
-```text
-Subject: Third-party AHP Android client authenticating to Dev Tunnels via prodGitHubAppClientId
-
-Hi Dev Tunnels / AHP team,
-
-We built an Android client for the open Agent Host Protocol (com.microsoft.agenthostprotocol:agent-host-protocol) that lets users monitor and interact with their coding-agent sessions on their phone, connecting either directly to an ahpd WebSocket endpoint or to a user's own VS Code Remote Tunnel Access host.
-
-To list and connect to a user's own VS Code tunnels, the app authenticates the user via GitHub OAuth Device Flow using `Iv1.e7b89e013f801f03` (published in `@microsoft/dev-tunnels-contracts` as `prodGitHubAppClientId`), because the Dev Tunnels service rejects tokens minted for other GitHub OAuth client IDs with 401. Tunnel discovery and read-only session monitoring in our app are 100% free; optional paid Pro features are strictly client-side capabilities (biometric tool approvals, local background monitoring service, and multi-host support, which also work over direct ahpd connections).
-
-Could you confirm whether a third-party AHP client app may use `prodGitHubAppClientId` (`Iv1.e7b89e013f801f03`) for user-initiated GitHub Device Flow authentication to their own Dev Tunnels, or if there is a separate recommended OAuth / Entra app registration path for third-party AHP clients?
-```
