@@ -136,6 +136,15 @@ class AppController(
      */
     val hosts: StateFlow<HostCatalog> = _hosts.asStateFlow()
 
+    private val _connectedHosts = MutableStateFlow<List<ConnectedHost>>(emptyList())
+
+    /**
+     * All currently connected hosts, in connection order. When one host is connected this holds that one [ConnectedHost]; when more
+     * than one host is connected via [connectHost], all stay online concurrently so their session lists merge in the drawer and can
+     * be filtered by host. [state] holds the currently focused host (and its [OpenSession], if any).
+     */
+    val connectedHosts: StateFlow<List<ConnectedHost>> = _connectedHosts.asStateFlow()
+
     /**
      * The permission of the host that is connected: a direct host has its own, and with none connected (or a tunnel host) it is the one
      * for the signed-in account's tunnel hosts. Everything below that asks "may this app act" asks this.
@@ -168,10 +177,18 @@ class AppController(
 
     private fun connectedSession(): HostSession? = (_state.value as? AppState.Connected)?.session
 
+    private fun allLiveSessions(): List<HostSession> =
+        (_connectedHosts.value.map { it.session } + listOfNotNull(connectedSession())).distinct()
+
     private fun liveSession(): HostSession = connectedSession() ?: throw IOException("Not connected to the host")
 
-    /** Parks whichever session is live once the app has been out of sight for [parkGraceMs], and takes it up again when the app returns. */
-    private val parking = ParkScheduler(scope, parkGraceMs, park = { connectedSession()?.park() }, unpark = { connectedSession()?.unpark() })
+    /** Parks whichever sessions are live once the app has been out of sight for [parkGraceMs], and takes them up again when the app returns. */
+    private val parking = ParkScheduler(
+        scope,
+        parkGraceMs,
+        park = { allLiveSessions().forEach { it.park() } },
+        unpark = { allLiveSessions().forEach { it.unpark() } },
+    )
 
     /**
      * Tells the controller whether the app can be seen, from the process lifecycle so that another screen of this app in front counts.
@@ -277,7 +294,15 @@ class AppController(
 
     /** Reconnects the session of [at], the state a permission was changed in, unless a switch has since moved to another host: that one's permission did not change. */
     private fun restartIfStillConnected(at: AppState) {
-        val session = (at as? AppState.Connected)?.session ?: return
+        val connected = at as? AppState.Connected ?: return
+        if (connected.host is HostRef.Tunnel) {
+            val tunnels = _connectedHosts.value.filter { it.host is HostRef.Tunnel }.map { it.session }
+            if (tunnels.isNotEmpty()) {
+                tunnels.forEach { it.restart() }
+                return
+            }
+        }
+        val session = connected.session
         if ((_state.value as? AppState.Connected)?.session === session) session.restart()
     }
 
@@ -363,13 +388,13 @@ class AppController(
     }
 
     /**
-     * Removes a direct host: its token, its saved permissions and the saved session list go with it. If it is the host connected to, the
+     * Removes a direct host: its token, its saved permissions and the saved session list go with it. If it is connected, its
      * connection is ended first. Signing out of GitHub never does any of this.
      */
     suspend fun removeDirectHost(id: String) {
         val host = directHosts.firstOrNull { it.id == id } ?: return
         disconnectFrom(id)
-        directHosts =directHosts.filter { it.id != id }
+        directHosts = directHosts.filter { it.id != id }
         try {
             directStore.save(directHosts)
         } catch (_: IOException) {
@@ -385,10 +410,14 @@ class AppController(
         publishDirect()
     }
 
-    /** Leaves the host with [id] if it is the one connected when this gets the lock: a switch to another host in the meantime is left alone. */
+    /** Leaves the host with [id] if it is connected when this gets the lock: another connected host stays up. */
     @Synchronized
     private fun disconnectFrom(id: String) {
-        if ((_state.value as? AppState.Connected)?.host?.id == id) disconnect()
+        if (_connectedHosts.value.size > 1 && _connectedHosts.value.any { it.host.id == id }) {
+            disconnectHost(id)
+        } else if ((_state.value as? AppState.Connected)?.host?.id == id) {
+            disconnect()
+        }
     }
 
     /** The hosts added by address, with the last used first and the rest by name. */
@@ -457,24 +486,105 @@ class AppController(
     }
 
     /**
-     * Connects to [target], from the host list or from another host that is connected: the one way to change hosts. From a connected host
-     * it goes straight to the next, with no host list in between: the old session is stopped (it saves its list) and the new one is made
-     * under the target's own permission, never the old host's. The switch to the new session happens only if the screen is still the old
-     * connection at that moment: a sign-out that landed while the session was being made wins, and the new session is stopped.
-     * The host already connected, and a direct host that is no longer saved, are ignored.
+     * Connects to [target], from the host list or from another host that is connected: the exclusive switch that stops the previous host.
+     * From a connected host it goes straight to the next, with no host list in between: the old session is stopped (it saves its list)
+     * and the new one is made under the target's own permission, never the old host's. The switch to the new session happens only if the
+     * screen is still the old connection at that moment: a sign-out that landed while the session was being made wins, and the new
+     * session is stopped. The host already connected, and a direct host that is no longer saved, are ignored.
      */
     @Synchronized
     fun switchHost(target: HostRef) {
         val from = _state.value
         if (from !is AppState.Hosts && !(from is AppState.Connected && from.host.id != target.id)) return
         val host = connectable(target) ?: return
+        val previous = (_connectedHosts.value.map { it.session } + listOfNotNull((from as? AppState.Connected)?.session)).distinct()
         if (from is AppState.Connected) {
             cancelWatchJob()
             forgetExpansions()
             cancelDiffJob()
-            from.session.stop()
+            previous.forEach { it.stop() }
+            _connectedHosts.value = emptyList()
         }
         swapToConnected(from, host, newSession(host))
+    }
+
+    /**
+     * Connects to [target] while keeping any already-connected hosts live in [connectedHosts], so the user can view and filter sessions
+     * across several hosts at once. If [target] is already in [connectedHosts], makes it the focused host without reconnecting.
+     */
+    @Synchronized
+    fun connectHost(target: HostRef) {
+        val from = _state.value
+        if (from is AppState.Hosts) {
+            switchHost(target)
+            return
+        }
+        val current = from as? AppState.Connected ?: return
+        if (current.host.id == target.id) return
+        val existing = _connectedHosts.value.firstOrNull { it.host.id == target.id }
+        if (existing != null) {
+            if (current.open != null) closeSession()
+            val afterClose = _state.value as? AppState.Connected ?: return
+            if (_state.compareAndSet(afterClose, AppState.Connected(existing.host, existing.session))) {
+                rememberLastHost(existing.host.id)
+                launchWatch()
+            }
+            return
+        }
+        val host = connectable(target) ?: return
+        if (current.open != null) closeSession()
+        val afterClose = _state.value as? AppState.Connected ?: return
+        val session = newSession(host)
+        session.start()
+        if (!_state.compareAndSet(afterClose, AppState.Connected(host, session))) {
+            session.stop()
+            return
+        }
+        _connectedHosts.update { list ->
+            val withCurrent = if (list.none { it.host.id == afterClose.host.id }) {
+                list + ConnectedHost(afterClose.host, afterClose.session)
+            } else {
+                list
+            }
+            withCurrent.filter { it.host.id != host.id } + ConnectedHost(host, session)
+        }
+        parking.ifParked(session::park)
+        autoConnectPending.set(false)
+        rememberLastHost(host.id)
+        launchWatch()
+    }
+
+    /**
+     * Disconnects the host with [hostId]. When other hosts remain in [connectedHosts], they stay online and the most recent remaining
+     * host becomes the focused connection; when [hostId] is the last connected host, returns to [AppState.Hosts] as [disconnect] does.
+     */
+    @Synchronized
+    fun disconnectHost(hostId: String) {
+        val current = _state.value as? AppState.Connected ?: return
+        val list = _connectedHosts.value
+        val target = list.firstOrNull { it.host.id == hostId }
+            ?: if (current.host.id == hostId) ConnectedHost(current.host, current.session) else return
+        val remaining = list.filter { it.host.id != hostId }
+        if (remaining.isEmpty()) {
+            if (current.host.id == hostId) disconnect()
+            return
+        }
+        if (current.host.id == hostId) {
+            if (current.open != null) closeSession()
+            cancelDiffJob()
+            val afterClose = _state.value as? AppState.Connected ?: return
+            val next = remaining.last()
+            target.session.stop()
+            _connectedHosts.value = remaining
+            if (_state.compareAndSet(afterClose, AppState.Connected(next.host, next.session))) {
+                rememberLastHost(next.host.id)
+                launchWatch()
+            }
+        } else {
+            target.session.stop()
+            _connectedHosts.value = remaining
+            launchWatch()
+        }
     }
 
     /** [target] as the app holds it now, or null when it cannot be connected to: a direct host removed since the caller got it, or no way to build one. */
@@ -494,19 +604,24 @@ class AppController(
             session.stop()
             return
         }
+        _connectedHosts.value = listOf(ConnectedHost(host, session))
         // The app may have gone out of sight before this session existed: it starts parked rather than waiting for another trip away.
         parking.ifParked(session::park)
         autoConnectPending.set(false)
-        lastId = host.id
+        rememberLastHost(host.id)
+        launchWatch()
+    }
+
+    private fun rememberLastHost(id: String) {
+        lastId = id
         republishLastUsed()
         scope.launch {
             try {
-                lastHost.set(host.id)
+                lastHost.set(id)
             } catch (_: IOException) {
                 // Remembering the last host is a convenience; failing to save it must not disturb a live connection.
             }
         }
-        launchWatch(session)
     }
 
     /** Opens the detail for [uri]. Ignored unless connected with no detail open, so a double tap cannot subscribe twice. */
@@ -518,19 +633,23 @@ class AppController(
         if (!_state.compareAndSet(current, current.copy(open = OpenSession(uri, store)))) current.session.closeSession(uri)
     }
 
-    /** Opens the session a notification points at, replacing any detail already open. Ignores a session the host does not list. */
+    /** Opens the session a notification points at, replacing any detail already open. Ignores a session no connected host lists. */
     @Synchronized
     fun focusSession(uri: String) {
         val current = _state.value as? AppState.Connected ?: return
-        if (current.session.root.sessions.value.none { it.resource == uri }) return
-        if (current.open?.uri == uri) return
-        if (current.open != null) closeSession()
-        openSession(uri)
+        if (current.session.root.sessions.value.any { it.resource == uri }) {
+            if (current.open?.uri == uri) return
+            if (current.open != null) closeSession()
+            openSession(uri)
+            return
+        }
+        val owner = _connectedHosts.value.firstOrNull { entry -> entry.session.root.sessions.value.any { it.resource == uri } } ?: return
+        showSession(uri, owner.host.id)
     }
 
     /**
-     * Opens [uri], leaving the session that is open, if any, so the side menu can go from one session to another. Unlike [focusSession]
-     * it does not need the host to list the session yet: one just started is not listed until the host says so.
+     * Opens [uri] on the currently focused host, leaving the session that is open, if any, so the side menu can go from one session to
+     * another. Unlike [focusSession] it does not need the host to list the session yet: one just started is not listed until the host says so.
      */
     @Synchronized
     fun showSession(uri: String) {
@@ -538,6 +657,25 @@ class AppController(
         if (current.open?.uri == uri) return
         if (current.open != null) closeSession()
         openSession(uri)
+    }
+
+    /**
+     * Opens [uri] on the connected host identified by [hostId] (or the currently focused host when [hostId] is null), switching focus to
+     * that host without disconnecting any other connected hosts.
+     */
+    @Synchronized
+    fun showSession(uri: String, hostId: String?) {
+        val current = _state.value as? AppState.Connected ?: return
+        if (hostId == null || current.host.id == hostId) {
+            showSession(uri)
+            return
+        }
+        val target = _connectedHosts.value.firstOrNull { it.host.id == hostId } ?: return
+        if (current.open != null) closeSession()
+        val afterClose = _state.value as? AppState.Connected ?: return
+        if (_state.compareAndSet(afterClose, AppState.Connected(target.host, target.session))) {
+            openSession(uri)
+        }
     }
 
     /** Leaves the open detail and stays connected. */
@@ -724,7 +862,7 @@ class AppController(
         var opened: HostSession? = null
         try {
             val store = withTimeoutOrNull(PREPARE_MS) {
-                val session = hostFor(background) ?: return@withTimeoutOrNull null
+                val session = hostForChat(chatUri, background) ?: return@withTimeoutOrNull null
                 // A background opener: this runs from a notification with the app out of sight, when a parked session would otherwise let the chat go.
                 val chat = session.openChat(chatUri, background = true)
                 opened = session
@@ -759,7 +897,7 @@ class AppController(
         var opened: HostSession? = null
         try {
             val store = withTimeoutOrNull(PREPARE_MS) {
-                val session = hostFor(background) ?: return@withTimeoutOrNull null
+                val session = hostForChat(chatUri, background) ?: return@withTimeoutOrNull null
                 val chat = session.openChat(chatUri, background = true)
                 opened = session
                 withTimeoutOrNull(CHAT_LOAD_MS) {
@@ -782,7 +920,7 @@ class AppController(
      * pending. [background] is as for [decideToolCall]: only then does it wait for a connection to be made.
      */
     suspend fun readWaiting(resource: String, background: Boolean = false): RequestRead? {
-        val session = hostFor(background) ?: return null
+        val session = hostForResource(resource, background) ?: return null
         if (resource.isBlank() || resource.length > ApprovalTarget.MAX_CHAT_URI) return null
         return WaitingRequests.read(session, resource)
     }
@@ -794,6 +932,24 @@ class AppController(
     private suspend fun hostFor(background: Boolean): HostSession? {
         if (background && !ensureConnected(CONNECT_MS)) return null
         return connectedSession()?.takeUnless { it.root.stale.value }
+    }
+
+    private suspend fun hostForResource(resource: String, background: Boolean): HostSession? {
+        val primary = hostFor(background) ?: return null
+        if (primary.root.sessions.value.any { it.resource == resource }) return primary
+        return _connectedHosts.value
+            .map { it.session }
+            .firstOrNull { !it.root.stale.value && it.root.sessions.value.any { s -> s.resource == resource } }
+            ?: primary
+    }
+
+    private suspend fun hostForChat(chatUri: String, background: Boolean): HostSession? {
+        val primary = hostFor(background) ?: return null
+        if (primary.root.sessions.value.any { s -> s.chats.orEmpty().any { it.resource == chatUri } || s.defaultChat == chatUri }) return primary
+        return _connectedHosts.value
+            .map { it.session }
+            .firstOrNull { !it.root.stale.value && it.root.sessions.value.any { s -> s.chats.orEmpty().any { it.resource == chatUri } || s.defaultChat == chatUri } }
+            ?: primary
     }
 
     /**
@@ -876,14 +1032,16 @@ class AppController(
         }
     }
 
-    /** Leaves the live host and returns to the host list, unless a sign-out took the screen first: then that stands. */
+    /** Leaves all live hosts and returns to the host list, unless a sign-out took the screen first: then that stands. */
     @Synchronized
     fun disconnect() {
         val connected = _state.value as? AppState.Connected ?: return
+        val sessionsToStop = (_connectedHosts.value.map { it.session } + connected.session).distinct()
         cancelWatchJob()
         forgetExpansions()
         cancelDiffJob()
-        connected.session.stop()
+        _connectedHosts.value = emptyList()
+        sessionsToStop.forEach { it.stop() }
         showHosts(from = connected)
     }
 
@@ -1082,7 +1240,8 @@ class AppController(
                 throw e
             } catch (e: DevTunnelsException.AuthExpired) {
                 // A direct host needs no GitHub sign-in, so one that is connected stays up; its screen is not the sign-in's to take.
-                if ((_state.value as? AppState.Connected)?.host is HostRef.Direct) dropSignInKeepingConnection() else endSignIn("GitHub no longer accepts this sign-in. Sign in again.")
+                val hasDirect = (_state.value as? AppState.Connected)?.host is HostRef.Direct || _connectedHosts.value.any { it.host is HostRef.Direct }
+                if (hasDirect) dropSignInKeepingConnection() else endSignIn("GitHub no longer accepts this sign-in. Sign in again.")
                 return
             } catch (e: DevTunnelsException.Forbidden) {
                 HostList.Failed("GitHub refused access (403). If your organization uses SSO, authorize this app for it, then try again.")
@@ -1142,13 +1301,20 @@ class AppController(
     }
 
     @Synchronized
-    private fun launchWatch(session: HostSession) {
+    private fun launchWatch() {
         watchJob?.cancel()
+        val watched = allLiveSessions()
+        if (watched.isEmpty()) return
         watchJob = scope.launch {
-            session.connection.collect { connection ->
-                val stillCurrent = (_state.value as? AppState.Connected)?.session === session
-                if (stillCurrent && connection is ConnState.Failed && connection.cause is DevTunnelsException.AuthExpired) {
-                    endSignIn("GitHub no longer accepts this sign-in. Sign in again.")
+            watched.forEach { session ->
+                launch {
+                    session.connection.collect { connection ->
+                        val stillCurrent = allLiveSessions().any { it === session }
+                        if (stillCurrent && connection is ConnState.Failed && connection.cause is DevTunnelsException.AuthExpired) {
+                            val hasDirect = _connectedHosts.value.any { it.host is HostRef.Direct }
+                            if (hasDirect) dropSignInKeepingConnection() else endSignIn("GitHub no longer accepts this sign-in. Sign in again.")
+                        }
+                    }
                 }
             }
         }
@@ -1165,7 +1331,9 @@ class AppController(
         cancelWatchJob()
         forgetExpansions()
         // Stopped without saving its session list: the cache is wiped below, and nothing may write it again after that.
-        (_state.value as? AppState.Connected)?.session?.stopAndForget()
+        val activeSessions = allLiveSessions()
+        _connectedHosts.value = emptyList()
+        activeSessions.forEach { it.stopAndForget() }
         cancelDiffJob()
         interaction.set(false)
         autoConnectPending.set(false)
@@ -1174,9 +1342,11 @@ class AppController(
         safeClear()
         // The host list stayed tappable while the disk was written, so a connection may have been made meanwhile: it is displaced, and stopped.
         val displaced = _state.getAndUpdate { AppState.SignedOut(SignInStep.Idle, notice, offerRevoke) }
+        val displacedHosts = _connectedHosts.getAndUpdate { emptyList() }
         // The account's tunnel hosts are not kept past its sign-in; the hosts added by address are.
         _hosts.value = HostCatalog(HostList.NotSignedIn, directEntries())
         (displaced as? AppState.Connected)?.session?.stopAndForget()
+        displacedHosts.forEach { it.session.stopAndForget() }
         // After every session is stopped, so none is left to write it again; no session title stays on the phone.
         safeClearCache()
         cancelWatchJob()
@@ -1184,7 +1354,7 @@ class AppController(
 
     /**
      * A refused GitHub sign-in while a direct host is connected: as [endSignIn] it forgets the token and the account's tunnel hosts, but
-     * leaves the connection and its saved session list alone, since that host never used the sign-in. The sign-in screen is not shown.
+     * leaves the direct connection(s) and their saved session list alone, since those hosts never used the sign-in. The sign-in screen is not shown.
      */
     private suspend fun dropSignInKeepingConnection() = withContext(NonCancellable) {
         cancelHostsJob()
@@ -1193,6 +1363,15 @@ class AppController(
         token = null
         refusedRefresh = null
         safeClear()
+        val tunnels = _connectedHosts.value.filter { it.host is HostRef.Tunnel }
+        val directs = _connectedHosts.value.filter { it.host is HostRef.Direct }
+        tunnels.forEach { it.session.stopAndForget() }
+        _connectedHosts.value = directs
+        val current = _state.value as? AppState.Connected
+        if (current != null && current.host is HostRef.Tunnel && directs.isNotEmpty()) {
+            val next = directs.last()
+            _state.compareAndSet(current, AppState.Connected(next.host, next.session))
+        }
         _hosts.value = HostCatalog(HostList.NotSignedIn, directEntries())
     }
 

@@ -34,6 +34,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TooltipAnchorPosition
@@ -41,7 +42,11 @@ import androidx.compose.material3.TooltipBox
 import androidx.compose.material3.TooltipDefaults
 import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -59,14 +64,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.microsoft.agenthostprotocol.generated.SessionSummary
+import dev.ahpclient.app.HostRef
 import dev.ahpclient.state.ActivityState
 import dev.ahpclient.state.ConnState
+import dev.ahpclient.state.HostSessionEntry
 import dev.ahpclient.state.SessionCatalog
+import dev.ahpclient.state.SessionFilter
 import dev.ahpclient.state.SessionListModel
 import dev.ahpclient.state.SessionRow
 import dev.ahpclient.state.label
-import dev.ahpclient.app.HostRef
-import com.microsoft.agenthostprotocol.generated.SessionSummary
 import java.time.Instant
 
 /**
@@ -100,11 +107,36 @@ fun DrawerContent(
     inboxCount: Int? = null,
     onOpenInbox: () -> Unit = {},
     stale: Boolean = false,
+    /** Multi-host session entries when connected to one or more hosts; falls back to [sessions] when empty. */
+    entries: List<HostSessionEntry> = emptyList(),
+    /** All currently connected hosts, so the header can show how many hosts are connected when more than one is active. */
+    connectedHosts: List<HostRef> = emptyList(),
+    /** Active filter, ordering and grouping choices for the sessions list. */
+    filter: SessionFilter = SessionFilter.DEFAULT,
+    onFilterChange: (SessionFilter) -> Unit = {},
+    onOpenSessionOnHost: (hostId: String?, uri: String) -> Unit = { _, uri -> onOpenSession(uri) },
 ) {
-    val model = remember(sessions, showArchived, now, query) { SessionListModel.from(SessionCatalog.sorted(sessions), showArchived, now, query) }
+    val effectiveFilter = remember(filter, showArchived) { filter.copy(showArchived = showArchived) }
+    val model = remember(entries, sessions, effectiveFilter, now, query) {
+        if (entries.isNotEmpty()) {
+            SessionListModel.fromEntries(SessionCatalog.sortedEntries(entries), effectiveFilter, now, query)
+        } else {
+            SessionListModel.from(SessionCatalog.sorted(sessions), showArchived, now, query, filter = effectiveFilter)
+        }
+    }
+    var filterSheetOpen by rememberSaveable { mutableStateOf(false) }
+    val applyFilter: (SessionFilter) -> Unit = { updated ->
+        if (updated.showArchived != showArchived) onToggleArchived()
+        onFilterChange(updated)
+    }
+    val resetFilter: () -> Unit = {
+        if (showArchived) onToggleArchived()
+        onFilterChange(SessionFilter.DEFAULT)
+    }
+
     ModalDrawerSheet(modifier = modifier.testTag("drawer")) {
         Column(Modifier.fillMaxSize()) {
-            HostButton(host, connection, onOpenHost)
+            HostButton(host, connectedHosts, connection, onOpenHost)
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -129,9 +161,31 @@ fun DrawerContent(
                     Button(onClick = onOpenHost, modifier = Modifier.heightIn(min = 48.dp).testTag("choose_host")) { Text("Choose a host") }
                 }
             } else {
-                SessionList(model, connection, stale, selected, query, onQueryChange, listState, watched, onOpenSession, Modifier.weight(1f))
+                SessionList(
+                    model = model,
+                    connection = connection,
+                    stale = stale,
+                    selected = selected,
+                    query = query,
+                    onQueryChange = onQueryChange,
+                    onOpenFilter = { filterSheetOpen = true },
+                    onResetFilter = resetFilter,
+                    listState = listState,
+                    watched = watched,
+                    onOpen = onOpenSessionOnHost,
+                    modifier = Modifier.weight(1f),
+                )
             }
         }
+    }
+    if (filterSheetOpen && host != null) {
+        SessionFilterSheet(
+            model = model,
+            filter = effectiveFilter,
+            onFilterChange = applyFilter,
+            onReset = resetFilter,
+            onDismiss = { filterSheetOpen = false },
+        )
     }
 }
 
@@ -214,11 +268,48 @@ private fun ArchivedAction(showing: Boolean, hidden: Int, onToggle: () -> Unit) 
     }
 }
 
+/** Opens the session filter sheet, carrying a badge when any non-default filter, ordering or grouping is active. */
+@Composable
+private fun FilterButton(activeCount: Int, onOpenFilter: () -> Unit) {
+    val active = activeCount > 0
+    val spoken = if (active) "Filter sessions, $activeCount active" else "Filter sessions"
+    Tooltip("Filter sessions") {
+        CountOver(
+            count = activeCount.takeIf { it > 0 },
+            tag = "session_filter_badge",
+            containerColor = MaterialTheme.colorScheme.primary,
+            contentColor = MaterialTheme.colorScheme.onPrimary,
+        ) {
+            IconToggleButton(
+                checked = active,
+                onCheckedChange = { onOpenFilter() },
+                modifier = Modifier.semantics(mergeDescendants = true) {
+                    contentDescription = spoken
+                    stateDescription = if (active) "$activeCount active" else "Default"
+                }.testTag("session_filter"),
+                colors = IconButtonDefaults.iconToggleButtonColors(
+                    checkedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                    checkedContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                ),
+            ) {
+                Icon(AppIcons.Filter, contentDescription = null)
+            }
+        }
+    }
+}
+
 /** The host's name and how the connection stands, as one button to the hosts sheet. */
 @Composable
-private fun HostButton(host: HostRef?, connection: ConnState?, onOpenHost: () -> Unit) {
+private fun HostButton(host: HostRef?, connectedHosts: List<HostRef>, connection: ConnState?, onOpenHost: () -> Unit) {
+    val extraHosts = (connectedHosts.size - 1).coerceAtLeast(0)
+    val title = when {
+        host == null -> "Hosts"
+        extraHosts > 0 -> "${host.name} + $extraHosts more"
+        else -> host.name
+    }
     val state = when {
         host == null -> "Not connected"
+        extraHosts > 0 && connection != null -> "${describe(connection)} · ${connectedHosts.size} hosts connected"
         connection != null -> describe(connection)
         else -> ""
     }
@@ -235,7 +326,7 @@ private fun HostButton(host: HostRef?, connection: ConnState?, onOpenHost: () ->
     ) {
         Icon(AppIcons.Host, contentDescription = null)
         Column(Modifier.weight(1f)) {
-            Text(host?.name ?: "Hosts", style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("drawer_host_name"))
+            Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("drawer_host_name"))
             Text(state, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("connection_status"))
         }
         Icon(AppIcons.ChevronDown, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -250,9 +341,11 @@ private fun SessionList(
     selected: String?,
     query: String,
     onQueryChange: (String) -> Unit,
+    onOpenFilter: () -> Unit,
+    onResetFilter: () -> Unit,
     listState: LazyListState,
     watched: Set<String>,
-    onOpen: (String) -> Unit,
+    onOpen: (hostId: String?, uri: String) -> Unit,
     modifier: Modifier,
 ) {
     LazyColumn(state = listState, modifier = modifier.fillMaxWidth().testTag("session_list")) {
@@ -272,13 +365,45 @@ private fun SessionList(
                 )
             }
         }
-        if (model.total > 0) {
-            item(key = "search") { SearchField(query, onQueryChange, Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) }
+        if (model.total > 0 || !model.filter.isDefault) {
+            item(key = "search") {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    SearchField(query, onQueryChange, Modifier.weight(1f))
+                    FilterButton(model.filter.activeCount, onOpenFilter)
+                }
+            }
         }
         if (model.rows.isEmpty()) {
-            item(key = "empty") { EmptyList(model, connection) }
+            item(key = "empty") { EmptyList(model, connection, onResetFilter) }
         } else {
-            items(model.rows, key = { it.resource }) { row -> SessionRowItem(row, row.resource == selected, row.resource in watched, onOpen) }
+            model.groups.forEach { group ->
+                val groupTitle = group.title
+                if (groupTitle != null) {
+                    item(key = "group_header_${group.key}") {
+                        Text(
+                            groupTitle,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .padding(start = 20.dp, end = 16.dp, top = 10.dp, bottom = 4.dp)
+                                .semantics { heading() }
+                                .testTag("group_header"),
+                        )
+                    }
+                }
+                items(group.rows, key = { "${group.key}:${it.key}" }) { row ->
+                    SessionRowItem(
+                        row = row,
+                        selected = row.resource == selected,
+                        watched = row.resource in watched,
+                        onOpen = { onOpen(row.hostId, row.resource) },
+                    )
+                }
+            }
         }
         item(key = "end") { Spacer(Modifier.height(8.dp)) }
     }
@@ -318,8 +443,24 @@ private fun SearchField(query: String, onQueryChange: (String) -> Unit, modifier
 }
 
 @Composable
-private fun EmptyList(model: SessionListModel, connection: ConnState?) {
+private fun EmptyList(model: SessionListModel, connection: ConnState?, onResetFilter: () -> Unit) {
     val tag = Modifier.testTag("empty_list").padding(horizontal = 16.dp, vertical = 12.dp)
+    if (model.query.isEmpty() && model.hiddenByFilter > 0) {
+        Column(modifier = tag, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                "No sessions match the current filters (${model.hiddenByFilter} hidden).",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            TextButton(
+                onClick = onResetFilter,
+                modifier = Modifier.heightIn(min = 48.dp).testTag("reset_filters_empty"),
+            ) {
+                Text("Reset filters")
+            }
+        }
+        return
+    }
     val text = when {
         model.query.isNotEmpty() -> "No sessions match \"${model.query}\"."
         model.total > 0 -> "All ${model.total} are archived."
@@ -332,10 +473,11 @@ private fun EmptyList(model: SessionListModel, connection: ConnState?) {
 
 /** One session on one or two lines. Its spoken description joins every part, so TalkBack reads the title, state, changes and age as a single item. */
 @Composable
-private fun SessionRowItem(row: SessionRow, selected: Boolean, watched: Boolean, onOpen: (String) -> Unit) {
+private fun SessionRowItem(row: SessionRow, selected: Boolean, watched: Boolean, onOpen: () -> Unit) {
     val description = listOfNotNull(
         row.title,
         row.state.label,
+        row.hostName?.let { "host $it" },
         row.subtitle,
         row.branch?.let { "branch $it" },
         row.changes?.spoken,
@@ -351,7 +493,7 @@ private fun SessionRowItem(row: SessionRow, selected: Boolean, watched: Boolean,
             .padding(horizontal = 8.dp)
             .clip(shape)
             .background(if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
-            .clickable(onClickLabel = "Open session", role = Role.Button) { onOpen(row.resource) }
+            .clickable(onClickLabel = "Open session", role = Role.Button, onClick = onOpen)
             .heightIn(min = 52.dp)
             .padding(horizontal = 12.dp, vertical = 6.dp)
             .semantics(mergeDescendants = true) {
@@ -371,20 +513,51 @@ private fun SessionRowItem(row: SessionRow, selected: Boolean, watched: Boolean,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            val hostName = row.hostName
             val second = row.subtitle
             val changes = row.changes
             val branch = row.branch
-            if (second != null || changes != null || branch != null) {
+            if (hostName != null || second != null || changes != null || branch != null) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    hostName?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false).testTag("row_host"),
+                        )
+                    }
                     second?.let {
-                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(start = if (hostName != null) 6.dp else 0.dp).weight(1f, fill = false),
+                        )
                     }
                     // The branch is host text and can be long; it shortens before the change count does.
                     branch?.let {
-                        Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = if (second != null) 6.dp else 0.dp).weight(1f, fill = false).testTag("row_branch"))
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(start = if (hostName != null || second != null) 6.dp else 0.dp).weight(1f, fill = false).testTag("row_branch"),
+                        )
                     }
                     changes?.let {
-                        Text(it.text, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, modifier = Modifier.padding(start = if (second != null || branch != null) 6.dp else 0.dp).testTag("row_changes"))
+                        Text(
+                            it.text,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            modifier = Modifier.padding(start = if (hostName != null || second != null || branch != null) 6.dp else 0.dp).testTag("row_changes"),
+                        )
                     }
                 }
             }
