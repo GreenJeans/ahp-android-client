@@ -1,5 +1,6 @@
 package dev.ahpclient.state
 
+import com.microsoft.agenthostprotocol.generated.FileEditSide
 import com.microsoft.agenthostprotocol.generated.StringOrMarkdown
 import com.microsoft.agenthostprotocol.generated.ToolCallCancellationReason
 import com.microsoft.agenthostprotocol.generated.ToolCallState
@@ -49,13 +50,19 @@ sealed interface ToolResultView {
      */
     data class Terminal(val title: String, val output: Clipped?, val exitCode: Long?, val clippedByHost: Boolean, val terminalUri: String? = null) : ToolResultView
 
-    data class FileEdit(val path: String, val added: Long?, val removed: Long?) : ToolResultView
+    data class FileEdit(val path: String, val added: Long?, val removed: Long?) : ToolResultView {
+        var before: FileEditSide? = null
+        var after: FileEditSide? = null
+        val canOpenDiff: Boolean get() = before?.content != null || after?.content != null
+    }
 
     /** The id of the subagent's own chat, set only when it is an AHP chat address: the transcript of what the subagent did lives there. */
     data class Subagent(val title: String, val agentName: String, val description: String, val chatUri: String? = null) : ToolResultView
 
-    /** An embedded or referenced resource. Its data is never decoded or copied: one real result was 669 KB of image. */
-    data class Attachment(val label: String) : ToolResultView
+    /** An embedded or referenced resource. Its data is only decoded on demand within safe bounds: one real result was 669 KB of image. */
+    data class Attachment(val label: String) : ToolResultView {
+        var resourceRef: ResourceRef? = null
+    }
 
     data object Unknown : ToolResultView
 }
@@ -189,7 +196,10 @@ data class ToolDetail(
                     path = displayPath((edit.after ?: edit.before)?.uri ?: "(unknown file)"),
                     added = edit.diff?.added,
                     removed = edit.diff?.removed,
-                )
+                ).apply {
+                    before = edit.before
+                    after = edit.after
+                }
             }
             is ToolResultContent.Subagent -> content.value.let {
                 ToolResultView.Subagent(
@@ -199,8 +209,12 @@ data class ToolDetail(
                     chatUriOf(it.resource),
                 )
             }
-            is ToolResultContent.EmbeddedResource -> ToolResultView.Attachment("Attachment: ${content.value.contentType}")
-            is ToolResultContent.Resource -> ToolResultView.Attachment("Attachment: ${content.value.contentType ?: "unknown type"}")
+            is ToolResultContent.EmbeddedResource -> ToolResultView.Attachment("Attachment: ${content.value.contentType}").apply {
+                resourceRef = ResourceRef.from(content.value)
+            }
+            is ToolResultContent.Resource -> ToolResultView.Attachment("Attachment: ${content.value.contentType ?: "unknown type"}").apply {
+                resourceRef = ResourceRef.from(content.value)
+            }
             else -> ToolResultView.Unknown
         }
 

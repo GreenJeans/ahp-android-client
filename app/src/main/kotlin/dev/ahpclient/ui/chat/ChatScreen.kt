@@ -20,17 +20,17 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
@@ -38,9 +38,11 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.microsoft.agenthostprotocol.generated.ResourceReadResult
 import dev.ahpclient.state.ChatGoneException
 import dev.ahpclient.state.ChatNotLoadedException
 import dev.ahpclient.state.ConnState
+import dev.ahpclient.state.HostFileTarget
 import dev.ahpclient.state.LinkTarget
 import dev.ahpclient.state.Transcript
 import dev.ahpclient.state.TranscriptItem
@@ -88,6 +90,8 @@ fun ChatScreen(
     onRetry: (() -> Unit)? = null,
     textScale: Float = 1f,
     onTextScale: ((Float) -> Unit)? = null,
+    onReadResource: (suspend (String) -> ResourceReadResult)? = null,
+    workingDirectories: List<String> = emptyList(),
 ) {
     ScreenScaffold(
         title = transcript?.title ?: "Chat",
@@ -98,7 +102,27 @@ fun ChatScreen(
         large = false,
         modifier = modifier,
     ) {
-        ChatPane(transcript, error, loadingOlder, olderError, connection, onLoadOlder, onOpenLink, Modifier, onShareLink, expanded, onToggle, actions, onOpenSubagent, onOpenTerminal, onRetry, textScale, onTextScale)
+        ChatPane(
+            transcript = transcript,
+            error = error,
+            loadingOlder = loadingOlder,
+            olderError = olderError,
+            connection = connection,
+            onLoadOlder = onLoadOlder,
+            onOpenLink = onOpenLink,
+            modifier = Modifier,
+            onShareLink = onShareLink,
+            expanded = expanded,
+            onToggle = onToggle,
+            actions = actions,
+            onOpenSubagent = onOpenSubagent,
+            onOpenTerminal = onOpenTerminal,
+            onRetry = onRetry,
+            textScale = textScale,
+            onTextScale = onTextScale,
+            onReadResource = onReadResource,
+            workingDirectories = workingDirectories,
+        )
     }
 }
 
@@ -128,10 +152,13 @@ fun ChatPane(
     /** The size of the text, as a multiple of the system's; [onTextScale], when given, is asked to change it as the person pinches the chat. */
     textScale: Float = 1f,
     onTextScale: ((Float) -> Unit)? = null,
+    onReadResource: (suspend (String) -> ResourceReadResult)? = null,
+    workingDirectories: List<String> = emptyList(),
 ) {
     // Kept as the text it came from: that survives the app being recreated, and a target is made from it again.
     var pendingRaw by rememberSaveable { mutableStateOf<String?>(null) }
     val pendingLink = pendingRaw?.let(LinkTarget::of)
+    var activeRichRequest by remember { mutableStateOf<RichModalRequest?>(null) }
     val notLoaded = error as? ChatNotLoadedException
     // The text of the chat, and the box under it, follow the person's size; the bars around them keep the system's.
     val base = LocalDensity.current
@@ -142,36 +169,64 @@ fun ChatPane(
     val scaled = remember(base, shown) { Density(base.density, base.fontScale * shown) }
     // The pinch sits outside the density it changes: a change of density would restart the gesture after its first step.
     Box(modifier = modifier.fillMaxSize().let { if (onTextScale != null) it.pinchToScale(shown, { s -> live = s }, { s -> live = s; onTextScale(s) }) else it }) {
-    CompositionLocalProvider(LocalDensity provides scaled) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            if (connection != ConnState.Online) ConnectionLine(connection, Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
-            if (transcript?.running == true && !transcript.waitingOnYou) WorkingBar()
-            when {
-                error is ChatGoneException -> ErrorText("This chat is no longer on the host.", Modifier.padding(horizontal = 16.dp).testTag("chat_gone"))
-                notLoaded != null && transcript == null ->
-                    NotLoaded(notLoaded, onRetry, stale = false, Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
-                transcript != null -> {
-                    if (notLoaded != null) NotLoaded(notLoaded, onRetry, stale = true, Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
-                    TranscriptList(
-                        transcript, loadingOlder, olderError, onLoadOlder,
-                        { link -> if (LinkTarget.of(link) != null) pendingRaw = link },
-                        expanded, onToggle, actions, onOpenSubagent, onOpenTerminal, Modifier.weight(1f),
+        CompositionLocalProvider(LocalDensity provides scaled) {
+            val openRich = activeRichRequest
+            if (openRich != null) {
+                RichViewerModal(
+                    request = openRich,
+                    connection = connection,
+                    onDismiss = { activeRichRequest = null },
+                    onReadResource = onReadResource,
+                    workingDirectories = workingDirectories,
+                )
+            } else {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    if (connection != ConnState.Online) ConnectionLine(connection, Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                    if (transcript?.running == true && !transcript.waitingOnYou) WorkingBar()
+                    when {
+                        error is ChatGoneException -> ErrorText("This chat is no longer on the host.", Modifier.padding(horizontal = 16.dp).testTag("chat_gone"))
+                        notLoaded != null && transcript == null ->
+                            NotLoaded(notLoaded, onRetry, stale = false, Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                        transcript != null -> {
+                            if (notLoaded != null) NotLoaded(notLoaded, onRetry, stale = true, Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                            TranscriptList(
+                                transcript = transcript,
+                                loadingOlder = loadingOlder,
+                                olderError = olderError,
+                                onLoadOlder = onLoadOlder,
+                                onOpenLink = { link ->
+                                    val hostTarget = HostFileTarget.fromInternalUri(link)
+                                    if (hostTarget != null && onReadResource != null) {
+                                        activeRichRequest = RichModalRequest.HostFile(hostTarget)
+                                    } else if (LinkTarget.of(link) != null) {
+                                        pendingRaw = link
+                                    }
+                                },
+                                expanded = expanded,
+                                onToggle = onToggle,
+                                actions = actions,
+                                onOpenSubagent = onOpenSubagent,
+                                onOpenTerminal = onOpenTerminal,
+                                allowHostFiles = onReadResource != null,
+                                onOpenRich = { req -> activeRichRequest = req },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                        error != null -> ErrorText("Could not load this chat (${error.javaClass.simpleName}).", Modifier.padding(horizontal = 16.dp).testTag("chat_error"))
+                        else -> LoadingChat(Modifier.padding(horizontal = 16.dp))
+                    }
+                    if (actions != null && transcript != null) Composer(actions)
+                }
+                pendingLink?.let { target ->
+                    LinkConfirmDialog(
+                        target = target,
+                        onOpen = { pendingRaw = null; onOpenLink(rawOf(target)) },
+                        onShare = onShareLink?.let { share -> { pendingRaw = null; share(rawOf(target)) } },
+                        onDismiss = { pendingRaw = null },
                     )
                 }
-                error != null -> ErrorText("Could not load this chat (${error.javaClass.simpleName}).", Modifier.padding(horizontal = 16.dp).testTag("chat_error"))
-                else -> LoadingChat(Modifier.padding(horizontal = 16.dp))
             }
-            if (actions != null && transcript != null) Composer(actions)
         }
-        pendingLink?.let { target ->
-            LinkConfirmDialog(
-                target = target,
-                onOpen = { pendingRaw = null; onOpenLink(rawOf(target)) },
-                onShare = onShareLink?.let { share -> { pendingRaw = null; share(rawOf(target)) } },
-                onDismiss = { pendingRaw = null },
-            )
-        }
-    }
     }
 }
 
@@ -181,6 +236,7 @@ private fun rawOf(target: LinkTarget): String = when (target) {
     is LinkTarget.Mail -> "mailto:${target.address}"
     is LinkTarget.Phone -> "tel:${target.number}"
 }
+
 /** Why a chat is not there (or not up to date) and the way to ask for it again. A long chat is the usual reason. */
 @Composable
 private fun NotLoaded(failure: ChatNotLoadedException, onRetry: (() -> Unit)?, stale: Boolean, modifier: Modifier = Modifier) {
@@ -200,7 +256,7 @@ private fun LoadingChat(modifier: Modifier = Modifier) {
         slow = true
     }
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Busy("Loading chat…", Modifier.testTag("chat_loading"))
+        Busy("Loading chat\u2026", Modifier.testTag("chat_loading"))
         if (slow) {
             Text(
                 "This chat is long, so it can take a while.",
@@ -229,6 +285,8 @@ private fun TranscriptList(
     actions: ChatActionsUi?,
     onOpenSubagent: ((String) -> Unit)?,
     onOpenTerminal: ((String) -> Unit)?,
+    allowHostFiles: Boolean,
+    onOpenRich: ((RichModalRequest) -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
@@ -277,14 +335,16 @@ private fun TranscriptList(
             }
             itemsIndexed(newestFirst, key = { _, row -> row.key }, contentType = { _, row -> row::class }) { index, row ->
                 TranscriptRow(
-                    row,
-                    onOpenLink,
-                    Modifier.padding(top = rowGap(row, newestFirst.getOrNull(index + 1))),
-                    expanded,
-                    onToggle,
-                    actions,
-                    onOpenSubagent,
-                    onOpenTerminal,
+                    row = row,
+                    onOpenLink = onOpenLink,
+                    modifier = Modifier.padding(top = rowGap(row, newestFirst.getOrNull(index + 1))),
+                    expanded = expanded,
+                    onToggle = onToggle,
+                    actions = actions,
+                    onOpenSubagent = onOpenSubagent,
+                    onOpenTerminal = onOpenTerminal,
+                    allowHostFiles = allowHostFiles,
+                    onOpenRich = onOpenRich,
                 )
             }
             if (loadingOlder || olderError != null || transcript.hasOlder) {
@@ -323,7 +383,7 @@ private fun LazyListState.atNewest(): Boolean = firstVisibleItemIndex == 0 && fi
 @Composable
 private fun OlderRow(loading: Boolean, error: Throwable?, onLoadOlder: () -> Unit) {
     when {
-        loading -> Busy("Loading earlier messages…", Modifier.testTag("older_loading"))
+        loading -> Busy("Loading earlier messages\u2026", Modifier.testTag("older_loading"))
         error != null -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             ErrorText("Could not load earlier messages.", Modifier.testTag("older_error"))
             OutlinedButton(onClick = onLoadOlder, modifier = Modifier.testTag("older_retry")) { Text("Try again") }

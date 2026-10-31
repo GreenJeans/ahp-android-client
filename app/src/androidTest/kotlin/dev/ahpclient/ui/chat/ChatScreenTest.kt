@@ -866,4 +866,81 @@ class ChatScreenTest {
         rule.onAllNodesWithTag("jump_latest").assertCountEquals(0)
         rule.onNodeWithTag("transcript").assertIsDisplayed()
     }
+
+    @Test
+    fun aMarkdownTableNeverTruncatesLongCellTextAndCanOpenFullScreenViewer() {
+        val longCell = "This is a very long description inside a markdown table cell that must wrap cleanly across multiple lines without ever being truncated with an ellipsis."
+        val md = """
+            | Column A | Detailed Explanation |
+            | :--- | :--- |
+            | Item 1 | $longCell |
+        """.trimIndent()
+        show(transcript(listOf(TranscriptItem.Markdown("m1", md))))
+        awaitText("Item 1")
+
+        rule.onNodeWithTag("markdown_table").assertIsDisplayed()
+        rule.onNodeWithText(longCell).assertIsDisplayed()
+        rule.onNodeWithTag("table_expand").assertHeightIsAtLeast(48.dp).performClick()
+        rule.waitForIdle()
+
+        rule.onNodeWithTag("rich_viewer").assertIsDisplayed()
+        rule.onNodeWithTag("rich_viewer_table_content").assertIsDisplayed()
+    }
+
+    @Test
+    fun mermaidAndCodeBlocksRenderRichlyInlineAndOpenFullScreenViewer() {
+        val md = """
+            ```mermaid
+            flowchart LR
+                A[Start] --> B[End]
+            ```
+
+            ```kotlin
+            fun greet() = println("Hello world")
+            ```
+        """.trimIndent()
+        show(transcript(listOf(TranscriptItem.Markdown("m1", md))))
+        awaitText("Flowchart")
+
+        rule.onNodeWithTag("markdown_diagram").assertIsDisplayed()
+        rule.onNodeWithTag("markdown_code_block").assertIsDisplayed()
+        rule.onNodeWithTag("diagram_toggle_code").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag("diagram_source_text").assertIsDisplayed()
+
+        rule.onNodeWithTag("diagram_expand").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag("rich_viewer").assertIsDisplayed()
+        rule.onNodeWithTag("rich_viewer_diagram_canvas").assertIsDisplayed()
+    }
+
+    @Test
+    fun hostFileLinksOpenInAppFileViewerWhenReaderIsProvided() {
+        val md = "Inspect [Main.kt](file:///repo/src/Main.kt#L1-L2) for details."
+        val t = transcript(listOf(TranscriptItem.Markdown("m1", md)))
+        rule.setContent {
+            AhpTheme {
+                ChatScreen(
+                    transcript = t,
+                    error = null,
+                    loadingOlder = false,
+                    olderError = null,
+                    connection = ConnState.Online,
+                    onBack = {},
+                    onLoadOlder = {},
+                    onOpenLink = {},
+                    onReadResource = {
+                        com.microsoft.agenthostprotocol.generated.ResourceReadResult(
+                            encoding = com.microsoft.agenthostprotocol.generated.ContentEncoding.UTF8,
+                            data = "package demo\nfun main() {}\n",
+                        )
+                    },
+                )
+            }
+        }
+        awaitText("Inspect Main.kt for details.")
+        rule.onNodeWithText("Inspect Main.kt for details.", substring = true).performClick()
+        rule.waitForIdle()
+        rule.onAllNodesWithTag("link_dialog").assertCountEquals(0)
+    }
 }

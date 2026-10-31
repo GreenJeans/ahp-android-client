@@ -502,6 +502,8 @@ private fun OpenChatView(
             backLabel = "Back to chat",
             textScale = textScale,
             onTextScale = ui::setTextScale,
+            onReadResource = session::readResource,
+            workingDirectories = sessionState?.workingDirectories.orEmpty(),
             modifier = modifier,
         )
     } else {
@@ -522,6 +524,8 @@ private fun OpenChatView(
             onRetry = chat.store::retry,
             textScale = textScale,
             onTextScale = ui::setTextScale,
+            onReadResource = session::readResource,
+            workingDirectories = sessionState?.workingDirectories.orEmpty(),
             modifier = modifier,
         )
     }

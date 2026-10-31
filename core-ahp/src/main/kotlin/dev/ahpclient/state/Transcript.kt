@@ -71,8 +71,10 @@ sealed interface TranscriptItem {
 
     data class Question(override val key: String, val request: InputRequestView, val answered: Boolean, val form: InputForm? = null) : TranscriptItem
 
-    /** A part this client does not render yet, named so the reader knows something is there. */
-    data class Other(override val key: String, val label: String) : TranscriptItem
+    /** A part this client does not render as plain markdown or a tool row, named so the reader knows something is there. */
+    data class Other(override val key: String, val label: String) : TranscriptItem {
+        var resourceRef: ResourceRef? = null
+    }
 }
 
 /**
@@ -161,7 +163,9 @@ data class Transcript(
                         form = if (answered) null else InputForm.from(part.value.request),
                     )
                 }
-                is ResponsePartContentRef -> TranscriptItem.Other(key(null), "Attached content (${part.value.contentType ?: "unknown type"})")
+                is ResponsePartContentRef -> TranscriptItem.Other(key(null), "Attached content (${part.value.contentType ?: "unknown type"})").apply {
+                    resourceRef = ResourceRef.from(part.value)
+                }
                 else -> TranscriptItem.Other(key(null), "Content this app cannot show")
             }
         }

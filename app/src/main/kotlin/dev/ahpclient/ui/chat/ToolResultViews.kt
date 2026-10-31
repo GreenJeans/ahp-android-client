@@ -1,5 +1,6 @@
 package dev.ahpclient.ui.chat
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -17,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
@@ -32,9 +34,9 @@ import java.text.NumberFormat
 /**
  * What a tool call was asked and what it produced, as the body of its expanded block. [approveHere] is set when the buttons
  * to decide it are on screen, so the block does not send the person elsewhere. [onShowAll] is set when something was left
- * out for length and the person may ask for more. [onOpenSubagent] opens a subagent's own transcript and [onOpenTerminal] the live
- * output of a terminal a command ran in. The text can be
- * selected and copied.
+ * out for length and the person may ask for more. [onOpenSubagent] opens a subagent's own transcript, [onOpenTerminal] the live
+ * output of a terminal a command ran in, and [onOpenRich] opens inline file edits or attachments in the full-screen viewer.
+ * The text can be selected and copied.
  */
 @Composable
 internal fun ToolDetailBody(
@@ -43,6 +45,7 @@ internal fun ToolDetailBody(
     onShowAll: (() -> Unit)? = null,
     onOpenSubagent: ((String) -> Unit)? = null,
     onOpenTerminal: ((String) -> Unit)? = null,
+    onOpenRich: ((RichModalRequest) -> Unit)? = null,
 ) {
     SelectionContainer {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -73,7 +76,7 @@ internal fun ToolDetailBody(
                     }
                 }
             }
-            detail.results.forEach { result -> ToolResultRow(result, onOpenSubagent, onOpenTerminal) }
+            detail.results.forEach { result -> ToolResultRow(result, onOpenSubagent, onOpenTerminal, onOpenRich) }
             detail.error?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("tool_error")) }
             if (detail.isEmpty) Text("No further details.", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("tool_nothing"))
             if (onShowAll != null) {
@@ -92,11 +95,16 @@ private fun InputLineView(line: InputLine) {
 }
 
 @Composable
-internal fun ToolResultRow(result: ToolResultView, onOpenSubagent: ((String) -> Unit)? = null, onOpenTerminal: ((String) -> Unit)? = null) {
+internal fun ToolResultRow(
+    result: ToolResultView,
+    onOpenSubagent: ((String) -> Unit)? = null,
+    onOpenTerminal: ((String) -> Unit)? = null,
+    onOpenRich: ((RichModalRequest) -> Unit)? = null,
+) {
     when (result) {
         is ToolResultView.Text -> MonoBlock(result.body, Modifier.testTag("result_text"))
         is ToolResultView.Terminal -> TerminalResult(result, onOpenTerminal)
-        is ToolResultView.FileEdit -> FileEditResult(result)
+        is ToolResultView.FileEdit -> FileEditResult(result, onOpenRich)
         is ToolResultView.Subagent -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             val chatUri = result.chatUri
             val canOpen = chatUri != null && onOpenSubagent != null
@@ -111,7 +119,18 @@ internal fun ToolResultRow(result: ToolResultView, onOpenSubagent: ((String) -> 
                 OutlinedButton(onClick = { onOpenSubagent(chatUri) }, modifier = Modifier.heightIn(min = 48.dp).testTag("subagent_open")) { Text("Open its transcript") }
             }
         }
-        is ToolResultView.Attachment -> Text(result.label, style = MaterialTheme.typography.bodyMedium, fontStyle = FontStyle.Italic, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("result_attachment"))
+        is ToolResultView.Attachment -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+                result.label,
+                style = MaterialTheme.typography.bodyMedium,
+                fontStyle = FontStyle.Italic,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.testTag("result_attachment"),
+            )
+            result.resourceRef?.let { ref ->
+                InlineResourcePreview(label = result.label, ref = ref, onOpenRich = onOpenRich)
+            }
+        }
         ToolResultView.Unknown -> Text("A result this app cannot show.", style = MaterialTheme.typography.bodyMedium, fontStyle = FontStyle.Italic, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("result_unknown"))
     }
 }
@@ -155,21 +174,56 @@ private fun ExitBadge(exitCode: Long?) {
 }
 
 @Composable
-private fun FileEditResult(result: ToolResultView.FileEdit) {
-    Row(
-        modifier = Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}.testTag("result_file_edit"),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(result.path, style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace, maxLines = 2, overflow = TextOverflow.MiddleEllipsis, modifier = Modifier.weight(1f))
-        if (result.added != null || result.removed != null) {
-            val added = result.added ?: 0
-            val removed = result.removed ?: 0
+private fun FileEditResult(
+    result: ToolResultView.FileEdit,
+    onOpenRich: ((RichModalRequest) -> Unit)? = null,
+) {
+    val canOpen = result.canOpenDiff && onOpenRich != null
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .let { mod ->
+                    if (canOpen) {
+                        mod
+                            .heightIn(min = 48.dp)
+                            .clickable(onClickLabel = "Open diff for ${result.path}", role = Role.Button) {
+                                onOpenRich(RichModalRequest.InlineFileEdit(result))
+                            }
+                    } else {
+                        mod
+                    }
+                }
+                .semantics(mergeDescendants = true) {}
+                .testTag("result_file_edit"),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Text(
-                "+$added \u2212$removed",
-                style = MaterialTheme.typography.labelMedium,
-                modifier = Modifier.semantics { contentDescription = "$added lines added, $removed removed" },
+                result.path,
+                style = MaterialTheme.typography.bodyMedium,
+                fontFamily = FontFamily.Monospace,
+                maxLines = 2,
+                overflow = TextOverflow.MiddleEllipsis,
+                modifier = Modifier.weight(1f),
             )
+            if (result.added != null || result.removed != null) {
+                val added = result.added ?: 0
+                val removed = result.removed ?: 0
+                Text(
+                    "+$added \u2212$removed",
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.semantics { contentDescription = "$added lines added, $removed removed" },
+                )
+            }
+        }
+        if (canOpen) {
+            OutlinedButton(
+                onClick = { onOpenRich(RichModalRequest.InlineFileEdit(result)) },
+                modifier = Modifier.heightIn(min = 48.dp).testTag("file_edit_open_diff"),
+            ) {
+                Text("View diff")
+            }
         }
     }
 }
