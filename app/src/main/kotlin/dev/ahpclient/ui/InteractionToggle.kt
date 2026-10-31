@@ -28,8 +28,15 @@ import androidx.compose.ui.unit.dp
  * question. The whole row is the control, so the label and its state are read together.
  */
 @Composable
-fun InteractionToggle(allowed: Boolean, onChange: (Boolean) -> Unit, modifier: Modifier = Modifier, supported: Boolean = true) {
+fun InteractionToggle(
+    allowed: Boolean,
+    onChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+    supported: Boolean = true,
+    proUnlocked: Boolean = true,
+) {
     var asking by rememberSaveable { mutableStateOf(false) }
+    val enabled = supported && proUnlocked
     Column(modifier = modifier.fillMaxWidth().testTag("interaction_section")) {
         Row(
             modifier = Modifier
@@ -37,7 +44,7 @@ fun InteractionToggle(allowed: Boolean, onChange: (Boolean) -> Unit, modifier: M
                 .heightIn(min = 48.dp)
                 .toggleable(
                     value = allowed,
-                    enabled = supported,
+                    enabled = enabled,
                     role = Role.Switch,
                     onValueChange = { on -> if (on) asking = true else onChange(false) },
                 )
@@ -46,11 +53,12 @@ fun InteractionToggle(allowed: Boolean, onChange: (Boolean) -> Unit, modifier: M
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text("Act for me", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-            Switch(checked = allowed, onCheckedChange = null, enabled = supported)
+            Switch(checked = allowed, onCheckedChange = null, enabled = enabled)
         }
         Text(
             when {
                 !supported -> "Needs Android 11 or newer, for the device-lock check on approvals. Watch only."
+                !proUnlocked -> "Requires Pro unlock. Watch only."
                 allowed -> "On: send, answer, approve and stop, as you. Approvals ask for your fingerprint, face or lock."
                 else -> "Off: watch only."
             },
@@ -59,7 +67,7 @@ fun InteractionToggle(allowed: Boolean, onChange: (Boolean) -> Unit, modifier: M
             modifier = Modifier.testTag("interaction_hint"),
         )
     }
-    if (asking && supported) {
+    if (asking && enabled) {
         AlertDialog(
             onDismissRequest = { asking = false },
             title = { Text("Act for you?") },

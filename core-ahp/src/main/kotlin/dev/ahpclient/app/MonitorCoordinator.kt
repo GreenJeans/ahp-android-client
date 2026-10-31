@@ -84,10 +84,11 @@ class FinishedAlerts(
 )
 
 /**
- * Decides when background monitoring runs and feeds it. Monitoring is on exactly while the user has turned it on and
- * is connected to a host: signing out, leaving the host or turning it off stops it, with nothing left running. While
- * it runs, [status] is the persistent notification's text and sessions that start waiting on the user go to [sink]. With [finished]
- * set, sessions the user chose to watch (or all of them) also go to its sink when they stop working. When the service cannot be
+ * Decides when background monitoring runs and feeds it. Monitoring is on exactly while the user has turned it on,
+ * is [entitled] to Pro background monitoring, and is connected to a host: signing out, leaving the host, losing Pro
+ * entitlement or turning it off stops it, with nothing left running. While it runs, [status] is the persistent
+ * notification's text and sessions that start waiting on the user go to [sink]. With [finished] set, sessions the
+ * user chose to watch (or all of them) also go to its sink when they stop working. When the service cannot be
  * started the status says so and [problems], if given, is told too, until a start works or monitoring ends.
  */
 class MonitorCoordinator(
@@ -100,6 +101,8 @@ class MonitorCoordinator(
     private val finished: FinishedAlerts? = null,
     private val finishedDebounceMs: Long = FinishedNotifier.DEFAULT_DEBOUNCE_MS,
     private val problems: MonitorProblemSink? = null,
+    /** Whether the user's Pro entitlement allows background monitoring and notifications. */
+    private val entitled: StateFlow<Boolean> = MutableStateFlow(true),
 ) {
     private val _status = MutableStateFlow<MonitorStatus?>(null)
     private val startFailed = MutableStateFlow(false)
@@ -107,18 +110,23 @@ class MonitorCoordinator(
     /** Null when monitoring is off. */
     val status: StateFlow<MonitorStatus?> = _status.asStateFlow()
 
-    val enabled: Flow<Boolean> get() = settings.enabled
+    val enabled: Flow<Boolean> get() = combine(settings.enabled, entitled) { on, allowed -> on && allowed }
 
-    suspend fun setEnabled(on: Boolean) = settings.setEnabled(on)
+    suspend fun setEnabled(on: Boolean) {
+        if (on && !entitled.value) return
+        settings.setEnabled(on)
+    }
 
     /** The sessions the user wants a "finished" alert for. Kept whether or not monitoring is on; the alerts need it on. */
     val finishedWatch: Flow<FinishedWatch> get() = finished?.settings?.watch ?: flowOf(FinishedWatch())
 
     suspend fun setWatchAll(on: Boolean) {
+        if (on && !entitled.value) return
         finished?.settings?.setAll(on)
     }
 
     suspend fun setWatched(resource: String, on: Boolean) {
+        if (on && !entitled.value) return
         finished?.settings?.setSession(resource, on)
     }
 
@@ -141,7 +149,7 @@ class MonitorCoordinator(
         // A warning is taken away only when monitoring that was running ends. The first look in a new process, with nothing connected yet,
         // is not that: the periodic check may have posted "Monitoring stopped", and nothing has brought monitoring back.
         var monitoring = false
-        combine(state, settings.enabled) { current, on -> if (on) current as? AppState.Connected else null }
+        combine(state, settings.enabled, entitled) { current, on, allowed -> if (on && allowed) current as? AppState.Connected else null }
             .distinctUntilChanged { old, new -> old?.session === new?.session }
             .collectLatest { connected ->
                 if (connected == null) {

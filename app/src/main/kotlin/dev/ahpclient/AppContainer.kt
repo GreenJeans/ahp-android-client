@@ -6,15 +6,21 @@ import android.os.Build
 import android.util.Log
 import androidx.datastore.preferences.preferencesDataStoreFile
 import dev.ahpclient.app.AppController
+import dev.ahpclient.app.BillingGateway
+import dev.ahpclient.app.BillingResult
 import dev.ahpclient.app.DirectSessionFactory
 import dev.ahpclient.app.FinishedAlerts
 import dev.ahpclient.app.HostSessionFactory
 import dev.ahpclient.app.InteractionConsent
 import dev.ahpclient.app.MonitorCoordinator
 import dev.ahpclient.app.OnScreen
+import dev.ahpclient.app.ProEntitlement
+import dev.ahpclient.app.StoreBillingGateway
 import dev.ahpclient.app.WatchdogDecision
 import dev.ahpclient.auth.GitHubDeviceAuth
+import dev.ahpclient.billing.PlayBillingDriver
 import dev.ahpclient.data.PrefsDirectHostStore
+import dev.ahpclient.data.PrefsEntitlementSettings
 import dev.ahpclient.data.PrefsFinishedWatch
 import dev.ahpclient.data.PrefsInteractionSettings
 import dev.ahpclient.data.PrefsLastHostStore
@@ -73,6 +79,7 @@ class AppContainer(context: Context) {
     private val http = OkHttpClient.Builder().followSslRedirects(false).build()
     private val wsHttp = http.newBuilder().pingInterval(30, TimeUnit.SECONDS).build()
     private val versionName: String = appContext.packageManager.getPackageInfo(appContext.packageName, 0).versionName ?: "0"
+    private val debuggable: Boolean = appContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
     private val prefs by lazy { PrefsLastHostStore.dataStoreFor(appContext.preferencesDataStoreFile("ahp_prefs"), ioScope) }
 
     /** How the app looks. */
@@ -81,11 +88,46 @@ class AppContainer(context: Context) {
     /** The phone's own prompt in front of every tool approval. Attached to the activity while it is on screen. */
     val approvalGate = BiometricApprovalGate()
 
+    /**
+     * Pro entitlement state. Debug builds default to unlocked (`defaultUnlocked = true`) and allow toggling between Free and Pro in
+     * Settings for testing; release builds default to locked (`false`) and read `pro_unlocked` from disk.
+     */
+    val pro: ProEntitlement by lazy {
+        ProEntitlement(
+            settings = PrefsEntitlementSettings(prefs, defaultUnlocked = debuggable),
+            alwaysUnlocked = false,
+            initialUnlocked = debuggable,
+        )
+    }
+
+    /** Google Play Billing driver; attached to the foreground activity while on screen. */
+    val billingDriver: PlayBillingDriver by lazy {
+        PlayBillingDriver(appContext) { purchases ->
+            appScope.launch {
+                if (storeBilling.evaluatePurchases(purchases) is BillingResult.Unlocked) {
+                    controller.setProUnlocked(true)
+                }
+            }
+        }
+    }
+
+    private val storeBilling: StoreBillingGateway by lazy { StoreBillingGateway(billingDriver) }
+
+    private val billingGateway: BillingGateway by lazy {
+        if (debuggable) {
+            object : BillingGateway {
+                override suspend fun purchasePro(): BillingResult = BillingResult.Unlocked
+                override suspend fun restorePurchases(): BillingResult = BillingResult.Unlocked
+            }
+        } else {
+            storeBilling
+        }
+    }
+
     val controller: AppController by lazy {
         val devTunnels = DevTunnelsClient(http, userAgent = "ahp-android-client/$versionName")
         val gateway = TunnelGateway(withWireLog(OkHttpSocketOpener(wsHttp)))
         val clientInfo = Implementation(name = "ahp-android-client", version = versionName)
-        val debuggable = appContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
         AppController(
             auth = GitHubDeviceAuth(http),
             vault = AndroidTokenVault.create(appContext, ioScope),
@@ -103,8 +145,8 @@ class AppContainer(context: Context) {
             approvalGate = approvalGate,
             // Debug builds only: says that a sign-in was renewed or refused, never anything of the token.
             note = { if (debuggable) Log.i(AUTH_TAG, it) },
-            // A restarted process connects to the last host by itself only while the user has monitoring turned on.
-            autoConnect = { monitorSettings.enabled.first() },
+            // A restarted process connects to the last host by itself only while the user has monitoring turned on and Pro is unlocked.
+            autoConnect = { pro.unlocked.value && monitorSettings.enabled.first() },
             // Leaving on purpose ends monitoring, so the periodic check has nothing left to remind the person of.
             afterSignOut = { monitorSettings.setEnabled(false) },
             sessionCache = sessionList,
@@ -123,8 +165,11 @@ class AppContainer(context: Context) {
                     PrefsInteractionSettings(prefs, PrefsInteractionSettings.interactionKeyFor(host.id)),
                     supported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
                     managementSettings = PrefsInteractionSettings(prefs, PrefsInteractionSettings.managementKeyFor(host.id)),
+                    entitled = { pro.unlocked.value },
                 )
             },
+            pro = pro,
+            billing = billingGateway,
         )
     }
 
@@ -154,6 +199,7 @@ class AppContainer(context: Context) {
             PrefsInteractionSettings(prefs),
             supported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
             managementSettings = PrefsInteractionSettings(prefs, PrefsInteractionSettings.MANAGEMENT_KEY),
+            entitled = { pro.unlocked.value },
         )
     }
 
@@ -174,6 +220,7 @@ class AppContainer(context: Context) {
             // The session on screen is never alerted about, but only while the app is in front: pressing Home with it open is not looking.
             finished = FinishedAlerts(PrefsFinishedWatch(prefs), NotificationFinishedSink(appContext), viewing = { OnScreen.session(inForeground, controller.state.value) }),
             problems = monitorProblems,
+            entitled = pro.unlocked,
         )
     }
 
@@ -237,7 +284,7 @@ class AppContainer(context: Context) {
      * For the periodic check: monitoring is on, yet this process has no live session and the app is not in front. In a process nothing
      * has started yet that is the case.
      */
-    suspend fun monitoringStopped(): Boolean = WatchdogDecision.shouldWarn(monitorSettings.enabled.first(), controller.state.value, appInFront = inForeground)
+    suspend fun monitoringStopped(): Boolean = WatchdogDecision.shouldWarn(pro.unlocked.value && monitorSettings.enabled.first(), controller.state.value, appInFront = inForeground)
 
     fun setMonitoring(on: Boolean) {
         appScope.launch { monitor.setEnabled(on) }
@@ -248,7 +295,6 @@ class AppContainer(context: Context) {
      * else, so a run on a real device can show that only read-tier calls were sent. Release builds log nothing.
      */
     private fun withWireLog(opener: SocketOpener): SocketOpener {
-        val debuggable = appContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
         return if (debuggable) MethodLoggingSocketOpener(opener) { Log.i(WIRE_TAG, it) } else opener
     }
 
@@ -273,10 +319,18 @@ class AppContainer(context: Context) {
         if (started.compareAndSet(false, true)) {
             controller.start()
             monitor.start()
+            if (!debuggable) {
+                // Reconcile any existing or newly completed Google Play Pro purchase on cold start.
+                appScope.launch {
+                    if (storeBilling.restorePurchases() is BillingResult.Unlocked) {
+                        controller.setProUnlocked(true)
+                    }
+                }
+            }
             // Scheduled while monitoring is on, found on at start or turned on later, and taken away when it is turned off, together with
             // any warning it or the coordinator left showing: with monitoring off there is nothing to resume.
             appScope.launch {
-                monitorSettings.enabled.distinctUntilChanged().collect { on ->
+                monitor.enabled.distinctUntilChanged().collect { on ->
                     if (on) {
                         MonitorWatchdog.schedule(appContext)
                     } else {
