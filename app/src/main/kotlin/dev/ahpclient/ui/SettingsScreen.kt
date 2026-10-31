@@ -155,46 +155,32 @@ fun SettingsScreen(
 
 @Composable
 private fun AboutSection() {
-    var showingPrivacyPolicy by rememberSaveable { mutableStateOf(false) }
-    var showingLicenses by rememberSaveable { mutableStateOf(false) }
-    SectionHeader("About")
-    TileCard(modifier = Modifier.testTag("about_section")) {
-        TilePadding {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    LEGAL_DISCLAIMER,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.testTag("legal_disclaimer"),
-                )
-                Text(
-                    "VS Code tunnel connections use Microsoft's Visual Studio Tunnel Service; direct ahpd hosts connect independently.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.testTag("tunnel_service_disclaimer"),
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(
-                        onClick = { showingPrivacyPolicy = true },
-                        modifier = Modifier.heightIn(min = 48.dp).testTag("privacy_policy_button"),
-                    ) {
-                        Text("Privacy policy")
-                    }
-                    TextButton(
-                        onClick = { showingLicenses = true },
-                        modifier = Modifier.heightIn(min = 48.dp).testTag("licenses_button"),
-                    ) {
-                        Text("Open-source licenses")
-                    }
-                }
-            }
+    var showingAbout by rememberSaveable { mutableStateOf(false) }
+    Spacer(Modifier.height(16.dp))
+    TileCard(
+        onClick = { showingAbout = true },
+        modifier = Modifier.testTag("about_button"),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(AppIcons.Info, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("About", style = MaterialTheme.typography.bodyLarge, maxLines = 1, modifier = Modifier.weight(1f))
+            Text(
+                "Privacy & licenses",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
         }
     }
-    if (showingPrivacyPolicy) {
-        PrivacyPolicyDialog(onDismiss = { showingPrivacyPolicy = false })
-    }
-    if (showingLicenses) {
-        OpenSourceLicensesDialog(onDismiss = { showingLicenses = false })
+    if (showingAbout) {
+        AboutSheet(onDismiss = { showingAbout = false })
     }
 }
 

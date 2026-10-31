@@ -50,7 +50,7 @@ fun SignInScreen(
     /** Skips the sign-in to use only hosts added by address. Null hides the way. */
     onUseDirect: (() -> Unit)? = null,
 ) {
-    var showingPrivacyPolicy by rememberSaveable { mutableStateOf(false) }
+    var showingAbout by rememberSaveable { mutableStateOf(false) }
     ScreenScaffold(title = "AHP Client", modifier = modifier) {
         Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
             ScreenColumn {
@@ -76,23 +76,17 @@ fun SignInScreen(
                         if (onUseDirect != null) UseDirect(onUseDirect)
                     }
                 }
-                Text(
-                    LEGAL_DISCLAIMER,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 8.dp).testTag("legal_disclaimer"),
-                )
                 TextButton(
-                    onClick = { showingPrivacyPolicy = true },
-                    modifier = Modifier.heightIn(min = 48.dp).testTag("privacy_policy_button"),
+                    onClick = { showingAbout = true },
+                    modifier = Modifier.heightIn(min = 48.dp).testTag("about_button"),
                 ) {
-                    Text("Privacy policy")
+                    Text("About")
                 }
             }
         }
     }
-    if (showingPrivacyPolicy) {
-        PrivacyPolicyDialog(onDismiss = { showingPrivacyPolicy = false })
+    if (showingAbout) {
+        AboutSheet(onDismiss = { showingAbout = false })
     }
 }
 
@@ -149,12 +143,6 @@ private fun Approval(
             "Open ${step.verificationUri} on a device you trust, enter the code, and approve “Visual Studio Tunnel Service”."
         },
         style = MaterialTheme.typography.bodyMedium,
-    )
-    Text(
-        "“Visual Studio Tunnel Service” is Microsoft's GitHub app used by VS Code Remote Tunnel Access. Your token stays encrypted on this phone and connects directly to your tunnel.",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.testTag("tunnel_service_note"),
     )
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         OutlinedButton(onClick = { onCopyCode(step.userCode) }, modifier = Modifier.testTag("copy_code")) { Text("Copy code") }

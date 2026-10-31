@@ -122,19 +122,16 @@ class ScreensTest {
         showSignIn(signedOut(SignInStep.AwaitingApproval("ABCD-1234", "https://github.com/login/device", expires)))
 
         rule.onNodeWithTag("user_code").assertIsDisplayed().assertTextContains("ABCD-1234").assertContentDescriptionEquals("Code A B C D dash 1 2 3 4")
-        rule.onNodeWithTag("tunnel_service_note").performScrollTo().assertIsDisplayed().assertTextContains("Visual Studio Tunnel Service", substring = true)
-        rule.onNodeWithTag("waiting").performScrollTo().assertTextContains("Waiting for approval", substring = true)
+        rule.onNodeWithTag("waiting").assertTextContains("Waiting for approval", substring = true)
     }
 
     @Test
-    fun signInScreenShowsLegalDisclaimerAndOpensPrivacyPolicyDialog() {
+    fun signInScreenOpensAboutSheet() {
         showSignIn(signedOut(SignInStep.Idle))
 
-        rule.onNodeWithTag("legal_disclaimer").performScrollTo().assertIsDisplayed().assertTextContains("Not affiliated with", substring = true)
-        rule.onNodeWithTag("privacy_policy_button").performScrollTo().assertIsDisplayed().assertTouchTargetAtLeast(48.dp).performClick()
-        rule.onNodeWithTag("privacy_policy_dialog").assertIsDisplayed()
-        rule.onNodeWithTag("privacy_policy_close").assertIsDisplayed().assertTouchTargetAtLeast(48.dp).performClick()
-        rule.onAllNodesWithTag("privacy_policy_dialog").assertCountEquals(0)
+        rule.onNodeWithTag("about_button").performScrollTo().assertIsDisplayed().assertTouchTargetAtLeast(48.dp).performClick()
+        rule.onNodeWithTag("about_sheet").assertIsDisplayed()
+        rule.onNodeWithTag("about_overview_content").assertIsDisplayed()
     }
 
     @Test
@@ -322,21 +319,18 @@ class ScreensTest {
     }
 
     @Test
-    fun settingsAboutSectionShowsDisclaimerAndOpensPrivacyAndLicensesDialogs() {
+    fun settingsAboutButtonOpensSheetWithOverviewPrivacyAndLicensesTabs() {
         showSettings()
 
-        rule.onNodeWithTag("about_section").performScrollTo().assertIsDisplayed()
-        rule.onNodeWithTag("legal_disclaimer").performScrollTo().assertIsDisplayed().assertTextContains("not affiliated with", substring = true)
+        rule.onNodeWithTag("about_button").performScrollTo().assertIsDisplayed().assertTouchTargetAtLeast(48.dp).performClick()
+        rule.onNodeWithTag("about_sheet").assertIsDisplayed()
+        rule.onNodeWithTag("about_overview_content").assertIsDisplayed()
 
-        rule.onNodeWithTag("privacy_policy_button").performScrollTo().assertIsDisplayed().assertTouchTargetAtLeast(48.dp).performClick()
-        rule.onNodeWithTag("privacy_policy_dialog").assertIsDisplayed()
-        rule.onNodeWithTag("privacy_policy_close").assertIsDisplayed().assertTouchTargetAtLeast(48.dp).performClick()
-        rule.onAllNodesWithTag("privacy_policy_dialog").assertCountEquals(0)
+        rule.onNodeWithTag("about_tab_privacy").assertIsDisplayed().assertTouchTargetAtLeast(48.dp).performClick()
+        rule.onNodeWithTag("about_privacy_content").assertIsDisplayed()
 
-        rule.onNodeWithTag("licenses_button").performScrollTo().assertIsDisplayed().assertTouchTargetAtLeast(48.dp).performClick()
-        rule.onNodeWithTag("licenses_dialog").assertIsDisplayed()
-        rule.onNodeWithTag("licenses_close").assertIsDisplayed().assertTouchTargetAtLeast(48.dp).performClick()
-        rule.onAllNodesWithTag("licenses_dialog").assertCountEquals(0)
+        rule.onNodeWithTag("about_tab_licenses").assertIsDisplayed().assertTouchTargetAtLeast(48.dp).performClick()
+        rule.onNodeWithTag("about_licenses_content").assertIsDisplayed()
     }
 
     // ---- connected --------------------------------------------------------------------------------------------
