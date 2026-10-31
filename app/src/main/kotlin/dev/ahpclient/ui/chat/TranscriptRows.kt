@@ -56,7 +56,7 @@ import dev.ahpclient.ui.AppIcons
 import dev.ahpclient.ui.InputRequestCard
 
 /**
- * One row of the transcript list: what the person said as a bubble on the right, what the agent wrote as plain text, and the
+ * One row of the transcript list: what the person said as a bubble on the right, what the agent wrote as formatted text, and the
  * agent's work in between as one folded card per run of steps, which opens to the steps. [expanded] holds the keys of the rows
  * that are open and [onToggle] flips one. A run with a step waiting on the person is never folded over it.
  */
@@ -70,10 +70,18 @@ internal fun TranscriptRow(
     actions: ChatActionsUi? = null,
     onOpenSubagent: ((String) -> Unit)? = null,
     onOpenTerminal: ((String) -> Unit)? = null,
+    allowHostFiles: Boolean = false,
+    onOpenRich: ((RichModalRequest) -> Unit)? = null,
 ) {
     when (row) {
-        is TranscriptRowModel.Single -> ItemRow(row.item, onOpenLink, modifier, row.item.key in expanded, { onToggle(row.item.key) }, actions, onOpenSubagent, onOpenTerminal)
-        is TranscriptRowModel.Steps -> StepsRow(row, onOpenLink, modifier, expanded, onToggle, actions, onOpenSubagent, onOpenTerminal)
+        is TranscriptRowModel.Single -> ItemRow(
+            row.item, onOpenLink, modifier, row.item.key in expanded, { onToggle(row.item.key) },
+            actions, onOpenSubagent, onOpenTerminal, allowHostFiles, onOpenRich,
+        )
+        is TranscriptRowModel.Steps -> StepsRow(
+            row, onOpenLink, modifier, expanded, onToggle,
+            actions, onOpenSubagent, onOpenTerminal, allowHostFiles, onOpenRich,
+        )
     }
 }
 
@@ -87,12 +95,14 @@ private fun ItemRow(
     actions: ChatActionsUi?,
     onOpenSubagent: ((String) -> Unit)?,
     onOpenTerminal: ((String) -> Unit)?,
+    allowHostFiles: Boolean,
+    onOpenRich: ((RichModalRequest) -> Unit)?,
 ) {
     when (item) {
         is TranscriptItem.User -> UserRow(item, modifier)
-        is TranscriptItem.Markdown -> AgentBubble(item, onOpenLink, modifier)
-        is TranscriptItem.Reasoning -> ReasoningBlock(item, expanded, onToggle, onOpenLink, modifier)
-        is TranscriptItem.Tool -> ToolCallBlock(item, expanded, onToggle, actions, onOpenSubagent, onOpenTerminal, modifier)
+        is TranscriptItem.Markdown -> AgentBubble(item, onOpenLink, modifier, allowHostFiles, onOpenRich)
+        is TranscriptItem.Reasoning -> ReasoningBlock(item, expanded, onToggle, onOpenLink, modifier, allowHostFiles, onOpenRich)
+        is TranscriptItem.Tool -> ToolCallBlock(item, expanded, onToggle, actions, onOpenSubagent, onOpenTerminal, onOpenRich, modifier)
         is TranscriptItem.Notice -> NoticeRow(item, modifier)
         is TranscriptItem.TurnEnd -> TurnEndRow(item, modifier)
         is TranscriptItem.Question -> {
@@ -110,13 +120,18 @@ private fun ItemRow(
                 }
             }
         }
-        is TranscriptItem.Other -> Text(
-            item.label,
-            style = MaterialTheme.typography.bodyMedium,
-            fontStyle = FontStyle.Italic,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = modifier.testTag("row_other"),
-        )
+        is TranscriptItem.Other -> Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+                item.label,
+                style = MaterialTheme.typography.bodyMedium,
+                fontStyle = FontStyle.Italic,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.testTag("row_other"),
+            )
+            item.resourceRef?.let { ref ->
+                InlineResourcePreview(label = item.label, ref = ref, onOpenRich = onOpenRich)
+            }
+        }
     }
 }
 
@@ -140,19 +155,33 @@ private fun UserRow(item: TranscriptItem.User, modifier: Modifier) {
         }
     }
 }
+
 /**
- * What the agent wrote, in a bubble of its own, so one message is told from the next and a long turn is plain to see. The text is
- * selectable and its links are the phone's to open, nothing else.
+ * What the agent wrote, in a bubble of its own, so one message is told from the next and a long turn is plain to see.
  */
 @Composable
-private fun AgentBubble(item: TranscriptItem.Markdown, onOpenLink: (String) -> Unit, modifier: Modifier) {
+private fun AgentBubble(
+    item: TranscriptItem.Markdown,
+    onOpenLink: (String) -> Unit,
+    modifier: Modifier,
+    allowHostFiles: Boolean = false,
+    onOpenRich: ((RichModalRequest) -> Unit)? = null,
+) {
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         contentColor = MaterialTheme.colorScheme.onSurface,
         shape = RoundedCornerShape(topStart = 4.dp, topEnd = 20.dp, bottomEnd = 20.dp, bottomStart = 20.dp),
         modifier = modifier.fillMaxWidth().testTag("row_markdown"),
     ) {
-        SelectionContainer { MarkdownPart(item.text, onOpenLink, Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) }
+        SelectionContainer {
+            MarkdownPart(
+                text = item.text,
+                onOpenLink = onOpenLink,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+                allowHostFiles = allowHostFiles,
+                onOpenRich = onOpenRich,
+            )
+        }
     }
 }
 
@@ -213,6 +242,8 @@ private fun StepsRow(
     actions: ChatActionsUi?,
     onOpenSubagent: ((String) -> Unit)?,
     onOpenTerminal: ((String) -> Unit)?,
+    allowHostFiles: Boolean,
+    onOpenRich: ((RichModalRequest) -> Unit)?,
 ) {
     val open = model.needsYou || model.key in expanded
     val colors = MaterialTheme.colorScheme
@@ -268,7 +299,10 @@ private fun StepsRow(
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
                     model.items.forEach { item ->
-                        ItemRow(item, onOpenLink, Modifier, item.key in expanded, { onToggle(item.key) }, actions, onOpenSubagent, onOpenTerminal)
+                        ItemRow(
+                            item, onOpenLink, Modifier, item.key in expanded, { onToggle(item.key) },
+                            actions, onOpenSubagent, onOpenTerminal, allowHostFiles, onOpenRich,
+                        )
                     }
                 }
             }
@@ -277,8 +311,16 @@ private fun StepsRow(
 }
 
 @Composable
-private fun ReasoningBlock(item: TranscriptItem.Reasoning, expanded: Boolean, onToggle: () -> Unit, onOpenLink: (String) -> Unit, modifier: Modifier) {
-    val label = if (item.live) "Thinking…" else "Thought"
+private fun ReasoningBlock(
+    item: TranscriptItem.Reasoning,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    onOpenLink: (String) -> Unit,
+    modifier: Modifier,
+    allowHostFiles: Boolean = false,
+    onOpenRich: ((RichModalRequest) -> Unit)? = null,
+) {
+    val label = if (item.live) "Thinking\u2026" else "Thought"
     val style = MaterialTheme.typography.bodyMedium
     // Nothing to open when the agent left no text: a plain line, not a button that opens onto nothing.
     if (item.text.isBlank()) {
@@ -302,14 +344,31 @@ private fun ReasoningBlock(item: TranscriptItem.Reasoning, expanded: Boolean, on
         // The thinking is set off from what the agent said by a thin rule down its side.
         Row(modifier = Modifier.height(IntrinsicSize.Min)) {
             Spacer(Modifier.fillMaxHeight().width(2.dp).background(MaterialTheme.colorScheme.outlineVariant))
-            SelectionContainer { MarkdownPart(item.text, onOpenLink, Modifier.fillMaxWidth().padding(start = 12.dp)) }
+            SelectionContainer {
+                MarkdownPart(
+                    text = item.text,
+                    onOpenLink = onOpenLink,
+                    modifier = Modifier.fillMaxWidth().padding(start = 12.dp),
+                    allowHostFiles = allowHostFiles,
+                    onOpenRich = onOpenRich,
+                )
+            }
         }
     }
 }
 
 /** A tool call opens to its input and its results. One made without the host's record has nothing to open and stays a plain row. */
 @Composable
-private fun ToolCallBlock(item: TranscriptItem.Tool, expanded: Boolean, onToggle: () -> Unit, actions: ChatActionsUi?, onOpenSubagent: ((String) -> Unit)?, onOpenTerminal: ((String) -> Unit)?, modifier: Modifier) {
+private fun ToolCallBlock(
+    item: TranscriptItem.Tool,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    actions: ChatActionsUi?,
+    onOpenSubagent: ((String) -> Unit)?,
+    onOpenTerminal: ((String) -> Unit)?,
+    onOpenRich: ((RichModalRequest) -> Unit)?,
+    modifier: Modifier,
+) {
     val source = item.source
     if (source == null) {
         Row(
@@ -337,6 +396,7 @@ private fun ToolCallBlock(item: TranscriptItem.Tool, expanded: Boolean, onToggle
                 onShowAll = if (!showAll && detail.hasMore) ({ showAll = true }) else null,
                 onOpenSubagent = onOpenSubagent,
                 onOpenTerminal = onOpenTerminal,
+                onOpenRich = onOpenRich,
             )
         }
         if (actions != null && waiting != null) ApprovalButtons(waiting.choices, waiting.toolCallId, waiting.forResult, actions)

@@ -466,7 +466,7 @@ class HostSession(
      * Reads the content a changed file's side points at. Internal on purpose: only code in this module, which hands it an
      * address taken from the open changeset's own state, may ask the host to read anything.
      */
-    internal suspend fun readResource(uri: String): ResourceReadResult = live().resourceRead(uri)
+    suspend fun readResource(uri: String): ResourceReadResult = live().resourceRead(uri)
 
     /**
      * The management commands, sent on the live connection. Each waits for the host's answer to the request.
