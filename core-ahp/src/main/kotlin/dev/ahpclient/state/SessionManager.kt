@@ -3,9 +3,16 @@ package dev.ahpclient.state
 import dev.ahpclient.ahp.AhpException
 import dev.ahpclient.ahp.CapabilityDeniedException
 import com.microsoft.agenthostprotocol.generated.AgentInfo
+import com.microsoft.agenthostprotocol.generated.ChatSource
+import com.microsoft.agenthostprotocol.generated.ChatSourceFork
+import com.microsoft.agenthostprotocol.generated.ChatSourceSideChat
+import com.microsoft.agenthostprotocol.generated.ForkChatSource
+import com.microsoft.agenthostprotocol.generated.Message
+import com.microsoft.agenthostprotocol.generated.MultipleChatsCapability
 import com.microsoft.agenthostprotocol.generated.ResolveSessionConfigResult
 import com.microsoft.agenthostprotocol.generated.SessionState
 import com.microsoft.agenthostprotocol.generated.SessionSummary
+import com.microsoft.agenthostprotocol.generated.SideChatSource
 import com.microsoft.agenthostprotocol.generated.StateAction
 import java.io.IOException
 import java.util.UUID
@@ -20,7 +27,7 @@ interface ManagementCommands {
     /** Asks which settings the host would offer for a new session of [provider] in [workingDirectory] (null: no folder named, the host's own choice), given the values already chosen. */
     suspend fun resolveSessionConfig(provider: String, workingDirectory: String?, config: Map<String, JsonElement>?): ResolveSessionConfigResult
 
-    suspend fun createChat(sessionUri: String, chatUri: String)
+    suspend fun createChat(sessionUri: String, chatUri: String, source: ChatSource? = null, initialMessage: Message? = null)
 
     suspend fun disposeSession(uri: String)
 
@@ -95,6 +102,58 @@ class SessionManager(
         if (!isReady(sessionUri)) return ManageResult.NoSuchTarget
         val chatUri = "$CHAT_SCHEME${newId()}"
         return command { commands.createChat(sessionUri, chatUri) }.let { if (it is ManageResult.Done) ManageResult.Done(chatUri) else it }
+    }
+
+    /** True when the session is ready, this client is allowed to manage chats, and the session's agent advertises `multipleChats.fork`. */
+    fun canFork(sessionUri: String): Boolean =
+        allowed() && isReady(sessionUri) && multipleChatsFor(sessionUri)?.fork == true
+
+    /** True when the session is ready, this client is allowed to manage chats, and the session's agent advertises `multipleChats.sideChat`. */
+    fun canSideChat(sessionUri: String): Boolean =
+        allowed() && isReady(sessionUri) && multipleChatsFor(sessionUri)?.sideChat == true
+
+    /**
+     * Forks [sourceChatUri] at [turnId] into a new chat in [sessionUri], optionally sending [initialMessage] immediately.
+     * When [turnId] is null (for example "Fork & Send" on the very first turn before any prior turn exists), requires a
+     * non-null [initialMessage] and starts a fresh peer chat in [sessionUri] with that message.
+     */
+    suspend fun forkChat(sessionUri: String, sourceChatUri: String, turnId: String?, initialMessage: Message? = null): ManageResult {
+        if (!allowed()) return ManageResult.NotAllowed
+        val state = sessionState(sessionUri)?.takeIf { isReady(sessionUri) } ?: return ManageResult.NoSuchTarget
+        if (state.chats.none { it.resource == sourceChatUri }) return ManageResult.NoSuchTarget
+        if (multipleChatsFor(sessionUri)?.fork != true) return ManageResult.NotAllowed
+        val source: ChatSource? = when {
+            turnId == null -> {
+                if (initialMessage == null) return ManageResult.NoSuchTarget
+                null
+            }
+            turnId.isBlank() -> return ManageResult.NoSuchTarget
+            else -> ChatSourceFork(ForkChatSource(chat = sourceChatUri, turnId = turnId))
+        }
+        val chatUri = "$CHAT_SCHEME${newId()}"
+        return command { commands.createChat(sessionUri, chatUri, source = source, initialMessage = initialMessage) }
+            .let { if (it is ManageResult.Done) ManageResult.Done(chatUri) else it }
+    }
+
+    /**
+     * Creates a side chat anchored to [turnId] of [sourceChatUri] in [sessionUri], optionally sending [initialMessage] immediately.
+     */
+    suspend fun createSideChat(sessionUri: String, sourceChatUri: String, turnId: String, initialMessage: Message? = null): ManageResult {
+        if (!allowed()) return ManageResult.NotAllowed
+        val state = sessionState(sessionUri)?.takeIf { isReady(sessionUri) } ?: return ManageResult.NoSuchTarget
+        if (state.chats.none { it.resource == sourceChatUri } || turnId.isBlank()) return ManageResult.NoSuchTarget
+        if (multipleChatsFor(sessionUri)?.sideChat != true) return ManageResult.NotAllowed
+        val source = ChatSourceSideChat(SideChatSource(chat = sourceChatUri, turnId = turnId))
+        val chatUri = "$CHAT_SCHEME${newId()}"
+        return command { commands.createChat(sessionUri, chatUri, source = source, initialMessage = initialMessage) }
+            .let { if (it is ManageResult.Done) ManageResult.Done(chatUri) else it }
+    }
+
+    private fun multipleChatsFor(sessionUri: String): MultipleChatsCapability? {
+        val provider = sessionState(sessionUri)?.provider
+            ?: sessions().firstOrNull { it.resource == sessionUri }?.provider
+            ?: return null
+        return agents().firstOrNull { it.provider == provider }?.capabilities?.multipleChats
     }
 
     /**

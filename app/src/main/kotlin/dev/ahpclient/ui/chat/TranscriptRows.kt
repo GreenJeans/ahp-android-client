@@ -18,16 +18,24 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -35,6 +43,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.SpanStyle
@@ -44,6 +53,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import dev.ahpclient.state.AgentPick
+import dev.ahpclient.state.InteractMessages
+import dev.ahpclient.state.ManageMessages
+import dev.ahpclient.state.ManageResult
 import dev.ahpclient.state.PendingApproval
 import dev.ahpclient.state.SessionDetail
 import dev.ahpclient.state.ToolDetail
@@ -54,6 +67,7 @@ import dev.ahpclient.state.TranscriptItem
 import dev.ahpclient.state.TranscriptRowModel
 import dev.ahpclient.ui.AppIcons
 import dev.ahpclient.ui.InputRequestCard
+import kotlinx.coroutines.launch
 
 /**
  * One row of the transcript list: what the person said as a bubble on the right, what the agent wrote as formatted text, and the
@@ -72,11 +86,13 @@ internal fun TranscriptRow(
     onOpenTerminal: ((String) -> Unit)? = null,
     allowHostFiles: Boolean = false,
     onOpenRich: ((RichModalRequest) -> Unit)? = null,
+    hasOlder: Boolean = false,
+    onLoadDraft: (String) -> Unit = {},
 ) {
     when (row) {
         is TranscriptRowModel.Single -> ItemRow(
             row.item, onOpenLink, modifier, row.item.key in expanded, { onToggle(row.item.key) },
-            actions, onOpenSubagent, onOpenTerminal, allowHostFiles, onOpenRich,
+            actions, onOpenSubagent, onOpenTerminal, allowHostFiles, onOpenRich, hasOlder, onLoadDraft,
         )
         is TranscriptRowModel.Steps -> StepsRow(
             row, onOpenLink, modifier, expanded, onToggle,
@@ -97,14 +113,16 @@ private fun ItemRow(
     onOpenTerminal: ((String) -> Unit)?,
     allowHostFiles: Boolean,
     onOpenRich: ((RichModalRequest) -> Unit)?,
+    hasOlder: Boolean = false,
+    onLoadDraft: (String) -> Unit = {},
 ) {
     when (item) {
-        is TranscriptItem.User -> UserRow(item, modifier)
+        is TranscriptItem.User -> UserRow(item, actions, hasOlder, onLoadDraft, modifier)
         is TranscriptItem.Markdown -> AgentBubble(item, onOpenLink, modifier, allowHostFiles, onOpenRich)
         is TranscriptItem.Reasoning -> ReasoningBlock(item, expanded, onToggle, onOpenLink, modifier, allowHostFiles, onOpenRich)
         is TranscriptItem.Tool -> ToolCallBlock(item, expanded, onToggle, actions, onOpenSubagent, onOpenTerminal, onOpenRich, modifier)
         is TranscriptItem.Notice -> NoticeRow(item, modifier)
-        is TranscriptItem.TurnEnd -> TurnEndRow(item, modifier)
+        is TranscriptItem.TurnEnd -> TurnEndRow(item, actions, modifier)
         is TranscriptItem.Question -> {
             val form = item.form
             if (actions != null && form != null && !item.answered) {
@@ -135,23 +153,293 @@ private fun ItemRow(
     }
 }
 
-/** What the person said: a rounded bubble on the right, as in the chat apps. Who said it is told to a screen reader, not shown. */
+/** Confirmation dialog before truncating turns via Restore Checkpoint, Start Over, Edit & Re-send, or non-resumable Retry. */
 @Composable
-private fun UserRow(item: TranscriptItem.User, modifier: Modifier) {
-    Row(modifier = modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-        Spacer(Modifier.weight(0.1f))
-        Surface(
-            color = MaterialTheme.colorScheme.primaryContainer,
-            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-            shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomEnd = 4.dp, bottomStart = 20.dp),
-            modifier = Modifier
-                .weight(0.9f, fill = false)
-                .semantics(mergeDescendants = true) { stateDescription = "You" }
-                .testTag("row_user"),
-        ) {
-            SelectionContainer {
-                Text(item.text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+private fun ConfirmTruncateDialog(
+    title: String,
+    body: String,
+    confirmLabel: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = { Text(body, modifier = Modifier.testTag("confirm_truncate_body")) },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                modifier = Modifier.heightIn(min = 48.dp).testTag("confirm_truncate_accept"),
+            ) { Text(confirmLabel) }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.heightIn(min = 48.dp).testTag("confirm_truncate_cancel"),
+            ) { Text("Cancel") }
+        },
+        modifier = Modifier.testTag("confirm_truncate_dialog"),
+    )
+}
+
+private fun turnsCountPhrase(count: Int): String = if (count == 1) "1 turn" else "$count turns"
+
+/**
+ * The checkpoint bar above a user turn, matching the VS Code Agents Panel:
+ * - Before the first turn of the conversation: "Start Over" (clears the chat and undoes all changes).
+ * - Between subsequent turns: "Restore Checkpoint" (restores workspace and chat to this point) and a fork icon button
+ *   to branch the conversation from the preceding turn.
+ */
+@Composable
+private fun CheckpointDivider(
+    item: TranscriptItem.User,
+    hasOlder: Boolean,
+    actions: ChatActionsUi,
+    busy: Boolean,
+    onRequestStartOver: () -> Unit,
+    onRequestRestore: () -> Unit,
+    onRequestFork: (String) -> Unit,
+) {
+    val isFirstTurn = item.turnIndex == 0 && !hasOlder
+    val previousTurnId = item.previousTurnId
+    if (!isFirstTurn && previousTurnId == null) return
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp).testTag("checkpoint_row_${item.turnId}"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        HorizontalDivider(modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.outlineVariant)
+        if (isFirstTurn) {
+            TextButton(
+                onClick = onRequestStartOver,
+                enabled = !busy,
+                modifier = Modifier
+                    .heightIn(min = 48.dp)
+                    .semantics { contentDescription = "Start Over. Clears the chat and undoes all changes" }
+                    .testTag("checkpoint_start_over_${item.turnId}"),
+            ) {
+                Text("Start Over", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+        } else {
+            TextButton(
+                onClick = onRequestRestore,
+                enabled = !busy,
+                modifier = Modifier
+                    .heightIn(min = 48.dp)
+                    .semantics { contentDescription = "Restore Checkpoint. Restores workspace and chat to this point" }
+                    .testTag("checkpoint_restore_${item.turnId}"),
+            ) {
+                Text("Restore Checkpoint", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (actions.canFork && previousTurnId != null) {
+                Text("\u00b7", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                IconButton(
+                    onClick = { onRequestFork(previousTurnId) },
+                    enabled = !busy,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("checkpoint_fork_${item.turnId}"),
+                ) {
+                    Icon(
+                        AppIcons.Fork,
+                        contentDescription = "Fork conversation from this point",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+        }
+        HorizontalDivider(modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.outlineVariant)
+    }
+}
+
+private enum class PendingUserConfirm { START_OVER, RESTORE, EDIT_RESEND }
+
+/**
+ * What the person said: a rounded bubble on the right, as in the chat apps. Who said it is told to a screen reader, not shown.
+ * When interactive, a checkpoint divider sits above the message and tapping the bubble opens an inline editor with Send,
+ * Fork & Send, and Cancel.
+ */
+@Composable
+private fun UserRow(
+    item: TranscriptItem.User,
+    actions: ChatActionsUi?,
+    hasOlder: Boolean,
+    onLoadDraft: (String) -> Unit,
+    modifier: Modifier,
+) {
+    val interactive = actions != null && item.turnId.isNotBlank()
+    var editing by rememberSaveable(item.key) { mutableStateOf(false) }
+    var draft by rememberSaveable(item.key) { mutableStateOf(item.text) }
+    var confirmAction by remember { mutableStateOf<PendingUserConfirm?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    var notice by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    Column(modifier = modifier.fillMaxWidth()) {
+        if (interactive && actions != null) {
+            CheckpointDivider(
+                item = item,
+                hasOlder = hasOlder,
+                actions = actions,
+                busy = busy,
+                onRequestStartOver = { confirmAction = PendingUserConfirm.START_OVER },
+                onRequestRestore = { confirmAction = PendingUserConfirm.RESTORE },
+                onRequestFork = { prevTurnId ->
+                    scope.launch {
+                        busy = true
+                        notice = ManageMessages.describe(actions.forkFromTurn(prevTurnId))
+                        busy = false
+                    }
+                },
+            )
+        }
+        if (editing && interactive && actions != null) {
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                shape = RoundedCornerShape(20.dp),
+                modifier = Modifier.fillMaxWidth().testTag("user_edit_card_${item.turnId}"),
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    OutlinedTextField(
+                        value = draft,
+                        onValueChange = { draft = it },
+                        label = { Text("Edit message") },
+                        maxLines = 8,
+                        modifier = Modifier.fillMaxWidth().testTag("user_edit_input_${item.turnId}"),
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        TextButton(
+                            onClick = { editing = false; draft = item.text },
+                            enabled = !busy,
+                            modifier = Modifier.heightIn(min = 48.dp).testTag("user_edit_cancel_${item.turnId}"),
+                        ) { Text("Cancel") }
+                        if (actions.canFork && (item.previousTurnId != null || !hasOlder)) {
+                            OutlinedButton(
+                                onClick = {
+                                    val editedText = draft.trim()
+                                    scope.launch {
+                                        busy = true
+                                        val res = actions.editAsFork(item.previousTurnId, editedText, actions.modelInUse, AgentPick.Keep)
+                                        notice = ManageMessages.describe(res)
+                                        if (res is ManageResult.Done) editing = false
+                                        busy = false
+                                    }
+                                },
+                                enabled = !busy && draft.isNotBlank(),
+                                modifier = Modifier.heightIn(min = 48.dp).testTag("user_edit_fork_${item.turnId}"),
+                            ) {
+                                Icon(AppIcons.Fork, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Fork & Send")
+                            }
+                        }
+                        Button(
+                            onClick = { confirmAction = PendingUserConfirm.EDIT_RESEND },
+                            enabled = !busy && draft.isNotBlank(),
+                            modifier = Modifier.heightIn(min = 48.dp).testTag("user_edit_send_${item.turnId}"),
+                        ) { Text("Send") }
+                    }
+                }
+            }
+        } else {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                Spacer(Modifier.weight(0.1f))
+                Surface(
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomEnd = 4.dp, bottomStart = 20.dp),
+                    modifier = Modifier
+                        .weight(0.9f, fill = false)
+                        .then(
+                            if (interactive) {
+                                Modifier.clickable(onClickLabel = "Click to Edit", role = Role.Button) {
+                                    draft = item.text
+                                    editing = true
+                                }
+                            } else {
+                                Modifier
+                            },
+                        )
+                        .semantics(mergeDescendants = true) { stateDescription = "You" }
+                        .testTag("row_user"),
+                ) {
+                    SelectionContainer {
+                        Text(item.text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+                    }
+                }
+            }
+        }
+        if (notice != null) {
+            Text(
+                notice!!,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.align(Alignment.End).padding(top = 4.dp).testTag("user_row_notice_${item.turnId}"),
+            )
+        }
+    }
+
+    val pending = confirmAction
+    if (pending != null && actions != null) {
+        val countPhrase = turnsCountPhrase(item.turnsFromHereCount)
+        when (pending) {
+            PendingUserConfirm.START_OVER -> ConfirmTruncateDialog(
+                title = "Start Over?",
+                body = "Clears the chat and undoes all changes ($countPhrase will be removed).",
+                confirmLabel = "Start Over",
+                onConfirm = {
+                    confirmAction = null
+                    scope.launch {
+                        busy = true
+                        val res = actions.startOver()
+                        notice = InteractMessages.describe(res)
+                        if (InteractMessages.succeeded(res)) onLoadDraft(item.text)
+                        busy = false
+                    }
+                },
+                onDismiss = { confirmAction = null },
+            )
+            PendingUserConfirm.RESTORE -> ConfirmTruncateDialog(
+                title = "Restore Checkpoint?",
+                body = "Restores workspace and chat to this point ($countPhrase will be removed).",
+                confirmLabel = "Restore",
+                onConfirm = {
+                    confirmAction = null
+                    scope.launch {
+                        busy = true
+                        val res = actions.restoreCheckpoint(item.turnId)
+                        notice = InteractMessages.describe(res)
+                        if (InteractMessages.succeeded(res)) onLoadDraft(item.text)
+                        busy = false
+                    }
+                },
+                onDismiss = { confirmAction = null },
+            )
+            PendingUserConfirm.EDIT_RESEND -> ConfirmTruncateDialog(
+                title = "Edit and Re-send?",
+                body = "Replaces $countPhrase from this point and sends the edited message.",
+                confirmLabel = "Send",
+                onConfirm = {
+                    confirmAction = null
+                    val editedText = draft.trim()
+                    scope.launch {
+                        busy = true
+                        val res = actions.editAndResend(item.turnId, editedText, actions.modelInUse, AgentPick.Keep)
+                        notice = InteractMessages.describe(res)
+                        if (InteractMessages.succeeded(res)) editing = false
+                        busy = false
+                    }
+                },
+                onDismiss = { confirmAction = null },
+            )
         }
     }
 }
@@ -185,9 +473,9 @@ private fun AgentBubble(
     }
 }
 
-/** The line that ends a turn: that the agent has stopped, how it ended, and how long it worked. */
+/** The line that ends a turn: that the agent has stopped, how it ended, how long it worked, and actions to retry, fork, or open a side chat. */
 @Composable
-private fun TurnEndRow(item: TranscriptItem.TurnEnd, modifier: Modifier) {
+private fun TurnEndRow(item: TranscriptItem.TurnEnd, actions: ChatActionsUi?, modifier: Modifier) {
     val colors = MaterialTheme.colorScheme
     val (glyph, word) = when (item.outcome) {
         TurnOutcome.DONE -> Glyph.DONE to "Done"
@@ -195,17 +483,124 @@ private fun TurnEndRow(item: TranscriptItem.TurnEnd, modifier: Modifier) {
         TurnOutcome.FAILED -> Glyph.FAILED to "Failed"
     }
     val text = listOfNotNull(word, TurnDuration.format(item.durationMs)).joinToString(" \u00b7 ")
-    Row(
-        modifier = modifier.fillMaxWidth().semantics(mergeDescendants = true) {}.testTag("row_turn_end"),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically,
+    var confirmRetry by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    var notice by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        GlyphIcon(glyph, Modifier.size(14.dp))
-        Text(
-            text,
-            style = MaterialTheme.typography.labelMedium,
-            color = if (item.outcome == TurnOutcome.FAILED) colors.error else colors.onSurfaceVariant,
-            modifier = Modifier.padding(start = 6.dp).testTag("turn_end_text"),
+        Row(
+            modifier = Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}.testTag("row_turn_end"),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            GlyphIcon(glyph, Modifier.size(14.dp))
+            Text(
+                text,
+                style = MaterialTheme.typography.labelMedium,
+                color = if (item.outcome == TurnOutcome.FAILED) colors.error else colors.onSurfaceVariant,
+                modifier = Modifier.padding(start = 6.dp).testTag("turn_end_text"),
+            )
+        }
+        if (actions != null && item.turnId.isNotBlank()) {
+            val retryLabel = when {
+                item.resumable -> "Resume"
+                item.outcome == TurnOutcome.DONE -> "Regenerate"
+                else -> "Retry"
+            }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(
+                    onClick = {
+                        if (item.resumable) {
+                            scope.launch {
+                                busy = true
+                                notice = InteractMessages.describe(actions.retryTurn(item.turnId, actions.modelInUse, AgentPick.Keep))
+                                busy = false
+                            }
+                        } else {
+                            confirmRetry = true
+                        }
+                    },
+                    enabled = !busy,
+                    modifier = Modifier.heightIn(min = 48.dp).testTag("turn_retry_${item.turnId}"),
+                ) {
+                    Icon(AppIcons.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text(retryLabel, style = MaterialTheme.typography.labelMedium)
+                }
+                if (actions.canFork) {
+                    TextButton(
+                        onClick = {
+                            scope.launch {
+                                busy = true
+                                notice = ManageMessages.describe(actions.forkFromTurn(item.turnId))
+                                busy = false
+                            }
+                        },
+                        enabled = !busy,
+                        modifier = Modifier
+                            .heightIn(min = 48.dp)
+                            .semantics { contentDescription = "Fork conversation from this point" }
+                            .testTag("turn_fork_${item.turnId}"),
+                    ) {
+                        Icon(AppIcons.Fork, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Fork", style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+                if (actions.canSideChat) {
+                    TextButton(
+                        onClick = {
+                            scope.launch {
+                                busy = true
+                                notice = ManageMessages.describe(actions.openSideChat(item.turnId, null, actions.modelInUse, AgentPick.Keep))
+                                busy = false
+                            }
+                        },
+                        enabled = !busy,
+                        modifier = Modifier
+                            .heightIn(min = 48.dp)
+                            .semantics { contentDescription = "Open side chat from this turn" }
+                            .testTag("turn_side_chat_${item.turnId}"),
+                    ) {
+                        Icon(AppIcons.SideChat, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Side chat", style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+            }
+        }
+        if (notice != null) {
+            Text(
+                notice!!,
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.error,
+                modifier = Modifier.testTag("turn_end_notice_${item.turnId}"),
+            )
+        }
+    }
+
+    if (confirmRetry && actions != null) {
+        val actionWord = if (item.outcome == TurnOutcome.DONE) "Regenerate" else "Retry"
+        ConfirmTruncateDialog(
+            title = "$actionWord Turn?",
+            body = "Truncates to before this turn and runs it again (1 turn will be replaced).",
+            confirmLabel = actionWord,
+            onConfirm = {
+                confirmRetry = false
+                scope.launch {
+                    busy = true
+                    notice = InteractMessages.describe(actions.retryTurn(item.turnId, actions.modelInUse, AgentPick.Keep))
+                    busy = false
+                }
+            },
+            onDismiss = { confirmRetry = false },
         )
     }
 }

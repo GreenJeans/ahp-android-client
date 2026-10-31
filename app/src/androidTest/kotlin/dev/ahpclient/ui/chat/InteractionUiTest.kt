@@ -49,10 +49,14 @@ import dev.ahpclient.state.FormValue
 import dev.ahpclient.state.InputForm
 import dev.ahpclient.state.InputRequestView
 import dev.ahpclient.state.InteractResult
+import dev.ahpclient.state.ManageResult
+import dev.ahpclient.state.PendingMessageKind
+import dev.ahpclient.state.PendingMessageView
 import dev.ahpclient.state.QuestionKind
 import dev.ahpclient.state.ToolState
 import dev.ahpclient.state.Transcript
 import dev.ahpclient.state.TranscriptItem
+import dev.ahpclient.state.TurnOutcome
 import dev.ahpclient.ui.theme.AhpTheme
 import com.microsoft.agenthostprotocol.Ahp
 import com.microsoft.agenthostprotocol.generated.ToolCallState
@@ -87,10 +91,30 @@ class InteractionUiTest {
         val drafts = mutableListOf<Triple<String, String, AnswerValue?>>()
         val declined = mutableListOf<String>()
         val dismissed = mutableListOf<String>()
+        val restoredCheckpoints = mutableListOf<String>()
+        var startOvers = 0
+        val editedResends = mutableListOf<Pair<String, String>>()
+        val retriedTurns = mutableListOf<String>()
+        val stopAndSends = mutableListOf<String>()
+        val removedPending = mutableListOf<String>()
+        val reorderedQueues = mutableListOf<List<String>>()
+        val forkedTurns = mutableListOf<String>()
+        val editedForks = mutableListOf<Pair<String?, String>>()
+        val openedSideChats = mutableListOf<Pair<String, String?>>()
         var result: InteractResult = InteractResult.Sent(DispatchOutcome.Accepted)
+        var manageResult: ManageResult = ManageResult.Done("ahp-chat:/new")
     }
 
-    private fun actions(calls: Calls, running: Boolean = false, models: List<ModelOption> = emptyList(), modelInUse: ModelChoice? = null, agents: List<AgentChoice> = emptyList(), agentInUse: String? = null) = ChatActionsUi(
+    private fun actions(
+        calls: Calls,
+        running: Boolean = false,
+        models: List<ModelOption> = emptyList(),
+        modelInUse: ModelChoice? = null,
+        agents: List<AgentChoice> = emptyList(),
+        agentInUse: String? = null,
+        canFork: Boolean = false,
+        canSideChat: Boolean = false,
+    ) = ChatActionsUi(
         running = running,
         send = { text, model, agent -> calls.sent += text; calls.sentModels += model; calls.sentAgents += agent; calls.result },
         steer = { text, model, agent -> calls.steered += text; calls.steeredModels += model; calls.steeredAgents += agent; calls.result },
@@ -107,6 +131,18 @@ class InteractionUiTest {
         modelInUse = modelInUse,
         agents = agents,
         agentInUse = agentInUse,
+        restoreCheckpoint = { beforeTurnId -> calls.restoredCheckpoints += beforeTurnId; calls.result },
+        startOver = { calls.startOvers++; calls.result },
+        editAndResend = { turnId, newText, _, _ -> calls.editedResends += turnId to newText; calls.result },
+        retryTurn = { turnId, _, _ -> calls.retriedTurns += turnId; calls.result },
+        stopAndSend = { text, _, _ -> calls.stopAndSends += text; calls.result },
+        removePending = { id -> calls.removedPending += id; calls.result },
+        reorderQueue = { order -> calls.reorderedQueues += order; calls.result },
+        canFork = canFork,
+        forkFromTurn = { turnId -> calls.forkedTurns += turnId; calls.manageResult },
+        editAsFork = { prevTurnId, newText, _, _ -> calls.editedForks += prevTurnId to newText; calls.manageResult },
+        canSideChat = canSideChat,
+        openSideChat = { turnId, initialText, _, _ -> calls.openedSideChats += turnId to initialText; calls.manageResult },
     )
 
     private fun transcript(vararg items: TranscriptItem) = Transcript("Fix the build", ActivityState.IN_PROGRESS, null, items.toList(), hasOlder = false)
@@ -1026,6 +1062,118 @@ class InteractionUiTest {
         rule.mainClock.advanceTimeBy(2_000)
 
         assertEquals(listOf(Triple("req-1", "a", AnswerValue.Text("typed"))), calls.drafts)
+    }
+
+    // ---- checkpoints, forking, editing, retrying & pending tray -------------------------------------------------
+
+    @Test
+    fun checkpointRestoreAndStartOverConfirmTurnCountAndPrefillTheComposer() {
+        val calls = Calls()
+        val items = listOf(
+            TranscriptItem.User("t1/user", "first prompt", turnId = "t1", turnIndex = 0, previousTurnId = null, turnsFromHereCount = 2),
+            TranscriptItem.Markdown("t1/m1", "first answer"),
+            TranscriptItem.TurnEnd("t1/end", TurnOutcome.DONE, 1_000L, turnId = "t1"),
+            TranscriptItem.User("t2/user", "second prompt", turnId = "t2", turnIndex = 1, previousTurnId = "t1", turnsFromHereCount = 1),
+            TranscriptItem.Markdown("t2/m1", "second answer"),
+            TranscriptItem.TurnEnd("t2/end", TurnOutcome.DONE, 2_000L, turnId = "t2"),
+        )
+        show(Transcript("Fix the build", ActivityState.IDLE, null, items, hasOlder = false, lastTurnId = "t2"), actions(calls, canFork = true))
+
+        rule.onNodeWithTag("checkpoint_fork_t2").performScrollTo().performClick()
+        rule.waitUntil(5_000) { calls.forkedTurns == listOf("t1") }
+
+        rule.onNodeWithTag("checkpoint_restore_t2").performScrollTo().performClick()
+        rule.onNodeWithTag("confirm_truncate_body").assertTextContains("1 turn will be removed", substring = true)
+        rule.onNodeWithTag("confirm_truncate_accept").performClick()
+
+        rule.waitUntil(5_000) { calls.restoredCheckpoints == listOf("t2") }
+        rule.waitUntil(5_000) { textInBox("second prompt") }
+
+        rule.onNodeWithTag("checkpoint_start_over_t1").performScrollTo().performClick()
+        rule.onNodeWithTag("confirm_truncate_body").assertTextContains("2 turns will be removed", substring = true)
+        rule.onNodeWithTag("confirm_truncate_accept").performClick()
+
+        rule.waitUntil(5_000) { calls.startOvers == 1 }
+    }
+
+    @Test
+    fun tappingAUserMessageOpensInlineEditWithSendAndForkAndSend() {
+        val calls = Calls()
+        val items = listOf(
+            TranscriptItem.User("t1/user", "first prompt", turnId = "t1", turnIndex = 0, previousTurnId = null, turnsFromHereCount = 2),
+            TranscriptItem.TurnEnd("t1/end", TurnOutcome.DONE, 1_000L, turnId = "t1"),
+            TranscriptItem.User("t2/user", "second prompt", turnId = "t2", turnIndex = 1, previousTurnId = "t1", turnsFromHereCount = 1),
+            TranscriptItem.TurnEnd("t2/end", TurnOutcome.DONE, 1_000L, turnId = "t2"),
+        )
+        show(Transcript("Fix the build", ActivityState.IDLE, null, items, hasOlder = false, lastTurnId = "t2"), actions(calls, canFork = true))
+
+        rule.onNodeWithText("second prompt").performScrollTo().performClick()
+        rule.onNodeWithTag("user_edit_card_t2").assertIsDisplayed()
+        rule.onNodeWithTag("user_edit_input_t2").performTextClearance()
+        rule.onNodeWithTag("user_edit_input_t2").performTextInput("updated second")
+        rule.onNodeWithTag("user_edit_fork_t2").performClick()
+
+        rule.waitUntil(5_000) { calls.editedForks == listOf("t1" to "updated second") }
+
+        rule.onNodeWithText("second prompt").performScrollTo().performClick()
+        rule.onNodeWithTag("user_edit_input_t2").performTextClearance()
+        rule.onNodeWithTag("user_edit_input_t2").performTextInput("resent second")
+        rule.onNodeWithTag("user_edit_send_t2").performClick()
+        rule.onNodeWithTag("confirm_truncate_accept").performClick()
+
+        rule.waitUntil(5_000) { calls.editedResends == listOf("t2" to "resent second") }
+    }
+
+    @Test
+    fun turnEndOffersResumeWithoutConfirmAndRegenerateForkAndSideChat() {
+        val calls = Calls()
+        val items = listOf(
+            TranscriptItem.User("t1/user", "first prompt", turnId = "t1", turnIndex = 0, previousTurnId = null, turnsFromHereCount = 1),
+            TranscriptItem.TurnEnd("t1/end", TurnOutcome.FAILED, 1_000L, turnId = "t1", resumable = true),
+        )
+        show(Transcript("Fix the build", ActivityState.IDLE, null, items, hasOlder = false, lastTurnId = "t1"), actions(calls, canFork = true, canSideChat = true))
+
+        rule.onNodeWithTag("turn_retry_t1").performClick()
+        rule.waitUntil(5_000) { calls.retriedTurns == listOf("t1") }
+
+        rule.onNodeWithTag("turn_fork_t1").performClick()
+        rule.waitUntil(5_000) { calls.forkedTurns == listOf("t1") }
+
+        rule.onNodeWithTag("turn_side_chat_t1").performClick()
+        rule.waitUntil(5_000) { calls.openedSideChats == listOf("t1" to null) }
+    }
+
+    @Test
+    fun pendingMessageTrayAndRunningSendOptionsSupportEditRemoveReorderStopAndSendAndSideChat() {
+        val calls = Calls()
+        val pending = listOf(
+            PendingMessageView("s1", "steer next", PendingMessageKind.STEERING),
+            PendingMessageView("q1", "queued first", PendingMessageKind.QUEUED),
+            PendingMessageView("q2", "queued second", PendingMessageKind.QUEUED),
+        )
+        show(
+            Transcript("Fix the build", ActivityState.IN_PROGRESS, null, emptyList(), hasOlder = false, pendingMessages = pending, activeTurnId = "t1"),
+            actions(calls, running = true, canSideChat = true),
+        )
+
+        rule.onNodeWithTag("pending_tray").assertIsDisplayed()
+        rule.onNodeWithTag("pending_down_q1").performClick()
+        rule.waitUntil(5_000) { calls.reorderedQueues == listOf(listOf("q2", "q1")) }
+
+        rule.onNodeWithTag("pending_remove_s1").performClick()
+        rule.waitUntil(5_000) { calls.removedPending.contains("s1") }
+
+        rule.onNodeWithTag("pending_edit_q2").performClick()
+        rule.waitUntil(5_000) { calls.removedPending.contains("q2") && textInBox("queued second") }
+
+        rule.onNodeWithTag("composer_send_options").performClick()
+        rule.onNodeWithTag("composer_mode_stop_and_send").performClick()
+        rule.waitUntil(5_000) { calls.stopAndSends == listOf("queued second") }
+
+        rule.onNodeWithTag("composer_input").performTextInput("side question")
+        rule.onNodeWithTag("composer_send_options").performClick()
+        rule.onNodeWithTag("composer_mode_side_chat").performClick()
+        rule.waitUntil(5_000) { calls.openedSideChats == listOf("t1" to "side question") }
     }
 
     // ---- helpers ------------------------------------------------------------------------------------------------

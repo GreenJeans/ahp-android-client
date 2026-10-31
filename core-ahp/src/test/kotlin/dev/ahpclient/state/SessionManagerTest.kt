@@ -4,6 +4,10 @@ import dev.ahpclient.ahp.AhpException
 import dev.ahpclient.ahp.CapabilityDeniedException
 import com.microsoft.agenthostprotocol.Ahp
 import com.microsoft.agenthostprotocol.generated.AgentInfo
+import com.microsoft.agenthostprotocol.generated.ChatSource
+import com.microsoft.agenthostprotocol.generated.ChatSourceFork
+import com.microsoft.agenthostprotocol.generated.ChatSourceSideChat
+import com.microsoft.agenthostprotocol.generated.Message
 import com.microsoft.agenthostprotocol.generated.ResolveSessionConfigResult
 import com.microsoft.agenthostprotocol.generated.SessionState
 import com.microsoft.agenthostprotocol.generated.SessionSummary
@@ -35,8 +39,11 @@ class SessionManagerTest {
             "workingDirectories":[${dirs.joinToString(",") { "\"$it\"" }}]}""",
     )
 
-    private fun agent(provider: String, name: String) =
-        Ahp.json.decodeFromString(AgentInfo.serializer(), """{"provider":"$provider","displayName":"$name","description":"d","models":[]}""")
+    private fun agent(provider: String, name: String, fork: Boolean = false, sideChat: Boolean = false) =
+        Ahp.json.decodeFromString(
+            AgentInfo.serializer(),
+            """{"provider":"$provider","displayName":"$name","description":"d","models":[],"capabilities":{"multipleChats":{"fork":$fork,"sideChat":$sideChat}}}""",
+        )
 
     private fun state(lifecycle: String, vararg chats: Pair<String, String>, defaultChat: String? = null) = Ahp.json.decodeFromString(
         SessionState.serializer(),
@@ -68,7 +75,14 @@ class SessionManagerTest {
             return resolution(provider, workingDirectory, config)
         }
 
-        override suspend fun createChat(sessionUri: String, chatUri: String) = record("createChat $sessionUri $chatUri")
+        val chatSources = mutableListOf<ChatSource?>()
+        val chatMessages = mutableListOf<Message?>()
+
+        override suspend fun createChat(sessionUri: String, chatUri: String, source: ChatSource?, initialMessage: Message?) {
+            chatSources += source
+            chatMessages += initialMessage
+            record("createChat $sessionUri $chatUri")
+        }
 
         override suspend fun disposeSession(uri: String) = record("disposeSession $uri")
 
@@ -692,5 +706,47 @@ class SessionManagerTest {
         assertEquals("""{"type":"session/isReadChanged","isRead":false}""", wire(SessionActions.setRead(false)).toString())
         assertEquals("""{"type":"session/isArchivedChanged","isArchived":true}""", wire(SessionActions.setArchived(true)).toString())
         assertEquals("""{"type":"session/isArchivedChanged","isArchived":false}""", wire(SessionActions.setArchived(false)).toString())
+    }
+
+    @Test
+    fun `forkChat and createSideChat check agent capabilities and chat membership and pass ChatSource and initialMessage`() = runTest {
+        val rig = Rig().apply {
+            agents = listOf(agent("copilotcli", "Copilot CLI", fork = true, sideChat = true), agent("claude", "Claude", fork = false, sideChat = false))
+        }
+        val initial = ChatActions.message("branched prompt")
+
+        assertTrue(rig.manager.canFork(s1))
+        assertTrue(rig.manager.canSideChat(s1))
+
+        assertEquals(ManageResult.Done("ahp-chat:/id1"), rig.manager.forkChat(s1, c1, "turn-1", initial))
+        val forkSource = assertIs<ChatSourceFork>(rig.commands.chatSources[0])
+        assertEquals(c1, forkSource.value.chat)
+        assertEquals("turn-1", forkSource.value.turnId)
+        assertEquals("branched prompt", rig.commands.chatMessages[0]?.text)
+
+        // Fork & Send on the very first turn (turnId == null) creates a peer chat with initialMessage and no source
+        assertEquals(ManageResult.Done("ahp-chat:/id2"), rig.manager.forkChat(s1, c1, null, initial))
+        assertNull(rig.commands.chatSources[1])
+        assertEquals("branched prompt", rig.commands.chatMessages[1]?.text)
+        assertEquals(ManageResult.NoSuchTarget, rig.manager.forkChat(s1, c1, null, null))
+
+        assertEquals(ManageResult.Done("ahp-chat:/id3"), rig.manager.createSideChat(s1, c1, "turn-1", initial))
+        val sideSource = assertIs<ChatSourceSideChat>(rig.commands.chatSources[2])
+        assertEquals(c1, sideSource.value.chat)
+        assertEquals("turn-1", sideSource.value.turnId)
+        assertEquals("branched prompt", rig.commands.chatMessages[2]?.text)
+
+        // Unlisted source chat or blank turnId -> NoSuchTarget
+        assertEquals(ManageResult.NoSuchTarget, rig.manager.forkChat(s1, "ahp-chat:/other", "turn-1"))
+        assertEquals(ManageResult.NoSuchTarget, rig.manager.forkChat(s1, c1, "   "))
+        assertEquals(ManageResult.NoSuchTarget, rig.manager.createSideChat(s1, "ahp-chat:/other", "turn-1"))
+        assertEquals(ManageResult.NoSuchTarget, rig.manager.createSideChat(s1, c1, "   "))
+
+        // Agent without fork/sideChat capabilities -> NotAllowed
+        rig.agents = listOf(agent("copilotcli", "Copilot CLI", fork = false, sideChat = false))
+        assertFalse(rig.manager.canFork(s1))
+        assertFalse(rig.manager.canSideChat(s1))
+        assertEquals(ManageResult.NotAllowed, rig.manager.forkChat(s1, c1, "turn-1"))
+        assertEquals(ManageResult.NotAllowed, rig.manager.createSideChat(s1, c1, "turn-1"))
     }
 }

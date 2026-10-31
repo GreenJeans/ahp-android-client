@@ -27,11 +27,14 @@ import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -85,9 +88,13 @@ import dev.ahpclient.state.FormValue
 import dev.ahpclient.state.InputForm
 import dev.ahpclient.state.InteractMessages
 import dev.ahpclient.state.InteractResult
+import dev.ahpclient.state.ManageMessages
+import dev.ahpclient.state.ManageResult
 import dev.ahpclient.state.ModelChoice
 import dev.ahpclient.state.ModelOption
 import dev.ahpclient.state.ModelOptions
+import dev.ahpclient.state.PendingMessageKind
+import dev.ahpclient.state.PendingMessageView
 import dev.ahpclient.state.QuestionKind
 import dev.ahpclient.ui.AppIcons
 import kotlinx.coroutines.delay
@@ -126,6 +133,30 @@ class ChatActionsUi(
     val config: ChatConfigView = ChatConfigView.NONE,
     /** Sets one of them. The device check for giving the agent more freedom is inside it, so a screen only reports the result. */
     val setConfig: suspend (key: String, value: String) -> InteractResult = { _, _ -> InteractResult.NotAllowed },
+    /** Restores the chat and workspace to the point just before [beforeTurnId]. */
+    val restoreCheckpoint: suspend (beforeTurnId: String) -> InteractResult = { InteractResult.NotAllowed },
+    /** Clears all turns from the chat and undoes all changes. */
+    val startOver: suspend () -> InteractResult = { InteractResult.NotAllowed },
+    /** Truncates to before [turnId] and starts a new turn with [newText]. */
+    val editAndResend: suspend (turnId: String, newText: String, model: ModelChoice?, agent: AgentPick) -> InteractResult = { _, _, _, _ -> InteractResult.NotAllowed },
+    /** Resumes a resumable failed turn or truncates + re-sends [turnId]. */
+    val retryTurn: suspend (turnId: String, model: ModelChoice?, agent: AgentPick) -> InteractResult = { _, _, _ -> InteractResult.NotAllowed },
+    /** Cancels the running turn and starts a new turn with [text]. */
+    val stopAndSend: suspend (text: String, model: ModelChoice?, agent: AgentPick) -> InteractResult = { _, _, _ -> InteractResult.NotAllowed },
+    /** Removes a pending (steering or queued) message by [id]. */
+    val removePending: suspend (id: String) -> InteractResult = { InteractResult.NotAllowed },
+    /** Reorders the queued messages to match [order]. */
+    val reorderQueue: suspend (order: List<String>) -> InteractResult = { InteractResult.NotAllowed },
+    /** True when the host and session allow branching this chat into a new forked chat tab. */
+    val canFork: Boolean = false,
+    /** Branches the conversation at [turnId] into a new chat tab. */
+    val forkFromTurn: suspend (turnId: String) -> ManageResult = { ManageResult.NotAllowed },
+    /** Branches the conversation at [previousTurnId] (or a fresh chat if null) and sends [newText] as its initial message. */
+    val editAsFork: suspend (previousTurnId: String?, newText: String, model: ModelChoice?, agent: AgentPick) -> ManageResult = { _, _, _, _ -> ManageResult.NotAllowed },
+    /** True when the host and session allow opening a side chat anchored to a turn. */
+    val canSideChat: Boolean = false,
+    /** Opens a side chat anchored to [turnId], optionally sending [initialText] right away. */
+    val openSideChat: suspend (turnId: String, initialText: String?, model: ModelChoice?, agent: AgentPick) -> ManageResult = { _, _, _, _ -> ManageResult.NotAllowed },
 )
 
 /** The host's own words on a button or a field are untrusted display text: shown as plain text and cut to a sane length. */
@@ -395,18 +426,122 @@ private fun Notice(text: String?, tag: String, modifier: Modifier = Modifier) {
 }
 
 /**
- * The message box, as the chat apps have it: one rounded card holding the text, and under the text a row with the model on the
- * left and the buttons on the right. The send button is an arrow; while the agent is working a Stop button joins it, and a
- * message typed then can steer the turn. The text stays until the host has confirmed the message, so a failed send loses
- * nothing, and it survives rotation.
+ * In-flight steering and queued messages waiting on the active turn. Allows removing a pending message, pulling it back into
+ * the composer to edit, or reordering queued messages.
  */
 @Composable
-internal fun Composer(actions: ChatActionsUi, modifier: Modifier = Modifier) {
+private fun PendingMessageTray(
+    pendingMessages: List<PendingMessageView>,
+    busy: Boolean,
+    onEdit: (PendingMessageView) -> Unit,
+    onRemove: (PendingMessageView) -> Unit,
+    onMoveQueue: (fromIndex: Int, toIndex: Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (pendingMessages.isEmpty()) return
+    val queuedIds = remember(pendingMessages) { pendingMessages.filter { it.kind == PendingMessageKind.QUEUED }.map { it.id } }
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        shape = RoundedCornerShape(16.dp),
+        modifier = modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp).testTag("pending_tray"),
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            pendingMessages.forEach { msg ->
+                val qIndex = if (msg.kind == PendingMessageKind.QUEUED) queuedIds.indexOf(msg.id) else -1
+                val badge = if (msg.kind == PendingMessageKind.STEERING) {
+                    "Steer next"
+                } else if (queuedIds.size > 1) {
+                    "Queued #${qIndex + 1}"
+                } else {
+                    "Queued"
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth().testTag("pending_row_${msg.id}"),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Surface(
+                        color = if (msg.kind == PendingMessageKind.STEERING) MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.secondaryContainer,
+                        shape = RoundedCornerShape(8.dp),
+                    ) {
+                        Text(
+                            badge,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (msg.kind == PendingMessageKind.STEERING) MaterialTheme.colorScheme.onTertiaryContainer else MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        )
+                    }
+                    Text(
+                        msg.text,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f).testTag("pending_text_${msg.id}"),
+                    )
+                    if (msg.kind == PendingMessageKind.QUEUED && queuedIds.size > 1) {
+                        IconButton(
+                            onClick = { onMoveQueue(qIndex, qIndex - 1) },
+                            enabled = !busy && qIndex > 0,
+                            modifier = Modifier.size(48.dp).testTag("pending_up_${msg.id}"),
+                        ) {
+                            Icon(AppIcons.ArrowUp, contentDescription = "Move up in queue", modifier = Modifier.size(18.dp))
+                        }
+                        IconButton(
+                            onClick = { onMoveQueue(qIndex, qIndex + 1) },
+                            enabled = !busy && qIndex in 0 until queuedIds.lastIndex,
+                            modifier = Modifier.size(48.dp).testTag("pending_down_${msg.id}"),
+                        ) {
+                            Icon(AppIcons.ArrowDown, contentDescription = "Move down in queue", modifier = Modifier.size(18.dp))
+                        }
+                    }
+                    IconButton(
+                        onClick = { onEdit(msg) },
+                        enabled = !busy,
+                        modifier = Modifier.size(48.dp).testTag("pending_edit_${msg.id}"),
+                    ) {
+                        Icon(AppIcons.Edit, contentDescription = "Edit pending message", modifier = Modifier.size(18.dp))
+                    }
+                    IconButton(
+                        onClick = { onRemove(msg) },
+                        enabled = !busy,
+                        modifier = Modifier.size(48.dp).testTag("pending_remove_${msg.id}"),
+                    ) {
+                        Icon(AppIcons.Clear, contentDescription = "Remove pending message", modifier = Modifier.size(18.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The message box, as the chat apps have it: one rounded card holding the text, and under the text a row with the model on the
+ * left and the buttons on the right. The send button is an arrow; while the agent is working a Stop button joins it, and a
+ * message typed then can steer the turn, be queued, stop and send, or open a side chat. The text stays until the host has
+ * confirmed the message, so a failed send loses nothing, and it survives rotation.
+ */
+@Composable
+internal fun Composer(
+    actions: ChatActionsUi,
+    modifier: Modifier = Modifier,
+    pendingMessages: List<PendingMessageView> = emptyList(),
+    activeTurnId: String? = null,
+    draftToLoad: String? = null,
+    onDraftLoaded: () -> Unit = {},
+) {
     var text by rememberSaveable { mutableStateOf("") }
+    LaunchedEffect(draftToLoad) {
+        if (draftToLoad != null) {
+            if (text.isBlank()) text = draftToLoad
+            onDraftLoaded()
+        }
+    }
     var pick by rememberSaveable(stateSaver = ModelPickSaver) { mutableStateOf<ModelChoice?>(null) }
     var choosing by rememberSaveable { mutableStateOf(false) }
     var agentPick by rememberSaveable(stateSaver = AgentPickSaver) { mutableStateOf<AgentPick>(AgentPick.Keep) }
     var choosingAgent by rememberSaveable { mutableStateOf(false) }
+    var sendMenuOpen by remember { mutableStateOf(false) }
     // A pick the host no longer offers is dropped, so the box never shows or sends a model that has gone.
     val chosen = pick?.takeIf { ModelOptions.isOffered(actions.models, it) } ?: actions.modelInUse
     // The same for an agent: a pick that is gone becomes "keep what the chat is on". What is shown is what a message is sent with.
@@ -428,6 +563,40 @@ internal fun Composer(actions: ChatActionsUi, modifier: Modifier = Modifier) {
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 8.dp)) {
             ConfigStateRow(actions.config, onClick = { choosingAgent = true }, chipColors = chipColors, modifier = Modifier.padding(top = 4.dp))
+            PendingMessageTray(
+                pendingMessages = pendingMessages,
+                busy = busy,
+                onEdit = { msg ->
+                    scope.launch {
+                        busy = true
+                        val result = actions.removePending(msg.id)
+                        notice = InteractMessages.describe(result)
+                        if (InteractMessages.succeeded(result)) {
+                            text = if (text.isBlank()) msg.text else "${msg.text}\n$text"
+                        }
+                        busy = false
+                    }
+                },
+                onRemove = { msg ->
+                    scope.launch {
+                        busy = true
+                        notice = InteractMessages.describe(actions.removePending(msg.id))
+                        busy = false
+                    }
+                },
+                onMoveQueue = { fromIndex, toIndex ->
+                    val queuedIds = pendingMessages.filter { it.kind == PendingMessageKind.QUEUED }.map { it.id }.toMutableList()
+                    if (fromIndex in queuedIds.indices && toIndex in queuedIds.indices) {
+                        val moved = queuedIds.removeAt(fromIndex)
+                        queuedIds.add(toIndex, moved)
+                        scope.launch {
+                            busy = true
+                            notice = InteractMessages.describe(actions.reorderQueue(queuedIds))
+                            busy = false
+                        }
+                    }
+                },
+            )
             Notice(notice, "composer_notice", Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
             TextField(
                 value = text,
@@ -521,6 +690,82 @@ internal fun Composer(actions: ChatActionsUi, modifier: Modifier = Modifier) {
                         border = null,
                         modifier = Modifier.testTag("composer_steer"),
                     )
+                    Box {
+                        IconButton(
+                            onClick = { sendMenuOpen = true },
+                            enabled = !busy,
+                            modifier = Modifier.size(48.dp).testTag("composer_send_options"),
+                        ) {
+                            Icon(AppIcons.MoreVert, contentDescription = "Send options")
+                        }
+                        DropdownMenu(
+                            expanded = sendMenuOpen,
+                            onDismissRequest = { sendMenuOpen = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Steer with Message") },
+                                onClick = {
+                                    sendMenuOpen = false
+                                    val sending = text
+                                    scope.launch {
+                                        busy = true
+                                        val result = actions.steer(sending, chosen, agentChosen)
+                                        notice = InteractMessages.describe(result)
+                                        if (InteractMessages.succeeded(result) && text == sending) text = ""
+                                        busy = false
+                                    }
+                                },
+                                modifier = Modifier.testTag("composer_mode_steer"),
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Add to Queue") },
+                                onClick = {
+                                    sendMenuOpen = false
+                                    val sending = text
+                                    scope.launch {
+                                        busy = true
+                                        val result = actions.send(sending, chosen, agentChosen)
+                                        notice = InteractMessages.describe(result)
+                                        if (InteractMessages.succeeded(result) && text == sending) text = ""
+                                        busy = false
+                                    }
+                                },
+                                modifier = Modifier.testTag("composer_mode_queue"),
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Stop and Send") },
+                                onClick = {
+                                    sendMenuOpen = false
+                                    val sending = text
+                                    scope.launch {
+                                        busy = true
+                                        val result = actions.stopAndSend(sending, chosen, agentChosen)
+                                        notice = InteractMessages.describe(result)
+                                        if (InteractMessages.succeeded(result) && text == sending) text = ""
+                                        busy = false
+                                    }
+                                },
+                                modifier = Modifier.testTag("composer_mode_stop_and_send"),
+                            )
+                            if (actions.canSideChat && activeTurnId != null) {
+                                DropdownMenuItem(
+                                    text = { Text("Ask in Side Chat") },
+                                    onClick = {
+                                        sendMenuOpen = false
+                                        val sending = text
+                                        scope.launch {
+                                            busy = true
+                                            val result = actions.openSideChat(activeTurnId, sending, chosen, agentChosen)
+                                            notice = ManageMessages.describe(result)
+                                            if (result is ManageResult.Done && text == sending) text = ""
+                                            busy = false
+                                        }
+                                    },
+                                    modifier = Modifier.testTag("composer_mode_side_chat"),
+                                )
+                            }
+                        }
+                    }
                 }
                 if (actions.running) {
                     FilledTonalIconButton(

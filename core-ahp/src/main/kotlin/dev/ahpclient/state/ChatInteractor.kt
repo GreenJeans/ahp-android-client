@@ -4,6 +4,8 @@ import com.microsoft.agenthostprotocol.generated.ChatInputRequest
 import com.microsoft.agenthostprotocol.generated.ChatInteractivity
 import com.microsoft.agenthostprotocol.generated.ChatState
 import com.microsoft.agenthostprotocol.generated.ConfirmationOptionKind
+import com.microsoft.agenthostprotocol.generated.Message
+import com.microsoft.agenthostprotocol.generated.ResponsePartError
 import com.microsoft.agenthostprotocol.generated.ResponsePartInputRequest
 import com.microsoft.agenthostprotocol.generated.ResponsePartToolCall
 import com.microsoft.agenthostprotocol.generated.StateAction
@@ -11,6 +13,7 @@ import com.microsoft.agenthostprotocol.generated.ToolCallPendingConfirmationStat
 import com.microsoft.agenthostprotocol.generated.ToolCallState
 import com.microsoft.agenthostprotocol.generated.ToolCallStatePendingConfirmation
 import com.microsoft.agenthostprotocol.generated.ToolCallStatePendingResultConfirmation
+import com.microsoft.agenthostprotocol.generated.TurnState
 import java.time.Instant
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
@@ -275,6 +278,118 @@ class ChatInteractor(
         if (model != null && !ModelOptions.isOffered(models(), model)) return InteractResult.InvalidModel
         val resolved = resolveAgent(agent, state) ?: return InteractResult.InvalidAgent
         return deliver(ChatActions.steerTurn(newId(), text, model, resolved.uri))
+    }
+
+    /** Explicitly queues a user message to run after the active turn (or starts a turn if the chat is already idle). */
+    suspend fun queue(text: String, model: ModelChoice? = null, agent: AgentPick = AgentPick.Keep): InteractResult =
+        send(text, model, agent)
+
+    /** Stops the currently running turn (if any) and immediately starts a new turn with [text]. */
+    suspend fun stopAndSend(text: String, model: ModelChoice? = null, agent: AgentPick = AgentPick.Keep): InteractResult {
+        val state = usable() ?: return InteractResult.NotAllowed
+        if (text.isBlank()) return InteractResult.Blank
+        if (model != null && !ModelOptions.isOffered(models(), model)) return InteractResult.InvalidModel
+        val resolved = resolveAgent(agent, state) ?: return InteractResult.InvalidAgent
+        val active = state.activeTurn
+        if (active != null) {
+            val stopped = deliver(ChatActions.cancelTurn(active.id))
+            if (!InteractMessages.succeeded(stopped)) return stopped
+        }
+        return deliver(ChatActions.startTurn(newId(), now(), text, model = model, agent = resolved.uri))
+    }
+
+    /**
+     * Restores the conversation to the checkpoint immediately before [beforeTurnId], removing [beforeTurnId] and any later turns.
+     * When [beforeTurnId] is the first turn in the chat, this clears all turns ("Start Over").
+     */
+    suspend fun restoreCheckpoint(beforeTurnId: String): InteractResult {
+        val state = usable() ?: return InteractResult.NotAllowed
+        val previousTurnId = previousTurnOf(state, beforeTurnId) ?: return InteractResult.NoSuchRequest
+        return deliver(ChatActions.truncate(previousTurnId.id))
+    }
+
+    /** Clears all turns in the chat ("Start Over"). */
+    suspend fun startOver(): InteractResult {
+        val state = usable() ?: return InteractResult.NotAllowed
+        if (state.turns.isEmpty() && state.activeTurn == null) return InteractResult.NoSuchRequest
+        return deliver(ChatActions.truncate(null))
+    }
+
+    /**
+     * Truncates the conversation to the point immediately before [turnId] and starts a new turn with [newText].
+     * If truncation is not accepted by the host, the new turn is never sent.
+     */
+    suspend fun editAndResend(turnId: String, newText: String, model: ModelChoice? = null, agent: AgentPick = AgentPick.Keep): InteractResult {
+        val state = usable() ?: return InteractResult.NotAllowed
+        if (newText.isBlank()) return InteractResult.Blank
+        if (model != null && !ModelOptions.isOffered(models(), model)) return InteractResult.InvalidModel
+        val resolved = resolveAgent(agent, state) ?: return InteractResult.InvalidAgent
+        val previousTurnId = previousTurnOf(state, turnId) ?: return InteractResult.NoSuchRequest
+        val truncated = deliver(ChatActions.truncate(previousTurnId.id))
+        if (!InteractMessages.succeeded(truncated)) return truncated
+        return deliver(ChatActions.startTurn(newId(), now(), newText, model = model, agent = resolved.uri))
+    }
+
+    /**
+     * Retries or regenerates [turnId]. When [turnId] is the latest turn, no turn is active, and the turn ended with a resumable error
+     * (and no model/agent override is requested), dispatches `chat/turnResume`. Otherwise truncates to the point before [turnId] and
+     * re-sends that turn's user message.
+     */
+    suspend fun retryTurn(turnId: String, model: ModelChoice? = null, agent: AgentPick = AgentPick.Keep): InteractResult {
+        val state = usable() ?: return InteractResult.NotAllowed
+        val idx = state.turns.indexOfFirst { it.id == turnId }
+        if (idx < 0) return InteractResult.NoSuchRequest
+        val turn = state.turns[idx]
+        val isLast = idx == state.turns.lastIndex && state.activeTurn == null
+        val resumable = turn.state == TurnState.ERROR && (turn.responseParts.lastOrNull() as? ResponsePartError)?.value?.resumable == true
+        if (isLast && resumable && model == null && agent == AgentPick.Keep) {
+            return deliver(ChatActions.resumeTurn(turnId))
+        }
+        val effectiveModel = model ?: modelInUse()?.takeIf { ModelOptions.isOffered(models(), it) }
+        return editAndResend(turnId, turn.message.text, effectiveModel, agent)
+    }
+
+    /** Removes a pending (steering or queued) message by its [id]. */
+    suspend fun removePending(id: String): InteractResult {
+        val state = usable() ?: return InteractResult.NotAllowed
+        return when {
+            state.steeringMessage?.id == id -> deliver(ChatActions.removeSteeringMessage(id))
+            state.queuedMessages.orEmpty().any { it.id == id } -> deliver(ChatActions.removeQueuedMessage(id))
+            else -> InteractResult.NoSuchRequest
+        }
+    }
+
+    /** Reorders the queued messages to [order], which must be a permutation of the current queued message ids. */
+    suspend fun reorderQueue(order: List<String>): InteractResult {
+        val state = usable() ?: return InteractResult.NotAllowed
+        val currentIds = state.queuedMessages.orEmpty().map { it.id }
+        if (currentIds.size < 2 || order.size != currentIds.size || order.toSet() != currentIds.toSet()) {
+            return InteractResult.NoSuchRequest
+        }
+        if (order == currentIds) return InteractResult.Blank
+        return deliver(ChatActions.reorderQueuedMessages(order))
+    }
+
+    /**
+     * Validates [text], [model], and [agent] against this chat's current offerings and builds a protocol [Message] for
+     * `createChat(..., initialMessage = ...)` (used by Fork & Send and Ask in Side Chat). Returns null when not allowed or invalid.
+     */
+    fun buildInitialMessage(text: String, model: ModelChoice? = null, agent: AgentPick = AgentPick.Keep): Message? {
+        val state = usable() ?: return null
+        if (text.isBlank()) return null
+        if (model != null && !ModelOptions.isOffered(models(), model)) return null
+        val resolved = resolveAgent(agent, state) ?: return null
+        return ChatActions.message(text, model, resolved.uri)
+    }
+
+    /** Wrapper for the turn id before a target turn (`id == null` means before the very first turn). */
+    private class PreviousTurn(val id: String?)
+
+    private fun previousTurnOf(state: ChatState, turnId: String): PreviousTurn? {
+        if (state.activeTurn?.id == turnId) return PreviousTurn(state.turns.lastOrNull()?.id)
+        val idx = state.turns.indexOfFirst { it.id == turnId }
+        if (idx < 0) return null
+        return PreviousTurn(if (idx == 0) null else state.turns[idx - 1].id)
     }
 
     /**

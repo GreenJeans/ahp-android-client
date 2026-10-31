@@ -36,11 +36,28 @@ enum class ToolState(val label: String) {
 /** How a finished turn ended. */
 enum class TurnOutcome { DONE, STOPPED, FAILED }
 
+/** Kind of pending message waiting in the chat. */
+enum class PendingMessageKind { STEERING, QUEUED }
+
+/** A steering or queued message waiting to be consumed by the agent. */
+data class PendingMessageView(
+    val id: String,
+    val text: String,
+    val kind: PendingMessageKind,
+)
+
 /** One row of the transcript. [key] is unique within a transcript and stable while the chat grows, so a list can key on it. */
 sealed interface TranscriptItem {
     val key: String
 
-    data class User(override val key: String, val text: String) : TranscriptItem
+    data class User(
+        override val key: String,
+        val text: String,
+        val turnId: String = key.removeSuffix("/user"),
+        val turnIndex: Int = 0,
+        val previousTurnId: String? = null,
+        val turnsFromHereCount: Int = 1,
+    ) : TranscriptItem
 
     data class Markdown(override val key: String, val text: String) : TranscriptItem
 
@@ -67,7 +84,13 @@ sealed interface TranscriptItem {
     data class Notice(override val key: String, val text: String, val isError: Boolean = false) : TranscriptItem
 
     /** The end of a finished turn, so it is plain when the agent has stopped, and for how long it worked. */
-    data class TurnEnd(override val key: String, val outcome: TurnOutcome, val durationMs: Long?) : TranscriptItem
+    data class TurnEnd(
+        override val key: String,
+        val outcome: TurnOutcome,
+        val durationMs: Long?,
+        val turnId: String = key.removeSuffix("/end"),
+        val resumable: Boolean = false,
+    ) : TranscriptItem
 
     data class Question(override val key: String, val request: InputRequestView, val answered: Boolean, val form: InputForm? = null) : TranscriptItem
 
@@ -90,6 +113,12 @@ data class Transcript(
     val hasOlder: Boolean,
     /** A turn is in progress: the agent is working, or waiting on the person. */
     val running: Boolean = false,
+    /** Pending steering and queued messages currently waiting in the chat. */
+    val pendingMessages: List<PendingMessageView> = emptyList(),
+    /** Identifier of the currently running turn, when [running] is true. */
+    val activeTurnId: String? = null,
+    /** Identifier of the most recent completed turn, if any. */
+    val lastTurnId: String? = null,
 ) {
     /** The turn that is running has stopped for the person: a call waiting to be approved or signed in, or a question to answer. Nothing is being worked on then. */
     val waitingOnYou: Boolean
@@ -104,17 +133,37 @@ data class Transcript(
         fun from(chat: ChatState): Transcript {
             val keys = KeyBook()
             val items = ArrayList<TranscriptItem>()
-            for (turn in chat.turns) {
-                if (addTurn(items, keys, turn.id, turn.message, turn.responseParts, live = false)) {
+            val totalTurns = chat.turns.size + if (chat.activeTurn != null) 1 else 0
+            chat.turns.forEachIndexed { index, turn ->
+                val prevId = if (index == 0) null else chat.turns[index - 1].id
+                val turnsFromHere = totalTurns - index
+                if (addTurn(items, keys, turn.id, turn.message, turn.responseParts, live = false, turnIndex = index, previousTurnId = prevId, turnsFromHereCount = turnsFromHere)) {
                     val outcome = when (turn.state) {
                         TurnState.CANCELLED -> TurnOutcome.STOPPED
                         TurnState.ERROR -> TurnOutcome.FAILED
                         else -> TurnOutcome.DONE
                     }
-                    items += TranscriptItem.TurnEnd(keys.unique("${turn.id}/end"), outcome, turn.duration?.takeIf { it >= 0 })
+                    val resumable = index == chat.turns.lastIndex &&
+                        chat.activeTurn == null &&
+                        turn.state == TurnState.ERROR &&
+                        (turn.responseParts.lastOrNull() as? ResponsePartError)?.value?.resumable == true
+                    items += TranscriptItem.TurnEnd(
+                        key = keys.unique("${turn.id}/end"),
+                        outcome = outcome,
+                        durationMs = turn.duration?.takeIf { it >= 0 },
+                        turnId = turn.id,
+                        resumable = resumable,
+                    )
                 }
             }
-            chat.activeTurn?.let { addTurn(items, keys, it.id, it.message, it.responseParts, live = true) }
+            chat.activeTurn?.let { active ->
+                val prevId = chat.turns.lastOrNull()?.id
+                addTurn(items, keys, active.id, active.message, active.responseParts, live = true, turnIndex = chat.turns.size, previousTurnId = prevId, turnsFromHereCount = 1)
+            }
+            val pending = buildList {
+                chat.steeringMessage?.let { add(PendingMessageView(it.id, it.message.text, PendingMessageKind.STEERING)) }
+                chat.queuedMessages.orEmpty().forEach { add(PendingMessageView(it.id, it.message.text, PendingMessageKind.QUEUED)) }
+            }
             return Transcript(
                 title = chat.title.ifBlank { UNTITLED_CHAT },
                 state = chat.status.activityState,
@@ -122,13 +171,35 @@ data class Transcript(
                 items = items,
                 hasOlder = chat.turnsNextCursor != null,
                 running = chat.activeTurn != null,
+                pendingMessages = pending,
+                activeTurnId = chat.activeTurn?.id,
+                lastTurnId = chat.turns.lastOrNull()?.id,
             )
         }
 
         /** Adds a turn's user message (unless hidden from the transcript, E4) and its response parts. Returns false when the turn left no rows. */
-        private fun addTurn(items: MutableList<TranscriptItem>, keys: KeyBook, turnId: String, message: Message, parts: List<ResponsePart>, live: Boolean): Boolean {
+        private fun addTurn(
+            items: MutableList<TranscriptItem>,
+            keys: KeyBook,
+            turnId: String,
+            message: Message,
+            parts: List<ResponsePart>,
+            live: Boolean,
+            turnIndex: Int = 0,
+            previousTurnId: String? = null,
+            turnsFromHereCount: Int = 1,
+        ): Boolean {
             val hidden = message.extras.hiddenFromTranscript
-            if (!hidden) items += TranscriptItem.User(keys.unique("$turnId/user"), message.text)
+            if (!hidden) {
+                items += TranscriptItem.User(
+                    key = keys.unique("$turnId/user"),
+                    text = message.text,
+                    turnId = turnId,
+                    turnIndex = turnIndex,
+                    previousTurnId = previousTurnId,
+                    turnsFromHereCount = turnsFromHereCount,
+                )
+            }
             parts.forEachIndexed { index, part -> items += item(keys, turnId, index, part, live && index == parts.lastIndex) }
             return !hidden || parts.isNotEmpty()
         }
