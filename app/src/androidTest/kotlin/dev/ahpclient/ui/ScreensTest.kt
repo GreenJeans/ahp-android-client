@@ -122,7 +122,19 @@ class ScreensTest {
         showSignIn(signedOut(SignInStep.AwaitingApproval("ABCD-1234", "https://github.com/login/device", expires)))
 
         rule.onNodeWithTag("user_code").assertIsDisplayed().assertTextContains("ABCD-1234").assertContentDescriptionEquals("Code A B C D dash 1 2 3 4")
-        rule.onNodeWithTag("waiting").assertTextContains("Waiting for approval", substring = true)
+        rule.onNodeWithTag("tunnel_service_note").performScrollTo().assertIsDisplayed().assertTextContains("Visual Studio Tunnel Service", substring = true)
+        rule.onNodeWithTag("waiting").performScrollTo().assertTextContains("Waiting for approval", substring = true)
+    }
+
+    @Test
+    fun signInScreenShowsLegalDisclaimerAndOpensPrivacyPolicyDialog() {
+        showSignIn(signedOut(SignInStep.Idle))
+
+        rule.onNodeWithTag("legal_disclaimer").performScrollTo().assertIsDisplayed().assertTextContains("Not affiliated with", substring = true)
+        rule.onNodeWithTag("privacy_policy_button").performScrollTo().assertIsDisplayed().assertTouchTargetAtLeast(48.dp).performClick()
+        rule.onNodeWithTag("privacy_policy_dialog").assertIsDisplayed()
+        rule.onNodeWithTag("privacy_policy_close").assertIsDisplayed().assertTouchTargetAtLeast(48.dp).performClick()
+        rule.onAllNodesWithTag("privacy_policy_dialog").assertCountEquals(0)
     }
 
     @Test
@@ -137,9 +149,9 @@ class ScreensTest {
             onCopy = { copied = it },
         )
 
-        rule.onNodeWithTag("copy_code").assertTouchTargetAtLeast(48.dp).performClick()
-        rule.onNodeWithTag("open_github").assertTouchTargetAtLeast(48.dp).performClick()
-        rule.onNodeWithTag("cancel_sign_in").assertTouchTargetAtLeast(48.dp).performClick()
+        rule.onNodeWithTag("copy_code").performScrollTo().assertTouchTargetAtLeast(48.dp).performClick()
+        rule.onNodeWithTag("open_github").performScrollTo().assertTouchTargetAtLeast(48.dp).performClick()
+        rule.onNodeWithTag("cancel_sign_in").performScrollTo().assertTouchTargetAtLeast(48.dp).performClick()
 
         assertEquals("ABCD-1234", copied)
         assertEquals("https://github.com/login/device", opened)
@@ -307,6 +319,24 @@ class ScreensTest {
 
         rule.onNodeWithTag("pro_cancel").assertIsDisplayed().assertTouchTargetAtLeast(48.dp).performClick()
         rule.onAllNodesWithTag("pro_upgrade_dialog").assertCountEquals(0)
+    }
+
+    @Test
+    fun settingsAboutSectionShowsDisclaimerAndOpensPrivacyAndLicensesDialogs() {
+        showSettings()
+
+        rule.onNodeWithTag("about_section").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithTag("legal_disclaimer").performScrollTo().assertIsDisplayed().assertTextContains("not affiliated with", substring = true)
+
+        rule.onNodeWithTag("privacy_policy_button").performScrollTo().assertIsDisplayed().assertTouchTargetAtLeast(48.dp).performClick()
+        rule.onNodeWithTag("privacy_policy_dialog").assertIsDisplayed()
+        rule.onNodeWithTag("privacy_policy_close").assertIsDisplayed().assertTouchTargetAtLeast(48.dp).performClick()
+        rule.onAllNodesWithTag("privacy_policy_dialog").assertCountEquals(0)
+
+        rule.onNodeWithTag("licenses_button").performScrollTo().assertIsDisplayed().assertTouchTargetAtLeast(48.dp).performClick()
+        rule.onNodeWithTag("licenses_dialog").assertIsDisplayed()
+        rule.onNodeWithTag("licenses_close").assertIsDisplayed().assertTouchTargetAtLeast(48.dp).performClick()
+        rule.onAllNodesWithTag("licenses_dialog").assertCountEquals(0)
     }
 
     // ---- connected --------------------------------------------------------------------------------------------

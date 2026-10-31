@@ -46,10 +46,14 @@ You can delete all stored credentials, cached session metadata, and preferences 
 - Tapping **Sign out** in the App's Settings (which immediately destroys the Keystore keys and deletes the encrypted token vault and session cache), or
 - Clearing storage / uninstalling the App in Android System Settings.
 
-## 6. Changes to This Policy
+## 6. Trademarks & Non-Affiliation Notice
+
+AHP Client is an independent third-party client for the open [Agent Host Protocol (AHP)](https://github.com/microsoft/agent-host-protocol) and is not affiliated with, endorsed by, or sponsored by Microsoft Corporation or GitHub, Inc. Visual Studio Code and GitHub are trademarks of their respective owners. When you sign in with GitHub to connect to a VS Code Remote Tunnel, GitHub Device Flow requests authorization for Microsoft's "Visual Studio Tunnel Service" app so that your device can query and connect directly to your own Dev Tunnels.
+
+## 7. Changes to This Policy
 
 If this Privacy Policy is updated, the revised version and effective date will be posted in the project repository (`docs/privacy-policy.md`).
 
-## 7. Contact
+## 8. Contact
 
 For questions about this Privacy Policy or AHP Client, please open an issue in the project's GitHub repository.

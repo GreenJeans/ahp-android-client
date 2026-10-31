@@ -374,6 +374,24 @@ class ProEntitlementTest {
             nextRestore = BillingResult.Unlocked
             assertSame(BillingResult.Unlocked, controller.restorePro())
             assertTrue(controller.proUnlocked.value)
+
+            // Cold-start reconciliation when store is unreachable (Unavailable) keeps cached Pro unlock intact for offline use.
+            nextRestore = BillingResult.Unavailable("Offline")
+            assertIs<BillingResult.Unavailable>(controller.reconcileProEntitlement())
+            assertTrue(controller.proUnlocked.value)
+            assertTrue(settings.saved)
+
+            // Cold-start reconciliation when store confirms no owned purchase (NotFound, e.g. refunded) revokes Pro unlock.
+            nextRestore = BillingResult.NotFound
+            assertSame(BillingResult.NotFound, controller.reconcileProEntitlement())
+            assertFalse(controller.proUnlocked.value)
+            assertFalse(settings.saved)
+
+            // Cold-start reconciliation when store finds an active purchase unlocks Pro again.
+            nextRestore = BillingResult.Unlocked
+            assertSame(BillingResult.Unlocked, controller.reconcileProEntitlement())
+            assertTrue(controller.proUnlocked.value)
+            assertTrue(settings.saved)
         }
     }
 
