@@ -180,10 +180,11 @@ class SessionScreensTest {
     }
 
     @Test
-    fun theSummaryLineCountsWhatIsHappening() {
+    fun theDrawerOmitsTheSessionsHeaderAndSummaryToLeaveRoomForSessions() {
         showSessions()
 
-        rule.onNodeWithTag("summary").assertTextEquals("1 needs you · 1 working")
+        rule.onAllNodesWithText("Sessions").assertCountEquals(0)
+        rule.onAllNodesWithTag("summary").assertCountEquals(0)
     }
 
     @Test
@@ -273,7 +274,7 @@ class SessionScreensTest {
     }
 
     @Test
-    fun theActionRowSitsUnderTheHostAndAboveTheSessions() {
+    fun theActionRowSitsUnderTheHostAndNewSessionSitsBesideTheFilterIcon() {
         showSessions(manage = manageActions(), inboxCount = 2)
 
         // Touch bounds, since the buttons draw smaller than they touch.
@@ -282,9 +283,9 @@ class SessionScreensTest {
         assertTrue(top("drawer_host") < top("drawer_inbox"))
         assertEquals(top("drawer_inbox"), top("settings"), 0.5f)
         assertTrue(top("settings") < top("session_list"))
-        assertTrue(left("drawer_inbox") < left("archived_toggle") && left("archived_toggle") < left("new_session") && left("new_session") < left("settings"))
-        // Archived leaves the Sessions header, and Settings the bottom of the drawer.
-        assertTrue(top("settings") < rule.onNodeWithText("Sessions").fetchSemanticsNode().boundsInRoot.top)
+        assertTrue(left("drawer_inbox") < left("archived_toggle") && left("archived_toggle") < left("settings"))
+        assertEquals(top("session_filter"), top("new_session"), 1f)
+        assertTrue(left("search") < left("session_filter") && left("session_filter") < left("new_session"))
     }
 
     @Test
@@ -461,11 +462,40 @@ class SessionScreensTest {
     }
 
     @Test
-    fun searchingDoesNotChangeTheSummaryOfWhatNeedsYou() {
-        showSessions(initialQuery = "Unread")
+    fun multiHostRowsShowHostNameOnItsOwnLineAboveTheSubtitle() {
+        val otherHost = TunnelInfo("t-other", "usw2", "workstation-long-hostname-box", 6, 1, listOf(31546))
+        rule.setContent {
+            AhpTheme {
+                DrawerContent(
+                    host = HostRef.Tunnel(host),
+                    connection = ConnState.Online,
+                    sessions = listOf(waiting),
+                    now = now,
+                    selected = null,
+                    showArchived = false,
+                    onToggleArchived = {},
+                    query = "",
+                    onQueryChange = {},
+                    listState = rememberLazyListState(),
+                    manage = null,
+                    onOpenHost = {},
+                    onOpenSession = {},
+                    onOpenSettings = {},
+                    onSessionCreated = {},
+                    connectedHosts = listOf(HostRef.Tunnel(host), HostRef.Tunnel(otherHost)),
+                    entries = listOf(
+                        dev.ahpclient.state.HostSessionEntry(host.tunnelId, host.name, waiting),
+                        dev.ahpclient.state.HostSessionEntry(otherHost.tunnelId, otherHost.name, working),
+                    ),
+                )
+            }
+        }
 
-        rule.onAllNodesWithTag("session_row").assertCountEquals(1)
-        rule.onNodeWithTag("summary").assertTextEquals("1 needs you · 1 working")
+        val hostNodes = rule.onAllNodesWithTag("row_host", useUnmergedTree = true)
+        hostNodes.assertCountEquals(2)
+        val hostBottom = hostNodes[0].fetchSemanticsNode().boundsInRoot.bottom
+        val subtitleTop = rule.onNodeWithText("repo-w", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot.top
+        assertTrue("row_host bottom ($hostBottom) should sit above subtitle top ($subtitleTop)", hostBottom <= subtitleTop + 1f)
     }
 
     @Test
@@ -473,7 +503,7 @@ class SessionScreensTest {
         val changes = mutableListOf<Boolean>()
         showSettings(monitorEnabled = true, onFinishedAll = { changes += it })
 
-        rule.onNodeWithTag("finished_all_toggle").assertIsOff().assertTouchTargetAtLeast(48.dp).performClick()
+        rule.onNodeWithTag("finished_all_toggle").performScrollTo().assertIsOff().assertTouchTargetAtLeast(48.dp).performClick()
 
         assertEquals(listOf(true), changes)
         rule.onNodeWithTag("finished_all_hint").assertTextContains("Off", substring = true)
@@ -484,7 +514,7 @@ class SessionScreensTest {
         val changes = mutableListOf<Boolean>()
         showSettings(monitorEnabled = true, finishedAll = true, onFinishedAll = { changes += it })
 
-        rule.onNodeWithTag("finished_all_toggle").assertIsOn().performClick()
+        rule.onNodeWithTag("finished_all_toggle").performScrollTo().assertIsOn().performClick()
 
         assertEquals(listOf(false), changes)
         rule.onNodeWithTag("finished_all_hint").assertTextContains("told when a session stops", substring = true)
@@ -494,15 +524,15 @@ class SessionScreensTest {
     fun theFinishedAlertSaysItNeedsMonitoringWhenThatIsOff() {
         showSettings(monitorEnabled = false, finishedAll = true)
 
-        rule.onNodeWithTag("finished_all_hint").assertTextContains("needs Monitor in background", substring = true)
+        rule.onNodeWithTag("finished_all_hint").performScrollTo().assertTextContains("needs Monitor in background", substring = true)
     }
 
     @Test
     fun theFinishedAlertSwitchSitsWithTheMonitorSwitch() {
         showSettings()
 
-        rule.onNodeWithTag("finished_all_toggle").assertIsDisplayed()
-        rule.onNodeWithTag("monitor_toggle").assertIsDisplayed()
+        rule.onNodeWithTag("finished_all_toggle").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithTag("monitor_toggle").performScrollTo().assertIsDisplayed()
     }
 
     @Test
@@ -563,7 +593,7 @@ class SessionScreensTest {
     }
 
     @Test
-    fun settingsShowTheThreeSwitchesAndGoBack() {
+    fun settingsShowTheSwitchesAndGoBack() {
         var back = 0
         showSettings(onBack = { back++ })
 
@@ -571,7 +601,8 @@ class SessionScreensTest {
         rule.onNodeWithTag("monitor_toggle").assertIsDisplayed()
         // The screen scrolls; on a small phone the permissions are below the first screenful.
         rule.onNodeWithTag("interaction_toggle").performScrollTo().assertIsDisplayed()
-        rule.onNodeWithTag("management_toggle").assertExists()
+        rule.onNodeWithTag("management_toggle").assertDoesNotExist()
+        rule.onNodeWithTag("text_size_slider").assertDoesNotExist()
         rule.onNodeWithTag("back").assertContentDescriptionEquals("Back").assertTouchTargetAtLeast(48.dp).performClick()
 
         assertEquals(1, back)

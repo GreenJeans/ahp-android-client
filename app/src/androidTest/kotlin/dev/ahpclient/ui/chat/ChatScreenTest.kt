@@ -943,4 +943,37 @@ class ChatScreenTest {
         rule.waitForIdle()
         rule.onAllNodesWithTag("link_dialog").assertCountEquals(0)
     }
+
+    @Test
+    fun scrollingBackSlidesTheComposerOffScreenAndJumpingBackRestoresIt() {
+        val actions = ChatActionsUi(
+            running = false,
+            send = { _, _, _ -> dev.ahpclient.state.InteractResult.Sent(dev.ahpclient.state.DispatchOutcome.Accepted) },
+            steer = { _, _, _ -> dev.ahpclient.state.InteractResult.Sent(dev.ahpclient.state.DispatchOutcome.Accepted) },
+            cancel = { dev.ahpclient.state.InteractResult.Sent(dev.ahpclient.state.DispatchOutcome.Accepted) },
+            approve = { _, _ -> dev.ahpclient.state.InteractResult.Sent(dev.ahpclient.state.DispatchOutcome.Accepted) },
+            deny = { _, _ -> dev.ahpclient.state.InteractResult.Sent(dev.ahpclient.state.DispatchOutcome.Accepted) },
+            approveResult = { dev.ahpclient.state.InteractResult.Sent(dev.ahpclient.state.DispatchOutcome.Accepted) },
+            denyResult = { dev.ahpclient.state.InteractResult.Sent(dev.ahpclient.state.DispatchOutcome.Accepted) },
+            answer = { _, _ -> dev.ahpclient.state.InteractResult.Sent(dev.ahpclient.state.DispatchOutcome.Accepted) },
+            saveDraft = { _, _, _ -> dev.ahpclient.state.InteractResult.Sent(dev.ahpclient.state.DispatchOutcome.Accepted) },
+            decline = { dev.ahpclient.state.InteractResult.Sent(dev.ahpclient.state.DispatchOutcome.Accepted) },
+            dismiss = { dev.ahpclient.state.InteractResult.Sent(dev.ahpclient.state.DispatchOutcome.Accepted) },
+        )
+        rule.setContent {
+            AhpTheme {
+                ChatScreen(transcript(rows(1..120)), null, false, null, ConnState.Online, {}, {}, {}, actions = actions)
+            }
+        }
+        rule.onNodeWithTag("composer_input").assertIsDisplayed()
+
+        rule.onNodeWithTag("transcript").performScrollToIndex(60)
+        rule.waitForIdle()
+
+        rule.onAllNodesWithTag("composer_input").assertCountEquals(0)
+        rule.onNodeWithTag("jump_latest").assertIsDisplayed().performClick()
+        rule.waitForIdle()
+
+        rule.onNodeWithTag("composer_input").assertIsDisplayed()
+    }
 }

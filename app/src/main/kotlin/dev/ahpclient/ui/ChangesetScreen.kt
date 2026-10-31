@@ -25,6 +25,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
@@ -32,9 +34,12 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import dev.ahpclient.state.ChangeKind
 import dev.ahpclient.state.ChangeRow
@@ -179,9 +184,9 @@ private fun ChangeRowItem(row: ChangeRow, onOpen: (() -> Unit)?, reviewEnabled: 
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                if (row.fileName != row.path) {
+                row.directory?.let { dir ->
                     Text(
-                        row.path,
+                        dir,
                         style = MaterialTheme.typography.bodySmall,
                         fontFamily = FontFamily.Monospace,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -195,7 +200,23 @@ private fun ChangeRowItem(row: ChangeRow, onOpen: (() -> Unit)?, reviewEnabled: 
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            counts?.let { Text(it, style = MaterialTheme.typography.labelLarge, modifier = Modifier.testTag("change_counts")) }
+            val added = row.added
+            val removed = row.removed
+            if (added != null && removed != null) {
+                val isDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+                val mutedColor = MaterialTheme.colorScheme.onSurfaceVariant
+                val addedColor = if (added > 0) (if (isDark) Color(0xFF81C784) else Color(0xFF1B5E20)) else mutedColor
+                val removedColor = if (removed > 0) (if (isDark) Color(0xFFE57373) else Color(0xFFB71C1C)) else mutedColor
+                Text(
+                    buildAnnotatedString {
+                        withStyle(SpanStyle(color = addedColor, fontWeight = FontWeight.Medium)) { append("+$added") }
+                        withStyle(SpanStyle(color = mutedColor)) { append(" ") }
+                        withStyle(SpanStyle(color = removedColor, fontWeight = FontWeight.Medium)) { append("−$removed") }
+                    },
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.testTag("change_counts"),
+                )
+            }
         }
         if (onReviewChange != null) ViewedBox(row.path, row.reviewed, reviewEnabled, onReviewChange)
     }

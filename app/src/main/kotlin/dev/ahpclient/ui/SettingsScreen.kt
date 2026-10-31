@@ -114,11 +114,9 @@ fun SettingsScreen(
         ) {
             HostsSection(signedIn, tokenExpiresAt, renews, onSignIn, onSignOut, direct, onAddHost, onRemoveHost, connectedId)
             SectionHeader("Display")
-            TileCard(shape = connectedShape(0, 3)) { TilePadding { TextSizeRow(textScale, onTextScale) } }
+            TileCard(shape = connectedShape(0, 2)) { TilePadding { ThemeRow(theme, onTheme) } }
             Spacer(Modifier.height(Design.Gap))
-            TileCard(shape = connectedShape(1, 3)) { TilePadding { ThemeRow(theme, onTheme) } }
-            Spacer(Modifier.height(Design.Gap))
-            TileCard(shape = connectedShape(2, 3)) { TilePadding { KeepAwakeToggle(keepAwake, onKeepAwake) } }
+            TileCard(shape = connectedShape(1, 2)) { TilePadding { KeepAwakeToggle(keepAwake, onKeepAwake) } }
             if (!proUnlocked || onDebugProChange != null) {
                 ProSection(proUnlocked, onUnlockPro, onPurchasePro, onRestorePro, onDebugProChange)
             }
@@ -132,17 +130,23 @@ fun SettingsScreen(
             }
             SectionHeader("Permissions")
             Text(
-                if (appliesTo != null) "These apply to “$appliesTo” only. Each host you add has its own." else "These apply to your VS Code (Remote Tunnel Access) hosts. A host added by address has its own, set while connected to it.",
+                if (appliesTo != null) "Applies to “$appliesTo” only." else "Applies to your VS Code tunnel hosts.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp).testTag("permissions_scope"),
             )
-            TileCard(shape = connectedShape(0, 2)) {
-                TilePadding { InteractionToggle(interactionAllowed, onInteractionChange, supported = interactionSupported, proUnlocked = proUnlocked) }
-            }
-            Spacer(Modifier.height(Design.Gap))
-            TileCard(shape = connectedShape(1, 2)) {
-                TilePadding { ManagementToggle(managementAllowed, available = interactionAllowed && interactionSupported && proUnlocked, onChange = onManagementChange) }
+            TileCard(shape = connectedShape(0, 1)) {
+                TilePadding {
+                    InteractionToggle(
+                        allowed = interactionAllowed,
+                        onChange = { on ->
+                            onInteractionChange(on)
+                            onManagementChange(on)
+                        },
+                        supported = interactionSupported,
+                        proUnlocked = proUnlocked,
+                    )
+                }
             }
         }
     }
@@ -169,8 +173,7 @@ private fun ProSection(
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Unlock Pro", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "Free lets you connect to a host and watch live transcripts, diffs and terminals. " +
-                            "Pro unlocks background monitoring and notifications, acting for you, looking after sessions, and connecting to multiple hosts at once.",
+                        "Free watches any session on one host. Pro unlocks acting on sessions, background alerts, and connecting to multiple hosts.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.testTag("pro_description"),
@@ -195,28 +198,28 @@ private fun ProSection(
             shape = if (!proUnlocked) connectedShape(1, 2) else connectedShape(0, 1),
         ) {
             TilePadding {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 48.dp)
-                        .toggleable(
-                            value = proUnlocked,
-                            role = Role.Switch,
-                            onValueChange = onDebugProChange,
-                        )
-                        .testTag("debug_pro_toggle"),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Pro tier (debug preview)", style = MaterialTheme.typography.bodyLarge)
-                        Text(
-                            "Turn off to test the Free read-only tier, or tap Unlock Pro to simulate purchasing Pro.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .toggleable(
+                                value = proUnlocked,
+                                role = Role.Switch,
+                                onValueChange = onDebugProChange,
+                            )
+                            .testTag("debug_pro_toggle"),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("Pro tier (debug preview)", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                        Switch(checked = proUnlocked, onCheckedChange = null)
                     }
-                    Switch(checked = proUnlocked, onCheckedChange = null)
+                    Text(
+                        "Toggle to test Free vs. Pro.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
@@ -249,7 +252,7 @@ private fun ProUpgradeDialog(
                 when (val res = call()) {
                     BillingResult.Unlocked -> onDismiss()
                     BillingResult.Cancelled -> {}
-                    BillingResult.NotFound -> message = "No previous Pro purchase was found for this account."
+                    BillingResult.NotFound -> message = "No previous Pro purchase was found."
                     is BillingResult.Unavailable -> message = res.message
                 }
             } finally {
@@ -265,7 +268,7 @@ private fun ProUpgradeDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    "One-time unlock for acting on sessions, looking after sessions, background monitoring and notifications, and connecting to multiple hosts at once.",
+                    "One-time unlock for acting on sessions, background alerts, and connecting to multiple hosts.",
                 )
                 val msg = message
                 if (msg != null) {
@@ -342,8 +345,8 @@ private fun HostsSection(
                 Text("GitHub", style = MaterialTheme.typography.bodyLarge)
                 // A sign-in the app renews on its own has no end worth showing: the access token it holds lasts hours, but the sign-in does not.
                 val status = when {
-                    !signedIn && onSignIn != null -> "Not signed in. Sign in to see your VS Code hosts."
-                    !signedIn -> "Not signed in. Disconnect from this host to sign in."
+                    !signedIn && onSignIn != null -> "Not signed in."
+                    !signedIn -> "Not signed in. Disconnect to sign in."
                     renews -> "Signed in. Renews itself."
                     tokenExpiresAt != null -> "Signed in until ${dateTimeFormat.format(tokenExpiresAt)}."
                     else -> "Signed in."
@@ -360,7 +363,7 @@ private fun HostsSection(
     SectionHeader("Hosts you added")
     if (direct.isEmpty()) {
         Text(
-            "None yet. A host that listens on its own address, such as ahpd, is added by that address.",
+            "None added yet.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp).testTag("no_direct_hosts"),
@@ -388,7 +391,7 @@ private fun HostsSection(
             title = { Text("Remove “${host.name}”?") },
             text = {
                 Text(
-                    "This phone forgets the host's address, its token and what you allowed this app to do there. Nothing changes on the host." +
+                    "Forgets this host, its token, and its permissions." +
                         if (host.id == connectedId) " It is connected now, so the connection ends too." else "",
                 )
             },
@@ -403,34 +406,13 @@ private fun HostsSection(
             title = { Text("Sign out?") },
             text = {
                 Text(
-                    "This phone forgets its GitHub sign-in. You will need to sign in again." +
-                        if (connectedId != null) " The host connected now is left too, and you go back to the sign-in screen." else "",
+                    "Forgets your GitHub sign-in." +
+                        if (connectedId != null) " Leaves the host connected now and returns to the sign-in screen." else "",
                 )
             },
             confirmButton = { TextButton(onClick = { confirmingSignOut = false; onSignOut() }, modifier = Modifier.testTag("sign_out_confirm")) { Text("Sign out") } },
             dismissButton = { TextButton(onClick = { confirmingSignOut = false }, modifier = Modifier.testTag("sign_out_cancel")) { Text("Cancel") } },
         )
-    }
-}
-
-/** The size of the text in chats: a slider in even steps, the same size a pinch on a chat sets, with a way back to normal. */
-@Composable
-private fun TextSizeRow(scale: Float, onChange: (Float) -> Unit) {
-    Column(Modifier.fillMaxWidth().testTag("text_size_section")) {
-        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("Text size", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-            Text(TextScale.percent(scale), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("text_size_value"))
-            TextButton(onClick = { onChange(TextScale.DEFAULT) }, enabled = scale != TextScale.DEFAULT, modifier = Modifier.heightIn(min = 48.dp).testTag("text_size_reset")) { Text("Reset") }
-        }
-        val steps = ((TextScale.MAX - TextScale.MIN) / TextScale.STEP).roundToInt() - 1
-        Slider(
-            value = TextScale.clamp(scale),
-            onValueChange = { onChange(TextScale.snap(it)) },
-            valueRange = TextScale.MIN..TextScale.MAX,
-            steps = steps,
-            modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Text size" }.testTag("text_size_slider"),
-        )
-        Text("Pinch a chat to change it too.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -496,10 +478,10 @@ internal fun MonitorToggle(enabled: Boolean, notificationsAllowed: Boolean, onCh
         }
         Text(
             when {
-                !proUnlocked -> "Requires Pro unlock. The list updates while the app is open."
-                !enabled -> "Off: the list updates only while the app is open."
-                notificationsAllowed -> "On: stays connected with the screen off and notifies you when a session needs you."
-                else -> "On, but notifications are blocked, so you won't be told. Allow them in Android settings."
+                !proUnlocked -> "Requires Pro."
+                !enabled -> "Off: updates only while open."
+                notificationsAllowed -> "On: stays connected and notifies you when a session needs you."
+                else -> "On, but notifications are blocked in Android settings."
             },
             style = MaterialTheme.typography.bodyMedium,
             color = if (enabled && !notificationsAllowed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -529,10 +511,10 @@ internal fun FinishedAllToggle(on: Boolean, monitoring: Boolean, onChange: (Bool
         }
         Text(
             when {
-                !proUnlocked -> "Requires Pro unlock."
-                on && monitoring -> "On: you are told when a session stops working."
-                on -> "On, but it needs Monitor in background to be on."
-                else -> "Off: choose sessions from their menu."
+                !proUnlocked -> "Requires Pro."
+                on && monitoring -> "On: you are told when a session stops."
+                on -> "On, but needs Monitor in background."
+                else -> "Off: per-session alerts only."
             },
             style = MaterialTheme.typography.bodyMedium,
             color = if (on && !monitoring) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,

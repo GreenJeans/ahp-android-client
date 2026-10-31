@@ -185,4 +185,44 @@ class SessionFilterSheetTest {
             rule.onRoot().tryPerformAccessibilityChecks()
         }
     }
+
+    @Test
+    fun longWorkspaceFacetListCollapsesToEightAndExpandsOnShowAll() {
+        val h1 = HostRef.Tunnel(host)
+        val entries = (1..12).map { i ->
+            HostSessionEntry(
+                h1,
+                summary(
+                    "ahp-session:/w$i",
+                    "Session $i",
+                    1,
+                    "2026-10-26T10:00:00.000Z",
+                    ""","project":{"uri":"file:///w$i","displayName":"repo-$i"}""",
+                ),
+            )
+        }
+        val filter = SessionFilter.DEFAULT
+        val model = SessionListModel.fromEntries(entries, filter, now)
+        rule.setContent {
+            AhpTheme {
+                SessionFilterSheet(
+                    model = model,
+                    filter = filter,
+                    onFilterChange = {},
+                    onReset = {},
+                    onDismiss = {},
+                )
+            }
+        }
+
+        rule.onNodeWithTag("facet_workspace_toggle_all")
+            .performScrollTo()
+            .assertIsDisplayed()
+            .assertTextEquals("Show all (12)")
+            .assertTouchTargetAtLeast(48.dp)
+            .performClick()
+
+        rule.onNodeWithTag("facet_workspace_toggle_all").assertTextEquals("Show fewer")
+        rule.onNodeWithTag("facet_workspace_repo-12").performScrollTo().assertIsDisplayed()
+    }
 }

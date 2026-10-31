@@ -166,12 +166,40 @@ private fun Shell(
 
     val multiHostEntries = ArrayList<HostSessionEntry>()
     val hostConnections = ArrayList<Pair<HostRef, ConnState?>>(activeHostList.size)
+    val rawManageTargets = ArrayList<HostManageTarget>(activeHostList.size)
     for (ch in activeHostList) {
         androidx.compose.runtime.key(ch.host.id) {
             val hostSessions by ch.session.root.sessions.collectAsStateWithLifecycle()
             val hostConn by ch.session.connection.collectAsStateWithLifecycle()
+            val hostCanManage by ch.session.canManage.collectAsStateWithLifecycle()
+            val hostStale by ch.session.root.stale.collectAsStateWithLifecycle()
+            val hostRoot by ch.session.root.root.collectAsStateWithLifecycle()
             hostSessions.mapTo(multiHostEntries) { s -> HostSessionEntry(host = ch.host, summary = s) }
             hostConnections += ch.host to hostConn
+            if (hostCanManage && !hostStale) {
+                val hostManager = remember(controller, ch.session) { controller.managerFor(ch.session) }
+                val target = remember(hostManager, ch.host.id, ch.host.name, hostRoot, hostSessions) {
+                    HostManageTarget(
+                        hostId = ch.host.id,
+                        hostName = ch.host.name,
+                        agents = hostManager.offeredAgents().map { AgentOption(it.provider, it.displayName) },
+                        folders = hostManager.offeredFolders(),
+                        newSession = hostManager::newSession,
+                        sessionSettings = hostManager::sessionSettings,
+                    )
+                }
+                rawManageTargets += target
+            }
+        }
+    }
+    val orderedManageTargets = remember(rawManageTargets, connected?.host?.id) {
+        val focusedId = connected?.host?.id
+        rawManageTargets.sortedByDescending { it.hostId == focusedId }
+    }
+
+    LaunchedEffect(proUnlocked, interactionAllowed, managementAllowed) {
+        if (proUnlocked && interactionAllowed && !managementAllowed) {
+            controller.setManagement(true)
         }
     }
 
@@ -186,7 +214,7 @@ private fun Shell(
     val inbox = remember(multiHostEntries, now) { Inbox.fromEntries(multiHostEntries, now) }
     // Nothing to look after sessions with unless the connection is on the manage tier: no controls, not disabled ones. Nor from a stale list.
     val manageActions = if (canManage && !stale) {
-        remember(controller.manager, rootState, listed) {
+        remember(controller.manager, rootState, listed, orderedManageTargets) {
             ManageActionsUi(
                 agents = controller.manager.offeredAgents().map { AgentOption(it.provider, it.displayName) },
                 folders = controller.manager.offeredFolders(),
@@ -197,6 +225,7 @@ private fun Shell(
                 sessionSettings = controller.manager::sessionSettings,
                 disposeSession = controller.manager::disposeSession,
                 disposeChat = controller.manager::disposeChat,
+                hosts = orderedManageTargets,
             )
         }
     } else {
@@ -247,6 +276,7 @@ private fun Shell(
                 filter = savedFilter,
                 onFilterChange = ui::setSessionFilter,
                 onOpenSessionOnHost = showSessionOnHost,
+                onSessionCreatedOnHost = showSessionOnHost,
             )
         },
     ) {
@@ -272,13 +302,14 @@ private fun Shell(
                 interactionAllowed = interactionAllowed,
                 interactionSupported = controller.interactionSupported,
                 onInteractionChange = { on ->
-                    scope.launch { if (!controller.setInteraction(on)) Toast.makeText(context, "Could not save the setting", Toast.LENGTH_SHORT).show() }
+                    scope.launch {
+                        val saved = controller.setInteraction(on) && (!on || controller.setManagement(true))
+                        if (!saved) Toast.makeText(context, "Could not save the setting", Toast.LENGTH_SHORT).show()
+                    }
                 },
                 managementAllowed = managementAllowed,
                 appliesTo = controller.consentScope,
-                onManagementChange = { on ->
-                    scope.launch { if (!controller.setManagement(on)) Toast.makeText(context, "Could not save the setting", Toast.LENGTH_SHORT).show() }
-                },
+                onManagementChange = {},
                 textScale = textScale,
                 onTextScale = ui::setTextScale,
                 theme = theme,
