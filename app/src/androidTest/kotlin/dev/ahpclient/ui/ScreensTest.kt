@@ -12,6 +12,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -259,8 +260,8 @@ class ScreensTest {
             onUnlockPro = { unlocks++ },
         )
 
-        rule.onNodeWithTag("pro_section").assertIsDisplayed()
-        rule.onNodeWithTag("unlock_pro").assertIsDisplayed().assertTouchTargetAtLeast(48.dp).performClick()
+        rule.onNodeWithTag("pro_section").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithTag("unlock_pro").performScrollTo().assertIsDisplayed().assertTouchTargetAtLeast(48.dp).performClick()
         assertEquals(1, unlocks)
     }
 
@@ -293,7 +294,7 @@ class ScreensTest {
             }
         }
 
-        rule.onNodeWithTag("unlock_pro").assertIsDisplayed().performClick()
+        rule.onNodeWithTag("unlock_pro").performScrollTo().assertIsDisplayed().performClick()
         rule.onNodeWithTag("pro_upgrade_dialog").assertIsDisplayed()
 
         rule.onNodeWithTag("pro_restore").assertIsDisplayed().assertTouchTargetAtLeast(48.dp).performClick()

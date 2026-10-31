@@ -376,4 +376,80 @@ class ProEntitlementTest {
             assertTrue(controller.proUnlocked.value)
         }
     }
+
+    @Test
+    fun `storeBillingGateway acknowledges purchases handles pending and already owned states and fails closed when acknowledgment fails`() = runTest {
+        val acknowledgedTokens = mutableListOf<String>()
+        var acknowledgeSucceeds = true
+        var queryResult: StoreQueryResult = StoreQueryResult.Success(emptyList())
+        var launchResult: StoreLaunchResult = StoreLaunchResult.Cancelled
+        var launchCalls = 0
+
+        val driver = object : StoreBillingDriver {
+            override suspend fun queryPurchases(): StoreQueryResult = queryResult
+            override suspend fun acknowledgePurchase(purchaseToken: String): Boolean {
+                if (acknowledgeSucceeds) acknowledgedTokens += purchaseToken
+                return acknowledgeSucceeds
+            }
+            override suspend fun launchPurchaseFlow(productId: String): StoreLaunchResult {
+                launchCalls++
+                return launchResult
+            }
+        }
+        val gateway = StoreBillingGateway(driver)
+
+        // 1. No owned purchases -> restore returns NotFound; cancelled purchase returns Cancelled.
+        assertSame(BillingResult.NotFound, gateway.restorePurchases())
+        assertSame(BillingResult.Cancelled, gateway.purchasePro())
+        assertEquals(1, launchCalls)
+
+        // 2. Pending purchase -> returns Unavailable with pending explanation.
+        val pendingRecord = StorePurchase(
+            products = listOf(BillingGateway.PRODUCT_ID),
+            state = StorePurchaseState.PENDING,
+            isAcknowledged = false,
+            purchaseToken = "tok-pending",
+        )
+        launchResult = StoreLaunchResult.Purchased(listOf(pendingRecord))
+        val pendingRes = assertIs<BillingResult.Unavailable>(gateway.purchasePro())
+        assertTrue(pendingRes.message.contains("pending"))
+        assertTrue(acknowledgedTokens.isEmpty())
+
+        // 3. Unacknowledged PURCHASED record when acknowledgment fails -> fails closed (Unavailable).
+        val unackRecord = StorePurchase(
+            products = listOf(BillingGateway.PRODUCT_ID),
+            state = StorePurchaseState.PURCHASED,
+            isAcknowledged = false,
+            purchaseToken = "tok-unack",
+        )
+        acknowledgeSucceeds = false
+        launchResult = StoreLaunchResult.Purchased(listOf(unackRecord))
+        val ackFailRes = assertIs<BillingResult.Unavailable>(gateway.purchasePro())
+        assertTrue(ackFailRes.message.contains("acknowledge"))
+
+        // 4. Unacknowledged PURCHASED record when acknowledgment succeeds -> acknowledges token and returns Unlocked.
+        acknowledgeSucceeds = true
+        assertSame(BillingResult.Unlocked, gateway.purchasePro())
+        assertEquals(listOf("tok-unack"), acknowledgedTokens)
+
+        // 5. AlreadyOwned from launchPurchaseFlow -> falls back to restorePurchases() and unlocks.
+        val ackedRecord = unackRecord.copy(isAcknowledged = true, purchaseToken = "tok-acked")
+        launchResult = StoreLaunchResult.AlreadyOwned
+        // Make initial pre-check return empty so launchPurchaseFlow is reached, then return ackedRecord on fallback query:
+        var queries = 0
+        val statefulGateway = StoreBillingGateway(object : StoreBillingDriver by driver {
+            override suspend fun queryPurchases(): StoreQueryResult {
+                queries++
+                return if (queries == 1) StoreQueryResult.Success(emptyList()) else StoreQueryResult.Success(listOf(ackedRecord))
+            }
+        })
+        assertSame(BillingResult.Unlocked, statefulGateway.purchasePro())
+        assertEquals(2, queries)
+
+        // 6. Pre-existing purchase found on initial queryPurchases -> purchasePro unlocks immediately without launching sheet.
+        val callsBefore = launchCalls
+        queryResult = StoreQueryResult.Success(listOf(ackedRecord))
+        assertSame(BillingResult.Unlocked, gateway.purchasePro())
+        assertEquals(callsBefore, launchCalls)
+    }
 }

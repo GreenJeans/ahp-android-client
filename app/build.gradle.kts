@@ -16,10 +16,31 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    val keystorePath = providers.gradleProperty("AHP_KEYSTORE_FILE").orElse(providers.environmentVariable("AHP_KEYSTORE_FILE")).orNull
+    val keystorePassword = providers.gradleProperty("AHP_KEYSTORE_PASSWORD").orElse(providers.environmentVariable("AHP_KEYSTORE_PASSWORD")).orNull
+    val keyAliasName = providers.gradleProperty("AHP_KEY_ALIAS").orElse(providers.environmentVariable("AHP_KEY_ALIAS")).orNull
+    val keyPasswordValue = providers.gradleProperty("AHP_KEY_PASSWORD").orElse(providers.environmentVariable("AHP_KEY_PASSWORD")).orNull
+    val hasReleaseSigning = !keystorePath.isNullOrBlank() && !keystorePassword.isNullOrBlank() &&
+        !keyAliasName.isNullOrBlank() && !keyPasswordValue.isNullOrBlank() && file(keystorePath).exists()
+
+    if (hasReleaseSigning) {
+        signingConfigs {
+            create("release") {
+                storeFile = file(keystorePath!!)
+                storePassword = keystorePassword
+                keyAlias = keyAliasName
+                keyPassword = keyPasswordValue
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
@@ -49,6 +70,7 @@ dependencies {
     implementation(libs.lifecycle.process)
     implementation(libs.work.runtime.ktx)
     implementation(libs.markdown.renderer.m3)
+    implementation(libs.billing.ktx)
     debugImplementation(libs.compose.ui.tooling)
     debugImplementation(libs.compose.ui.test.manifest)
 
@@ -57,6 +79,7 @@ dependencies {
     androidTestImplementation(libs.compose.ui.test.accessibility)
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.espresso.core)
     androidTestImplementation(libs.junit4)
     androidTestImplementation(libs.work.testing)
 }

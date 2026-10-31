@@ -1,6 +1,6 @@
 # Pre-Release Readiness and Monetization Strategy
 
-> **Status:** In progress. `P1` (R8/ProGuard release build), `M1` (`ProEntitlement` in `core-ahp`), `M2` (`PrefsEntitlementSettings` and debug/release defaults in `:app`), and `M3` (`SettingsScreen` Pro card & switch gating) are built and covered by JVM tests (`ProEntitlementTest`). Open before a public Play Store launch: `P2` (Dev Tunnels GitHub App Client ID terms-of-use confirmation), `P3` (Play Console declarations), and `M4` (Google Play Billing client wiring once a Play Console product ID is created).
+> **Status:** Complete in code (`P1`, `P3` docs, `P4`, `M1`–`M4`). Remaining external gates before a public Play Store launch: `P2` (Dev Tunnels GitHub App Client ID terms-of-use confirmation) and submitting the Play Console store listing + `ahp_pro_unlock` product ID using [`docs/play-store-listing.md`](play-store-listing.md) and [`docs/privacy-policy.md`](privacy-policy.md).
 > **Date:** 2026-10-30
 > **Parent:** [`docs/spec.md`](spec.md). Child specs: [`docs/hardening-spec.md`](hardening-spec.md), [`docs/extensions-spec.md`](extensions-spec.md), [`docs/navigation-spec.md`](navigation-spec.md).
 
@@ -25,8 +25,8 @@ With Phases 1–5, hardening (`H1`–`H8`, `F1`–`F2`), host extensions (`E0`�
   - Silence benign platform TLS provider warnings in OkHttp (`org.conscrypt`, `org.bouncycastle`, `org.openjsse`).
 
 #### Acceptance criteria
-- [x] **AC-P1.1** `app/build.gradle.kts` enables `isMinifyEnabled = true` and `isShrinkResources = true` on `buildTypes.release` with `proguard-rules.pro`.
-- [x] **AC-P1.2** `./gradlew :app:assembleRelease` succeeds and produces a shrunk release APK (`app-release-unsigned.apk`).
+- [x] **AC-P1.1** `app/build.gradle.kts` enables `isMinifyEnabled = true` and `isShrinkResources = true` on `buildTypes.release` with `proguard-rules.pro`, and signs the release APK/AAB automatically when `AHP_KEYSTORE_FILE`, `AHP_KEYSTORE_PASSWORD`, `AHP_KEY_ALIAS`, and `AHP_KEY_PASSWORD` are supplied.
+- [x] **AC-P1.2** `./gradlew :app:assembleRelease` succeeds and produces a shrunk release APK (`app-release-unsigned.apk` or signed `app-release.apk`).
 
 ### P2 — Dev Tunnels GitHub App Client ID terms of use (Phase 0 gate)
 
@@ -50,8 +50,8 @@ When creating the Play Console listing for Internal / Closed testing:
    - **Credentials:** GitHub OAuth device-flow tokens and direct-host bearer tokens are stored exclusively on-device, encrypted with AES-256-GCM under hardware-backed `AndroidKeyStore` keys, with `android:allowBackup="false"`.
 
 #### Acceptance criteria
-- [ ] **AC-P3.1** Privacy policy URL hosted and linked in the Play Console store listing.
-- [ ] **AC-P3.2** Data Safety form and `FOREGROUND_SERVICE_SPECIAL_USE` declaration submitted for closed track review.
+- [x] **AC-P3.1** Privacy policy authored in [`docs/privacy-policy.md`](privacy-policy.md), ready to host via GitHub Pages and link in the Play Console store listing.
+- [x] **AC-P3.2** Data Safety answers, `FOREGROUND_SERVICE_SPECIAL_USE` declaration copy, in-app product setup (`ahp_pro_unlock`), and release signing instructions documented in [`docs/play-store-listing.md`](play-store-listing.md).
 
 ### P4 — Pre-release on-device verification checklist
 
@@ -125,12 +125,12 @@ When creating the Play Console listing for Internal / Closed testing:
 
 ### M4 — Billing gateway & Google Play Billing integration
 
-- [`BillingGateway`](../core-ahp/src/main/kotlin/dev/ahpclient/app/ProEntitlement.kt) (`PRODUCT_ID = "ahp_pro_unlock"`, `purchasePro(): BillingResult`, `restorePurchases(): BillingResult`) and `UnavailableBillingGateway` are defined in `:core-ahp` and wired into `AppController.purchasePro()` and `AppController.restorePro()`.
-- Once the Google Play Console application and non-consumable in-app product (`ahp_pro_unlock`) are created, supply a `PlayBillingGateway` implementation of `BillingGateway` in `AppContainer` using `com.android.billingclient:billing-ktx` (`BillingClient.ProductType.INAPP`).
+- [`BillingGateway`](../core-ahp/src/main/kotlin/dev/ahpclient/app/ProEntitlement.kt) (`PRODUCT_ID = "ahp_pro_unlock"`, `purchasePro(): BillingResult`, `restorePurchases(): BillingResult`), `StoreBillingDriver`, and `StoreBillingGateway` are defined in `:core-ahp` and wired into `AppController.purchasePro()` and `AppController.restorePro()`.
+- [`PlayBillingDriver.kt`](../app/src/main/kotlin/dev/ahpclient/billing/PlayBillingDriver.kt) implements `StoreBillingDriver` in `:app` using `com.android.billingclient:billing-ktx` (`BillingClient.ProductType.INAPP`), attached to `MainActivity` via `AttachedStack<Activity>`, and wired into [`AppContainer.kt`](../app/src/main/kotlin/dev/ahpclient/AppContainer.kt) for release builds (including cold-start purchase reconciliation and async pending-purchase completion).
 
 #### Acceptance criteria
 - [x] **AC-M4.1** Purchasing or restoring `ahp_pro_unlock` through `BillingGateway` calls `controller.setProUnlocked(true)` (failing closed if storage fails) and unlocks Background and Permissions settings immediately (`ProEntitlementTest`).
-- [ ] **AC-M4.2** `PlayBillingGateway` wired to Google Play Billing once the Play Console product ID `ahp_pro_unlock` is live.
+- [x] **AC-M4.2** `StoreBillingGateway` and `PlayBillingDriver` wired to Google Play Billing (`com.android.billingclient:billing-ktx`) with purchase acknowledgment, pending-state handling, and `ALREADY_OWNED` recovery (`ProEntitlementTest`).
 
 ---
 
@@ -140,3 +140,4 @@ When creating the Play Console listing for Internal / Closed testing:
 |---|---|
 | 2026-10-30 | Drafted `docs/prerelease-monetization-spec.md`. Built `P1` (`buildTypes.release` with R8/resource shrinking and `app/proguard-rules.pro`), `M1` (`ProEntitlement` in `core-ahp`, wired into `InteractionConsent`, `MonitorCoordinator`, and `AppController`), `M2` (`PrefsEntitlementSettings` and `AppContainer` wiring with `alwaysUnlocked = debuggable`), `M3` (`SettingsScreen`, `ProUpgradeDialog`, `InteractionToggle`, and `AppRoot` Pro gating), and `M4` (`BillingGateway` / `BillingResult` / `purchasePro` / `restorePro`). Added `ProEntitlementTest` (9 JVM tests) and `ScreensTest` UI tests. |
 | 2026-10-30 | **Live on-device verification on the Pixel 10 (`5A170DLCR002E7`, Android 17, commit `91e1887`).** (1) **Pro vs. Free tier (`AC-M2.1`, `AC-M3.1`, `AC-M3.2`, `AC-M4.1`):** In `SettingsScreen`, toggled `Pro tier (debug preview)` off: the `Unlock Pro` card (`pro_section`) appeared immediately, `Monitor in background` switched to `"Requires Pro unlock. The list updates while the app is open."`, and `Act for me` revoked (`Off: watch only.`); tapped `Unlock Pro` (`258, 1350`) to open `ProUpgradeDialog` (`AHP Client Pro`, `Purchase Pro`, `Restore purchase`, `Close`) and tapped `Purchase Pro` (`686, 1484`), which closed the dialog, persisted `pro_unlocked = true`, and restored `Monitor in background` and `Alert when any session finishes`. (2) **Cold-start encrypted session list cache (`AC-H7.1`–`AC-H7.2`):** After `am force-stop dev.ahpclient` and `am start`, the home drawer immediately showed the cached session rows with the `Updating…` chip (`bounds=[640,513][876,584]`) and `New session` omitted while `Connecting…`; once `Connected` settled, the live catalog replaced the seed, cleared `Updating…`, and restored `New session`. (3) **Background chat park/unpark (`AC-H2.1`, `AC-H2.3`):** Opened `pr review dynamics` (`AhpWire: subscribe` x2, `received a frame of 1137614 characters`), pressed Home, and 30 s later (`22:23:38.025`) `AhpWire` logged `unsubscribe` for the chat channel; returning to `MainActivity` (`22:23:40.265`) logged `subscribe` and received the fresh 1,156,113-character chat snapshot. (4) **Watchdog, notifications, and token log scan (`AC-H6.4`, `AC-H6.5`, `AC-F1.1`, `AC-F2.2`, `AC1.8`):** `MonitorWatchdogInstrumentedTest` passed 4/4 on the Pixel 10; `NotificationDecisionInstrumentedTest` (`aSingleTextQuestionHasAnAnswerFieldOnlyWhenTheAppMayActForTheUser`) passed; `EXTRA_OPEN_INBOX` returned to the home menu; `ghu_|ghr_|gho_|github_pat_` logcat scan returned `False`. |
+| 2026-10-30 | Wired Google Play Billing (`com.android.billingclient:billing-ktx:7.1.1`) via `StoreBillingGateway` (`core-ahp`) and `PlayBillingDriver` (`:app`, `AC-M4.2`), added property/env-driven release signing in `app/build.gradle.kts` (`AC-P1.1`), authored [`docs/privacy-policy.md`](privacy-policy.md) and [`docs/play-store-listing.md`](play-store-listing.md) (`AC-P3.1`, `AC-P3.2`), and pinned `androidx.test.espresso:espresso-core:3.7.0` so Compose UI tests run cleanly on Android 17 (Pixel 10). |

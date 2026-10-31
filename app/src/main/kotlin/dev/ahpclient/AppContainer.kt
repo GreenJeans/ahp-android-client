@@ -6,6 +6,8 @@ import android.os.Build
 import android.util.Log
 import androidx.datastore.preferences.preferencesDataStoreFile
 import dev.ahpclient.app.AppController
+import dev.ahpclient.app.BillingGateway
+import dev.ahpclient.app.BillingResult
 import dev.ahpclient.app.DirectSessionFactory
 import dev.ahpclient.app.FinishedAlerts
 import dev.ahpclient.app.HostSessionFactory
@@ -13,8 +15,10 @@ import dev.ahpclient.app.InteractionConsent
 import dev.ahpclient.app.MonitorCoordinator
 import dev.ahpclient.app.OnScreen
 import dev.ahpclient.app.ProEntitlement
+import dev.ahpclient.app.StoreBillingGateway
 import dev.ahpclient.app.WatchdogDecision
 import dev.ahpclient.auth.GitHubDeviceAuth
+import dev.ahpclient.billing.PlayBillingDriver
 import dev.ahpclient.data.PrefsDirectHostStore
 import dev.ahpclient.data.PrefsEntitlementSettings
 import dev.ahpclient.data.PrefsFinishedWatch
@@ -96,14 +100,27 @@ class AppContainer(context: Context) {
         )
     }
 
-    private val billingGateway: dev.ahpclient.app.BillingGateway by lazy {
+    /** Google Play Billing driver; attached to the foreground activity while on screen. */
+    val billingDriver: PlayBillingDriver by lazy {
+        PlayBillingDriver(appContext) { purchases ->
+            appScope.launch {
+                if (storeBilling.evaluatePurchases(purchases) is BillingResult.Unlocked) {
+                    controller.setProUnlocked(true)
+                }
+            }
+        }
+    }
+
+    private val storeBilling: StoreBillingGateway by lazy { StoreBillingGateway(billingDriver) }
+
+    private val billingGateway: BillingGateway by lazy {
         if (debuggable) {
-            object : dev.ahpclient.app.BillingGateway {
-                override suspend fun purchasePro(): dev.ahpclient.app.BillingResult = dev.ahpclient.app.BillingResult.Unlocked
-                override suspend fun restorePurchases(): dev.ahpclient.app.BillingResult = dev.ahpclient.app.BillingResult.Unlocked
+            object : BillingGateway {
+                override suspend fun purchasePro(): BillingResult = BillingResult.Unlocked
+                override suspend fun restorePurchases(): BillingResult = BillingResult.Unlocked
             }
         } else {
-            dev.ahpclient.app.UnavailableBillingGateway
+            storeBilling
         }
     }
 
@@ -302,6 +319,14 @@ class AppContainer(context: Context) {
         if (started.compareAndSet(false, true)) {
             controller.start()
             monitor.start()
+            if (!debuggable) {
+                // Reconcile any existing or newly completed Google Play Pro purchase on cold start.
+                appScope.launch {
+                    if (storeBilling.restorePurchases() is BillingResult.Unlocked) {
+                        controller.setProUnlocked(true)
+                    }
+                }
+            }
             // Scheduled while monitoring is on, found on at start or turned on later, and taken away when it is turned off, together with
             // any warning it or the coordinator left showing: with monitoring off there is nothing to resume.
             appScope.launch {

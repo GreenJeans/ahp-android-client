@@ -129,3 +129,108 @@ object UnavailableBillingGateway : BillingGateway {
     override suspend fun purchasePro(): BillingResult = BillingResult.Unavailable(DEFAULT_MESSAGE)
     override suspend fun restorePurchases(): BillingResult = BillingResult.Unavailable(DEFAULT_MESSAGE)
 }
+
+/** State of a store purchase record for [BillingGateway.PRODUCT_ID]. */
+enum class StorePurchaseState {
+    PURCHASED,
+    PENDING,
+    UNSPECIFIED,
+}
+
+/** Platform-neutral representation of an in-app purchase record returned by the store SDK. */
+data class StorePurchase(
+    val products: List<String>,
+    val state: StorePurchaseState,
+    val isAcknowledged: Boolean,
+    val purchaseToken: String,
+)
+
+/** Result of querying owned/pending in-app purchases from the store SDK. */
+sealed interface StoreQueryResult {
+    data class Success(val purchases: List<StorePurchase>) : StoreQueryResult
+    data class Error(val message: String) : StoreQueryResult
+}
+
+/** Result of launching the store purchase sheet on the foreground screen. */
+sealed interface StoreLaunchResult {
+    data class Purchased(val purchases: List<StorePurchase>) : StoreLaunchResult
+    data object Cancelled : StoreLaunchResult
+    data object AlreadyOwned : StoreLaunchResult
+    data class Error(val message: String) : StoreLaunchResult
+}
+
+/**
+ * Low-level store operations backed by Google Play Billing (`BillingClient`) on Android.
+ * Kept platform-independent so [StoreBillingGateway] can be tested in pure JVM unit tests.
+ */
+interface StoreBillingDriver {
+    /** Queries currently owned or pending in-app purchases from the store. */
+    suspend fun queryPurchases(): StoreQueryResult
+
+    /** Acknowledges a completed purchase by its [purchaseToken] so Google Play does not auto-refund it after 3 days. */
+    suspend fun acknowledgePurchase(purchaseToken: String): Boolean
+
+    /** Launches the store purchase sheet on the foreground screen and returns the resulting purchase update. */
+    suspend fun launchPurchaseFlow(productId: String): StoreLaunchResult
+}
+
+/**
+ * Coordinates purchasing and restoring [BillingGateway.PRODUCT_ID] against a [StoreBillingDriver], ensuring every
+ * completed purchase is acknowledged with the store before reporting [BillingResult.Unlocked].
+ */
+class StoreBillingGateway(
+    private val driver: StoreBillingDriver,
+    private val productId: String = BillingGateway.PRODUCT_ID,
+) : BillingGateway {
+
+    override suspend fun purchasePro(): BillingResult {
+        // Check existing purchases first so a user who already owns Pro on another device unlocks immediately without launching a sheet.
+        val existing = restorePurchases()
+        if (existing is BillingResult.Unlocked) return BillingResult.Unlocked
+
+        return when (val launched = driver.launchPurchaseFlow(productId)) {
+            StoreLaunchResult.Cancelled -> BillingResult.Cancelled
+            StoreLaunchResult.AlreadyOwned -> {
+                val restored = restorePurchases()
+                if (restored is BillingResult.NotFound) {
+                    BillingResult.Unavailable("Already owned in Google Play, but purchase record could not be loaded.")
+                } else {
+                    restored
+                }
+            }
+            is StoreLaunchResult.Error -> BillingResult.Unavailable(launched.message)
+            is StoreLaunchResult.Purchased -> evaluatePurchases(launched.purchases, onMissing = {
+                BillingResult.Unavailable("Purchase did not include Pro unlock.")
+            })
+        }
+    }
+
+    override suspend fun restorePurchases(): BillingResult {
+        return when (val queried = driver.queryPurchases()) {
+            is StoreQueryResult.Error -> BillingResult.Unavailable(queried.message)
+            is StoreQueryResult.Success -> evaluatePurchases(queried.purchases, onMissing = { BillingResult.NotFound })
+        }
+    }
+
+    /** Evaluates store purchases for [productId], acknowledging any unacknowledged [StorePurchaseState.PURCHASED] record first. */
+    suspend fun evaluatePurchases(
+        purchases: List<StorePurchase>,
+        onMissing: () -> BillingResult = { BillingResult.NotFound },
+    ): BillingResult {
+        val matching = purchases.filter { productId in it.products }
+        val purchased = matching.firstOrNull { it.state == StorePurchaseState.PURCHASED }
+        if (purchased != null) {
+            if (!purchased.isAcknowledged) {
+                val ok = driver.acknowledgePurchase(purchased.purchaseToken)
+                if (!ok) {
+                    return BillingResult.Unavailable("Could not acknowledge the purchase with Google Play. Try Restore purchase.")
+                }
+            }
+            return BillingResult.Unlocked
+        }
+        if (matching.any { it.state == StorePurchaseState.PENDING }) {
+            return BillingResult.Unavailable("Purchase is pending confirmation in Google Play.")
+        }
+        return onMissing()
+    }
+}
