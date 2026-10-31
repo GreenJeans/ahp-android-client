@@ -74,11 +74,14 @@ class CapabilityPolicy private constructor(
             "chat/turnStarted",
             "chat/pendingMessageSet",
             "chat/pendingMessageRemoved",
+            "chat/queuedMessagesReordered",
             "chat/inputAnswerChanged",
             "chat/inputCompleted",
             "chat/toolCallConfirmed",
             "chat/toolCallResultConfirmed",
             "chat/turnCancelled",
+            "chat/turnResume",
+            "chat/truncated",
             CHAT_CONFIG_CHANGED,
         )
 

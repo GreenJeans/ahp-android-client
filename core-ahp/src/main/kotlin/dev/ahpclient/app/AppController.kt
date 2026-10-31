@@ -1,5 +1,7 @@
 package dev.ahpclient.app
 
+import com.microsoft.agenthostprotocol.generated.ChatSource
+import com.microsoft.agenthostprotocol.generated.Message
 import dev.ahpclient.auth.DeviceFlowResult
 import dev.ahpclient.auth.GitHubAuthException
 import dev.ahpclient.auth.GitHubDeviceAuth
@@ -220,7 +222,8 @@ class AppController(
             override suspend fun resolveSessionConfig(provider: String, workingDirectory: String?, config: Map<String, JsonElement>?) =
                 liveSession().resolveSessionConfig(provider, workingDirectory, config)
 
-            override suspend fun createChat(sessionUri: String, chatUri: String) = liveSession().createChat(sessionUri, chatUri)
+            override suspend fun createChat(sessionUri: String, chatUri: String, source: ChatSource?, initialMessage: Message?) =
+                liveSession().createChat(sessionUri, chatUri, source, initialMessage)
 
             override suspend fun disposeSession(uri: String) = liveSession().disposeSession(uri)
 
@@ -243,7 +246,8 @@ class AppController(
             override suspend fun resolveSessionConfig(provider: String, workingDirectory: String?, config: Map<String, JsonElement>?) =
                 session.resolveSessionConfig(provider, workingDirectory, config)
 
-            override suspend fun createChat(sessionUri: String, chatUri: String) = session.createChat(sessionUri, chatUri)
+            override suspend fun createChat(sessionUri: String, chatUri: String, source: ChatSource?, initialMessage: Message?) =
+                session.createChat(sessionUri, chatUri, source, initialMessage)
 
             override suspend fun disposeSession(uri: String) = session.disposeSession(uri)
 

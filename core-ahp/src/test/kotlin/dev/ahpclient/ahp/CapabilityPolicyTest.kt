@@ -9,9 +9,9 @@ class CapabilityPolicyTest {
     private val allowed = setOf("initialize", "reconnect", "ping", "subscribe", "unsubscribe", "listSessions", "fetchTurns", "resourceRead")
 
     private val interactActions = setOf(
-        "chat/turnStarted", "chat/pendingMessageSet", "chat/pendingMessageRemoved", "chat/inputAnswerChanged",
-        "chat/inputCompleted", "chat/toolCallConfirmed", "chat/toolCallResultConfirmed", "chat/turnCancelled",
-        "chat/configChanged",
+        "chat/turnStarted", "chat/pendingMessageSet", "chat/pendingMessageRemoved", "chat/queuedMessagesReordered",
+        "chat/inputAnswerChanged", "chat/inputCompleted", "chat/toolCallConfirmed", "chat/toolCallResultConfirmed",
+        "chat/turnCancelled", "chat/turnResume", "chat/truncated", "chat/configChanged",
     )
 
     // Everything the spec's Design Notes name as denied, plus the rest of the protocol surface.

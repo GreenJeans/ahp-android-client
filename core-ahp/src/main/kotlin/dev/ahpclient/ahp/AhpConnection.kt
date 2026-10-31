@@ -6,6 +6,7 @@ import dev.ahpclient.tunnel.TextSocket
 import com.microsoft.agenthostprotocol.Ahp
 import com.microsoft.agenthostprotocol.generated.ActionEnvelope
 import com.microsoft.agenthostprotocol.generated.AhpErrorCodes
+import com.microsoft.agenthostprotocol.generated.ChatSource
 import com.microsoft.agenthostprotocol.generated.ContentEncoding
 import com.microsoft.agenthostprotocol.generated.CreateChatParams
 import com.microsoft.agenthostprotocol.generated.CreateSessionParams
@@ -20,6 +21,7 @@ import com.microsoft.agenthostprotocol.generated.InitializeResult
 import com.microsoft.agenthostprotocol.generated.JsonRpcErrorCodes
 import com.microsoft.agenthostprotocol.generated.ListSessionsParams
 import com.microsoft.agenthostprotocol.generated.ListSessionsResult
+import com.microsoft.agenthostprotocol.generated.Message
 import com.microsoft.agenthostprotocol.generated.ReconnectParams
 import com.microsoft.agenthostprotocol.generated.ReconnectResult
 import com.microsoft.agenthostprotocol.generated.ResolveSessionConfigParams
@@ -236,8 +238,8 @@ class AhpConnection(
         )
 
     /** Creates the chat at [chatUri], which the client picks, in the session at [sessionUri]. */
-    suspend fun createChat(sessionUri: String, chatUri: String) {
-        val params = CreateChatParams(channel = sessionUri, chat = chatUri)
+    suspend fun createChat(sessionUri: String, chatUri: String, source: ChatSource? = null, initialMessage: Message? = null) {
+        val params = CreateChatParams(channel = sessionUri, chat = chatUri, initialMessage = initialMessage, source = source)
         requestRaw("createChat", json.encodeToJsonElement(CreateChatParams.serializer(), params).jsonObject)
     }
 

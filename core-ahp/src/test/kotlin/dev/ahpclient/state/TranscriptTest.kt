@@ -363,4 +363,46 @@ class TranscriptTest {
         )
         assertFalse(Transcript.from(earlierWaiting).waitingOnYou, "TurnEnd stops the backward scan even when the active turn has no User row")
     }
+
+    @Test
+    fun `user turns carry checkpoint metadata, resumable errors mark TurnEnd, and pendingMessages are surfaced`() {
+        val state = Ahp.json.decodeFromString(
+            ChatState.serializer(),
+            """{"resource":"ahp-chat:/c","title":"Chat","status":8,"modifiedAt":"2026-10-22T10:00:00.000Z",
+                "turns":[
+                  {"id":"t1","message":{"text":"first","origin":{"kind":"user"}},"responseParts":[${markdown("m1", "ok")}],"startedAt":"2026-10-22T10:00:00.000Z","state":"complete"},
+                  {"id":"t2","message":{"text":"second","origin":{"kind":"user"}},"responseParts":[{"kind":"error","error":{"errorType":"network","message":"boom"},"resumable":true}],"startedAt":"2026-10-22T10:01:00.000Z","state":"error"}
+                ],
+                "steeringMessage":{"id":"s1","message":{"text":"steer me","origin":{"kind":"user"}}},
+                "queuedMessages":[{"id":"q1","message":{"text":"queued 1","origin":{"kind":"user"}}}]}""",
+        )
+
+        val t = Transcript.from(state)
+        val users = t.items.filterIsInstance<TranscriptItem.User>()
+        assertEquals(2, users.size)
+        assertEquals("t1", users[0].turnId)
+        assertEquals(0, users[0].turnIndex)
+        assertNull(users[0].previousTurnId)
+        assertEquals(2, users[0].turnsFromHereCount)
+
+        assertEquals("t2", users[1].turnId)
+        assertEquals(1, users[1].turnIndex)
+        assertEquals("t1", users[1].previousTurnId)
+        assertEquals(1, users[1].turnsFromHereCount)
+
+        val ends = t.items.filterIsInstance<TranscriptItem.TurnEnd>()
+        assertFalse(ends[0].resumable)
+        assertTrue(ends[1].resumable)
+        assertEquals("t2", ends[1].turnId)
+
+        assertEquals(
+            listOf(
+                PendingMessageView("s1", "steer me", PendingMessageKind.STEERING),
+                PendingMessageView("q1", "queued 1", PendingMessageKind.QUEUED),
+            ),
+            t.pendingMessages,
+        )
+        assertEquals("t2", t.lastTurnId)
+        assertNull(t.activeTurnId)
+    }
 }

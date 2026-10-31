@@ -780,4 +780,160 @@ class ChatInteractorTest {
         assertEquals(InteractResult.NotAllowed, readOnly.interactor.answerText("req-1", "main"))
         assertEquals("Nothing was sent.", InteractMessages.describeAnswer(InteractResult.Blank))
     }
+
+    // ---- checkpoints, edit & resend, retry, stop & send, pending queue ---------------------------------------------
+
+    private fun multiTurnChat(
+        active: Boolean = false,
+        lastState: String = "complete",
+        lastErrorResumable: Boolean? = null,
+        steeringId: String? = null,
+        queuedIds: List<String> = emptyList(),
+    ): ChatState {
+        val lastParts = if (lastErrorResumable != null) {
+            """[{"kind":"error","error":{"errorType":"network","message":"Network error"},"resumable":$lastErrorResumable}]"""
+        } else {
+            "[]"
+        }
+        val steeringJson = steeringId?.let { ""","steeringMessage":{"id":"$it","message":{"text":"steer-$it","origin":{"kind":"user"}}}""" }.orEmpty()
+        val queuedJson = if (queuedIds.isNotEmpty()) {
+            ""","queuedMessages":[${queuedIds.joinToString(",") { """{"id":"$it","message":{"text":"queue-$it","origin":{"kind":"user"}}}""" }}]"""
+        } else {
+            ""
+        }
+        val activeJson = if (active) {
+            ""","activeTurn":{"id":"t3","message":{"text":"active prompt","origin":{"kind":"user"}},"responseParts":[],"startedAt":"2026-10-22T10:05:00.000Z"}"""
+        } else {
+            ""
+        }
+        return Ahp.json.decodeFromString(
+            ChatState.serializer(),
+            """{"resource":"$uri","title":"Chat","status":8,"modifiedAt":"2026-10-22T10:00:00.000Z",
+                "turns":[
+                    {"id":"t1","message":{"text":"first prompt","origin":{"kind":"user"}},"responseParts":[],"startedAt":"2026-10-22T10:00:00.000Z","state":"complete"},
+                    {"id":"t2","message":{"text":"second prompt","origin":{"kind":"user"}},"responseParts":$lastParts,"startedAt":"2026-10-22T10:02:00.000Z","state":"$lastState"}
+                ]$steeringJson$queuedJson$activeJson}""",
+        )
+    }
+
+    @Test
+    fun `restoreCheckpoint truncates to the preceding turn, or clears all turns before the first turn`() = runTest {
+        val rig = rig(multiTurnChat(active = true))
+
+        assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), rig.interactor.restoreCheckpoint("t2"))
+        assertEquals("chat/truncated", rig.types().last())
+        assertEquals("t1", rig.wire(0)["turnId"]!!.jsonPrimitive.content)
+
+        assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), rig.interactor.restoreCheckpoint("t1"))
+        assertNull(rig.wire(1)["turnId"])
+
+        assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), rig.interactor.restoreCheckpoint("t3"))
+        assertEquals("t2", rig.wire(2)["turnId"]!!.jsonPrimitive.content)
+
+        assertEquals(InteractResult.NoSuchRequest, rig.interactor.restoreCheckpoint("t-missing"))
+    }
+
+    @Test
+    fun `startOver truncates all turns and refuses when the chat is already empty`() = runTest {
+        val empty = rig(chat())
+        assertEquals(InteractResult.NoSuchRequest, empty.interactor.startOver())
+        assertTrue(empty.sent.isEmpty())
+
+        val populated = rig(multiTurnChat())
+        assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), populated.interactor.startOver())
+        assertEquals(listOf("chat/truncated"), populated.types())
+        assertNull(populated.wire()["turnId"])
+    }
+
+    @Test
+    fun `editAndResend truncates before the edited turn and starts a new turn with the edited text`() = runTest {
+        val rig = rig(multiTurnChat()).apply { models = listOf(sonnet); agents = listOf(plan) }
+
+        val res = rig.interactor.editAndResend("t2", "revised second", ModelChoice("claude-sonnet-5.5"), AgentPick.Use(plan.uri))
+
+        assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), res)
+        assertEquals(listOf("chat/truncated", "chat/turnStarted"), rig.types())
+        assertEquals("t1", rig.wire(0)["turnId"]!!.jsonPrimitive.content)
+        assertEquals("revised second", rig.wire(1)["message"]!!.jsonObject["text"]!!.jsonPrimitive.content)
+        assertEquals("claude-sonnet-5.5", rig.wire(1)["message"]!!.jsonObject["model"]!!.jsonObject["id"]!!.jsonPrimitive.content)
+        assertEquals(plan.uri, rig.wire(1)["message"]!!.jsonObject["agent"]!!.jsonObject["uri"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `editAndResend does not send a new turn when truncation is rejected or inputs are invalid`() = runTest {
+        val rig = rig(multiTurnChat()).apply { models = listOf(sonnet); agents = listOf(plan) }
+
+        assertEquals(InteractResult.Blank, rig.interactor.editAndResend("t1", "   "))
+        assertEquals(InteractResult.InvalidModel, rig.interactor.editAndResend("t1", "ok", ModelChoice("bad")))
+        assertEquals(InteractResult.InvalidAgent, rig.interactor.editAndResend("t1", "ok", agent = AgentPick.Use("file:///bad")))
+        assertEquals(InteractResult.NoSuchRequest, rig.interactor.editAndResend("t-missing", "ok"))
+        assertTrue(rig.sent.isEmpty())
+
+        rig.outcome = DispatchOutcome.Rejected("cannot truncate")
+        assertEquals(InteractResult.Sent(DispatchOutcome.Rejected("cannot truncate")), rig.interactor.editAndResend("t1", "ok"))
+        assertEquals(listOf("chat/truncated"), rig.types(), "startTurn must not be sent when truncate was rejected")
+    }
+
+    @Test
+    fun `retryTurn uses turnResume on a resumable error at the end, and truncates + resends otherwise`() = runTest {
+        val resumableRig = rig(multiTurnChat(lastState = "error", lastErrorResumable = true))
+        assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), resumableRig.interactor.retryTurn("t2"))
+        assertEquals(listOf("chat/turnResume"), resumableRig.types())
+        assertEquals("t2", resumableRig.wire()["turnId"]!!.jsonPrimitive.content)
+
+        val nonResumableRig = rig(multiTurnChat(lastState = "error", lastErrorResumable = false))
+        assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), nonResumableRig.interactor.retryTurn("t2"))
+        assertEquals(listOf("chat/truncated", "chat/turnStarted"), nonResumableRig.types())
+        assertEquals("t1", nonResumableRig.wire(0)["turnId"]!!.jsonPrimitive.content)
+        assertEquals("second prompt", nonResumableRig.wire(1)["message"]!!.jsonObject["text"]!!.jsonPrimitive.content)
+
+        val earlierTurnRig = rig(multiTurnChat(lastState = "error", lastErrorResumable = true))
+        assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), earlierTurnRig.interactor.retryTurn("t1"))
+        assertEquals(listOf("chat/truncated", "chat/turnStarted"), earlierTurnRig.types())
+        assertNull(earlierTurnRig.wire(0)["turnId"])
+        assertEquals("first prompt", earlierTurnRig.wire(1)["message"]!!.jsonObject["text"]!!.jsonPrimitive.content)
+        assertEquals(InteractResult.NoSuchRequest, earlierTurnRig.interactor.retryTurn("t-missing"))
+    }
+
+    @Test
+    fun `stopAndSend cancels the active turn before starting the new turn, and queue delegates to send`() = runTest {
+        val busy = rig(multiTurnChat(active = true))
+        assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), busy.interactor.stopAndSend("urgent"))
+        assertEquals(listOf("chat/turnCancelled", "chat/turnStarted"), busy.types())
+        assertEquals("t3", busy.wire(0)["turnId"]!!.jsonPrimitive.content)
+        assertEquals("urgent", busy.wire(1)["message"]!!.jsonObject["text"]!!.jsonPrimitive.content)
+
+        val queued = rig(multiTurnChat(active = true))
+        assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), queued.interactor.queue("later"))
+        assertEquals(listOf("chat/pendingMessageSet"), queued.types())
+
+        val rejectedStop = rig(multiTurnChat(active = true)).apply { outcome = DispatchOutcome.Rejected("cannot stop") }
+        assertEquals(InteractResult.Sent(DispatchOutcome.Rejected("cannot stop")), rejectedStop.interactor.stopAndSend("urgent"))
+        assertEquals(listOf("chat/turnCancelled"), rejectedStop.types())
+    }
+
+    @Test
+    fun `removePending and reorderQueue manage steering and queued messages and validate ids`() = runTest {
+        val rig = rig(multiTurnChat(active = true, steeringId = "s1", queuedIds = listOf("q1", "q2")))
+
+        assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), rig.interactor.removePending("s1"))
+        assertEquals("steering", rig.wire(0)["kind"]!!.jsonPrimitive.content)
+        assertEquals("s1", rig.wire(0)["id"]!!.jsonPrimitive.content)
+
+        assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), rig.interactor.removePending("q2"))
+        assertEquals("queued", rig.wire(1)["kind"]!!.jsonPrimitive.content)
+        assertEquals("q2", rig.wire(1)["id"]!!.jsonPrimitive.content)
+
+        assertEquals(InteractResult.NoSuchRequest, rig.interactor.removePending("unknown"))
+
+        assertEquals(InteractResult.Blank, rig.interactor.reorderQueue(listOf("q1", "q2")))
+        assertEquals(InteractResult.NoSuchRequest, rig.interactor.reorderQueue(listOf("q1")))
+        assertEquals(InteractResult.NoSuchRequest, rig.interactor.reorderQueue(listOf("q1", "q3")))
+        assertEquals(InteractResult.Sent(DispatchOutcome.Accepted), rig.interactor.reorderQueue(listOf("q2", "q1")))
+        assertEquals("chat/queuedMessagesReordered", rig.types().last())
+
+        val msg = rig.interactor.buildInitialMessage("fork text")
+        assertEquals("fork text", msg?.text)
+        assertNull(rig.interactor.buildInitialMessage("   "))
+    }
 }

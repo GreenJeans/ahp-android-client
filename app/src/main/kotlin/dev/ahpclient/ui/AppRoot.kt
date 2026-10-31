@@ -44,6 +44,7 @@ import dev.ahpclient.state.HostSession
 import dev.ahpclient.state.HostSessionEntry
 import dev.ahpclient.state.Inbox
 import dev.ahpclient.state.InboxReader
+import dev.ahpclient.state.ManageResult
 import dev.ahpclient.state.ModelOptions
 import dev.ahpclient.ui.chat.ChatActionsUi
 import dev.ahpclient.ui.chat.ChatPane
@@ -422,13 +423,14 @@ private fun SessionPage(
         }
     } else if (chat != null && chat.parent != null) {
         // A subagent's transcript is a screen of its own over the session.
-        OpenChatView(chat, connected.session, connection, rootState, sessionState, chatMutable, controller, ui, screen = true, modifier = Modifier)
+        OpenChatView(open.uri, chat, connected.session, connection, rootState, sessionState, chatMutable, canManage, controller, ui, screen = true, modifier = Modifier)
     } else {
         val error by open.store.error.collectAsStateWithLifecycle()
         val now by rememberNow()
         val context = LocalContext.current
         val summary = remember(listed, open.uri) { listed.firstOrNull { it.resource == open.uri } }
         val changes = remember(summary) { ChangeStats.of(summary?.changes) }
+        var requestedChat by remember { mutableStateOf<String?>(null) }
         SessionScreen(
             state = sessionState,
             error = error,
@@ -447,8 +449,25 @@ private fun SessionPage(
             summary = summary,
             onOpenLink = { link -> if (!openLink(context, link)) Toast.makeText(context, "Nothing can open this link", Toast.LENGTH_SHORT).show() },
             onShareLink = { link -> if (!shareLink(context, link)) Toast.makeText(context, "Nothing can share this link", Toast.LENGTH_SHORT).show() },
+            requestedChat = requestedChat,
         ) {
-            if (chat != null) OpenChatView(chat, connected.session, connection, rootState, sessionState, chatMutable, controller, ui, screen = false, modifier = Modifier)
+            if (chat != null) {
+                OpenChatView(
+                    sessionUri = open.uri,
+                    chat = chat,
+                    session = connected.session,
+                    connection = connection,
+                    rootState = rootState,
+                    sessionState = sessionState,
+                    chatMutable = chatMutable,
+                    canManage = canManage,
+                    controller = controller,
+                    ui = ui,
+                    screen = false,
+                    onChatCreated = { requestedChat = it },
+                    modifier = Modifier,
+                )
+            }
         }
     }
 }
@@ -456,15 +475,18 @@ private fun SessionPage(
 /** The chat the user has open, wired to what the host says about it and to what this app may do there. */
 @Composable
 private fun OpenChatView(
+    sessionUri: String,
     chat: OpenChat,
     session: HostSession,
     connection: ConnState,
     rootState: Any?,
     sessionState: SessionState?,
     chatMutable: Set<String>,
+    canManage: Boolean,
     controller: AppController,
     ui: UiSettings,
     screen: Boolean,
+    onChatCreated: (String) -> Unit = {},
     modifier: Modifier,
 ) {
     val context = LocalContext.current
@@ -491,9 +513,15 @@ private fun OpenChatView(
     // The chat's own settings sit over the session's, so what is shown is what the host has in force for this chat.
     val ownConfig by chat.store.ownConfig.collectAsStateWithLifecycle()
     val config = remember(sessionState, chat.uri, chatMutable, ownConfig) { ChatConfig.view(sessionState, chat.uri, chatMutable, ownConfig) }
+    val canFork = remember(controller.manager, sessionState, sessionUri, canManage, screen) {
+        !screen && canManage && controller.manager.canFork(sessionUri)
+    }
+    val canSideChat = remember(controller.manager, sessionState, sessionUri, canManage, screen) {
+        !screen && canManage && controller.manager.canSideChat(sessionUri)
+    }
     // Nothing to act with unless the connection allows it and the host shows this chat as interactive.
     val actions = if (ChatInteractor.available(chatState, canInteract)) {
-        remember(chat.interactor, running, models, inUse, agents, agentInUse, config) {
+        remember(chat.interactor, running, models, inUse, agents, agentInUse, config, canFork, canSideChat, sessionUri, chat.uri) {
             ChatActionsUi(
                 running = running,
                 send = chat.interactor::send,
@@ -513,6 +541,36 @@ private fun OpenChatView(
                 agentInUse = agentInUse,
                 config = config,
                 setConfig = chat.interactor::setConfig,
+                restoreCheckpoint = chat.interactor::restoreCheckpoint,
+                startOver = chat.interactor::startOver,
+                editAndResend = chat.interactor::editAndResend,
+                retryTurn = chat.interactor::retryTurn,
+                stopAndSend = chat.interactor::stopAndSend,
+                removePending = chat.interactor::removePending,
+                reorderQueue = chat.interactor::reorderQueue,
+                canFork = canFork,
+                forkFromTurn = { turnId ->
+                    val res = controller.manager.forkChat(sessionUri, chat.uri, turnId)
+                    (res as? ManageResult.Done)?.created?.let(onChatCreated)
+                    res
+                },
+                editAsFork = { prevTurnId, newText, model, agent ->
+                    val msg = chat.interactor.buildInitialMessage(newText, model, agent)
+                    if (msg == null) {
+                        ManageResult.InvalidChoice
+                    } else {
+                        val res = controller.manager.forkChat(sessionUri, chat.uri, prevTurnId, msg)
+                        (res as? ManageResult.Done)?.created?.let(onChatCreated)
+                        res
+                    }
+                },
+                canSideChat = canSideChat,
+                openSideChat = { turnId, initialText, model, agent ->
+                    val msg = initialText?.let { chat.interactor.buildInitialMessage(it, model, agent) }
+                    val res = controller.manager.createSideChat(sessionUri, chat.uri, turnId, msg)
+                    (res as? ManageResult.Done)?.created?.let(onChatCreated)
+                    res
+                },
             )
         }
     } else {

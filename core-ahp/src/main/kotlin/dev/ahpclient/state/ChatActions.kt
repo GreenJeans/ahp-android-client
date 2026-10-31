@@ -1,6 +1,7 @@
 package dev.ahpclient.state
 
 import com.microsoft.agenthostprotocol.Ahp
+import com.microsoft.agenthostprotocol.generated.Message
 import com.microsoft.agenthostprotocol.generated.StateAction
 import java.time.Instant
 import kotlinx.serialization.json.JsonArray
@@ -71,6 +72,38 @@ object ChatActions {
             put("kind", "queued")
             put("id", messageId)
         }
+
+    /** Takes back a steering message that has not been consumed yet. */
+    fun removeSteeringMessage(messageId: String): StateAction =
+        action("chat/pendingMessageRemoved") {
+            put("kind", "steering")
+            put("id", messageId)
+        }
+
+    /** Reorders the queued messages to match [order] (the complete permutation of queued message ids). */
+    fun reorderQueuedMessages(order: List<String>): StateAction =
+        action("chat/queuedMessagesReordered") {
+            put("order", JsonArray(order.map(::JsonPrimitive)))
+        }
+
+    /**
+     * Truncates the chat back to [turnId] (keeping [turnId] and earlier turns, removing everything after it).
+     * When [turnId] is null, clears all turns in the chat ("Start Over").
+     */
+    fun truncate(turnId: String? = null): StateAction =
+        action("chat/truncated") {
+            turnId?.let { put("turnId", it) }
+        }
+
+    /** Resumes the last turn after a resumable error. */
+    fun resumeTurn(turnId: String): StateAction =
+        action("chat/turnResume") {
+            put("turnId", turnId)
+        }
+
+    /** Builds a decoded protocol [Message] for `createChat(..., initialMessage = ...)` with the same shape as [startTurn]. */
+    fun message(text: String, model: ModelChoice? = null, agent: String? = null): Message =
+        Ahp.json.decodeFromJsonElement(Message.serializer(), userMessage(text, model, agent))
 
     /** One in-progress answer, so another client showing the same question can follow along. A null [answer] clears that question's draft. */
     fun draftAnswer(requestId: String, questionId: String, answer: AnswerValue?): StateAction =
