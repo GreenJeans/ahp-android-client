@@ -25,12 +25,26 @@ object SessionCatalog {
     )
 
     /**
-     * Sessions that need the user come first, then the most recently modified. `modifiedAt` is an ISO-8601 UTC
-     * timestamp, so comparing the strings orders them in time.
+     * Sessions that need the user come first, then the most recent according to [ordering] (`modifiedAt` by default, or `createdAt`).
+     * Timestamps are ISO-8601 UTC strings, so comparing the strings orders them in time.
      */
-    fun sorted(sessions: Collection<SessionSummary>): List<SessionSummary> = sessions.sortedWith(
+    fun sorted(
+        sessions: Collection<SessionSummary>,
+        ordering: SessionOrdering = SessionOrdering.UPDATED,
+    ): List<SessionSummary> = sessions.sortedWith(
         compareBy<SessionSummary> { if (it.status.activityState == ActivityState.NEEDS_INPUT) 0 else 1 }
-            .thenByDescending { it.modifiedAt }
+            .thenByDescending { ordering.timestampOf(it) }
             .thenBy { it.resource },
+    )
+
+    /** Sorts multi-host session entries with needs-input first, then by [ordering] timestamp descending. */
+    fun sortedEntries(
+        entries: Collection<HostSessionEntry>,
+        ordering: SessionOrdering = SessionOrdering.UPDATED,
+    ): List<HostSessionEntry> = entries.sortedWith(
+        compareBy<HostSessionEntry> { if (it.summary.status.activityState == ActivityState.NEEDS_INPUT) 0 else 1 }
+            .thenByDescending { ordering.timestampOf(it.summary) }
+            .thenBy { it.hostId.orEmpty() }
+            .thenBy { it.summary.resource },
     )
 }

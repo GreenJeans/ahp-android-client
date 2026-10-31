@@ -25,9 +25,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.microsoft.agenthostprotocol.generated.SessionState
+import com.microsoft.agenthostprotocol.generated.SessionSummary
 import dev.ahpclient.app.AppController
 import dev.ahpclient.app.AppState
+import dev.ahpclient.app.ConnectedHost
 import dev.ahpclient.app.HostCatalog
+import dev.ahpclient.app.HostRef
 import dev.ahpclient.app.OpenChat
 import dev.ahpclient.app.SignInStep
 import dev.ahpclient.data.UiSettings
@@ -35,19 +39,17 @@ import dev.ahpclient.state.ChangeStats
 import dev.ahpclient.state.ChatConfig
 import dev.ahpclient.state.ChatInteractor
 import dev.ahpclient.state.ConnState
-import com.microsoft.agenthostprotocol.generated.SessionState
 import dev.ahpclient.state.CustomAgents
 import dev.ahpclient.state.HostSession
+import dev.ahpclient.state.HostSessionEntry
 import dev.ahpclient.state.Inbox
 import dev.ahpclient.state.InboxReader
 import dev.ahpclient.state.ModelOptions
-import dev.ahpclient.tunnel.TunnelInfo
 import dev.ahpclient.ui.chat.ChatActionsUi
 import dev.ahpclient.ui.chat.ChatPane
 import dev.ahpclient.ui.chat.ChatScreen
 import dev.ahpclient.ui.chat.rememberTranscript
 import dev.ahpclient.ui.theme.AhpTheme
-import com.microsoft.agenthostprotocol.generated.SessionSummary
 import kotlinx.coroutines.launch
 
 /** Picks the screen for the current [AppState]. Holds no state of its own beyond what the controller and the settings expose. */
@@ -109,6 +111,8 @@ private fun Shell(
     val textScale by ui.textScale.collectAsStateWithLifecycle()
     val theme by ui.theme.collectAsStateWithLifecycle()
     val keepAwake by ui.keepAwake.collectAsStateWithLifecycle()
+    val savedFilter by ui.sessionFilter.collectAsStateWithLifecycle()
+    val connectedHosts by controller.connectedHosts.collectAsStateWithLifecycle()
     var page by rememberSaveable { mutableStateOf(Page.MAIN) }
     var hostSheet by rememberSaveable { mutableStateOf(false) }
     var showArchived by rememberSaveable { mutableStateOf(false) }
@@ -136,17 +140,37 @@ private fun Shell(
     // host they were opened on.
     OnConnectionChange(connected != null) { if (page != Page.MAIN) page = Page.MAIN }
     OfferHostsOnce(connected != null, hosts) { hostSheet = true }
-    // A host that connects under an open sheet (the cold-start auto-connect) leaves the sheet open: it lists hosts to choose from, shows the
-    // one connected, and a typed address in its Add dialog is not lost. Only the person's own taps close it.
-    // The menu's search, archived toggle and scroll are of the host they were made on: another host starts with a plain list.
-    var shownHost by rememberSaveable { mutableStateOf(connected?.host?.id) }
-    LaunchedEffect(connected?.host?.id) {
-        val id = connected?.host?.id
-        if (id != shownHost) {
+
+    val activeHostList = remember(connectedHosts, connected?.host, connected?.session) {
+        if (connectedHosts.isNotEmpty()) {
+            connectedHosts
+        } else if (connected != null) {
+            listOf(ConnectedHost(connected.host, connected.session))
+        } else {
+            emptyList()
+        }
+    }
+
+    // When all connected hosts change completely, reset the transient search and archive toggle.
+    var shownHostSet by rememberSaveable { mutableStateOf(activeHostList.map { it.host.id }.toSet()) }
+    LaunchedEffect(activeHostList.map { it.host.id }.toSet()) {
+        val currentIds = activeHostList.map { it.host.id }.toSet()
+        if (currentIds.isEmpty() || (shownHostSet.isNotEmpty() && currentIds.intersect(shownHostSet).isEmpty())) {
             query = ""
             showArchived = false
             listState.scrollToItem(0)
-            shownHost = id
+        }
+        shownHostSet = currentIds
+    }
+
+    val multiHostEntries = ArrayList<HostSessionEntry>()
+    val hostConnections = ArrayList<Pair<HostRef, ConnState?>>(activeHostList.size)
+    for (ch in activeHostList) {
+        androidx.compose.runtime.key(ch.host.id) {
+            val hostSessions by ch.session.root.sessions.collectAsStateWithLifecycle()
+            val hostConn by ch.session.connection.collectAsStateWithLifecycle()
+            hostSessions.mapTo(multiHostEntries) { s -> HostSessionEntry(host = ch.host, summary = s) }
+            hostConnections += ch.host to hostConn
         }
     }
 
@@ -157,8 +181,8 @@ private fun Shell(
     // The list is only what was saved last time until the host sends its own: to look at, with nothing in it to act on.
     val stale = connected?.let { it.session.root.stale.collectAsStateWithLifecycle().value } == true
     val now by rememberNow()
-    // Where the person is needed, from the same list as the side menu: what waits on them, and what finished unread.
-    val inbox = remember(listed, now) { Inbox.from(listed, now) }
+    // Where the person is needed, across all connected hosts: what waits on them, and what finished unread.
+    val inbox = remember(multiHostEntries, now) { Inbox.fromEntries(multiHostEntries, now) }
     // Nothing to look after sessions with unless the connection is on the manage tier: no controls, not disabled ones. Nor from a stale list.
     val manageActions = if (canManage && !stale) {
         remember(controller.manager, rootState, listed) {
@@ -180,6 +204,7 @@ private fun Shell(
     // With no session the menu is held open, and the session that opens closes it (HomeMenu); over a session it is closed here, so that
     // picking the session that is already open, or another, closes it too.
     val showSession = { uri: String -> menu.close(); controller.showSession(uri) }
+    val showSessionOnHost = { hostId: String?, uri: String -> menu.close(); controller.showSession(uri, hostId) }
     val addHost: suspend (String, String, String) -> String? = { name, address, token ->
         when (val result = controller.addDirectHost(name, address, token)) {
             is AppController.AddHostResult.Added -> null
@@ -216,6 +241,11 @@ private fun Shell(
                 inboxCount = if (connected != null) inbox.waiting.size else null,
                 onOpenInbox = { page = Page.INBOX; menu.close() },
                 stale = stale,
+                entries = multiHostEntries,
+                connectedHosts = activeHostList.map { it.host },
+                filter = savedFilter,
+                onFilterChange = ui::setSessionFilter,
+                onOpenSessionOnHost = showSessionOnHost,
             )
         },
     ) {
@@ -265,7 +295,11 @@ private fun Shell(
                     inbox = inbox,
                     details = details,
                     onBack = { page = Page.MAIN },
-                    onOpen = { uri -> page = Page.MAIN; controller.showSession(uri) },
+                    onOpen = { uri ->
+                        page = Page.MAIN
+                        val targetHostId = (inbox.waiting + inbox.finished).firstOrNull { it.row.resource == uri }?.row?.hostId
+                        controller.showSession(uri, targetHostId)
+                    },
                     canDecide = interactionAllowed,
                     onDecide = { chat, call, approve, option -> controller.decideToolCall(chat, call, approve, option) },
                     manage = manageActions,
@@ -297,6 +331,9 @@ private fun Shell(
             onAddHost = addHost,
             // Signing in ends the screen the sheet is on, so it is offered only with no host to lose.
             onSignIn = if (connected == null) controller::signIn else null,
+            connectedHosts = hostConnections,
+            onConnectHost = controller::connectHost,
+            onDisconnectHost = controller::disconnectHost,
         )
     }
 }
@@ -351,8 +388,6 @@ private fun SessionPage(
     } else {
         val error by open.store.error.collectAsStateWithLifecycle()
         val now by rememberNow()
-    // Where the person is needed, from the same list as the side menu: what waits on them, and what finished unread.
-    val inbox = remember(listed, now) { Inbox.from(listed, now) }
         val context = LocalContext.current
         val summary = remember(listed, open.uri) { listed.firstOrNull { it.resource == open.uri } }
         val changes = remember(summary) { ChangeStats.of(summary?.changes) }

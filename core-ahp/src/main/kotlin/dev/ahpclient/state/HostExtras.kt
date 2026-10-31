@@ -1,7 +1,10 @@
 package dev.ahpclient.state
 
 import dev.ahpclient.app.SafeLinks
+import com.microsoft.agenthostprotocol.generated.ChatOrigin
 import com.microsoft.agenthostprotocol.generated.Message
+import com.microsoft.agenthostprotocol.generated.SessionOriginAutomation
+import com.microsoft.agenthostprotocol.generated.SessionOriginUnknown
 import com.microsoft.agenthostprotocol.generated.SessionState
 import com.microsoft.agenthostprotocol.generated.SessionSummary
 import com.microsoft.agenthostprotocol.generated.ToolCallState
@@ -137,8 +140,26 @@ object HostExtras {
 
     private val MODEL_KEYS = listOf("model", "ahpd.model", "vscode.model")
     private val HIDDEN_KEYS = listOf("vscode.chat.hiddenFromTranscript", "requestHiddenFromTranscript", "hiddenFromTranscript")
+    private val EXTERNAL_KEYS = listOf("vscode.external", "external", "ahpd.external")
+    private val INITIATOR_KEYS = listOf("vscode.session.initiator.name", "initiator.name", "initiator", "ahpd.initiator")
+    private val SPAWNED_ORIGINS = setOf("automation", "subagent", "tool", "external")
     private val WHITESPACE_RUN = Regex("""[\r\n\t ]+""")
 
+    /** Whether `_meta` marks the session as created outside the primary agent panel (`vscode.external`). */
+    fun isExternal(meta: Map<String, JsonElement>?): Boolean {
+        if (meta.isNullOrEmpty()) return false
+        val root = JsonObject(meta)
+        return EXTERNAL_KEYS.any { root.flag(it) }
+    }
+
+    /** Which client or surface started the session (`vscode.session.initiator.name`), or null when the host did not say. */
+    fun initiator(meta: Map<String, JsonElement>?): String? {
+        if (meta.isNullOrEmpty()) return null
+        val root = JsonObject(meta)
+        return INITIATOR_KEYS.firstNotNullOfOrNull { root.text(it, MAX_STATE) }
+    }
+
+    internal fun isSpawnedOriginKind(kind: String?): Boolean = kind?.lowercase() in SPAWNED_ORIGINS
 
     fun session(meta: Map<String, JsonElement>?): SessionExtras {
         if (meta.isNullOrEmpty()) return SessionExtras.NONE
@@ -258,6 +279,53 @@ object HostExtras {
 }
 
 val SessionSummary.extras: SessionExtras get() = HostExtras.session(meta)
+
+/** Whether the host marks this session as created externally (`vscode.external`). */
+val SessionSummary.isExternal: Boolean get() = HostExtras.isExternal(meta)
+
+/** Whether this session was started by an automation or an unknown spawned origin. */
+val SessionSummary.isAutomation: Boolean
+    get() = when (val o = origin) {
+        is SessionOriginAutomation -> true
+        is SessionOriginUnknown -> HostExtras.isSpawnedOriginKind((o.raw["kind"] as? JsonPrimitive)?.takeIf { it.isString }?.content)
+        else -> false
+    }
+
+/** Whether the session's main chat (or only chat) was spawned by a tool call (`ChatOrigin.Tool`). */
+val SessionSummary.isToolSpawned: Boolean
+    get() {
+        val list = chats.orEmpty()
+        if (list.isEmpty()) return false
+        val main = list.firstOrNull { it.resource == defaultChat } ?: list.first()
+        return main.origin is ChatOrigin.Tool
+    }
+
+/** Whether this session was created externally, spawned by a tool/subagent, or started by an automation. */
+val SessionSummary.isSpawnedOrExternal: Boolean
+    get() = isExternal || isAutomation || isToolSpawned
+
+/** Where the session was created ("Created In"): the explicit initiator name, or a fallback derived from its origin/external flag. */
+val SessionSummary.initiatorLabel: String?
+    get() {
+        HostExtras.initiator(meta)?.let { return it }
+        if (isAutomation) return "Automation"
+        if (isToolSpawned) return "Subagent"
+        val m = meta ?: return null
+        if ("vscode.external" in m || "external" in m || "ahpd.external" in m || (m["vscode"] as? JsonObject)?.containsKey("external") == true) {
+            return if (isExternal) "External" else "VS Code"
+        }
+        return null
+    }
+
+/** The workspace or repository name for grouping and filtering: `project.displayName`, or the folder basename of the first working directory. */
+val SessionSummary.workspaceLabel: String?
+    get() {
+        project?.displayName?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+        val firstDir = workingDirectories?.firstOrNull { it.isNotBlank() } ?: return null
+        val path = displayPath(firstDir).trimEnd('/', '\\')
+        val name = path.substringAfterLast('/').substringAfterLast('\\').trim()
+        return name.ifEmpty { path.takeIf { it.isNotEmpty() } }
+    }
 
 val SessionState.extras: SessionExtras get() = HostExtras.session(meta)
 

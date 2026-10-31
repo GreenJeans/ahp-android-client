@@ -66,13 +66,13 @@ private sealed interface OtherHost {
 }
 
 /**
- * The hosts other than the connected one as one list, in the order the sheet shows them: tunnel hosts that are online, hosts added by
+ * The hosts other than the connected ones as one list, in the order the sheet shows them: tunnel hosts that are online, hosts added by
  * address, then tunnel hosts that are offline. Each group keeps the order the catalog gave it (the last used first).
  */
-private fun otherHosts(catalog: HostCatalog, connected: HostRef?): List<OtherHost> {
-    val tunnels = (catalog.list as? HostList.Loaded)?.hosts.orEmpty().filter { it.tunnel.tunnelId != connected?.id }
+private fun otherHosts(catalog: HostCatalog, connectedIds: Set<String>): List<OtherHost> {
+    val tunnels = (catalog.list as? HostList.Loaded)?.hosts.orEmpty().filter { it.tunnel.tunnelId !in connectedIds }
     return tunnels.filter { it.tunnel.isOnline }.map { OtherHost.Tunnel(it) } +
-        catalog.direct.filter { it.host.id != connected?.id }.map { OtherHost.Direct(it) } +
+        catalog.direct.filter { it.host.id !in connectedIds }.map { OtherHost.Direct(it) } +
         tunnels.filterNot { it.tunnel.isOnline }.map { OtherHost.Tunnel(it) }
 }
 
@@ -97,10 +97,10 @@ internal fun OfferHostsOnce(connected: Boolean, catalog: HostCatalog, onOffer: (
 }
 
 /**
- * The hosts, in a sheet from the bottom over the side menu: the one connected (with a way to leave it), every other host to switch to
- * with one tap, a way to add a host by its address, and, with no GitHub sign-in, a way to sign in. [onRefresh] is called when the
- * sheet opens and by the button in its header. A tap on a host calls [onSwitch], Disconnect calls [onDisconnect] and Manage hosts calls
- * [onManageHosts], and each then calls [onDismiss]. Switching goes from one host to the next in the controller, with no "not connected" between.
+ * The hosts, in a sheet from the bottom over the side menu: the ones connected (with a way to leave each), every other host to connect or
+ * switch to with one tap, a way to add a host by its address, and, with no GitHub sign-in, a way to sign in. [onRefresh] is called when the
+ * sheet opens and by the button in its header. A tap on a host calls [onConnectHost] (or [onSwitch] when [onConnectHost] is null),
+ * Disconnect calls [onDisconnectHost] (or [onDisconnect]), and Manage hosts calls [onManageHosts], and each then calls [onDismiss].
  *
  * [catalog] is what the controller lists; [connectedHost] and [connection] are null with nothing connected. A failed tunnel list is
  * said in place of the tunnel hosts and leaves the hosts added by address. [onAddHost] returns why a host could not be added, or null
@@ -120,18 +120,32 @@ fun HostSheet(
     modifier: Modifier = Modifier,
     onAddHost: (suspend (name: String, address: String, token: String) -> String?)? = null,
     onSignIn: (() -> Unit)? = null,
+    /** All currently connected hosts with their connection states; defaults to [connectedHost] paired with [connection]. */
+    connectedHosts: List<Pair<HostRef, ConnState?>> = emptyList(),
+    /** Connects an additional host concurrently; falls back to [onSwitch] when null. */
+    onConnectHost: ((HostRef) -> Unit)? = null,
+    /** Disconnects a specific host by id; falls back to [onDisconnect] when null. */
+    onDisconnectHost: ((String) -> Unit)? = null,
 ) {
     var adding by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(Unit) { onRefresh() }
-    val others = otherHosts(catalog, connectedHost)
+    val activeHosts: List<Pair<HostRef, ConnState?>> = when {
+        connectedHosts.isNotEmpty() -> connectedHosts
+        connectedHost != null -> listOf(connectedHost to connection)
+        else -> emptyList()
+    }
+    val connectedIds = activeHosts.map { it.first.id }.toSet()
+    val others = otherHosts(catalog, connectedIds)
     val card = MaterialTheme.colorScheme.surfaceContainerHigh
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
     // A tap that ends the sheet slides it away as a swipe or the scrim does, and only then takes it out of the composition.
     val close: () -> Unit = { scope.launch { sheetState.hide() }.invokeOnCompletion { if (!sheetState.isVisible) onDismiss() } }
     // With a host connected and no sign-in to see its tunnel hosts, the sheet says why there are none, rather than leave the person to guess.
-    val signInHint = connectedHost != null && catalog.list == HostList.NotSignedIn && onSignIn == null
+    val hasConnected = activeHosts.isNotEmpty()
+    val signInHint = hasConnected && catalog.list == HostList.NotSignedIn && onSignIn == null
     val listing = others.isNotEmpty() || signInHint || catalog.list is HostList.Loading || catalog.list is HostList.Failed || catalog.list == HostList.Empty
+    val pickHost: (HostRef) -> Unit = onConnectHost ?: onSwitch
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
@@ -150,10 +164,17 @@ fun HostSheet(
                 Text("Hosts", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f).semantics { heading() })
                 IconButton(onClick = onRefresh, modifier = Modifier.testTag("refresh_hosts")) { Icon(AppIcons.Refresh, contentDescription = "Refresh hosts") }
             }
-            if (connectedHost != null) ConnectedCard(connectedHost, connection, { onDisconnect(); close() }, color = card)
+            if (activeHosts.size > 1) SectionHeader("Connected (${activeHosts.size})")
+            activeHosts.forEach { (host, conn) ->
+                val disconnectOne: () -> Unit = {
+                    if (onDisconnectHost != null) onDisconnectHost(host.id) else onDisconnect()
+                    if (activeHosts.size <= 1) close()
+                }
+                ConnectedCard(host, conn, disconnectOne, color = card)
+            }
             // The heading is drawn only with something under it; with a host connected and nothing else to show, a plain line says so.
             if (listing) Column(verticalArrangement = Arrangement.spacedBy(Design.Gap)) {
-                if (connectedHost != null) SectionHeader("Other hosts")
+                if (hasConnected) SectionHeader("Other hosts")
                 when (val list = catalog.list) {
                     HostList.Loading -> Busy("Looking for hosts…", Modifier.padding(8.dp).testTag("hosts_loading"))
                     is HostList.Failed -> ErrorText(list.message, Modifier.padding(horizontal = 16.dp, vertical = 8.dp).testTag("hosts_error"))
@@ -174,11 +195,11 @@ fun HostSheet(
                 others.forEachIndexed { index, other ->
                     val shape = connectedShape(index, others.size)
                     when (other) {
-                        is OtherHost.Tunnel -> HostRow(other.entry, shape, { onSwitch(HostRef.Tunnel(it)); close() }, color = card)
-                        is OtherHost.Direct -> DirectRow(other.entry, shape, { onSwitch(HostRef.Direct(it)); close() }, onRemove = null, color = card)
+                        is OtherHost.Tunnel -> HostRow(other.entry, shape, { pickHost(HostRef.Tunnel(it)); close() }, color = card)
+                        is OtherHost.Direct -> DirectRow(other.entry, shape, { pickHost(HostRef.Direct(it)); close() }, onRemove = null, color = card)
                     }
                 }
-            } else if (connectedHost != null) {
+            } else if (hasConnected) {
                 Text("No other hosts.", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).testTag("no_other_hosts"))
             }
             if (onAddHost != null) {

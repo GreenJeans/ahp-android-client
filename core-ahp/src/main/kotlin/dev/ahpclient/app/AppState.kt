@@ -51,6 +51,12 @@ sealed interface HostRef {
     }
 }
 
+/** One live host connection held by [AppController.connectedHosts] when one or more hosts are connected concurrently. */
+data class ConnectedHost(
+    val host: HostRef,
+    val session: HostSession,
+)
+
 sealed interface SignInStep {
     data object Idle : SignInStep
 

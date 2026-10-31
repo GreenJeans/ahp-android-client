@@ -32,17 +32,26 @@ data class Inbox(val waiting: List<InboxItem>, val finished: List<InboxItem>) {
          * worse than a cluttered list. A finished session must be idle or in error, not archived, not read, and have changed within
          * [RECENT_DAYS]; a failed one comes first, then the most recent.
          */
-        fun from(sessions: List<SessionSummary>, now: Instant): Inbox {
+        fun from(sessions: List<SessionSummary>, now: Instant): Inbox =
+            fromEntries(sessions.map { HostSessionEntry(hostId = null, hostName = null, session = it) }, now)
+
+        /**
+         * Computes the inbox across one or more connected hosts ([HostSessionEntry]), preserving each session's [HostSessionEntry.hostId]
+         * and [HostSessionEntry.hostName] on [InboxItem.row].
+         */
+        fun fromEntries(entries: List<HostSessionEntry>, now: Instant): Inbox {
             val waiting = ArrayList<InboxItem>()
             val finished = ArrayList<InboxItem>()
-            for (session in SessionCatalog.sorted(sessions)) {
+            for (entry in SessionCatalog.sortedEntries(entries)) {
+                val session = entry.session
                 val state = session.status.activityState
+                val row = SessionListModel.row(session, now, hostId = entry.hostId, hostName = entry.hostName)
                 when {
-                    state == ActivityState.NEEDS_INPUT -> waiting += InboxItem(SessionListModel.row(session, now), session.modifiedAt)
+                    state == ActivityState.NEEDS_INPUT -> waiting += InboxItem(row, session.modifiedAt)
                     state == ActivityState.IN_PROGRESS -> Unit
                     session.status.isArchived || session.status.isRead -> Unit
                     !recent(session.modifiedAt, now) -> Unit
-                    else -> finished += InboxItem(SessionListModel.row(session, now), session.modifiedAt)
+                    else -> finished += InboxItem(row, session.modifiedAt)
                 }
             }
             return Inbox(waiting, finished.sortedBy { if (it.row.state == ActivityState.ERROR) 0 else 1 })
