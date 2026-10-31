@@ -372,6 +372,22 @@ class AppController(
         return result
     }
 
+    /**
+     * Reconciles the local Pro entitlement against the platform billing store on cold start:
+     * - [BillingResult.Unlocked]: unlocks Pro and persists `true`.
+     * - [BillingResult.NotFound]: revokes Pro and persists `false` (for example after a store refund).
+     * - [BillingResult.Unavailable] / [BillingResult.Cancelled]: leaves the cached entitlement unchanged so offline use is unaffected.
+     */
+    suspend fun reconcileProEntitlement(): BillingResult {
+        val result = billing.restorePurchases()
+        when (result) {
+            BillingResult.Unlocked -> setProUnlocked(true)
+            BillingResult.NotFound -> setProUnlocked(false)
+            BillingResult.Cancelled, is BillingResult.Unavailable -> Unit
+        }
+        return result
+    }
+
     @Synchronized
     private fun keepOnlyFocusedHost() {
         val current = _state.value as? AppState.Connected ?: return

@@ -320,11 +320,9 @@ class AppContainer(context: Context) {
             controller.start()
             monitor.start()
             if (!debuggable) {
-                // Reconcile any existing or newly completed Google Play Pro purchase on cold start.
+                // Reconcile any existing, newly completed, or refunded Google Play Pro purchase on cold start.
                 appScope.launch {
-                    if (storeBilling.restorePurchases() is BillingResult.Unlocked) {
-                        controller.setProUnlocked(true)
-                    }
+                    controller.reconcileProEntitlement()
                 }
             }
             // Scheduled while monitoring is on, found on at start or turned on later, and taken away when it is turned off, together with
