@@ -165,10 +165,10 @@ class PlayBillingDriver(
         val params = QueryProductDetailsParams.newBuilder()
             .setProductList(listOf(product))
             .build()
-        client.queryProductDetailsAsync(params) { billingResult, productDetailsList ->
+        client.queryProductDetailsAsync(params) { billingResult, queryProductDetailsResult ->
             if (!continuation.isActive) return@queryProductDetailsAsync
             if (billingResult.responseCode == BillingResponseCode.OK) {
-                continuation.resume(productDetailsList.firstOrNull { it.productId == productId })
+                continuation.resume(queryProductDetailsResult.productDetailsList.firstOrNull { it.productId == productId })
             } else {
                 continuation.resume(null)
             }
