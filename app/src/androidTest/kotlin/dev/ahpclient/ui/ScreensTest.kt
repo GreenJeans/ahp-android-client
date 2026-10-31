@@ -59,9 +59,20 @@ class ScreensTest {
         onSignIn: (() -> Unit)? = null,
         onSignOut: () -> Unit = {},
         onBack: () -> Unit = {},
+        proUnlocked: Boolean = true,
+        onUnlockPro: () -> Unit = {},
     ) = rule.setContent {
         AhpTheme {
-            SettingsScreen(onBack, signedIn = signedIn, tokenExpiresAt = expiresAt, renews = renews, onSignIn = onSignIn, onSignOut = onSignOut)
+            SettingsScreen(
+                onBack,
+                signedIn = signedIn,
+                tokenExpiresAt = expiresAt,
+                renews = renews,
+                onSignIn = onSignIn,
+                onSignOut = onSignOut,
+                proUnlocked = proUnlocked,
+                onUnlockPro = onUnlockPro,
+            )
         }
     }
 
@@ -236,6 +247,65 @@ class ScreensTest {
 
         rule.onAllNodesWithTag("browser_row").assertCountEquals(0)
         rule.onAllNodesWithText("Open links in").assertCountEquals(0)
+    }
+
+    // ---- pro entitlement --------------------------------------------------------------------------------------
+
+    @Test
+    fun whenProIsLockedSettingsShowsUnlockCardAndDisablesProSwitches() {
+        var unlocks = 0
+        showSettings(
+            proUnlocked = false,
+            onUnlockPro = { unlocks++ },
+        )
+
+        rule.onNodeWithTag("pro_section").assertIsDisplayed()
+        rule.onNodeWithTag("unlock_pro").assertIsDisplayed().assertTouchTargetAtLeast(48.dp).performClick()
+        assertEquals(1, unlocks)
+    }
+
+    @Test
+    fun whenProIsUnlockedSettingsHidesTheUnlockCard() {
+        showSettings(proUnlocked = true)
+
+        rule.onAllNodesWithTag("pro_section").assertCountEquals(0)
+        rule.onAllNodesWithTag("unlock_pro").assertCountEquals(0)
+    }
+
+    @Test
+    fun proUpgradeDialogSupportsPurchaseAndRestoreFlows() {
+        var purchases = 0
+        var restores = 0
+        rule.setContent {
+            AhpTheme {
+                SettingsScreen(
+                    onBack = {},
+                    proUnlocked = false,
+                    onPurchasePro = {
+                        purchases++
+                        dev.ahpclient.app.BillingResult.Unavailable("Not yet active.")
+                    },
+                    onRestorePro = {
+                        restores++
+                        dev.ahpclient.app.BillingResult.NotFound
+                    },
+                )
+            }
+        }
+
+        rule.onNodeWithTag("unlock_pro").assertIsDisplayed().performClick()
+        rule.onNodeWithTag("pro_upgrade_dialog").assertIsDisplayed()
+
+        rule.onNodeWithTag("pro_restore").assertIsDisplayed().assertTouchTargetAtLeast(48.dp).performClick()
+        assertEquals(1, restores)
+        rule.onNodeWithTag("pro_upgrade_message").assertIsDisplayed().assertTextContains("No previous Pro purchase", substring = true)
+
+        rule.onNodeWithTag("pro_purchase").assertIsDisplayed().assertTouchTargetAtLeast(48.dp).performClick()
+        assertEquals(1, purchases)
+        rule.onNodeWithTag("pro_upgrade_message").assertIsDisplayed().assertTextContains("Not yet active", substring = true)
+
+        rule.onNodeWithTag("pro_cancel").assertIsDisplayed().assertTouchTargetAtLeast(48.dp).performClick()
+        rule.onAllNodesWithTag("pro_upgrade_dialog").assertCountEquals(0)
     }
 
     // ---- connected --------------------------------------------------------------------------------------------

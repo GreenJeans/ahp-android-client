@@ -106,6 +106,7 @@ private fun Shell(
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val proUnlocked by controller.proUnlocked.collectAsStateWithLifecycle()
     val interactionAllowed by controller.interactionAllowed.collectAsStateWithLifecycle()
     val managementAllowed by controller.managementAllowed.collectAsStateWithLifecycle()
     val textScale by ui.textScale.collectAsStateWithLifecycle()
@@ -284,6 +285,12 @@ private fun Shell(
                 onTheme = ui::setTheme,
                 keepAwake = keepAwake,
                 onKeepAwake = ui::setKeepAwake,
+                proUnlocked = proUnlocked,
+                onPurchasePro = controller::purchasePro,
+                onRestorePro = controller::restorePro,
+                onDebugProChange = if (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+                    { on -> scope.launch { controller.setProUnlocked(on) } }
+                } else null,
             )
             Page.INBOX -> {
                 val reader = remember(controller) { InboxReader(controller::readWaiting) }

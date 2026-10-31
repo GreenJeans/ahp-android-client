@@ -124,6 +124,10 @@ class AppController(
     private val directConsent: (DirectHost) -> InteractionConsent = { InteractionConsent() },
     /** How long to wait between retries when the cold-start host list fails to load while [autoConnect] is pending. */
     private val backoff: Backoff = Backoff(),
+    /** Controls whether Pro features (act/manage, background monitoring, and concurrent multi-host) are unlocked. */
+    private val pro: ProEntitlement = ProEntitlement(),
+    /** Platform billing gateway for purchasing or restoring the Pro entitlement. */
+    private val billing: BillingGateway = UnavailableBillingGateway,
 ) {
     private val _state = MutableStateFlow<AppState>(AppState.Restoring)
     val state: StateFlow<AppState> = _state.asStateFlow()
@@ -174,6 +178,9 @@ class AppController(
 
     /** Whether a GitHub sign-in is held. A direct host needs none. */
     val isSignedIn: Boolean get() = token != null
+
+    /** Whether Pro features (acting, managing, background monitoring, and concurrent multi-host) are unlocked. */
+    val proUnlocked: StateFlow<Boolean> get() = pro.unlocked
 
     private fun connectedSession(): HostSession? = (_state.value as? AppState.Connected)?.session
 
@@ -271,6 +278,7 @@ class AppController(
     fun start() {
         // The saved choice is read before anything can connect, so the first connection already uses the right tier.
         scope.launch {
+            pro.load()
             interaction.load()
             loadDirectHosts()
             restore()
@@ -284,6 +292,7 @@ class AppController(
      * @return true when the choice was saved. Turning it off takes effect either way.
      */
     suspend fun setInteraction(on: Boolean): Boolean {
+        if (on && !pro.unlocked.value) return false
         val at = _state.value
         val consent = consentOf(at)
         val saved = consent.set(on)
@@ -313,11 +322,64 @@ class AppController(
      * @return true when the choice was saved. Turning it off takes effect either way.
      */
     suspend fun setManagement(on: Boolean): Boolean {
+        if (on && !pro.unlocked.value) return false
         val at = _state.value
         val consent = consentOf(at)
         val saved = consent.setManagement(on)
         if (consent.managementAllowed.value == on) restartIfStillConnected(at)
         return saved
+    }
+
+    /**
+     * Grants or revokes the Pro entitlement. When revoked (on == false), active write/management permissions are cleared,
+     * any extra background hosts in [connectedHosts] are disconnected so at most one host stays connected, and the remaining
+     * session reconnects on the read-only tier.
+     */
+    suspend fun setProUnlocked(on: Boolean): Boolean {
+        val saved = pro.setUnlocked(on)
+        if (!pro.unlocked.value) {
+            val hadWrite = interaction.allowed.value || synchronized(directConsents) { directConsents.values.any { it.allowed.value } }
+            interaction.revokeEntitlement()
+            val directs = synchronized(directConsents) { directConsents.values.toList() }
+            directs.forEach { it.revokeEntitlement() }
+            keepOnlyFocusedHost()
+            if (hadWrite) {
+                allLiveSessions().forEach { it.restart() }
+            }
+        }
+        return saved
+    }
+
+    /**
+     * Launches the platform purchase flow for the Pro unlock ([BillingGateway.PRODUCT_ID]), persisting the unlock if purchased.
+     */
+    suspend fun purchasePro(): BillingResult {
+        val result = billing.purchasePro()
+        if (result is BillingResult.Unlocked && !setProUnlocked(true)) {
+            return BillingResult.Unavailable("Could not save the setting on this phone.")
+        }
+        return result
+    }
+
+    /**
+     * Queries the platform billing store to restore an existing Pro purchase ([BillingGateway.PRODUCT_ID]), persisting the unlock if found.
+     */
+    suspend fun restorePro(): BillingResult {
+        val result = billing.restorePurchases()
+        if (result is BillingResult.Unlocked && !setProUnlocked(true)) {
+            return BillingResult.Unavailable("Could not save the setting on this phone.")
+        }
+        return result
+    }
+
+    @Synchronized
+    private fun keepOnlyFocusedHost() {
+        val current = _state.value as? AppState.Connected ?: return
+        val extra = _connectedHosts.value.filter { it.host.id != current.host.id }
+        if (extra.isEmpty()) return
+        extra.forEach { it.session.stop() }
+        _connectedHosts.value = listOf(ConnectedHost(current.host, current.session))
+        launchWatch()
     }
 
     fun signIn() {
@@ -515,7 +577,7 @@ class AppController(
     @Synchronized
     fun connectHost(target: HostRef) {
         val from = _state.value
-        if (from is AppState.Hosts) {
+        if (from is AppState.Hosts || !pro.unlocked.value) {
             switchHost(target)
             return
         }

@@ -45,6 +45,8 @@ class InteractionConsent(
     val supported: Boolean = true,
     /** The second, separate choice: may it also create, archive and remove sessions and chats. Only ever on while the first is. */
     private val managementSettings: InteractionSettings = InMemoryInteractionSettings(),
+    /** Whether the user's Pro entitlement allows write/management tiers; when false, the tier is always [CapabilityPolicy.READ]. */
+    private val entitled: () -> Boolean = { true },
 ) {
     private val _allowed = MutableStateFlow(false)
     val allowed: StateFlow<Boolean> = _allowed.asStateFlow()
@@ -56,15 +58,20 @@ class InteractionConsent(
 
     /** The tier a new connection should be made under right now. */
     fun policy(): CapabilityPolicy = when {
-        !_allowed.value -> CapabilityPolicy.READ
+        !entitled() || !_allowed.value -> CapabilityPolicy.READ
         _managementAllowed.value -> CapabilityPolicy.MANAGE
         else -> CapabilityPolicy.INTERACT
     }
 
-    /** Reads the saved choices. An unreadable one counts as off, and so does any choice on a phone that is not [supported]. */
+    /** Reads the saved choices. An unreadable one counts as off, and so does any choice on a phone that is not [supported] or not [entitled]. */
     suspend fun load() {
-        _allowed.value = supported && read(settings)
+        _allowed.value = supported && entitled() && read(settings)
         _managementAllowed.value = _allowed.value && read(managementSettings)
+    }
+
+    /** Clears active write/management permissions in memory and on disk when Pro entitlement is revoked. */
+    suspend fun revokeEntitlement() {
+        set(false)
     }
 
     private suspend fun read(from: InteractionSettings): Boolean = try {
@@ -76,13 +83,13 @@ class InteractionConsent(
     /**
      * Turns the permission on or off. Off takes effect at once, before anything is written, so it cannot be held up by
      * a full disk; on takes effect only once the choice is saved, so a consent that could not be recorded is not granted.
-     * On is refused outright, and nothing is written, when the phone is not [supported]. Turning it off also turns
+     * On is refused outright, and nothing is written, when the phone is not [supported] or not [entitled]. Turning it off also turns
      * looking after sessions off, so the second permission can never outlive the first.
      *
      * @return true when the choice was saved. Turning it off always takes effect, whatever this returns.
      */
     suspend fun set(on: Boolean): Boolean {
-        if (on && !supported) return false
+        if (on && (!supported || !entitled())) return false
         if (!on) {
             _allowed.value = false
             _managementAllowed.value = false
@@ -114,13 +121,13 @@ class InteractionConsent(
     }
 
     /**
-     * Turns looking after sessions on or off. Refused, with nothing written, unless the app may already act for the user.
+     * Turns looking after sessions on or off. Refused, with nothing written, unless the app may already act for the user and is [entitled].
      * Off takes effect at once; on only once it is saved.
      *
      * @return true when the choice was saved.
      */
     suspend fun setManagement(on: Boolean): Boolean {
-        if (on && !_allowed.value) return false
+        if (on && (!_allowed.value || !entitled())) return false
         if (!on) _managementAllowed.value = false
         return try {
             managementSettings.setEnabled(on)
