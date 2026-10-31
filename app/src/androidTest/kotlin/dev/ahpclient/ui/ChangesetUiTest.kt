@@ -83,7 +83,7 @@ class ChangesetUiTest {
         )
 
         rule.onAllNodesWithTag("change_row").assertCountEquals(4)
-        rule.onAllNodesWithTag("change_row")[0].assertTextContains("/work/a.kt", substring = true).assertTextContains("Modified", substring = true)
+        rule.onAllNodesWithTag("change_row")[0].assertTextContains("a.kt", substring = true).assertTextContains("/work", substring = true).assertTextContains("Modified", substring = true)
         rule.onAllNodesWithTag("change_row")[1].assertTextContains("Added", substring = true)
         rule.onAllNodesWithTag("change_row")[2].assertTextContains("Deleted", substring = true)
         rule.onAllNodesWithTag("change_row")[3].assertTextContains("Reviewed", substring = true)
@@ -261,8 +261,8 @@ class ChangesetUiTest {
         assertEquals(listOf("file:///work/b.kt"), opened)
         rule.onNodeWithTag("changeset_note").assertTextContains("Tap a file", substring = true)
         rule.onAllNodesWithTag("change_row")[0].assertHeightIsAtLeast(48.dp)
-        // A row leads with the file's own name and keeps the path under it.
-        rule.onAllNodesWithTag("change_row")[0].assertTextContains("a.kt", substring = true).assertTextContains("/work/a.kt", substring = true)
+        // A row leads with the file's own name and keeps the parent directory under it.
+        rule.onAllNodesWithTag("change_row")[0].assertTextContains("a.kt", substring = true).assertTextContains("/work", substring = true)
     }
 
     @Test

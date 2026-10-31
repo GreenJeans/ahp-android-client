@@ -355,6 +355,8 @@ class SessionFilterTest {
             zone = ZoneOffset.UTC,
         )
         assertEquals(listOf("Laptop", "Desktop"), byHost.groups.map { it.title })
+        assertTrue(byHost.rows.all { it.hostName == null }, "Host name should not repeat on rows when already grouped by host")
+        assertTrue(byTime.rows.all { it.hostName != null }, "Host name should appear on rows in multi-host mode when not grouped by host")
     }
 
     @Test

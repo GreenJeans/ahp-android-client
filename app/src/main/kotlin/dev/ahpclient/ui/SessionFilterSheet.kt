@@ -25,12 +25,17 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.ahpclient.state.FilterFacetOption
 import dev.ahpclient.state.SessionFilter
@@ -67,14 +72,12 @@ fun SessionFilterSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
                 .navigationBarsPadding()
                 .padding(horizontal = 24.dp)
                 .padding(bottom = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
@@ -91,13 +94,20 @@ fun SessionFilterSheet(
                 }
             }
 
-            SectionHeader("Ordering & grouping")
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                SectionHeader("Ordering & grouping")
             TileCard(shape = connectedShape(0, 3), color = card) {
                 FilterTilePadding {
                     Text("Ordering", style = MaterialTheme.typography.bodyLarge)
                     FlowRow(
                         modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         SessionOrdering.entries.forEach { ordering ->
                             FilterChip(
@@ -117,6 +127,7 @@ fun SessionFilterSheet(
                     FlowRow(
                         modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         SessionGrouping.entries.forEach { grouping ->
                             FilterChip(
@@ -136,6 +147,7 @@ fun SessionFilterSheet(
                     FlowRow(
                         modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         SessionShowScope.entries.forEach { scope ->
                             FilterChip(
@@ -247,9 +259,12 @@ fun SessionFilterSheet(
                     )
                 }
             }
+            }
         }
     }
 }
+
+private const val MAX_INITIAL_FACET_OPTIONS = 8
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -263,26 +278,50 @@ private fun FacetSection(
     onClear: () -> Unit,
     onToggle: (String) -> Unit,
 ) {
+    var expanded by rememberSaveable(tagPrefix) { mutableStateOf(false) }
+    val canCollapse = options.size > MAX_INITIAL_FACET_OPTIONS
+    val visibleOptions = if (expanded || !canCollapse) {
+        options
+    } else {
+        val head = options.take(MAX_INITIAL_FACET_OPTIONS)
+        val headIds = head.mapTo(HashSet()) { it.id }
+        head + options.drop(MAX_INITIAL_FACET_OPTIONS).filter { it.id in selected && it.id !in headIds }
+    }
     SectionHeader(title)
     TileCard(color = color) {
         FilterTilePadding {
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 FilterChip(
                     selected = selected.isEmpty(),
                     onClick = onClear,
-                    label = { Text(allLabel) },
+                    label = { Text(allLabel, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     modifier = Modifier.heightIn(min = 48.dp).testTag("${tagPrefix}_all"),
                 )
-                options.forEach { option ->
+                visibleOptions.forEach { option ->
                     FilterChip(
                         selected = option.id in selected,
                         onClick = { onToggle(option.id) },
-                        label = { Text("${option.label} (${option.count})") },
+                        label = {
+                            Text(
+                                "${option.label} (${option.count})",
+                                maxLines = 1,
+                                overflow = TextOverflow.MiddleEllipsis,
+                            )
+                        },
                         modifier = Modifier.heightIn(min = 48.dp).testTag("${tagPrefix}_${option.id}"),
                     )
+                }
+            }
+            if (canCollapse) {
+                TextButton(
+                    onClick = { expanded = !expanded },
+                    modifier = Modifier.heightIn(min = 48.dp).testTag("${tagPrefix}_toggle_all"),
+                ) {
+                    Text(if (expanded) "Show fewer" else "Show all (${options.size})")
                 }
             }
         }

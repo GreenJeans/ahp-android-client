@@ -20,6 +20,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
@@ -64,6 +65,17 @@ import kotlinx.coroutines.launch
 @Immutable
 data class AgentOption(val provider: String, val name: String)
 
+/** One connected host that can start a new session when multiple hosts are connected. */
+@Stable
+class HostManageTarget(
+    val hostId: String,
+    val hostName: String,
+    val agents: List<AgentOption>,
+    val folders: List<String>,
+    val newSession: suspend (provider: String, folder: String?, picks: Map<String, ConfigPick>) -> ManageResult,
+    val sessionSettings: suspend (provider: String, folder: String?, picks: Map<String, ConfigPick>) -> ConfigOffer = { _, _, _ -> ConfigOffer.NoSettings },
+)
+
 /**
  * What a screen can ask for to look after sessions, once the person has allowed it and the connection is on the manage
  * tier. A screen with none of this shows none of the controls below: nothing to disable, nothing to tap by accident.
@@ -82,6 +94,8 @@ class ManageActionsUi(
     val disposeChat: suspend (sessionUri: String, chatUri: String) -> ManageResult,
     /** Asks the host which settings it offers for a new session of this agent in this folder, given the choices so far. */
     val sessionSettings: suspend (provider: String, folder: String?, picks: Map<String, ConfigPick>) -> ConfigOffer = { _, _, _ -> ConfigOffer.NoSettings },
+    /** Connected hosts that can start a new session; when more than one is present, the dialog offers a host picker. */
+    val hosts: List<HostManageTarget> = emptyList(),
 )
 
 @Composable
@@ -151,12 +165,26 @@ fun ManagementToggle(allowed: Boolean, available: Boolean, onChange: (Boolean) -
 
 /** The button that starts the new-session dialog: a tonal icon button, spoken "New session". [onCreated] gets the address of the session the host took. */
 @Composable
-fun NewSessionIconButton(manage: ManageActionsUi, onCreated: (String) -> Unit, modifier: Modifier = Modifier) {
+fun NewSessionIconButton(
+    manage: ManageActionsUi,
+    onCreated: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    onCreatedOnHost: ((hostId: String?, uri: String) -> Unit)? = null,
+) {
     var open by rememberSaveable { mutableStateOf(false) }
     FilledTonalIconButton(onClick = { open = true }, modifier = modifier.testTag("new_session")) {
         Icon(AppIcons.Add, contentDescription = "New session")
     }
-    if (open) NewSessionDialog(manage, onDismiss = { open = false }, onCreated = { open = false; onCreated(it) })
+    if (open) {
+        NewSessionDialog(
+            manage = manage,
+            onDismiss = { open = false },
+            onCreated = { hostId, uri ->
+                open = false
+                if (onCreatedOnHost != null) onCreatedOnHost(hostId, uri) else onCreated(uri)
+            },
+        )
+    }
 }
 
 /** Keeps the settings chosen for a new session across rotation: each setting's id, then its value as `t:text` or `f:true`/`f:false`. */
@@ -183,11 +211,19 @@ private val PicksSaver: Saver<Map<String, ConfigPick>, Any> = listSaver<Map<Stri
  * words are plain text.
  */
 @Composable
-private fun NewSessionDialog(manage: ManageActionsUi, onDismiss: () -> Unit, onCreated: (String) -> Unit) {
-    var provider by rememberSaveable { mutableStateOf(manage.agents.singleOrNull()?.provider) }
-    var folder by rememberSaveable { mutableStateOf(manage.folders.singleOrNull()) }
+private fun NewSessionDialog(manage: ManageActionsUi, onDismiss: () -> Unit, onCreated: (hostId: String?, uri: String) -> Unit) {
+    val hostTargets = manage.hosts
+    var selectedHostId by rememberSaveable { mutableStateOf(hostTargets.firstOrNull()?.hostId) }
+    val activeTarget = hostTargets.firstOrNull { it.hostId == selectedHostId } ?: hostTargets.firstOrNull()
+    val activeAgents = activeTarget?.agents ?: manage.agents
+    val activeFolders = activeTarget?.folders ?: manage.folders
+    val activeNewSession = activeTarget?.newSession ?: manage.newSession
+    val activeSessionSettings = activeTarget?.sessionSettings ?: manage.sessionSettings
+
+    var provider by rememberSaveable { mutableStateOf(activeAgents.singleOrNull()?.provider) }
+    var folder by rememberSaveable { mutableStateOf(activeFolders.singleOrNull()) }
     // "No folder" is a choice of its own, since a null folder alone would read as nothing chosen yet. With no folders to pick it is the one choice, so it starts chosen.
-    var noFolder by rememberSaveable { mutableStateOf(manage.folders.isEmpty()) }
+    var noFolder by rememberSaveable { mutableStateOf(activeFolders.isEmpty()) }
     var picks by rememberSaveable(stateSaver = PicksSaver) { mutableStateOf<Map<String, ConfigPick>>(emptyMap()) }
     var form by remember { mutableStateOf<SessionConfigForm?>(null) }
     var settingsNote by remember { mutableStateOf<String?>(null) }
@@ -195,11 +231,11 @@ private fun NewSessionDialog(manage: ManageActionsUi, onDismiss: () -> Unit, onC
     var busy by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<String?>(null) }
     var showAllFolders by rememberSaveable { mutableStateOf(false) }
-    val shownFolders = if (showAllFolders) manage.folders else manage.folders.take(RecentFolders.SHOWN)
+    val shownFolders = if (showAllFolders) activeFolders else activeFolders.take(RecentFolders.SHOWN)
     val scope = rememberCoroutineScope()
 
-    // Asked again whenever the agent, folder or a choice changes: the host's list of settings can depend on all three.
-    LaunchedEffect(provider, folder, noFolder, picks) {
+    // Asked again whenever the host, agent, folder or a choice changes: the host's list of settings can depend on all of them.
+    LaunchedEffect(activeTarget?.hostId, provider, folder, noFolder, picks) {
         val chosenAgent = provider
         val chosenFolder = if (noFolder) null else folder
         if (chosenAgent == null || (!noFolder && chosenFolder == null)) {
@@ -208,7 +244,7 @@ private fun NewSessionDialog(manage: ManageActionsUi, onDismiss: () -> Unit, onC
             return@LaunchedEffect
         }
         loading = true
-        when (val offer = manage.sessionSettings(chosenAgent, chosenFolder, picks)) {
+        when (val offer = activeSessionSettings(chosenAgent, chosenFolder, picks)) {
             is ConfigOffer.Form -> {
                 form = offer.form
                 settingsNote = null
@@ -234,9 +270,27 @@ private fun NewSessionDialog(manage: ManageActionsUi, onDismiss: () -> Unit, onC
         title = { Text("Start a new session") },
         text = {
             Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (hostTargets.size > 1) {
+                    Text("Host", style = MaterialTheme.typography.titleSmall, modifier = Modifier.semantics { heading() })
+                    hostTargets.forEach { target ->
+                        ChoiceRow(target.hostName.take(MAX_SHOWN), activeTarget?.hostId == target.hostId, "host_${target.hostId}") {
+                            if (selectedHostId != target.hostId) {
+                                selectedHostId = target.hostId
+                                provider = target.agents.singleOrNull()?.provider
+                                folder = target.folders.singleOrNull()
+                                noFolder = target.folders.isEmpty()
+                                showAllFolders = false
+                                picks = emptyMap()
+                                form = null
+                                settingsNote = null
+                                notice = null
+                            }
+                        }
+                    }
+                }
                 Text("Agent", style = MaterialTheme.typography.titleSmall, modifier = Modifier.semantics { heading() })
-                if (manage.agents.isEmpty()) Text("The host offers no agents.", modifier = Modifier.testTag("no_agents"))
-                manage.agents.forEach { agent ->
+                if (activeAgents.isEmpty()) Text("The host offers no agents.", modifier = Modifier.testTag("no_agents"))
+                activeAgents.forEach { agent ->
                     ChoiceRow(agent.name.ifBlank { agent.provider }.take(MAX_SHOWN), provider == agent.provider, "agent_${agent.provider}") {
                         if (provider != agent.provider) {
                             provider = agent.provider
@@ -247,7 +301,7 @@ private fun NewSessionDialog(manage: ManageActionsUi, onDismiss: () -> Unit, onC
                     }
                 }
                 Text("Folder", style = MaterialTheme.typography.titleSmall, modifier = Modifier.semantics { heading() })
-                if (manage.folders.isEmpty()) {
+                if (activeFolders.isEmpty()) {
                     Text("The host has no folders to pick yet.", modifier = Modifier.testTag("no_folders"))
                 }
                 ChoiceRow("No folder (the host chooses)", noFolder, "folder_none") {
@@ -270,9 +324,9 @@ private fun NewSessionDialog(manage: ManageActionsUi, onDismiss: () -> Unit, onC
                         }
                     }
                 }
-                if (shownFolders.size < manage.folders.size) {
+                if (shownFolders.size < activeFolders.size) {
                     TextButton(onClick = { showAllFolders = true }, modifier = Modifier.heightIn(min = 48.dp).testTag("folders_show_all")) {
-                        Text("Show ${manage.folders.size - shownFolders.size} more folders")
+                        Text("Show ${activeFolders.size - shownFolders.size} more folders")
                     }
                 }
                 form?.let { current -> SettingsSection(current, picks, missing) { id, pick -> picks = picks + (id to pick) } }
@@ -296,10 +350,10 @@ private fun NewSessionDialog(manage: ManageActionsUi, onDismiss: () -> Unit, onC
                     if (chosenAgent != null && (noFolder || chosenFolder != null)) {
                         scope.launch {
                             busy = true
-                            val result = manage.newSession(chosenAgent, chosenFolder, picks)
+                            val result = activeNewSession(chosenAgent, chosenFolder, picks)
                             notice = ManageMessages.describe(result)
                             busy = false
-                            if (result is ManageResult.Done) result.created?.let(onCreated)
+                            if (result is ManageResult.Done) result.created?.let { onCreated(activeTarget?.hostId, it) }
                         }
                     }
                 },
@@ -405,7 +459,12 @@ fun SessionMenu(
             Icon(AppIcons.MoreVert, contentDescription = "More options")
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }, modifier = Modifier.testTag("session_menu_items")) {
-            DropdownMenuItem(text = { Text("Details") }, onClick = { open = false; onShowDetails() }, modifier = Modifier.testTag("menu_details"))
+            DropdownMenuItem(
+                text = { Text("Details") },
+                leadingIcon = { Icon(AppIcons.Info, contentDescription = null) },
+                onClick = { open = false; onShowDetails() },
+                modifier = Modifier.testTag("menu_details"),
+            )
             if (alerts != null && sessionUri.isNotEmpty() && !detail.isArchived) {
                 val everySession = alerts.watch.all
                 val on = everySession || sessionUri in alerts.watch.sessions
@@ -427,25 +486,34 @@ fun SessionMenu(
                 HorizontalDivider()
                 DropdownMenuItem(
                     text = { Text(if (detail.isRead) "Mark unread" else "Mark read") },
+                    leadingIcon = { Icon(AppIcons.Mail, contentDescription = null) },
                     enabled = !busy,
                     onClick = { open = false; run({ manage.setRead(sessionUri, !detail.isRead) }) },
                     modifier = Modifier.testTag("toggle_read"),
                 )
                 DropdownMenuItem(
                     text = { Text(if (detail.isArchived) "Restore" else "Archive") },
+                    leadingIcon = { Icon(if (detail.isArchived) AppIcons.Refresh else AppIcons.Archive, contentDescription = null) },
                     enabled = !busy,
                     onClick = { open = false; if (detail.isArchived) run({ manage.setArchived(sessionUri, false) }) else confirmArchive = true },
                     modifier = Modifier.testTag("toggle_archive"),
                 )
                 DropdownMenuItem(
                     text = { Text("New chat") },
+                    leadingIcon = { Icon(AppIcons.Add, contentDescription = null) },
                     enabled = !busy && detail.phase == SessionPhase.READY,
                     onClick = { open = false; run({ manage.newChat(sessionUri) }) { result -> (result as? ManageResult.Done)?.created?.let(onChatCreated) } },
                     modifier = Modifier.testTag("new_chat"),
                 )
+                val destructiveColors = MenuDefaults.itemColors(
+                    textColor = MaterialTheme.colorScheme.error,
+                    leadingIconColor = MaterialTheme.colorScheme.error,
+                )
                 if (shownChat != null && shownChat.removable) {
                     DropdownMenuItem(
                         text = { Text("Remove this chat…") },
+                        leadingIcon = { Icon(AppIcons.Trash, contentDescription = null) },
+                        colors = destructiveColors,
                         enabled = !busy,
                         onClick = { open = false; removingChat = shownChat.uri },
                         modifier = Modifier.testTag("remove_chat"),
@@ -453,6 +521,8 @@ fun SessionMenu(
                 }
                 DropdownMenuItem(
                     text = { Text("Remove session…") },
+                    leadingIcon = { Icon(AppIcons.Trash, contentDescription = null) },
+                    colors = destructiveColors,
                     enabled = !busy,
                     onClick = { open = false; confirmRemove = true },
                     modifier = Modifier.testTag("remove_session"),

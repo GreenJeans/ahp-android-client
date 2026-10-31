@@ -17,6 +17,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -63,7 +65,7 @@ fun FileDiffScreen(path: String, load: DiffLoad, connection: ConnState, onBack: 
                     style = MaterialTheme.typography.bodySmall,
                     fontFamily = FontFamily.Monospace,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
+                    maxLines = 1,
                     overflow = TextOverflow.MiddleEllipsis,
                     modifier = Modifier.semantics { heading() }.testTag("diff_title"),
                 )
@@ -122,10 +124,16 @@ private fun DiffBody(diff: FileDiff) {
 @Composable
 private fun DiffLineRow(line: DiffLine) {
     val scheme = MaterialTheme.colorScheme
+    val isDark = scheme.surface.luminance() < 0.5f
     val (background, content) = when (line.kind) {
-        DiffLineKind.ADDED -> scheme.tertiaryContainer to scheme.onTertiaryContainer
-        DiffLineKind.REMOVED -> scheme.errorContainer to scheme.onErrorContainer
+        DiffLineKind.ADDED -> if (isDark) Color(0xFF132A1C) to Color(0xFFD7F5DF) else Color(0xFFE6F4EA) to Color(0xFF0D2E16)
+        DiffLineKind.REMOVED -> if (isDark) Color(0xFF2D1418) to Color(0xFFFFDAD6) else Color(0xFFFCE8E6) to Color(0xFF3C0D0D)
         DiffLineKind.CONTEXT -> scheme.surface to scheme.onSurface
+    }
+    val markerColor = when (line.kind) {
+        DiffLineKind.ADDED -> if (isDark) Color(0xFF81C784) else Color(0xFF1B5E20)
+        DiffLineKind.REMOVED -> if (isDark) Color(0xFFE57373) else Color(0xFFB71C1C)
+        DiffLineKind.CONTEXT -> scheme.onSurfaceVariant
     }
     val marker = when (line.kind) {
         DiffLineKind.ADDED -> "+"
@@ -148,7 +156,7 @@ private fun DiffLineRow(line: DiffLine) {
     ) {
         Row(modifier = Modifier.padding(horizontal = 24.dp, vertical = 1.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
             Text(number?.toString().orEmpty(), style = MaterialTheme.typography.labelSmall, fontFamily = FontFamily.Monospace, modifier = Modifier.width(36.dp))
-            Text(marker, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+            Text(marker, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, color = markerColor)
             Text(line.text.ifEmpty { " " }, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, modifier = Modifier.weight(1f))
         }
     }

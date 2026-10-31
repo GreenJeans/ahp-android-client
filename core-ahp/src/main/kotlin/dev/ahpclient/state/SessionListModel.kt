@@ -159,7 +159,7 @@ data class SessionListModel(
                     now = now,
                     ordering = filter.ordering,
                     hostId = entry.hostId,
-                    hostName = entry.hostName?.takeIf { multiHost || filter.grouping == SessionGrouping.HOST },
+                    hostName = entry.hostName?.takeIf { multiHost && filter.grouping != SessionGrouping.HOST },
                 )
             }
 

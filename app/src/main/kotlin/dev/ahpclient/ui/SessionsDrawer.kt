@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -115,6 +116,7 @@ fun DrawerContent(
     filter: SessionFilter = SessionFilter.DEFAULT,
     onFilterChange: (SessionFilter) -> Unit = {},
     onOpenSessionOnHost: (hostId: String?, uri: String) -> Unit = { _, uri -> onOpenSession(uri) },
+    onSessionCreatedOnHost: (hostId: String?, uri: String) -> Unit = { _, uri -> onSessionCreated(uri) },
 ) {
     val effectiveFilter = remember(filter, showArchived) { filter.copy(showArchived = showArchived) }
     val model = remember(entries, sessions, effectiveFilter, now, query) {
@@ -145,9 +147,6 @@ fun DrawerContent(
                 if (inboxCount != null && host != null) InboxAction(inboxCount, onOpenInbox)
                 if (host != null && (model.hiddenArchived > 0 || showArchived)) ArchivedAction(showArchived, model.hiddenArchived, onToggleArchived)
                 Spacer(Modifier.weight(1f))
-                if (manage != null && host != null) {
-                    Tooltip("New session") { NewSessionIconButton(manage, onSessionCreated) }
-                }
                 Tooltip("Settings") {
                     IconButton(onClick = onOpenSettings, modifier = Modifier.testTag("settings")) {
                         Icon(AppIcons.Settings, contentDescription = "Settings")
@@ -171,6 +170,9 @@ fun DrawerContent(
                     onOpenFilter = { filterSheetOpen = true },
                     onResetFilter = resetFilter,
                     listState = listState,
+                    manage = manage,
+                    onSessionCreated = onSessionCreated,
+                    onSessionCreatedOnHost = onSessionCreatedOnHost,
                     watched = watched,
                     onOpen = onOpenSessionOnHost,
                     modifier = Modifier.weight(1f),
@@ -234,7 +236,7 @@ private fun CountOver(count: Int?, tag: String, containerColor: Color, contentCo
                 Badge(containerColor = containerColor, contentColor = contentColor) {
                     Text("$count", modifier = Modifier.testTag(tag).semantics { hideFromAccessibility() })
                 }
-            }) { Spacer(Modifier.size(24.dp)) }
+            }) { Spacer(Modifier.size(30.dp)) }
         }
     }
 }
@@ -344,36 +346,44 @@ private fun SessionList(
     onOpenFilter: () -> Unit,
     onResetFilter: () -> Unit,
     listState: LazyListState,
+    manage: ManageActionsUi?,
+    onSessionCreated: (String) -> Unit,
+    onSessionCreatedOnHost: (hostId: String?, uri: String) -> Unit,
     watched: Set<String>,
     onOpen: (hostId: String?, uri: String) -> Unit,
     modifier: Modifier,
 ) {
+    val showSearch = model.total > 0 || !model.filter.isDefault
     LazyColumn(state = listState, modifier = modifier.fillMaxWidth().testTag("session_list")) {
-        item(key = "header") {
-            Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Sessions", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f).semantics { heading() })
-                if (stale) UpdatingChip(Modifier.padding(end = 12.dp))
+        if (stale) {
+            item(key = "stale") {
+                Row(
+                    Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 2.dp),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    UpdatingChip()
+                }
             }
         }
-        if (model.summary.isNotEmpty()) {
-            item(key = "summary") {
-                Text(
-                    model.summary,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = if (model.needsInput > 0) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 4.dp).testTag("summary"),
-                )
-            }
-        }
-        if (model.total > 0 || !model.filter.isDefault) {
+        if (showSearch || manage != null) {
             item(key = "search") {
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                    modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 4.dp),
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    SearchField(query, onQueryChange, Modifier.weight(1f))
-                    FilterButton(model.filter.activeCount, onOpenFilter)
+                    if (showSearch) {
+                        SearchField(query, onQueryChange, Modifier.weight(1f))
+                        FilterButton(model.filter.activeCount, onOpenFilter)
+                    } else {
+                        Spacer(Modifier.weight(1f))
+                    }
+                    if (manage != null) {
+                        Tooltip("New session") {
+                            NewSessionIconButton(manage, onSessionCreated, onCreatedOnHost = onSessionCreatedOnHost)
+                        }
+                    }
                 }
             }
         }
@@ -405,7 +415,7 @@ private fun SessionList(
                 }
             }
         }
-        item(key = "end") { Spacer(Modifier.height(8.dp)) }
+        item(key = "end") { Spacer(Modifier.navigationBarsPadding().height(16.dp)) }
     }
 }
 
@@ -504,7 +514,7 @@ private fun SessionRowItem(row: SessionRow, selected: Boolean, watched: Boolean,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        StateMark(row.state)
+        StateMark(row.state, unread = !row.isRead)
         Column(Modifier.weight(1f)) {
             Text(
                 row.title,
@@ -517,18 +527,20 @@ private fun SessionRowItem(row: SessionRow, selected: Boolean, watched: Boolean,
             val second = row.subtitle
             val changes = row.changes
             val branch = row.branch
-            if (hostName != null || second != null || changes != null || branch != null) {
+            val inlineBranch = branch.takeIf { second == null }
+            val separateBranch = branch.takeIf { second != null }
+            hostName?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.MiddleEllipsis,
+                    modifier = Modifier.testTag("row_host"),
+                )
+            }
+            if (second != null || changes != null || inlineBranch != null) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    hostName?.let {
-                        Text(
-                            it,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false).testTag("row_host"),
-                        )
-                    }
                     second?.let {
                         Text(
                             it,
@@ -536,18 +548,17 @@ private fun SessionRowItem(row: SessionRow, selected: Boolean, watched: Boolean,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(start = if (hostName != null) 6.dp else 0.dp).weight(1f, fill = false),
+                            modifier = Modifier.weight(1f, fill = false),
                         )
                     }
-                    // The branch is host text and can be long; it shortens before the change count does.
-                    branch?.let {
+                    inlineBranch?.let {
                         Text(
                             it,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(start = if (hostName != null || second != null) 6.dp else 0.dp).weight(1f, fill = false).testTag("row_branch"),
+                            overflow = TextOverflow.MiddleEllipsis,
+                            modifier = Modifier.weight(1f, fill = false).testTag("row_branch"),
                         )
                     }
                     changes?.let {
@@ -556,10 +567,20 @@ private fun SessionRowItem(row: SessionRow, selected: Boolean, watched: Boolean,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
-                            modifier = Modifier.padding(start = if (hostName != null || second != null || branch != null) 6.dp else 0.dp).testTag("row_changes"),
+                            modifier = Modifier.padding(start = if (second != null || inlineBranch != null) 6.dp else 0.dp).testTag("row_changes"),
                         )
                     }
                 }
+            }
+            separateBranch?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.MiddleEllipsis,
+                    modifier = Modifier.testTag("row_branch"),
+                )
             }
         }
         if (watched) {
@@ -573,17 +594,22 @@ private fun SessionRowItem(row: SessionRow, selected: Boolean, watched: Boolean,
 
 /**
  * What a session is doing at a glance: a spinner while it works, a lock while it waits on you, an alert on an error, a quiet dot at
- * rest. Decorative: the row's spoken description carries the state in words.
+ * rest (or an accent dot when unread). Decorative: the row's spoken description carries the state in words.
  */
 @Composable
-internal fun StateMark(state: ActivityState, modifier: Modifier = Modifier) {
+internal fun StateMark(state: ActivityState, modifier: Modifier = Modifier, unread: Boolean = false) {
     val colors = MaterialTheme.colorScheme
     Box(modifier.size(18.dp).testTag("state_mark").clearAndSetSemantics {}, contentAlignment = Alignment.Center) {
         when (state) {
             ActivityState.IN_PROGRESS -> CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = colors.primary)
             ActivityState.NEEDS_INPUT -> Icon(AppIcons.Lock, contentDescription = null, tint = colors.tertiary, modifier = Modifier.size(16.dp))
             ActivityState.ERROR -> Icon(AppIcons.ErrorCircle, contentDescription = null, tint = colors.error, modifier = Modifier.size(16.dp))
-            ActivityState.IDLE -> Box(Modifier.size(8.dp).clip(CircleShape).background(colors.outlineVariant))
+            ActivityState.IDLE -> Box(
+                Modifier
+                    .size(if (unread) 10.dp else 8.dp)
+                    .clip(CircleShape)
+                    .background(if (unread) colors.primary else colors.outlineVariant),
+            )
         }
     }
 }

@@ -177,23 +177,27 @@ private fun ModelPickerDialog(models: List<ModelOption>, current: ModelChoice?, 
         onDismissRequest = onDismiss,
         title = { Text("Model") },
         text = {
-            Column(
-                modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()).testTag("model_dialog"),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                if (showDefault) PickRow("Default", draft == null, "model_default") { draft = null }
-                models.forEach { m -> PickRow(m.name, draft?.id == m.id, "model_option") { if (draft?.id != m.id) draft = ModelChoice(m.id) } }
-                model?.settings?.forEach { setting ->
-                    Text(setting.title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 12.dp).semantics { heading() })
-                    PickRow("Default", draft?.config?.containsKey(setting.id) != true, "model_setting_default") {
-                        draft = draft?.let { it.copy(config = it.config - setting.id) }
-                    }
-                    setting.values.forEach { v ->
-                        PickRow(v.label, draft?.config?.get(setting.id) == v.value, "model_setting_value") {
-                            draft = draft?.let { it.copy(config = it.config + (setting.id to v.value)) }
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (models.size > 5) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Column(
+                    modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()).testTag("model_dialog"),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    if (showDefault) PickRow("Default", draft == null, "model_default") { draft = null }
+                    models.forEach { m -> PickRow(m.name, draft?.id == m.id, "model_option") { if (draft?.id != m.id) draft = ModelChoice(m.id) } }
+                    model?.settings?.forEach { setting ->
+                        Text(setting.title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 12.dp).semantics { heading() })
+                        PickRow("Default", draft?.config?.containsKey(setting.id) != true, "model_setting_default") {
+                            draft = draft?.let { it.copy(config = it.config - setting.id) }
+                        }
+                        setting.values.forEach { v ->
+                            PickRow(v.label, draft?.config?.get(setting.id) == v.value, "model_setting_value") {
+                                draft = draft?.let { it.copy(config = it.config + (setting.id to v.value)) }
+                            }
                         }
                     }
                 }
+                if (models.size > 5) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             }
         },
         confirmButton = { TextButton(onClick = { onPick(draft) }, modifier = Modifier.testTag("model_use")) { Text("Use") } },
@@ -252,7 +256,10 @@ private fun ConfigSection(control: ConfigControl, selected: String?, onSelect: (
     val kind = if (control.kind == ConfigKind.MODE) "mode" else "approvals"
     Column(modifier = Modifier.fillMaxWidth().testTag("config_section_$kind"), verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(control.title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 4.dp).semantics { heading() })
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
             control.choices.forEach { choice ->
                 FilterChip(
                     selected = selected == choice.value,
@@ -311,6 +318,7 @@ private fun ChatOptionsDialog(
                         unlisted != null -> 1
                         else -> 1 + agents.indexOfFirst { it.uri == currentAgent }.coerceAtLeast(0)
                     }
+                    if (agents.size > 3) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     LazyColumn(
                         state = rememberLazyListState(initialFirstVisibleItemIndex = (position - 1).coerceAtLeast(0)),
                         modifier = Modifier.heightIn(max = if (config.controls.isEmpty()) 420.dp else 280.dp).testTag("agent_dialog"),
@@ -322,6 +330,7 @@ private fun ChatOptionsDialog(
                         }
                         items(agents, key = { it.uri }) { a -> AgentRow(a.name, a.description, draft == a.uri, "agent_option") { draft = a.uri } }
                     }
+                    if (agents.size > 3) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
             }
         },

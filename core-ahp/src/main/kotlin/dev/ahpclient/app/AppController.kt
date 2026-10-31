@@ -229,6 +229,29 @@ class AppController(
         gate = approvalGate,
     )
 
+    /** Creates a [SessionManager] bound to [session], so multi-host dialogs can query or start sessions on any connected host. */
+    fun managerFor(session: HostSession): SessionManager = SessionManager(
+        allowed = { session.canManage.value && !session.root.stale.value },
+        sessions = { session.root.sessions.value },
+        agents = { session.root.root.value?.agents.orEmpty() },
+        sessionState = { uri -> (_state.value as? AppState.Connected)?.open?.takeIf { it.uri == uri }?.store?.state?.value },
+        dispatch = { channel, action -> session.dispatch(channel, action) },
+        commands = object : ManagementCommands {
+            override suspend fun createSession(uri: String, provider: String?, workingDirectories: List<String>?, config: Map<String, JsonElement>?) =
+                session.createSession(uri, provider, workingDirectories, config)
+
+            override suspend fun resolveSessionConfig(provider: String, workingDirectory: String?, config: Map<String, JsonElement>?) =
+                session.resolveSessionConfig(provider, workingDirectory, config)
+
+            override suspend fun createChat(sessionUri: String, chatUri: String) = session.createChat(sessionUri, chatUri)
+
+            override suspend fun disposeSession(uri: String) = session.disposeSession(uri)
+
+            override suspend fun disposeChat(uri: String) = session.disposeChat(uri)
+        },
+        gate = approvalGate,
+    )
+
     /**
      * Reads the two sides of a changed file of the open changeset, for its line-by-line changes. It is asked only for files the
      * open changeset lists, and reads only the content addresses that file's own entry names.

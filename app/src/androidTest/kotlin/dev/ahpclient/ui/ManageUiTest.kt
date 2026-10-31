@@ -1068,16 +1068,79 @@ class ManageUiTest {
     }
 
     @Test
-    fun theManagementSwitchIsOnTheSettingsScreenAndNeedsActingForMeFirst() {
-        var allowed by mutableStateOf(false)
-        rule.setContent { AhpTheme { SettingsScreen({}, interactionAllowed = allowed) } }
+    fun theCombinedPermissionsSwitchOnSettingsTurnsOnBothActingAndManagement() {
+        var interaction by mutableStateOf(false)
+        var management by mutableStateOf(false)
+        rule.setContent {
+            AhpTheme {
+                SettingsScreen(
+                    {},
+                    interactionAllowed = interaction,
+                    onInteractionChange = { interaction = it },
+                    managementAllowed = management,
+                    onManagementChange = { management = it },
+                )
+            }
+        }
 
-        rule.onNodeWithTag("management_toggle").assertIsNotEnabled()
-        rule.onNodeWithTag("management_hint").assertTextContains("turn on", ignoreCase = true, substring = true)
+        rule.onNodeWithTag("management_toggle").assertDoesNotExist()
+        rule.onNodeWithTag("interaction_toggle").performScrollTo().performClick()
+        rule.onNodeWithTag("interaction_confirm").performClick()
 
-        allowed = true
-        rule.waitForIdle()
-        rule.onNodeWithTag("management_toggle").assertIsEnabled()
+        assertTrue(interaction)
+        assertTrue(management)
+    }
+
+    @Test
+    fun whenMultipleHostsAreConnectedNewSessionLetsYouPickTheHost() {
+        val host1Calls = mutableListOf<Pair<String, String?>>()
+        val host2Calls = mutableListOf<Pair<String, String?>>()
+        val createdOn = mutableListOf<Pair<String?, String>>()
+        val manage = ManageActionsUi(
+            agents = listOf(AgentOption("copilotcli", "Copilot")),
+            folders = listOf("file:///work/host1"),
+            setRead = { _, _ -> ManageResult.Done() },
+            setArchived = { _, _ -> ManageResult.Done() },
+            newChat = { ManageResult.Done() },
+            newSession = { p, f, _ -> host1Calls += p to f; ManageResult.Done("ahp-session:/h1") },
+            disposeSession = { ManageResult.Done() },
+            disposeChat = { _, _ -> ManageResult.Done() },
+            hosts = listOf(
+                HostManageTarget(
+                    hostId = "h1",
+                    hostName = "laptop-box",
+                    agents = listOf(AgentOption("copilotcli", "Copilot")),
+                    folders = listOf("file:///work/host1"),
+                    newSession = { p, f, _ -> host1Calls += p to f; ManageResult.Done("ahp-session:/h1") },
+                ),
+                HostManageTarget(
+                    hostId = "h2",
+                    hostName = "workstation-box",
+                    agents = listOf(AgentOption("claude", "Claude")),
+                    folders = listOf("file:///work/host2"),
+                    newSession = { p, f, _ -> host2Calls += p to f; ManageResult.Done("ahp-session:/h2") },
+                ),
+            ),
+        )
+        rule.setContent {
+            AhpTheme {
+                NewSessionIconButton(manage, onCreated = {}, onCreatedOnHost = { hId, u -> createdOn += hId to u })
+            }
+        }
+        rule.onNodeWithTag("new_session").performClick()
+
+        rule.onNodeWithTag("host_h1").assertIsDisplayed().assertIsSelected()
+        rule.onNodeWithTag("host_h2").assertIsDisplayed().assertIsNotSelected().performClick()
+        rule.onNodeWithTag("host_h2").assertIsSelected()
+        rule.onNodeWithTag("agent_claude").assertIsSelected()
+        rule.onNodeWithTag("folder_file:///work/host2").assertIsSelected()
+        rule.onNodeWithTag("new_session_start").assertIsEnabled().performClick()
+
+        rule.waitUntil(5_000) { host2Calls.isNotEmpty() }
+        assertTrue(host1Calls.isEmpty())
+        assertEquals(listOf("claude" to "file:///work/host2"), host2Calls)
+        rule.waitUntil(5_000) { createdOn.isNotEmpty() }
+        assertEquals(listOf("h2" to "ahp-session:/h2"), createdOn)
     }
 
     @androidx.compose.runtime.Composable

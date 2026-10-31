@@ -23,9 +23,9 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 
 /**
- * The switch that lets this app act for the user: send messages, answer questions, approve tools and stop the agent. Off
- * until turned on, and turning it on is a decision made in a dialog that says what it allows; turning it off needs no
- * question. The whole row is the control, so the label and its state are read together.
+ * The switch that lets this app act for the user and look after sessions: send messages, answer questions, approve tools,
+ * stop the agent, and start, archive or remove sessions. Off until turned on, and turning it on is a decision made in a
+ * dialog that says what it allows; turning it off needs no question.
  */
 @Composable
 fun InteractionToggle(
@@ -57,9 +57,9 @@ fun InteractionToggle(
         }
         Text(
             when {
-                !supported -> "Needs Android 11 or newer, for the device-lock check on approvals. Watch only."
-                !proUnlocked -> "Requires Pro unlock. Watch only."
-                allowed -> "On: send, answer, approve and stop, as you. Approvals ask for your fingerprint, face or lock."
+                !supported -> "Needs Android 11+ for device-lock checks. Watch only."
+                !proUnlocked -> "Requires Pro. Watch only."
+                allowed -> "On: send, answer, approve and stop, or start and archive sessions."
                 else -> "Off: watch only."
             },
             style = MaterialTheme.typography.bodyMedium,
@@ -73,8 +73,8 @@ fun InteractionToggle(
             title = { Text("Act for you?") },
             text = {
                 Text(
-                    "This app can send messages to your agents, answer their questions, approve or deny their tool calls and stop them, as you. " +
-                        "Approvals ask for your fingerprint, face or screen lock first, but anyone who can unlock this phone could do the rest while it is on. " +
+                    "Lets this app send messages, answer questions, approve or deny tools, stop agents, and start, archive or remove sessions. " +
+                        "Approvals and removing sessions ask for your fingerprint, face or screen lock first. " +
                         "Signing out turns it off.",
                     modifier = Modifier.testTag("interaction_dialog_text"),
                 )

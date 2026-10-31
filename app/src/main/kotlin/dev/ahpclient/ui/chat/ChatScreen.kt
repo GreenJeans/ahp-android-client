@@ -1,5 +1,8 @@
 package dev.ahpclient.ui.chat
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,9 +16,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -29,10 +34,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.Density
@@ -215,7 +223,6 @@ fun ChatPane(
                         error != null -> ErrorText("Could not load this chat (${error.javaClass.simpleName}).", Modifier.padding(horizontal = 16.dp).testTag("chat_error"))
                         else -> LoadingChat(Modifier.padding(horizontal = 16.dp))
                     }
-                    if (actions != null && transcript != null) Composer(actions)
                 }
                 pendingLink?.let { target ->
                     LinkConfirmDialog(
@@ -319,6 +326,9 @@ private fun TranscriptList(
     }
 
     val away by remember { derivedStateOf { !listState.atNewest() } }
+    var composerHeightPx by remember { mutableStateOf(0) }
+    val composerPadding = if (actions != null) with(LocalDensity.current) { composerHeightPx.toDp() } else 0.dp
+    val saveableHolder = rememberSaveableStateHolder()
     Box(modifier = modifier.fillMaxSize()) {
         if (newestFirst.isEmpty() && !transcript.hasOlder) {
             Text("No messages yet.", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(24.dp).testTag("chat_empty"))
@@ -327,7 +337,7 @@ private fun TranscriptList(
             state = listState,
             reverseLayout = true,
             modifier = Modifier.fillMaxSize().testTag("transcript"),
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+            contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 6.dp + composerPadding),
         ) {
             // The newest row, at the bottom: for as long as the turn runs, the sign that it does (or that it is held up on the person).
             if (transcript.running) {
@@ -354,8 +364,31 @@ private fun TranscriptList(
         if (away) {
             FilledTonalIconButton(
                 onClick = { scope.launch { listState.animateScrollToItem(0) } },
-                modifier = Modifier.align(Alignment.BottomCenter).padding(12.dp).size(48.dp).testTag("jump_latest"),
+                colors = IconButtonDefaults.filledTonalIconButtonColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                ),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(12.dp)
+                    .shadow(6.dp, CircleShape)
+                    .size(48.dp)
+                    .testTag("jump_latest"),
             ) { Icon(AppIcons.ArrowDown, contentDescription = "Jump to latest") }
+        }
+        if (actions != null) {
+            AnimatedVisibility(
+                visible = !away,
+                enter = slideInVertically { it },
+                exit = slideOutVertically { it },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .onSizeChanged { if (it.height > 0) composerHeightPx = it.height },
+            ) {
+                saveableHolder.SaveableStateProvider("composer") {
+                    Composer(actions)
+                }
+            }
         }
     }
 }

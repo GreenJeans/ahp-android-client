@@ -144,7 +144,7 @@ private fun CardHeader(item: InboxItem, detail: String?, second: String?, onOpen
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            StateMark(row.state)
+            StateMark(row.state, unread = !row.isRead)
             Text(row.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             if (row.whenText.isNotEmpty()) Text(row.whenText, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }

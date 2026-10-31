@@ -894,7 +894,7 @@ class InteractionUiTest {
 
         rule.onNodeWithTag("question_form").assertIsDisplayed()
         rule.onNodeWithTag("input_request").assertDoesNotExist()
-        rule.onNodeWithTag("question_message").assertTextContains("Nothing is queued or pushed until you answer.")
+        rule.onNodeWithTag("question_message").assertTextContains("Nothing is queued or pushed until you answer.", substring = true)
         rule.onNodeWithText("reports-custom-attributes policy").assertIsDisplayed()
         rule.onNodeWithText(longPrompt).assertIsDisplayed()
         rule.onNodeWithTag("option_policy_exclude").assertTextContains("$longOption (recommended)", substring = true)
