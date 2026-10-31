@@ -36,6 +36,8 @@ try {
     $test = Join-Path $root 'app\build\outputs\apk\androidTest\debug\app-debug-androidTest.apk'
     & $adb -s $Serial install -r -t $app | Out-Null
     & $adb -s $Serial install -r -t $test | Out-Null
+    & $adb -s $Serial shell cmd package compile -m verify -f dev.ahpclient | Out-Null
+    & $adb -s $Serial shell cmd package compile -m verify -f dev.ahpclient.test | Out-Null
 
     $args = @('-s', $Serial, 'shell', 'am', 'instrument', '-w')
     if ($Filter) { $args += @('-e', 'class', $Filter) }
