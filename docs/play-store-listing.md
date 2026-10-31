@@ -1,6 +1,6 @@
 # Google Play Console & Release Packaging Guide (`P1`, `P3`, `M4`)
 
-This guide contains the exact copy, questionnaire answers, and build commands needed to publish **AHP Client** (`dev.ahpclient`) to Google Play Internal / Closed Testing and Production.
+This guide contains the exact copy, questionnaire answers, and build commands needed to publish **AHP Client** (`com.greenjeans.ahpclient`) to Google Play Internal / Closed Testing and Production.
 
 ---
 

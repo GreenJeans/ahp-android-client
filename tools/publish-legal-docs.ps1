@@ -31,7 +31,7 @@ try {
     $Readme = @"
 # AHP Client — Legal & Privacy Documentation
 
-This repository hosts the public Privacy Policy and legal disclosures for **AHP Client** (`dev.ahpclient`) on Google Play.
+This repository hosts the public Privacy Policy and legal disclosures for **AHP Client** (`com.greenjeans.ahpclient`) on Google Play.
 
 - [Privacy Policy](privacy-policy.md)
 "@

@@ -8,7 +8,7 @@ android {
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "dev.ahpclient"
+        applicationId = "com.greenjeans.ahpclient"
         minSdk = 26
         targetSdk = 36
         versionCode = 1

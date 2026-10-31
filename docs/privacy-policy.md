@@ -1,4 +1,4 @@
-# Privacy Policy — AHP Client (`dev.ahpclient`)
+# Privacy Policy — AHP Client (`com.greenjeans.ahpclient`)
 
 **Effective Date:** October 30, 2026
 
