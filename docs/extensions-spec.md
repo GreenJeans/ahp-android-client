@@ -203,7 +203,7 @@ VS Code marks some messages (synthetic or system prompts) as hidden from the tra
 
 ### Problem
 
-`ActionEnvelope.origin` is declared required, but `ahpc` reports that hosts omit it. This app waits for the echo of its own action by matching `origin.clientId` and `origin.clientSeq` (`HostSession.resolveDispatch`, which returns at once when `origin` is null). Against a host that omits it, an accepted message, approval or answer would never resolve, and the person would be told "No answer from the host yet" even though it worked. Nothing is wrong in the code for the VS Code host; this is a risk for any other host, and E6 would add one.
+`ActionEnvelope.origin` is optional in AHP 1.0.0 (`ActionOrigin | undefined`, where absent means server-originated), and `ahpc` reports that some hosts omit `origin` even on client-triggered actions (for example, `softov/ahpd` `0.14.0` omitted `origin` when waking a dormant session; fixed upstream in `softov/ahpd#161`, merged 2026-10-30). This app waits for the echo of its own action by matching `origin.clientId` and `origin.clientSeq` (`HostSession.resolveDispatch`, which returns at once when `origin` is null). Against a host that omits it or re-dispatches a turn without `origin`, an accepted message, approval or answer would never resolve, and the person would be told "No answer from the host yet" even though it worked. Nothing is wrong in the code for the VS Code host; this is a risk for any other host, and E6 would add one.
 
 ### Design
 

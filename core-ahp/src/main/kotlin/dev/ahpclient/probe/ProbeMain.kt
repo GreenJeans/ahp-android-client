@@ -28,6 +28,7 @@ import com.microsoft.agenthostprotocol.generated.SUPPORTED_PROTOCOL_VERSIONS
 import com.microsoft.agenthostprotocol.generated.SessionSummary
 import com.microsoft.agenthostprotocol.generated.SnapshotState
 import com.microsoft.agenthostprotocol.generated.StateAction
+import com.microsoft.agenthostprotocol.generated.SubscribeView
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.concurrent.TimeUnit
@@ -52,6 +53,7 @@ private const val SESSION_PAGE_SIZE = 100L
 private const val MAX_SESSION_PAGES = 10
 private const val TITLE_WIDTH = 60
 private const val DEFAULT_CHAT_WATCH_SECONDS = 30
+private const val PROBE_CHAT_TURNS = 10L
 
 internal data class ProbeArgs(
     val tunnel: String? = null,
@@ -244,7 +246,7 @@ internal class Probe(private val args: ProbeArgs, private val out: (String) -> U
             } ?: continue
             val chatUri = session.defaultChat ?: session.chats.firstOrNull()?.resource ?: continue
             try {
-                ahp.subscribe(chatUri)
+                ahp.subscribe(chatUri, SubscribeView(turns = PROBE_CHAT_TURNS))
                 open += chatUri
             } catch (e: AhpException) {
                 log("warn", "chat did not arrive: ${e.message}")
@@ -267,7 +269,7 @@ internal class Probe(private val args: ProbeArgs, private val out: (String) -> U
             ?: return log("FAIL", "the session snapshot holds no session state")
         val chatUri = session.defaultChat ?: session.chats.firstOrNull()?.resource ?: return log("FAIL", "the session lists no chat")
         log("info", "session is ${session.status.activityState.name.lowercase()}, ${session.chats.size} chat(s); subscribing to the first")
-        val chat = (ahp.subscribe(chatUri).snapshot?.state as? SnapshotState.Chat)?.value
+        val chat = (ahp.subscribe(chatUri, SubscribeView(turns = PROBE_CHAT_TURNS)).snapshot?.state as? SnapshotState.Chat)?.value
             ?: return log("FAIL", "the chat snapshot holds no chat state")
         val trace = ChatTrace(chat)
         log("PASS", "chat snapshot decoded: turns=${chat.turns.size} activeTurn=${chat.activeTurn != null} olderTurnsAvailable=${chat.turnsNextCursor != null} parts=${trace.partKinds()}")
