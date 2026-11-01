@@ -357,5 +357,57 @@ class QuickRepliesTest {
         val errMsg = QuickReplies.extractApiErrorMessage(404, """{"error":{"message":"models/gemini-3.6-flash is not found for API version v1beta"}}""")
         assertEquals("HTTP 404: models/gemini-3.6-flash is not found for API version v1beta", errMsg)
         assertEquals("HTTP 500", QuickReplies.extractApiErrorMessage(500, ""))
+
+        // Gemini 2.5 / 3.x thinking part + JSON answer part
+        val geminiWithThoughts = """
+            {
+              "candidates": [
+                {
+                  "content": {
+                    "parts": [
+                      {
+                        "thought": true,
+                        "text": "The user wants JSON like {replies: [...]}. Let me draft 2 options."
+                      },
+                      {
+                        "text": "{\"replies\":[{\"label\":\"Run tests\",\"prompt\":\"Please run the unit tests.\"}]}"
+                      }
+                    ],
+                    "role": "model"
+                  },
+                  "finishReason": "STOP"
+                }
+              ]
+            }
+        """.trimIndent()
+        val parsedWithThoughts = QuickReplies.parseGeminiApiResponseJson("t11", geminiWithThoughts, "Google Gemini · gemini-3-flash")
+        assertNotNull(parsedWithThoughts)
+        assertEquals("Run tests", parsedWithThoughts.chips.first().label)
+
+        // Truncated JSON recovery (e.g. if cut off mid-stream after emitting first complete chip object)
+        val truncatedJson = """{"tldr":"Cut off response","replies":[{"label":"Approve plan","prompt":"Looks good, proceed with the plan."},{"label":"Wait"""""
+        val recovered = QuickReplies.parseAiResponse("t11", truncatedJson, QuickReplySource.CLOUD_AI)
+        assertNotNull(recovered)
+        assertEquals("Approve plan", recovered.chips.first().label)
+
+        // Top-level JSON array and string array support
+        val topLevelArray = """[{"title":"Commit now","text":"Please commit these changes."}]"""
+        val parsedArray = QuickReplies.parseAiResponse("t11", topLevelArray, QuickReplySource.CLOUD_AI)
+        assertNotNull(parsedArray)
+        assertEquals("Commit now", parsedArray.chips.first().label)
+
+        val stringArray = """{"suggestions":["Yes, proceed with option 1","Run the test suite first"]}"""
+        val parsedStringArray = QuickReplies.parseAiResponse("t11", stringArray, QuickReplySource.CLOUD_AI)
+        assertNotNull(parsedStringArray)
+        assertEquals(2, parsedStringArray.chips.size)
+
+        // Bulleted fallback without pipe
+        val bulletFallback = "- Yes, apply the migration\n- No, skip the migration for now"
+        val parsedBullets = QuickReplies.parseAiResponse("t11", bulletFallback, QuickReplySource.CLOUD_AI)
+        assertNotNull(parsedBullets)
+        assertEquals(2, parsedBullets.chips.size)
+
+        val maxTokensBody = """{"candidates":[{"finishReason":"MAX_TOKENS"}]}"""
+        assertTrue(QuickReplies.describeUnparsedResponse(maxTokensBody).contains("MAX_TOKENS"))
     }
 }

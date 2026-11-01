@@ -159,12 +159,15 @@ object QuickReplies {
 
     const val DEFAULT_GOOGLE_MODEL = ""
 
+    private const val JSON_FORMAT_INSTRUCTION =
+        "Respond ONLY with valid JSON matching: " +
+            "{\"replies\":[{\"label\":\"2-4 word button label\",\"prompt\":\"Full message to populate in the chat box\"}]}"
+
     const val DEFAULT_SYSTEM_PROMPT =
         "You are a mobile coding assistant helper. Given the user's last prompt and the coding agent's response, " +
             "propose 3 to 4 concise, actionable replies the user might want to send next. " +
             "If the agent asked a question or offered options, prioritize answering or choosing among them. " +
-            "Respond ONLY with valid JSON matching: " +
-            "{\"replies\":[{\"label\":\"2-4 word button label\",\"prompt\":\"Full message to populate in the chat box\"}]}"
+            JSON_FORMAT_INSTRUCTION
 
     private val NUMBERED_ITEM_REGEX = Regex("""^\s*(?:(?:Option|Choice|Approach|Step)\s+)?([1-6]|[A-D])[.):\-]\s+(.+)$""", RegexOption.IGNORE_CASE)
     private val BULLET_ITEM_REGEX = Regex("""^\s*[-*•]\s+(.+)$""")
@@ -303,19 +306,28 @@ object QuickReplies {
             append("Agent response:\n")
             append(clippedAgent)
         }
-        return systemPrompt.trim().ifEmpty { DEFAULT_SYSTEM_PROMPT } to body
+        val baseSystem = systemPrompt.trim().ifEmpty { DEFAULT_SYSTEM_PROMPT }
+        val effectiveSystem = if (baseSystem.contains("\"replies\"") || baseSystem.contains("\"label\"")) {
+            baseSystem
+        } else {
+            "$baseSystem\n\n$JSON_FORMAT_INSTRUCTION"
+        }
+        return effectiveSystem to body
     }
 
     /**
-     * Parses a model's output into a [QuickReplySuggestion]. Supports both JSON (`{"tldr":..., "replies":[{"label":..., "prompt":...}]}`)
-     * and line-delimited `Label | Prompt` output. Returns null when no usable chips could be extracted.
+     * Parses a model's output into a [QuickReplySuggestion]. Supports JSON objects (`{"tldr":..., "replies":[{"label":..., "prompt":...}]}`),
+     * top-level JSON arrays, partially truncated JSON, and line-delimited output. Returns null when no usable chips could be extracted.
      */
     fun parseAiResponse(turnKey: String, raw: String, source: QuickReplySource): QuickReplySuggestion? {
-        val trimmed = raw.trim()
-        if (trimmed.isEmpty()) return null
+        val stripped = raw
+            .replace(Regex("""<think>[\s\S]*?</think>""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""^<think>[\s\S]*?(?=\{|\[)""", RegexOption.IGNORE_CASE), "")
+            .trim()
+        if (stripped.isEmpty()) return null
 
-        parseJsonSuggestion(turnKey, trimmed, source)?.let { return it }
-        return parseLineSuggestion(turnKey, trimmed, source)
+        parseJsonSuggestion(turnKey, stripped, source)?.let { return it }
+        return parseLineSuggestion(turnKey, stripped, source)
     }
 
     /**
@@ -358,8 +370,54 @@ object QuickReplies {
                 "generationConfig",
                 buildJsonObject {
                     put("temperature", 0.2)
-                    put("maxOutputTokens", 350)
+                    // Gemini 2.5 and 3.x thinking models count internal thinking tokens toward maxOutputTokens;
+                    // 2048 gives plenty of room for thoughts + the JSON reply without hitting MAX_TOKENS truncation.
+                    put("maxOutputTokens", 2048)
                     put("responseMimeType", "application/json")
+                    put(
+                        "responseSchema",
+                        buildJsonObject {
+                            put("type", "OBJECT")
+                            put(
+                                "properties",
+                                buildJsonObject {
+                                    put("tldr", buildJsonObject { put("type", "STRING") })
+                                    put(
+                                        "replies",
+                                        buildJsonObject {
+                                            put("type", "ARRAY")
+                                            put(
+                                                "items",
+                                                buildJsonObject {
+                                                    put("type", "OBJECT")
+                                                    put(
+                                                        "properties",
+                                                        buildJsonObject {
+                                                            put("label", buildJsonObject { put("type", "STRING") })
+                                                            put("prompt", buildJsonObject { put("type", "STRING") })
+                                                        },
+                                                    )
+                                                    put(
+                                                        "required",
+                                                        buildJsonArray {
+                                                            add(JsonPrimitive("label"))
+                                                            add(JsonPrimitive("prompt"))
+                                                        },
+                                                    )
+                                                },
+                                            )
+                                        },
+                                    )
+                                },
+                            )
+                            put(
+                                "required",
+                                buildJsonArray {
+                                    add(JsonPrimitive("replies"))
+                                },
+                            )
+                        },
+                    )
                 },
             )
         }
@@ -381,9 +439,20 @@ object QuickReplies {
             val firstCandidate = candidates.firstOrNull() as? JsonObject ?: return null
             val content = firstCandidate["content"] as? JsonObject ?: return null
             val parts = content["parts"] as? JsonArray ?: return null
-            val combinedText = parts.mapNotNull { part ->
-                (part as? JsonObject)?.string("text")
-            }.joinToString("\n").trim()
+            val partObjects = parts.mapNotNull { it as? JsonObject }
+            // Exclude Gemini 2.5 / 3.x thinking parts ("thought": true) so thought prose never collides with the JSON answer part.
+            val nonThoughtTexts = partObjects
+                .filterNot { (it["thought"] as? JsonPrimitive)?.contentOrNull?.equals("true", ignoreCase = true) == true }
+                .mapNotNull { it.string("text")?.takeIf(String::isNotBlank) }
+            val textsToParse = nonThoughtTexts.ifEmpty {
+                partObjects.mapNotNull { it.string("text")?.takeIf(String::isNotBlank) }
+            }
+            for (partText in textsToParse.asReversed()) {
+                parseAiResponse(turnKey, partText, QuickReplySource.CLOUD_AI)?.let {
+                    return it.copy(providerLabel = providerLabel)
+                }
+            }
+            val combinedText = textsToParse.joinToString("\n").trim()
             if (combinedText.isEmpty()) null else parseAiResponse(turnKey, combinedText, QuickReplySource.CLOUD_AI)?.copy(providerLabel = providerLabel)
         } catch (_: Exception) {
             null
@@ -434,7 +503,7 @@ object QuickReplies {
                 },
             )
             put("temperature", 0.2)
-            put("max_tokens", 350)
+            put("max_tokens", 1024)
         }
         return payload.toString()
     }
@@ -471,7 +540,7 @@ object QuickReplies {
         val (effectiveSystem, userPrompt) = buildPrompt(context, systemPrompt)
         val payload = buildJsonObject {
             put("model", modelName.trim())
-            put("max_tokens", 350)
+            put("max_tokens", 1024)
             put("temperature", 0.2)
             put("system", effectiveSystem)
             put(
@@ -593,49 +662,156 @@ object QuickReplies {
         return "HTTP $httpCode"
     }
 
-    private fun parseJsonSuggestion(turnKey: String, text: String, source: QuickReplySource): QuickReplySuggestion? {
-        val start = text.indexOf('{')
-        val end = text.lastIndexOf('}')
-        if (start < 0 || end <= start) return null
-        val candidate = text.substring(start, end + 1)
-        return try {
-            val root = Json.parseToJsonElement(candidate).jsonObject
-            val tldr = root.string("tldr")
-                ?.let(::cleanInlineMarkdown)
-                ?.takeIf { it.isNotBlank() }
-                ?.let { truncateEllipsis(it, MAX_SUMMARY_CHARS) }
-            val repliesArray = root["replies"] as? JsonArray ?: root["options"] as? JsonArray ?: return null
-            val chips = repliesArray.mapNotNull { element ->
-                val obj = element as? JsonObject ?: return@mapNotNull null
-                val rawLabel = obj.string("label") ?: obj.string("title") ?: return@mapNotNull null
-                val rawPrompt = obj.string("prompt") ?: obj.string("text") ?: rawLabel
-                makeChip(rawLabel, rawPrompt)
-            }.distinctBy { it.label.lowercase() }.take(MAX_CHIPS)
-            if (chips.isEmpty()) null else QuickReplySuggestion(turnKey = turnKey, chips = chips, source = source, summary = tldr)
+    /**
+     * Explains why a 200 OK model response could not be parsed into quick-reply chips (e.g. `finishReason=MAX_TOKENS` or safety block).
+     */
+    fun describeUnparsedResponse(responseBody: String): String {
+        try {
+            val root = Json.parseToJsonElement(responseBody) as? JsonObject
+            val candidate = (root?.get("candidates") as? JsonArray)?.firstOrNull() as? JsonObject
+            val finishReason = candidate?.string("finishReason")
+                ?: ((root?.get("choices") as? JsonArray)?.firstOrNull() as? JsonObject)?.string("finish_reason")
+                ?: root?.string("stop_reason")
+            if (!finishReason.isNullOrBlank() && finishReason != "STOP" && finishReason != "stop" && finishReason != "end_turn") {
+                return "Model stopped early ($finishReason) before completing quick-reply JSON."
+            }
         } catch (_: Exception) {
-            null
+            // Ignore and fall back
+        }
+        return "Model response did not contain valid quick-reply JSON."
+    }
+
+    private fun parseJsonSuggestion(turnKey: String, text: String, source: QuickReplySource): QuickReplySuggestion? {
+        val candidates = ArrayList<String>(4)
+        val firstObj = text.indexOf('{')
+        val lastObj = text.lastIndexOf('}')
+        if (firstObj >= 0 && lastObj > firstObj) {
+            candidates += text.substring(firstObj, lastObj + 1)
+        }
+        val firstArr = text.indexOf('[')
+        val lastArr = text.lastIndexOf(']')
+        if (firstArr >= 0 && lastArr > firstArr) {
+            candidates += text.substring(firstArr, lastArr + 1)
+        }
+
+        for (candidate in candidates) {
+            try {
+                val parsed = Json.parseToJsonElement(candidate)
+                parseJsonElementToSuggestion(turnKey, parsed, source)?.let { return it }
+            } catch (_: Exception) {
+                // Continue to next candidate or partial object recovery
+            }
+        }
+
+        // Partial JSON recovery: if the response was truncated mid-stream after emitting 1+ complete {"label":...,"prompt":...} objects,
+        // extract each balanced {"label":...} object individually.
+        val objectRegex = Regex("""\{[^{}]*"(?:label|title|name|button)"\s*:\s*"[^"]+"[^{}]*}""", RegexOption.IGNORE_CASE)
+        val recoveredChips = objectRegex.findAll(text).mapNotNull { match ->
+            runCatching {
+                val obj = Json.parseToJsonElement(match.value) as? JsonObject ?: return@runCatching null
+                extractChipFromJsonObject(obj)
+            }.getOrNull()
+        }.distinctBy { it.label.lowercase() }.take(MAX_CHIPS).toList()
+        if (recoveredChips.isNotEmpty()) {
+            return QuickReplySuggestion(turnKey = turnKey, chips = recoveredChips, source = source)
+        }
+
+        return null
+    }
+
+    private fun parseJsonElementToSuggestion(
+        turnKey: String,
+        element: kotlinx.serialization.json.JsonElement,
+        source: QuickReplySource,
+    ): QuickReplySuggestion? {
+        return when (element) {
+            is JsonObject -> {
+                val tldr = (element.string("tldr") ?: element.string("summary"))
+                    ?.let(::cleanInlineMarkdown)
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { truncateEllipsis(it, MAX_SUMMARY_CHARS) }
+                val repliesArray = listOf(
+                    "replies", "options", "suggestions", "choices", "quick_replies", "quickReplies", "items", "actions", "responses",
+                ).firstNotNullOfOrNull { key -> element[key] as? JsonArray }
+                    ?: element.values.firstOrNull { it is JsonArray } as? JsonArray
+                if (repliesArray != null) {
+                    val chips = extractChipsFromJsonArray(repliesArray)
+                    if (chips.isNotEmpty()) {
+                        return QuickReplySuggestion(turnKey = turnKey, chips = chips, source = source, summary = tldr)
+                    }
+                }
+                // Single chip object
+                val single = extractChipFromJsonObject(element)
+                if (single != null) QuickReplySuggestion(turnKey = turnKey, chips = listOf(single), source = source, summary = tldr) else null
+            }
+            is JsonArray -> {
+                val chips = extractChipsFromJsonArray(element)
+                if (chips.isEmpty()) null else QuickReplySuggestion(turnKey = turnKey, chips = chips, source = source)
+            }
+            else -> null
         }
     }
 
-    private fun parseLineSuggestion(turnKey: String, text: String, source: QuickReplySource): QuickReplySuggestion? {
-        val chips = text.lineSequence()
-            .map { it.trim() }
-            .filter { it.isNotEmpty() && !it.startsWith("```") && !it.startsWith("{") && !it.startsWith("}") }
-            .mapNotNull { line ->
-                val cleaned = line.replace(Regex("""^\s*(?:[-*•]|\d+[.):])\s*"""), "").trim()
-                val pipeIdx = cleaned.indexOf('|')
-                if (pipeIdx > 0) {
-                    val label = cleaned.substring(0, pipeIdx).trim()
-                    val prompt = cleaned.substring(pipeIdx + 1).trim()
-                    makeChip(label, prompt)
-                } else {
-                    null
+    private fun extractChipsFromJsonArray(array: JsonArray): List<QuickReplyChip> =
+        array.mapNotNull { item ->
+            when (item) {
+                is JsonObject -> extractChipFromJsonObject(item)
+                is JsonPrimitive -> item.contentOrNull?.takeIf { it.isNotBlank() }?.let { text ->
+                    makeChip(summarizeItemTitle(text), text)
                 }
+                else -> null
             }
-            .distinctBy { it.label.lowercase() }
-            .take(MAX_CHIPS)
+        }.distinctBy { it.label.lowercase() }.take(MAX_CHIPS)
+
+    private fun extractChipFromJsonObject(obj: JsonObject): QuickReplyChip? {
+        val rawLabel = obj.string("label")
+            ?: obj.string("title")
+            ?: obj.string("name")
+            ?: obj.string("short")
+            ?: obj.string("button")
+        val rawPrompt = obj.string("prompt")
+            ?: obj.string("text")
+            ?: obj.string("reply")
+            ?: obj.string("message")
+            ?: obj.string("value")
+            ?: obj.string("content")
+            ?: rawLabel
+        val effectiveLabel = rawLabel ?: rawPrompt?.let(::summarizeItemTitle) ?: return null
+        val effectivePrompt = rawPrompt ?: effectiveLabel
+        return makeChip(effectiveLabel, effectivePrompt)
+    }
+
+    private fun parseLineSuggestion(turnKey: String, text: String, source: QuickReplySource): QuickReplySuggestion? {
+        val cleanLines = text.lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && !it.startsWith("```") && !it.startsWith("{") && !it.startsWith("}") && !it.startsWith("[") && !it.startsWith("]") }
             .toList()
-        return if (chips.isEmpty()) null else QuickReplySuggestion(turnKey = turnKey, chips = chips, source = source)
+        val pipeChips = cleanLines.mapNotNull { line ->
+            val cleaned = line.replace(Regex("""^\s*(?:[-*•]|\d+[.):])\s*"""), "").trim()
+            val pipeIdx = cleaned.indexOf('|')
+            if (pipeIdx > 0) {
+                val label = cleaned.substring(0, pipeIdx).trim()
+                val prompt = cleaned.substring(pipeIdx + 1).trim()
+                makeChip(label, prompt)
+            } else {
+                null
+            }
+        }.distinctBy { it.label.lowercase() }.take(MAX_CHIPS)
+        if (pipeChips.isNotEmpty()) {
+            return QuickReplySuggestion(turnKey = turnKey, chips = pipeChips, source = source)
+        }
+
+        // Fallback for models that return a bulleted or numbered list of suggested replies instead of JSON or pipe-delimited lines.
+        val listChips = cleanLines.mapNotNull { line ->
+            val bulletMatch = Regex("""^(?:[-*•]|\d+[.):])\s+(.+)$""").find(line) ?: return@mapNotNull null
+            val itemText = cleanInlineMarkdown(bulletMatch.groupValues[1]).trim().removeSurrounding("\"")
+            if (itemText.length in 2..200) {
+                makeChip(summarizeItemTitle(itemText), itemText)
+            } else {
+                null
+            }
+        }.distinctBy { it.label.lowercase() }.take(MAX_CHIPS)
+        return if (listChips.size >= 2) QuickReplySuggestion(turnKey = turnKey, chips = listChips, source = source) else null
     }
 
     private fun extractNumberedOrBulletedOptions(cleanText: String): List<QuickReplyChip> {
