@@ -48,6 +48,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -181,6 +182,8 @@ private fun ConfirmTruncateDialog(
         modifier = Modifier.testTag("confirm_truncate_dialog"),
     )
 }
+
+private val LEADING_SLASH_COMMAND = Regex("""^/[A-Za-z0-9_.\-]+(?=\s|$)""")
 
 private fun turnsCountPhrase(count: Int): String = if (count == 1) "1 turn" else "$count turns"
 
@@ -372,7 +375,20 @@ private fun UserRow(
                         .testTag("row_user"),
                 ) {
                     SelectionContainer {
-                        Text(item.text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+                        val styledUserText = remember(item.text) {
+                            buildAnnotatedString {
+                                val m = LEADING_SLASH_COMMAND.find(item.text)
+                                if (m != null) {
+                                    withStyle(SpanStyle(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)) {
+                                        append(item.text.substring(0, m.range.last + 1))
+                                    }
+                                    append(item.text.substring(m.range.last + 1))
+                                } else {
+                                    append(item.text)
+                                }
+                            }
+                        }
+                        Text(styledUserText, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
                     }
                 }
             }

@@ -142,6 +142,7 @@ object HostExtras {
     private val HIDDEN_KEYS = listOf("vscode.chat.hiddenFromTranscript", "requestHiddenFromTranscript", "hiddenFromTranscript")
     private val EXTERNAL_KEYS = listOf("vscode.external", "external", "ahpd.external")
     private val INITIATOR_KEYS = listOf("vscode.session.initiator.name", "initiator.name", "initiator", "ahpd.initiator")
+    private val ARGUMENT_HINT_KEYS = listOf("vscode.skill.argumentHint", "ahpd.argumentHint", "argumentHint")
     private val SPAWNED_ORIGINS = setOf("automation", "subagent", "tool", "external")
     private val WHITESPACE_RUN = Regex("""[\r\n\t ]+""")
 
@@ -160,6 +161,13 @@ object HostExtras {
     }
 
     internal fun isSpawnedOriginKind(kind: String?): Boolean = kind?.lowercase() in SPAWNED_ORIGINS
+
+    /** An argument hint the host attaches to a skill or prompt customization (`vscode.skill.argumentHint`, `ahpd.argumentHint`), or null. */
+    fun argumentHint(meta: Map<String, JsonElement>?): String? {
+        if (meta.isNullOrEmpty()) return null
+        val root = JsonObject(meta)
+        return ARGUMENT_HINT_KEYS.firstNotNullOfOrNull { root.oneLine(it, MAX_TEXT) }
+    }
 
     fun session(meta: Map<String, JsonElement>?): SessionExtras {
         if (meta.isNullOrEmpty()) return SessionExtras.NONE

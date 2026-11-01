@@ -40,6 +40,11 @@ import dev.ahpclient.state.ChatConfig
 import dev.ahpclient.state.ChatInteractor
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.CustomAgents
+import dev.ahpclient.state.CustomizationCategory
+import dev.ahpclient.state.HostFileTarget
+import dev.ahpclient.state.SlashCommands
+import dev.ahpclient.ui.chat.RichModalRequest
+import com.microsoft.agenthostprotocol.generated.RootState
 import dev.ahpclient.state.HostSession
 import dev.ahpclient.state.HostSessionEntry
 import dev.ahpclient.state.Inbox
@@ -431,6 +436,10 @@ private fun SessionPage(
         val summary = remember(listed, open.uri) { listed.firstOrNull { it.resource == open.uri } }
         val changes = remember(summary) { ChangeStats.of(summary?.changes) }
         var requestedChat by remember { mutableStateOf<String?>(null) }
+        var prefillText by rememberSaveable { mutableStateOf<String?>(null) }
+        var agentToUse by rememberSaveable { mutableStateOf<String?>(null) }
+        var externalRichRequest by remember { mutableStateOf<RichModalRequest?>(null) }
+        var openCustomizationsRequest by remember { mutableStateOf<Pair<CustomizationCategory?, String>?>(null) }
         SessionScreen(
             state = sessionState,
             error = error,
@@ -450,6 +459,12 @@ private fun SessionPage(
             onOpenLink = { link -> if (!openLink(context, link)) Toast.makeText(context, "Nothing can open this link", Toast.LENGTH_SHORT).show() },
             onShareLink = { link -> if (!shareLink(context, link)) Toast.makeText(context, "Nothing can share this link", Toast.LENGTH_SHORT).show() },
             requestedChat = requestedChat,
+            rootState = rootState as? RootState,
+            onUseSlashCommand = { name -> prefillText = "/$name " },
+            onUseAgent = { uri -> agentToUse = uri },
+            onViewHostFile = { target -> externalRichRequest = RichModalRequest.HostFile(target) },
+            openCustomizationsRequest = openCustomizationsRequest,
+            onCustomizationsRequestConsumed = { openCustomizationsRequest = null },
         ) {
             if (chat != null) {
                 OpenChatView(
@@ -457,7 +472,7 @@ private fun SessionPage(
                     chat = chat,
                     session = connected.session,
                     connection = connection,
-                    rootState = rootState,
+                    rootState = rootState as? RootState,
                     sessionState = sessionState,
                     chatMutable = chatMutable,
                     canManage = canManage,
@@ -465,6 +480,13 @@ private fun SessionPage(
                     ui = ui,
                     screen = false,
                     onChatCreated = { requestedChat = it },
+                    prefillText = prefillText,
+                    onPrefillConsumed = { prefillText = null },
+                    agentToUse = agentToUse,
+                    onAgentToUseConsumed = { agentToUse = null },
+                    externalRichRequest = externalRichRequest,
+                    onExternalRichConsumed = { externalRichRequest = null },
+                    onOpenCustomizations = { cat, q -> openCustomizationsRequest = cat to q },
                     modifier = Modifier,
                 )
             }
@@ -487,6 +509,13 @@ private fun OpenChatView(
     ui: UiSettings,
     screen: Boolean,
     onChatCreated: (String) -> Unit = {},
+    prefillText: String? = null,
+    onPrefillConsumed: () -> Unit = {},
+    agentToUse: String? = null,
+    onAgentToUseConsumed: () -> Unit = {},
+    externalRichRequest: RichModalRequest? = null,
+    onExternalRichConsumed: () -> Unit = {},
+    onOpenCustomizations: ((CustomizationCategory?, String) -> Unit)? = null,
     modifier: Modifier,
 ) {
     val context = LocalContext.current
@@ -508,7 +537,9 @@ private fun OpenChatView(
     }
     val models = remember(chat.interactor, rootState) { chat.interactor.modelOptions() }
     val inUse = ModelOptions.inUse(chatState, models)
-    val agents = remember(sessionState) { CustomAgents.of(sessionState) }
+    val rootTyped = rootState as? RootState
+    val agents = remember(sessionState, rootTyped) { CustomAgents.of(sessionState, rootTyped) }
+    var localRichRequest by remember { mutableStateOf<RichModalRequest?>(null) }
     val agentInUse = CustomAgents.inUse(chatState)
     // The chat's own settings sit over the session's, so what is shown is what the host has in force for this chat.
     val ownConfig by chat.store.ownConfig.collectAsStateWithLifecycle()
@@ -520,8 +551,12 @@ private fun OpenChatView(
         !screen && canManage && controller.manager.canSideChat(sessionUri)
     }
     // Nothing to act with unless the connection allows it and the host shows this chat as interactive.
+    val customizations = remember(sessionState, rootTyped) { SlashCommands.customizationsOf(sessionState, rootTyped) }
+    val slashCommands = remember(sessionState, rootTyped, canFork, canSideChat) {
+        SlashCommands.of(sessionState, rootTyped, canFork = canFork, canSideChat = canSideChat)
+    }
     val actions = if (ChatInteractor.available(chatState, canInteract)) {
-        remember(chat.interactor, running, models, inUse, agents, agentInUse, config, canFork, canSideChat, sessionUri, chat.uri) {
+        remember(chat.interactor, running, models, inUse, agents, agentInUse, config, canFork, canSideChat, slashCommands, customizations, prefillText, agentToUse, sessionUri, chat.uri) {
             ChatActionsUi(
                 running = running,
                 send = chat.interactor::send,
@@ -565,6 +600,14 @@ private fun OpenChatView(
                     }
                 },
                 canSideChat = canSideChat,
+                slashCommands = slashCommands,
+                customizations = customizations,
+                onOpenCustomizations = onOpenCustomizations,
+                onViewHostFile = { target -> localRichRequest = RichModalRequest.HostFile(target) },
+                prefillText = prefillText,
+                onPrefillConsumed = onPrefillConsumed,
+                agentToUse = agentToUse,
+                onAgentToUseConsumed = onAgentToUseConsumed,
                 openSideChat = { turnId, initialText, model, agent ->
                     val msg = initialText?.let { chat.interactor.buildInitialMessage(it, model, agent) }
                     val res = controller.manager.createSideChat(sessionUri, chat.uri, turnId, msg)
@@ -600,6 +643,11 @@ private fun OpenChatView(
             onTextScale = ui::setTextScale,
             onReadResource = session::readResource,
             workingDirectories = sessionState?.workingDirectories.orEmpty(),
+            externalRichRequest = externalRichRequest ?: localRichRequest,
+            onExternalRichConsumed = {
+                onExternalRichConsumed()
+                localRichRequest = null
+            },
             modifier = modifier,
         )
     } else {
@@ -622,6 +670,11 @@ private fun OpenChatView(
             onTextScale = ui::setTextScale,
             onReadResource = session::readResource,
             workingDirectories = sessionState?.workingDirectories.orEmpty(),
+            externalRichRequest = externalRichRequest ?: localRichRequest,
+            onExternalRichConsumed = {
+                onExternalRichConsumed()
+                localRichRequest = null
+            },
             modifier = modifier,
         )
     }
