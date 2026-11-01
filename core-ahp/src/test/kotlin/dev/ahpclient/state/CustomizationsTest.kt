@@ -194,6 +194,48 @@ class CustomizationsTest {
     }
 
     @Test
+    fun `subsequence matching finds commands with all letters in order like prw for pr-watch and highlights matched spans`() {
+        val s = session(
+            plugin(
+                skill("power-review", "file:///s/1/SKILL.md", ""","description":"Review power metrics"""") + "," +
+                    skill("pr-watch", "file:///s/2/SKILL.md", ""","description":"Watch pull request checks"""") + "," +
+                    skill("update-skills", "file:///s/3/SKILL.md", ""","description":"Update skills"""") + "," +
+                    skill("create-canvas", "file:///s/4/SKILL.md", ""","description":"Create a canvas""""),
+            ),
+        )
+        val commands = SlashCommands.of(s, includeBuiltIns = false)
+
+        // `/prw` matches both `pr-watch` and `power-review`, ranking word-boundary acronym match `pr-watch` first
+        val prwMatches = SlashCommands.match("/prw", commands)
+        assertEquals(listOf("pr-watch", "power-review"), prwMatches.map { it.command.name })
+        // In `pr-watch`, `pr` (0..1) and `w` (3..3) are highlighted
+        assertEquals(listOf(0..1, 3..3), prwMatches[0].highlightRanges)
+
+        // `/cc` matches `create-canvas` via word-boundary initials (`c` at 0, `c` at 7)
+        val ccMatches = SlashCommands.match("/cc", commands)
+        assertEquals(listOf("create-canvas"), ccMatches.map { it.command.name })
+        assertEquals(listOf(0..0, 7..7), ccMatches[0].highlightRanges)
+
+        // `/upds` matches `update-skills` (`upd` at 0..2, `s` at 7..7)
+        val updsMatches = SlashCommands.match("/upds", commands)
+        assertEquals(listOf("update-skills"), updsMatches.map { it.command.name })
+        assertEquals(listOf(0..2, 7..7), updsMatches[0].highlightRanges)
+    }
+
+    @Test
+    fun `tapping slash returns all commands beyond 12 and human-titled skills use their folder slug`() {
+        val manySkills = (1..30).joinToString(",") { i ->
+            skill("skill-$i", "file:///s/skill-$i/SKILL.md", ""","description":"Skill number $i"""")
+        } + "," + skill("Fix Diagnostics", "file:///s/fix-diagnostics/SKILL.md", ""","description":"Fixes diagnostics"""")
+        val commands = SlashCommands.of(session(plugin(manySkills)), includeBuiltIns = false)
+        assertEquals(31, commands.size)
+        assertTrue("fix-diagnostics" in commands.map { it.name })
+
+        val matches = SlashCommands.match("/", commands)
+        assertEquals(31, matches.size)
+    }
+
+    @Test
     fun `multi-word built-in commands like skills list match across spaces while single-word commands close popup on space`() {
         val commands = SlashCommands.of(session(plugin(skill("skill-eval", "file:///s/1/SKILL.md"))), includeBuiltIns = true)
 

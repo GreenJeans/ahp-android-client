@@ -1209,6 +1209,25 @@ class InteractionUiTest {
     }
 
     @Test
+    fun slashSubsequenceMatchingAndShowAllPickerSheetWorkWithLargeCommandList() {
+        val calls = Calls()
+        val skills = listOf(
+            SlashCommand("pr-watch", "Watch pull request checks", kind = SlashCommandKind.SKILL, uri = "file:///s/pr-watch/SKILL.md", source = "github-pack"),
+            SlashCommand("chat-customization-diagnostics", "Runs Chat Customization diagnostics", kind = SlashCommandKind.SKILL, uri = "file:///s/diag/SKILL.md", source = "core-pack"),
+        )
+        show(transcript(), actions(calls, slashCommands = skills))
+
+        rule.onNodeWithTag("composer_input").performTextInput("/prw")
+        rule.onNodeWithTag("composer_slash_menu").assertIsDisplayed()
+        rule.onNodeWithTag("slash_option_pr-watch").assertIsDisplayed().assertTextContains("/pr-watch", substring = true)
+
+        rule.onNodeWithTag("composer_show_all_slash_commands").performClick()
+        rule.onNodeWithTag("slash_picker_sheet").assertIsDisplayed()
+        rule.onNodeWithTag("slash_picker_item_pr-watch").assertIsDisplayed().performClick()
+        rule.onNodeWithTag("composer_active_skill").assertIsDisplayed().assertTextContains("/pr-watch", substring = true)
+    }
+
+    @Test
     fun customizationsSheetFiltersCategoriesAndInsertsSelectedSkill() {
         val pickedSkill = mutableListOf<String>()
         val view = CustomizationsView(

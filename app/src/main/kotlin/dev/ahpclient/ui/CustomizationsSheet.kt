@@ -38,18 +38,27 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import dev.ahpclient.state.CustomizationCategory
 import dev.ahpclient.state.CustomizationEntry
 import dev.ahpclient.state.CustomizationsView
 import dev.ahpclient.state.HostFileTarget
+import dev.ahpclient.state.SlashCommand
+import dev.ahpclient.state.SlashCommandKind
+import dev.ahpclient.state.SlashCommandMatch
+import dev.ahpclient.state.SlashCommands
 
 /**
  * Modal bottom sheet modeled on the VS Code Agents "Customizations" panel.
@@ -390,6 +399,7 @@ private fun CustomizationEntryCard(
                         },
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
+                        softWrap = false,
                         overflow = TextOverflow.Ellipsis,
                     )
                     entry.argumentHint?.let { hint ->
@@ -530,4 +540,375 @@ internal fun categoryIcon(category: CustomizationCategory): ImageVector = when (
     CustomizationCategory.AGENTS -> AppIcons.AgentCode
     CustomizationCategory.HOOKS -> AppIcons.Lightning
     CustomizationCategory.TOOLS -> AppIcons.Wrench
+}
+
+/**
+ * Formats a `/command` name with bold primary-colored spans for every range in [SlashCommandMatch.highlightRanges]
+ * (supporting prefix, substring, and multi-span subsequence matches like `/prw` -> **`/pr`**`-`**`w`**`atch`).
+ */
+internal fun formatSlashCommandName(
+    match: SlashCommandMatch,
+    primaryColor: Color,
+    normalColor: Color,
+): AnnotatedString = buildAnnotatedString {
+    val name = match.command.name
+    val ranges = match.highlightRanges
+    if (ranges.isEmpty()) {
+        withStyle(SpanStyle(fontWeight = FontWeight.SemiBold, color = normalColor)) {
+            append("/")
+            append(name)
+        }
+        return@buildAnnotatedString
+    }
+    val startsAtZero = ranges.first().first == 0
+    withStyle(
+        if (startsAtZero) {
+            SpanStyle(fontWeight = FontWeight.Bold, color = primaryColor)
+        } else {
+            SpanStyle(color = normalColor)
+        },
+    ) {
+        append("/")
+    }
+    var cursor = 0
+    for (range in ranges) {
+        val rStart = range.first.coerceIn(cursor, name.length)
+        val rEnd = (range.last + 1).coerceIn(rStart, name.length)
+        if (rStart > cursor) {
+            withStyle(SpanStyle(color = normalColor)) {
+                append(name.substring(cursor, rStart))
+            }
+        }
+        if (rEnd > rStart) {
+            withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = primaryColor)) {
+                append(name.substring(rStart, rEnd))
+            }
+        }
+        cursor = rEnd
+    }
+    if (cursor < name.length) {
+        withStyle(SpanStyle(color = normalColor)) {
+            append(name.substring(cursor))
+        }
+    }
+}
+
+/**
+ * Full-screen searchable Slash Command Picker modal bottom sheet opened via "Show all" from the inline `/` menu.
+ *
+ * Designed for environments with a large number of installed skills and prompts: supports subsequence search
+ * (`prw` -> `/pr-watch`), kind and source/plugin filter chips, full descriptions, host file inspection, and
+ * one-tap command invocation.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SlashCommandPickerSheet(
+    commands: List<SlashCommand>,
+    initialQuery: String = "",
+    onDismiss: () -> Unit,
+    onSelect: (SlashCommand) -> Unit,
+    onViewFile: ((HostFileTarget) -> Unit)? = null,
+    onOpenCustomizations: (() -> Unit)? = null,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+    ) {
+        SlashCommandPickerSheetContent(
+            commands = commands,
+            initialQuery = initialQuery,
+            onDismiss = onDismiss,
+            onSelect = onSelect,
+            onViewFile = onViewFile,
+            onOpenCustomizations = onOpenCustomizations,
+        )
+    }
+}
+
+@Composable
+fun SlashCommandPickerSheetContent(
+    commands: List<SlashCommand>,
+    initialQuery: String = "",
+    onDismiss: () -> Unit,
+    onSelect: (SlashCommand) -> Unit,
+    onViewFile: ((HostFileTarget) -> Unit)? = null,
+    onOpenCustomizations: (() -> Unit)? = null,
+) {
+    var query by rememberSaveable(initialQuery) { mutableStateOf(initialQuery) }
+    var selectedKindName by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedSource by rememberSaveable { mutableStateOf<String?>(null) }
+
+    val selectedKind = selectedKindName?.let { name ->
+        SlashCommandKind.entries.firstOrNull { it.name == name }
+    }
+    val sources = commands.mapNotNull { it.source }.distinct()
+    val matches = SlashCommands.filterCommands(
+        query = query,
+        commands = commands,
+        kindFilter = selectedKind,
+        sourceFilter = selectedSource,
+    )
+
+    val skillCount = commands.count { it.kind == SlashCommandKind.SKILL }
+    val promptCount = commands.count { it.kind == SlashCommandKind.PROMPT }
+    val builtInCount = commands.count { it.kind == SlashCommandKind.BUILT_IN }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp)
+            .padding(bottom = 24.dp)
+            .testTag("slash_picker_sheet"),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Slash commands",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.semantics { heading() },
+                )
+                Text(
+                    text = "${matches.size} of ${commands.size} commands",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (onOpenCustomizations != null) {
+                    TextButton(
+                        onClick = {
+                            onDismiss()
+                            onOpenCustomizations()
+                        },
+                        modifier = Modifier.testTag("slash_picker_open_customizations"),
+                    ) {
+                        Text("Customizations")
+                    }
+                }
+                TextButton(onClick = onDismiss, modifier = Modifier.testTag("slash_picker_close")) {
+                    Text("Done")
+                }
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+
+        OutlinedTextField(
+            value = query,
+            onValueChange = { query = it.take(120) },
+            placeholder = { Text("Search slash commands (e.g. prw for /pr-watch)…") },
+            leadingIcon = { Icon(AppIcons.Search, contentDescription = null) },
+            trailingIcon = if (query.isNotEmpty()) {
+                {
+                    IconButton(onClick = { query = "" }, modifier = Modifier.testTag("slash_picker_search_clear")) {
+                        Icon(AppIcons.Clear, contentDescription = "Clear search")
+                    }
+                }
+            } else {
+                null
+            },
+            singleLine = true,
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("slash_picker_search"),
+        )
+
+        Spacer(Modifier.height(8.dp))
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            FilterChip(
+                selected = selectedKind == null && selectedSource == null,
+                onClick = {
+                    selectedKindName = null
+                    selectedSource = null
+                },
+                label = { Text("All (${commands.size})") },
+                modifier = Modifier.testTag("slash_picker_filter_ALL"),
+            )
+            if (skillCount > 0) {
+                FilterChip(
+                    selected = selectedKind == SlashCommandKind.SKILL,
+                    onClick = {
+                        selectedKindName = if (selectedKind == SlashCommandKind.SKILL) null else SlashCommandKind.SKILL.name
+                    },
+                    leadingIcon = {
+                        Icon(AppIcons.Lightbulb, contentDescription = null, modifier = Modifier.size(16.dp))
+                    },
+                    label = { Text("Skills ($skillCount)") },
+                    modifier = Modifier.testTag("slash_picker_filter_SKILL"),
+                )
+            }
+            if (promptCount > 0) {
+                FilterChip(
+                    selected = selectedKind == SlashCommandKind.PROMPT,
+                    onClick = {
+                        selectedKindName = if (selectedKind == SlashCommandKind.PROMPT) null else SlashCommandKind.PROMPT.name
+                    },
+                    leadingIcon = {
+                        Icon(AppIcons.BookOpen, contentDescription = null, modifier = Modifier.size(16.dp))
+                    },
+                    label = { Text("Prompts ($promptCount)") },
+                    modifier = Modifier.testTag("slash_picker_filter_PROMPT"),
+                )
+            }
+            if (builtInCount > 0) {
+                FilterChip(
+                    selected = selectedKind == SlashCommandKind.BUILT_IN,
+                    onClick = {
+                        selectedKindName = if (selectedKind == SlashCommandKind.BUILT_IN) null else SlashCommandKind.BUILT_IN.name
+                    },
+                    leadingIcon = {
+                        Icon(AppIcons.Slash, contentDescription = null, modifier = Modifier.size(16.dp))
+                    },
+                    label = { Text("Built-in ($builtInCount)") },
+                    modifier = Modifier.testTag("slash_picker_filter_BUILT_IN"),
+                )
+            }
+            for (src in sources) {
+                FilterChip(
+                    selected = selectedSource == src,
+                    onClick = {
+                        selectedSource = if (selectedSource == src) null else src
+                    },
+                    label = { Text(src) },
+                    modifier = Modifier.testTag("slash_picker_source_$src"),
+                )
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 480.dp)
+                .testTag("slash_picker_list"),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (matches.isEmpty()) {
+                item(key = "empty") {
+                    Text(
+                        text = if (query.isNotBlank()) {
+                            "No slash commands match \"$query\"."
+                        } else {
+                            "No slash commands available."
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .padding(vertical = 16.dp)
+                            .testTag("slash_picker_empty"),
+                    )
+                }
+            } else {
+                items(matches, key = { it.command.name }) { match ->
+                    val cmd = match.command
+                    val fileTarget = cmd.uri?.let { HostFileTarget.of(it) }
+                    val primaryColor = MaterialTheme.colorScheme.primary
+                    val normalColor = MaterialTheme.colorScheme.onSurface
+                    val nameText = formatSlashCommandName(match, primaryColor, normalColor)
+
+                    Surface(
+                        shape = MaterialTheme.shapes.medium,
+                        color = MaterialTheme.colorScheme.surfaceContainerLow,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                onSelect(cmd)
+                                onDismiss()
+                            }
+                            .testTag("slash_picker_item_${cmd.name}"),
+                    ) {
+                        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.weight(1f),
+                                ) {
+                                    Text(
+                                        text = nameText,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontFamily = FontFamily.Monospace,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    cmd.argumentHint?.let { hint ->
+                                        Text(
+                                            text = hint,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                }
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    val badgeText = cmd.source ?: when (cmd.kind) {
+                                        SlashCommandKind.SKILL -> "Skill"
+                                        SlashCommandKind.PROMPT -> "Prompt"
+                                        SlashCommandKind.BUILT_IN -> "Built-in"
+                                    }
+                                    Surface(
+                                        shape = MaterialTheme.shapes.extraSmall,
+                                        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                    ) {
+                                        Text(
+                                            text = badgeText,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                        )
+                                    }
+                                    if (fileTarget != null && onViewFile != null) {
+                                        TextButton(
+                                            onClick = {
+                                                onDismiss()
+                                                onViewFile(fileTarget)
+                                            },
+                                            modifier = Modifier.testTag("slash_picker_view_${cmd.name}"),
+                                        ) {
+                                            Text("View file", style = MaterialTheme.typography.labelSmall)
+                                        }
+                                    }
+                                }
+                            }
+                            cmd.description?.let { desc ->
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    text = desc,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

@@ -110,6 +110,8 @@ import dev.ahpclient.state.SlashCommand
 import dev.ahpclient.state.SlashCommandKind
 import dev.ahpclient.state.SlashCommandMatch
 import dev.ahpclient.state.SlashCommands
+import dev.ahpclient.ui.SlashCommandPickerSheet
+import dev.ahpclient.ui.formatSlashCommandName
 import dev.ahpclient.ui.AppIcons
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -554,6 +556,7 @@ internal fun SlashCommandPopup(
     matches: List<SlashCommandMatch>,
     onSelect: (SlashCommand) -> Unit,
     onOpenCustomizations: (() -> Unit)?,
+    onShowAll: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     if (matches.isEmpty()) return
@@ -566,32 +569,43 @@ internal fun SlashCommandPopup(
             .testTag("composer_slash_menu"),
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-            if (onOpenCustomizations != null) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 2.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = "Slash commands",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    TextButton(
-                        onClick = onOpenCustomizations,
-                        modifier = Modifier.testTag("composer_open_customizations"),
-                    ) {
-                        Text("Customizations", style = MaterialTheme.typography.labelSmall)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Slash commands (${matches.size})",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (onShowAll != null) {
+                        TextButton(
+                            onClick = onShowAll,
+                            modifier = Modifier.testTag("composer_show_all_slash_commands"),
+                        ) {
+                            Text("Show all", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                    if (onOpenCustomizations != null) {
+                        TextButton(
+                            onClick = onOpenCustomizations,
+                            modifier = Modifier.testTag("composer_open_customizations"),
+                        ) {
+                            Text("Customizations", style = MaterialTheme.typography.labelSmall)
+                        }
                     }
                 }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
             }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
             LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 240.dp),
+                    .heightIn(max = 260.dp)
+                    .testTag("composer_slash_list"),
             ) {
                 items(matches, key = { it.command.name }) { match ->
                     val cmd = match.command
@@ -602,66 +616,30 @@ internal fun SlashCommandPopup(
                             .clickable { onSelect(cmd) }
                             .padding(horizontal = 12.dp, vertical = 6.dp)
                             .testTag("slash_option_${cmd.name}"),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         val primaryColor = MaterialTheme.colorScheme.primary
                         val normalColor = MaterialTheme.colorScheme.onSurface
-                        val nameText = buildAnnotatedString {
-                            val hStart = match.highlightStart.coerceIn(0, cmd.name.length)
-                            val hEnd = match.highlightEnd.coerceIn(hStart, cmd.name.length)
-                            if (hEnd > hStart) {
-                                if (hStart == 0) {
-                                    withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = primaryColor)) {
-                                        append("/")
-                                        append(cmd.name.substring(0, hEnd))
-                                    }
-                                    append(cmd.name.substring(hEnd))
-                                } else {
-                                    withStyle(SpanStyle(color = normalColor)) {
-                                        append("/")
-                                        append(cmd.name.substring(0, hStart))
-                                    }
-                                    withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = primaryColor)) {
-                                        append(cmd.name.substring(hStart, hEnd))
-                                    }
-                                    append(cmd.name.substring(hEnd))
-                                }
-                            } else {
-                                withStyle(SpanStyle(fontWeight = FontWeight.SemiBold, color = normalColor)) {
-                                    append("/")
-                                    append(cmd.name)
-                                }
-                            }
-                        }
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            modifier = Modifier.weight(1f, fill = false),
-                        ) {
+                        val nameText = formatSlashCommandName(match, primaryColor, normalColor)
+                        Text(
+                            text = nameText,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontFamily = FontFamily.Monospace,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = if (cmd.description != null) Modifier.widthIn(max = 210.dp) else Modifier,
+                        )
+                        val rightText = cmd.description ?: cmd.argumentHint
+                        if (rightText != null) {
                             Text(
-                                text = nameText,
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontFamily = FontFamily.Monospace,
-                                maxLines = 1,
-                            )
-                            cmd.argumentHint?.let { hint ->
-                                Text(
-                                    text = hint,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontFamily = FontFamily.Monospace,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                        }
-                        cmd.description?.let { desc ->
-                            Text(
-                                text = desc,
+                                text = rightText,
                                 style = MaterialTheme.typography.bodySmall,
+                                fontFamily = if (cmd.description == null) FontFamily.Monospace else FontFamily.Default,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
+                                softWrap = false,
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f),
                             )
@@ -709,6 +687,9 @@ private fun ActiveSlashCommandBar(
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSecondaryContainer,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
             )
             val detail = cmd.argumentHint ?: cmd.description
             if (detail != null) {
@@ -787,6 +768,10 @@ private fun AgentMentionPopup(
                         style = MaterialTheme.typography.bodyMedium,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = if (agent.description != null) Modifier.widthIn(max = 190.dp) else Modifier,
                     )
                     agent.description?.let { desc ->
                         Text(
@@ -794,6 +779,7 @@ private fun AgentMentionPopup(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
+                            softWrap = false,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f),
                         )
@@ -825,6 +811,8 @@ internal fun Composer(
     var agentPick by rememberSaveable(stateSaver = AgentPickSaver) { mutableStateOf<AgentPick>(AgentPick.Keep) }
     var choosingAgent by rememberSaveable { mutableStateOf(false) }
     var sendMenuOpen by remember { mutableStateOf(false) }
+    var showSlashPicker by rememberSaveable { mutableStateOf(false) }
+    var slashPickerInitialQuery by rememberSaveable { mutableStateOf("") }
     LaunchedEffect(actions.prefillText) {
         if (actions.prefillText != null) {
             text = actions.prefillText
@@ -1051,6 +1039,10 @@ internal fun Composer(
                         }
                     },
                     onOpenCustomizations = actions.onOpenCustomizations?.let { open -> { open(null, "") } },
+                    onShowAll = {
+                        slashPickerInitialQuery = text.removePrefix("/").trim()
+                        showSlashPicker = true
+                    },
                 )
             } else if (agentMention != null) {
                 AgentMentionPopup(
@@ -1059,6 +1051,22 @@ internal fun Composer(
                         agentPick = if (pickedAgent.uri == actions.agentInUse) AgentPick.Keep else AgentPick.Use(pickedAgent.uri)
                         text = SlashCommands.stripAgentMention(text, agentMention)
                     },
+                )
+            }
+            if (showSlashPicker) {
+                SlashCommandPickerSheet(
+                    commands = effectiveCommands,
+                    initialQuery = slashPickerInitialQuery,
+                    onDismiss = { showSlashPicker = false },
+                    onSelect = { cmd ->
+                        if (cmd.kind == SlashCommandKind.BUILT_IN && cmd.argumentHint == null) {
+                            executeBuiltInCommand(cmd, "")
+                        } else {
+                            text = "/${cmd.name} "
+                        }
+                    },
+                    onViewFile = actions.onViewHostFile,
+                    onOpenCustomizations = actions.onOpenCustomizations?.let { open -> { open(null, "") } },
                 )
             }
             if (activeSlashCommand != null && slashMatches.isEmpty()) {

@@ -61,13 +61,15 @@ data class SlashCommand(
 /**
  * One matching [SlashCommand] for the current `/` query in the composer.
  *
- * [highlightStart] and [highlightEnd] mark the character range within [SlashCommand.name] that matched the query so the UI can
- * bold the matched span just like the VS Code Agents panel.
+ * [highlightStart] and [highlightEnd] mark the primary character range within [SlashCommand.name] that matched the query, while
+ * [highlightRanges] holds all matched character spans (supporting subsequence matches like `/prw` -> `/pr-watch` where both `pr`
+ * and `w` are highlighted).
  */
 data class SlashCommandMatch(
     val command: SlashCommand,
     val highlightStart: Int = 0,
     val highlightEnd: Int = 0,
+    val highlightRanges: List<IntRange> = if (highlightEnd > highlightStart) listOf(highlightStart until highlightEnd) else emptyList(),
 )
 
 /**
@@ -137,16 +139,27 @@ data class CustomizationsView(
         entries.count { it.category == category }
 
     fun entriesIn(category: CustomizationCategory?, query: String = ""): List<CustomizationEntry> {
-        val q = query.trim().lowercase()
-        return entries.filter { entry ->
-            (category == null || entry.category == category) &&
-                (q.isEmpty() ||
-                    entry.name.lowercase().contains(q) ||
-                    entry.description?.lowercase()?.contains(q) == true ||
-                    entry.source?.lowercase()?.contains(q) == true ||
-                    entry.statusLabel?.lowercase()?.contains(q) == true ||
-                    entry.badges.any { it.lowercase().contains(q) })
+        val q = query.trim().removePrefix("/").removePrefix("@").trim().lowercase()
+        if (q.isEmpty()) {
+            return if (category == null) entries else entries.filter { it.category == category }
         }
+        val scored = mutableListOf<Pair<Int, CustomizationEntry>>()
+        for (entry in entries) {
+            if (category != null && entry.category != category) continue
+            val subseq = SlashCommands.subsequenceMatch(q, entry.name)
+            val score = when {
+                subseq != null -> subseq.score
+                entry.description?.lowercase()?.contains(q) == true -> 10
+                entry.source?.lowercase()?.contains(q) == true -> 8
+                entry.statusLabel?.lowercase()?.contains(q) == true -> 5
+                entry.badges.any { it.lowercase().contains(q) } -> 5
+                else -> Int.MIN_VALUE
+            }
+            if (score > Int.MIN_VALUE) {
+                scored.add(score to entry)
+            }
+        }
+        return scored.sortedByDescending { it.first }.map { it.second }
     }
 
     companion object {
@@ -159,9 +172,9 @@ data class CustomizationsView(
  * and matches `/` and `@` queries in the chat composer.
  */
 object SlashCommands {
-    const val MAX_COMMANDS = 200
-    const val MAX_SUGGESTIONS = 12
-    const val MAX_ENTRIES_PER_CATEGORY = 250
+    const val MAX_COMMANDS = 500
+    const val MAX_SUGGESTIONS = MAX_COMMANDS
+    const val MAX_ENTRIES_PER_CATEGORY = 500
     private const val MAX_NAME = 80
     private const val MAX_DESCRIPTION = 240
     private const val MAX_SOURCE = 80
@@ -293,7 +306,7 @@ object SlashCommands {
             .take(MAX_COMMANDS)
 
         if (!includeBuiltIns) return hostCommands
-        val taken = hostCommands.mapTo( HashSet() ) { it.name.lowercase() }
+        val taken = hostCommands.mapTo(HashSet()) { it.name.lowercase() }
         val builtIns = builtInCommands(canFork = canFork, canSideChat = canSideChat)
             .filterNot { it.name.lowercase() in taken }
         return (hostCommands + builtIns).take(MAX_COMMANDS)
@@ -301,6 +314,9 @@ object SlashCommands {
 
     /**
      * Matches composer [text] against [commands] when the person is typing a `/` command.
+     *
+     * Supports prefix, substring, and subsequence matching ("all of these letters in this order", such as `/prw` -> `/pr-watch`),
+     * ranking prefix and word-boundary matches first and highlighting every matched character span.
      *
      * Returns an empty list when [text] does not start with `/`, or when the person has already completed a command token and moved
      * on to typing its arguments after a space (unless a multi-word command like `/skills list` still matches).
@@ -320,7 +336,13 @@ object SlashCommands {
             val multiWordMatches = commands.mapNotNull { cmd ->
                 val nameLower = cmd.name.lowercase()
                 if (' ' in nameLower && nameLower.startsWith(query) && nameLower != query) {
-                    SlashCommandMatch(cmd, highlightStart = 0, highlightEnd = query.length.coerceAtMost(cmd.name.length))
+                    val end = query.length.coerceAtMost(cmd.name.length)
+                    SlashCommandMatch(
+                        command = cmd,
+                        highlightStart = 0,
+                        highlightEnd = end,
+                        highlightRanges = if (end > 0) listOf(0 until end) else emptyList(),
+                    )
                 } else {
                     null
                 }
@@ -328,31 +350,245 @@ object SlashCommands {
             return multiWordMatches.take(limit)
         }
 
-        if (query.isEmpty()) {
-            return commands.take(limit).map { SlashCommandMatch(it, highlightStart = 0, highlightEnd = 0) }
+        return filterCommands(query = query, commands = commands, limit = limit)
+    }
+
+    /**
+     * Filters and ranks [commands] against a freeform search [query] (with or without a leading `/`), using the same
+     * prefix / substring / subsequence matching and highlight spans as the inline `/` popup.
+     */
+    fun filterCommands(
+        query: String,
+        commands: List<SlashCommand>,
+        kindFilter: SlashCommandKind? = null,
+        sourceFilter: String? = null,
+        limit: Int = MAX_COMMANDS,
+    ): List<SlashCommandMatch> {
+        val candidates = commands.filter { cmd ->
+            (kindFilter == null || cmd.kind == kindFilter) &&
+                (sourceFilter == null || cmd.source == sourceFilter)
+        }
+        val cleanQuery = query.trim().removePrefix("/").trim().lowercase()
+        if (cleanQuery.isEmpty()) {
+            return candidates.take(limit).map { SlashCommandMatch(it, highlightStart = 0, highlightEnd = 0, highlightRanges = emptyList()) }
         }
 
-        val prefixMatches = mutableListOf<SlashCommandMatch>()
-        val substringMatches = mutableListOf<SlashCommandMatch>()
-        val descriptionMatches = mutableListOf<SlashCommandMatch>()
+        data class ScoredMatch(
+            val match: SlashCommandMatch,
+            val tier: Int,
+            val score: Int,
+            val originalIndex: Int,
+        )
 
-        for (cmd in commands) {
-            val nameLower = cmd.name.lowercase()
-            val idx = nameLower.indexOf(query)
-            when {
-                idx == 0 -> prefixMatches.add(
-                    SlashCommandMatch(cmd, highlightStart = 0, highlightEnd = query.length),
+        val scored = mutableListOf<ScoredMatch>()
+        for ((index, cmd) in candidates.withIndex()) {
+            val subseq = subsequenceMatch(cleanQuery, cmd.name)
+            if (subseq != null) {
+                val firstRange = subseq.ranges.firstOrNull()
+                scored.add(
+                    ScoredMatch(
+                        match = SlashCommandMatch(
+                            command = cmd,
+                            highlightStart = firstRange?.first ?: 0,
+                            highlightEnd = firstRange?.let { it.last + 1 } ?: 0,
+                            highlightRanges = subseq.ranges,
+                        ),
+                        tier = subseq.tier,
+                        score = subseq.score,
+                        originalIndex = index,
+                    ),
                 )
-                idx > 0 -> substringMatches.add(
-                    SlashCommandMatch(cmd, highlightStart = idx, highlightEnd = idx + query.length),
-                )
-                cmd.description?.lowercase()?.contains(query) == true -> descriptionMatches.add(
-                    SlashCommandMatch(cmd, highlightStart = 0, highlightEnd = 0),
+            } else if (cmd.description?.lowercase()?.contains(cleanQuery) == true) {
+                scored.add(
+                    ScoredMatch(
+                        match = SlashCommandMatch(
+                            command = cmd,
+                            highlightStart = 0,
+                            highlightEnd = 0,
+                            highlightRanges = emptyList(),
+                        ),
+                        tier = 4,
+                        score = 0,
+                        originalIndex = index,
+                    ),
                 )
             }
         }
 
-        return (prefixMatches + substringMatches + descriptionMatches).take(limit)
+        return scored
+            .sortedWith(
+                compareBy<ScoredMatch> { it.tier }
+                    .thenByDescending { it.score }
+                    .thenBy { it.originalIndex },
+            )
+            .take(limit)
+            .map { it.match }
+    }
+
+    internal data class SubsequenceResult(
+        val tier: Int,
+        val score: Int,
+        val ranges: List<IntRange>,
+    )
+
+    /**
+     * Checks whether all characters of [queryRaw] appear in [target] in order (case-insensitively), and if so returns the best
+     * alignment (preferring prefix matches, word-boundary acronym matches like `prw` -> `pr-watch`, and contiguous runs).
+     */
+    internal fun subsequenceMatch(queryRaw: String, target: String): SubsequenceResult? {
+        val query = queryRaw.lowercase()
+        if (query.isEmpty() || target.isEmpty() || query.length > target.length) return null
+        val targetLower = target.lowercase()
+
+        // Fast O(N) subsequence check before running DP alignment.
+        var qi = 0
+        for (ti in 0 until targetLower.length) {
+            if (targetLower[ti] == query[qi]) {
+                qi++
+                if (qi == query.length) break
+            }
+        }
+        if (qi < query.length) return null
+
+        val m = query.length
+        val n = targetLower.length
+
+        // Tier 0: Exact prefix match is always top tier.
+        if (targetLower.startsWith(query)) {
+            return SubsequenceResult(
+                tier = 0,
+                score = 10_000 - n,
+                ranges = listOf(0 until m),
+            )
+        }
+
+        // Tier 1: Contiguous substring match (preferring word-boundary occurrences such as "skill" in "update-skills").
+        var searchFrom = 0
+        var bestSubIdx = -1
+        var bestSubBoundary = false
+        while (searchFrom <= n - m) {
+            val found = targetLower.indexOf(query, searchFrom)
+            if (found < 0) break
+            val boundary = isWordBoundary(target, found)
+            if (bestSubIdx < 0 || (boundary && !bestSubBoundary)) {
+                bestSubIdx = found
+                bestSubBoundary = boundary
+                if (boundary) break
+            }
+            searchFrom = found + 1
+        }
+        if (bestSubIdx >= 0) {
+            return SubsequenceResult(
+                tier = 1,
+                score = 5_000 + (if (bestSubBoundary) 500 else 0) - bestSubIdx * 4 - n,
+                ranges = listOf(bestSubIdx until (bestSubIdx + m)),
+            )
+        }
+
+        // DP over (i in 0 until m, j in 0 until n) to find the highest-scoring subsequence alignment.
+        val negInf = -1_000_000
+        val dp = Array(m) { IntArray(n) { negInf } }
+        val prev = Array(m) { IntArray(n) { -1 } }
+
+        for (j in 0 until n) {
+            if (targetLower[j] == query[0]) {
+                val boundaryBonus = when {
+                    j == 0 -> 160
+                    isWordBoundary(target, j) -> 110
+                    else -> 0
+                }
+                dp[0][j] = 100 + boundaryBonus - j * 2
+            }
+        }
+
+        for (i in 1 until m) {
+            val qChar = query[i]
+            for (j in i until n) {
+                if (targetLower[j] != qChar) continue
+                val boundary = isWordBoundary(target, j)
+                var bestScore = negInf
+                var bestPrev = -1
+                for (p in (i - 1) until j) {
+                    val prevScore = dp[i - 1][p]
+                    if (prevScore <= negInf / 2) continue
+                    val gap = j - p - 1
+                    val transition = when {
+                        gap == 0 -> 140 // Consecutive character run
+                        boundary -> 115 - gap * 2 // Jumped to the start of a subsequent word (e.g. 'w' in pr-watch)
+                        else -> 15 - gap * 4 // Mid-word skip
+                    }
+                    val candidate = prevScore + 100 + transition
+                    if (candidate > bestScore) {
+                        bestScore = candidate
+                        bestPrev = p
+                    }
+                }
+                dp[i][j] = bestScore
+                prev[i][j] = bestPrev
+            }
+        }
+
+        var bestEnd = -1
+        var bestTotal = negInf
+        for (j in (m - 1) until n) {
+            if (dp[m - 1][j] > bestTotal) {
+                bestTotal = dp[m - 1][j]
+                bestEnd = j
+            }
+        }
+        if (bestEnd < 0) return null
+
+        val indices = IntArray(m)
+        var curr = bestEnd
+        for (i in (m - 1) downTo 0) {
+            indices[i] = curr
+            curr = prev[i][curr]
+        }
+
+        val ranges = coalesceRanges(indices)
+        val isContiguousSubstring = ranges.size == 1
+        val allBoundaryOrConsecutive = indices.indices.all { idx ->
+            val pos = indices[idx]
+            pos == 0 || isWordBoundary(target, pos) || (idx > 0 && pos == indices[idx - 1] + 1)
+        }
+        val tier = when {
+            isContiguousSubstring -> 1
+            allBoundaryOrConsecutive -> 2
+            else -> 3
+        }
+        return SubsequenceResult(
+            tier = tier,
+            score = bestTotal - n,
+            ranges = ranges,
+        )
+    }
+
+    private fun isWordBoundary(text: String, index: Int): Boolean {
+        if (index <= 0 || index >= text.length) return index == 0
+        val prev = text[index - 1]
+        val curr = text[index]
+        return prev == '-' || prev == '_' || prev == ' ' || prev == '/' || prev == '.' ||
+            (prev.isLowerCase() && curr.isUpperCase()) ||
+            (prev.isLetter() && curr.isDigit())
+    }
+
+    private fun coalesceRanges(indices: IntArray): List<IntRange> {
+        if (indices.isEmpty()) return emptyList()
+        val result = mutableListOf<IntRange>()
+        var start = indices[0]
+        var end = start
+        for (i in 1 until indices.size) {
+            val pos = indices[i]
+            if (pos == end + 1) {
+                end = pos
+            } else {
+                result.add(start..(end + 1) - 1)
+                start = pos
+                end = pos
+            }
+        }
+        result.add(start..end)
+        return result
     }
 
     /**
@@ -389,7 +625,7 @@ object SlashCommands {
     fun matchAgentMention(
         text: String,
         agents: List<AgentChoice>,
-        limit: Int = 8,
+        limit: Int = 20,
     ): AgentMentionQuery? {
         if (agents.isEmpty() || text.isEmpty()) return null
         // Match either a leading `@query` (no space yet) or a trailing ` @query` token at the end of the text.
@@ -406,11 +642,21 @@ object SlashCommands {
         }
         if (atIndex < 0) return null
         val query = text.substring(atIndex + 1).lowercase()
-        val matches = agents.filter { agent ->
-            query.isEmpty() ||
-                agent.name.lowercase().contains(query) ||
-                agent.description?.lowercase()?.contains(query) == true
-        }.take(limit)
+        val matches = if (query.isEmpty()) {
+            agents.take(limit)
+        } else {
+            agents.mapNotNull { agent ->
+                val subseq = subsequenceMatch(query, agent.name)
+                when {
+                    subseq != null -> Triple(subseq.tier, subseq.score, agent)
+                    agent.description?.lowercase()?.contains(query) == true -> Triple(4, 0, agent)
+                    else -> null
+                }
+            }
+                .sortedWith(compareBy<Triple<Int, Int, AgentChoice>> { it.first }.thenByDescending { it.second })
+                .take(limit)
+                .map { it.third }
+        }
         if (matches.isEmpty()) return null
         return AgentMentionQuery(
             query = query,
@@ -802,7 +1048,11 @@ object SlashCommands {
 
     internal fun skillNameOf(rawName: String, uri: String): String {
         val cleaned = cleanCommandName(rawName)
-        if (cleaned != null && !cleaned.equals("SKILL", ignoreCase = true) && !cleaned.equals("SKILL.md", ignoreCase = true)) {
+        if (cleaned != null &&
+            !cleaned.equals("SKILL", ignoreCase = true) &&
+            !cleaned.equals("SKILL.md", ignoreCase = true) &&
+            cleaned.none { it.isWhitespace() }
+        ) {
             return cleaned
         }
         val path = uri.substringBefore('?').substringBefore('#').trimEnd('/', '\\')
@@ -813,14 +1063,21 @@ object SlashCommands {
         } else {
             last.removeSuffix(".md").removeSuffix(".skill")
         }
-        return cleanCommandName(candidate) ?: "skill"
+        val fromUri = cleanCommandName(candidate)?.takeIf {
+            !it.equals("SKILL", ignoreCase = true) && it.none { c -> c.isWhitespace() }
+        }
+        if (fromUri != null) return fromUri
+        return cleaned?.replace(WHITESPACE_RUN, "-") ?: fromUri ?: "skill"
     }
 
     internal fun promptNameOf(rawName: String, uri: String): String {
-        cleanCommandName(rawName)?.let { return it }
+        val cleaned = cleanCommandName(rawName)
+        if (cleaned != null && cleaned.none { it.isWhitespace() }) return cleaned
         val file = uri.substringBefore('?').substringBefore('#').trimEnd('/', '\\').substringAfterLast('/').substringAfterLast('\\')
         val base = file.removeSuffix(".md").removeSuffix(".prompt")
-        return cleanCommandName(base) ?: "prompt"
+        val fromUri = cleanCommandName(base)?.takeIf { it.none { c -> c.isWhitespace() } }
+        if (fromUri != null) return fromUri
+        return cleaned?.replace(WHITESPACE_RUN, "-") ?: "prompt"
     }
 
     private fun ruleNameOf(rawName: String, uri: String): String {
