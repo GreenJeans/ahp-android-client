@@ -77,19 +77,22 @@ fun ChangesetScreen(
     onSetReviewed: (suspend (fileId: String, reviewed: Boolean) -> ManageResult)? = null,
     onOpenFile: ((fileId: String) -> Unit)? = null,
     onInvokeOperation: (suspend (operationId: String) -> ManageResult)? = null,
+    onInvokeFileOperation: (suspend (fileId: String, operationId: String) -> ManageResult)? = null,
 ) {
     ScreenScaffold(title = title, titleTag = "changeset_title", onBack = onBack, backLabel = "Back to session", large = false, modifier = modifier) {
         Column(modifier = Modifier.fillMaxSize()) {
             if (connection != ConnState.Online) ConnectionLine(connection, Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
             when {
                 error is ChannelGoneException -> ErrorText("These changes are no longer on the host.", Modifier.padding(horizontal = 24.dp).testTag("changeset_gone"))
-                state != null -> ChangesetBody(remember(state) { ChangesetView.from(state) }, onSetReviewed, onOpenFile, onInvokeOperation)
+                state != null -> ChangesetBody(remember(state) { ChangesetView.from(state) }, onSetReviewed, onOpenFile, onInvokeOperation, onInvokeFileOperation)
                 error != null -> ErrorText("Could not load these changes (${error.javaClass.simpleName}).", Modifier.padding(horizontal = 24.dp).testTag("changeset_error"))
                 else -> Busy("Loading changes…", Modifier.padding(horizontal = 24.dp).testTag("changeset_loading"))
             }
         }
     }
 }
+
+private data class PendingOperation(val op: ChangesetOperationItem, val file: ChangeRow? = null)
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -98,30 +101,38 @@ private fun ChangesetBody(
     onSetReviewed: (suspend (String, Boolean) -> ManageResult)?,
     onOpenFile: ((String) -> Unit)?,
     onInvokeOperation: (suspend (String) -> ManageResult)?,
+    onInvokeFileOperation: (suspend (String, String) -> ManageResult)?,
 ) {
     val scope = rememberCoroutineScope()
     val inFlight = remember { mutableStateListOf<String>() }
     val opsInFlight = remember { mutableStateListOf<String>() }
-    var confirmingOp by remember { mutableStateOf<ChangesetOperationItem?>(null) }
+    var confirmingOp by remember { mutableStateOf<PendingOperation?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
     var opMessage by remember { mutableStateOf<String?>(null) }
     val note = listOfNotNull(
         if (onOpenFile != null) "Tap a file to see what changed in it." else null,
         if (onSetReviewed != null) "Tick “Viewed” to mark a file reviewed on the host." else null,
     ).joinToString(" ").ifEmpty { "Read only: you can look at what changed, not change it." }
-    fun runOperation(opId: String) {
-        val invoke = onInvokeOperation ?: return
-        if (opId in opsInFlight) return
-        opsInFlight += opId
+    fun runOperation(opId: String, fileId: String? = null) {
+        val flightKey = if (fileId != null) "$fileId:$opId" else opId
+        if (flightKey in opsInFlight) return
+        val invoke: suspend () -> ManageResult = if (fileId != null) {
+            val fileInvoke = onInvokeFileOperation ?: return
+            suspend { fileInvoke(fileId, opId) }
+        } else {
+            val csInvoke = onInvokeOperation ?: return
+            suspend { csInvoke(opId) }
+        }
+        opsInFlight += flightKey
         notice = null
         opMessage = null
         scope.launch {
             try {
-                val res = invoke(opId)
+                val res = invoke()
                 notice = ManageMessages.describe(res)
                 if (res is ManageResult.Done) opMessage = res.created
             } finally {
-                opsInFlight -= opId
+                opsInFlight -= flightKey
             }
         }
     }
@@ -158,7 +169,7 @@ private fun ChangesetBody(
                     view.operations.forEach { op ->
                         val running = op.phase == ChangesetOperationPhase.RUNNING || op.id in opsInFlight
                         OutlinedButton(
-                            onClick = { if (op.confirmation != null) confirmingOp = op else runOperation(op.id) },
+                            onClick = { if (op.confirmation != null) confirmingOp = PendingOperation(op) else runOperation(op.id) },
                             enabled = op.phase.canInvoke && !running,
                             modifier = Modifier.testTag("changeset_op_${op.id}"),
                         ) {
@@ -204,6 +215,24 @@ private fun ChangesetBody(
                         }
                     },
                 )
+                if (onInvokeFileOperation != null && view.resourceOperations.isNotEmpty()) {
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 4.dp).testTag("changeset_file_operations_${row.id}"),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        view.resourceOperations.forEach { op ->
+                            val running = op.phase == ChangesetOperationPhase.RUNNING || "${row.id}:${op.id}" in opsInFlight
+                            OutlinedButton(
+                                onClick = { if (op.confirmation != null) confirmingOp = PendingOperation(op, row) else runOperation(op.id, row.id) },
+                                enabled = op.phase.canInvoke && !running,
+                                modifier = Modifier.testTag("changeset_file_op_${row.id}_${op.id}"),
+                            ) {
+                                Text(if (running) "${op.label}…" else op.label)
+                            }
+                        }
+                    }
+                }
                 HorizontalDivider()
             }
             if (view.omitted > 0) {
@@ -214,14 +243,15 @@ private fun ChangesetBody(
         }
     }
     val pendingOp = confirmingOp
-    if (pendingOp != null && onInvokeOperation != null) {
+    if (pendingOp != null && (if (pendingOp.file != null) onInvokeFileOperation != null else onInvokeOperation != null)) {
         AlertDialog(
             onDismissRequest = { confirmingOp = null },
-            title = { Text("${pendingOp.label}?") },
+            title = { Text(if (pendingOp.file != null) "${pendingOp.op.label} (${pendingOp.file.fileName})?" else "${pendingOp.op.label}?") },
             text = {
                 Text(
                     listOfNotNull(
-                        pendingOp.confirmation,
+                        pendingOp.file?.path,
+                        pendingOp.op.confirmation,
                         "You will be asked for your fingerprint, face or screen lock.",
                     ).joinToString(" "),
                     modifier = Modifier.testTag("changeset_op_confirm_text"),
@@ -231,7 +261,7 @@ private fun ChangesetBody(
                 TextButton(
                     onClick = {
                         confirmingOp = null
-                        runOperation(pendingOp.id)
+                        runOperation(pendingOp.op.id, pendingOp.file?.id)
                     },
                     modifier = Modifier.testTag("changeset_op_confirm"),
                 ) { Text("Run") }

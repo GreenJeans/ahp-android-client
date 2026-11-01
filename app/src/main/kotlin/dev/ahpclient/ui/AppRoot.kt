@@ -465,7 +465,15 @@ private fun SessionPage(
         val diff = changeset.diff
         if (diff != null) {
             val diffLoad by diff.load.collectAsStateWithLifecycle()
-            FileDiffScreen(path = diff.path, load = diffLoad, connection = connection, onBack = controller::closeDiff)
+            val resourceOps = remember(changesetState) { changesetState?.let { dev.ahpclient.state.ChangesetView.from(it).resourceOperations }.orEmpty() }
+            FileDiffScreen(
+                path = diff.path,
+                load = diffLoad,
+                connection = connection,
+                onBack = controller::closeDiff,
+                operations = resourceOps,
+                onInvokeOperation = if (canManage) { opId -> controller.invokeChangesetOperation(opId, diff.fileId) } else null,
+            )
         } else {
             ChangesetScreen(
                 title = changesetTitle ?: "Changes",
@@ -475,7 +483,8 @@ private fun SessionPage(
                 onBack = controller::closeChangeset,
                 onSetReviewed = if (canManage && changeset.reviewable) controller::setFileReviewed else null,
                 onOpenFile = controller::openDiff,
-                onInvokeOperation = if (canManage) controller::invokeChangesetOperation else null,
+                onInvokeOperation = if (canManage) { opId -> controller.invokeChangesetOperation(opId) } else null,
+                onInvokeFileOperation = if (canManage) { fileId, opId -> controller.invokeChangesetOperation(opId, fileId) } else null,
             )
         }
     } else if (chat != null && chat.parent != null) {

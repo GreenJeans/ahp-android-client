@@ -1,7 +1,10 @@
 package dev.ahpclient.state
 
+import com.microsoft.agenthostprotocol.generated.ChangesetFile
 import com.microsoft.agenthostprotocol.generated.ChangesetOperation
+import com.microsoft.agenthostprotocol.generated.ChangesetOperationResourceTarget
 import com.microsoft.agenthostprotocol.generated.ChangesetOperationScope
+import com.microsoft.agenthostprotocol.generated.ChangesetOperationTarget
 import com.microsoft.agenthostprotocol.generated.InvokeChangesetOperationResult
 import com.microsoft.agenthostprotocol.generated.StateAction
 import dev.ahpclient.ahp.AhpException
@@ -22,7 +25,8 @@ class ChangesetReviewer(
     private val reviewableFiles: (changesetUri: String) -> Set<String>?,
     private val dispatch: suspend (channel: String, action: StateAction) -> DispatchOutcome,
     private val operations: (changesetUri: String) -> List<ChangesetOperation>? = { null },
-    private val invoke: suspend (changesetUri: String, operationId: String) -> InvokeChangesetOperationResult = { _, _ -> InvokeChangesetOperationResult() },
+    private val files: (changesetUri: String) -> List<ChangesetFile>? = { null },
+    private val invoke: suspend (changesetUri: String, operationId: String, target: ChangesetOperationTarget?) -> InvokeChangesetOperationResult = { _, _, _ -> InvokeChangesetOperationResult() },
     private val gate: ApprovalGate = ApprovalGate { false },
 ) {
     suspend fun setReviewed(changesetUri: String, fileId: String, reviewed: Boolean): ManageResult {
@@ -44,27 +48,39 @@ class ChangesetReviewer(
     }
 
     /**
-     * Runs [operationId] on [changesetUri] when it is an active changeset-scoped operation in the open changeset.
-     * Operations that carry a host confirmation prompt require the device check ([gate]) first and re-verify the operation
-     * is still runnable afterwards.
+     * Runs [operationId] on [changesetUri] (or on [fileId] within it when [fileId] is given) when it is an active
+     * operation in the open changeset for that scope. Operations that carry a host confirmation prompt require the
+     * device check ([gate]) first and re-verify the operation and file are still runnable afterwards.
      */
-    suspend fun invokeOperation(changesetUri: String, operationId: String): ManageResult {
+    suspend fun invokeOperation(changesetUri: String, operationId: String, fileId: String? = null): ManageResult {
         if (!allowed()) return ManageResult.NotAllowed
         if (operationId.isBlank()) return ManageResult.NoSuchTarget
-        val op = findRunnable(changesetUri, operationId) ?: return ManageResult.NoSuchTarget
-        val confirmation = SessionDetail.plain(op.confirmation)?.takeIf { it.isNotBlank() }?.take(MAX_SUMMARY_CHARS)
+        if (fileId != null && fileId.isBlank()) return ManageResult.NoSuchTarget
+        val forResource = fileId != null
+        val op = findRunnable(changesetUri, operationId, forResource) ?: return ManageResult.NoSuchTarget
+        var target = if (fileId != null) resolveResourceTarget(changesetUri, fileId) ?: return ManageResult.NoSuchTarget else null
+        val confirmation = SessionDetail.plain(op.confirmation)?.takeIf { it.isNotBlank() }
         if (op.confirmation != null) {
+            val summary = if (target != null) {
+                listOfNotNull(displayPath(target.value.resource).takeIf { it.isNotBlank() }, confirmation)
+                    .joinToString(" — ")
+                    .takeIf { it.isNotBlank() }
+                    ?.take(MAX_SUMMARY_CHARS)
+            } else {
+                confirmation?.take(MAX_SUMMARY_CHARS)
+            }
             val request = ApprovalRequest(
                 toolName = op.label.ifBlank { op.id }.take(MAX_LABEL_CHARS),
-                summary = confirmation,
+                summary = summary,
                 title = OPERATION_TITLE,
             )
             if (!confirmed(request)) return ManageResult.NotConfirmed
             if (!allowed()) return ManageResult.NotAllowed
-            if (findRunnable(changesetUri, operationId) == null) return ManageResult.NoSuchTarget
+            if (findRunnable(changesetUri, operationId, forResource) == null) return ManageResult.NoSuchTarget
+            if (fileId != null) target = resolveResourceTarget(changesetUri, fileId) ?: return ManageResult.NoSuchTarget
         }
         return try {
-            val result = invoke(changesetUri, operationId)
+            val result = invoke(changesetUri, operationId, target)
             val message = SessionDetail.plain(result.message)?.takeIf { it.isNotBlank() }?.take(MAX_SUMMARY_CHARS)
             ManageResult.Done(message)
         } catch (e: CancellationException) {
@@ -80,13 +96,19 @@ class ChangesetReviewer(
         }
     }
 
-    private fun findRunnable(changesetUri: String, operationId: String): ChangesetOperation? =
+    private fun findRunnable(changesetUri: String, operationId: String, forResource: Boolean): ChangesetOperation? =
         operations(changesetUri)
             ?.firstOrNull {
                 it.id == operationId &&
-                    (it.scopes.isEmpty() || ChangesetOperationScope.CHANGESET in it.scopes) &&
+                    (if (forResource) ChangesetOperationScope.RESOURCE in it.scopes else (it.scopes.isEmpty() || ChangesetOperationScope.CHANGESET in it.scopes)) &&
                     ChangesetOperationPhase.of(it.status.rawValue).canInvoke
             }
+
+    private fun resolveResourceTarget(changesetUri: String, fileId: String): ChangesetOperationTarget.Resource? {
+        val file = files(changesetUri)?.firstOrNull { it.id == fileId } ?: return null
+        val uri = (file.edit.after?.uri ?: file.edit.before?.uri ?: file.id).takeIf { it.isNotBlank() } ?: return null
+        return ChangesetOperationTarget.Resource(ChangesetOperationResourceTarget(resource = uri))
+    }
 
     private suspend fun confirmed(request: ApprovalRequest): Boolean =
         try {

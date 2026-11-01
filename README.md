@@ -179,7 +179,7 @@ diff worked out on the phone. The app asks only for the two content addresses th
 method that reads is internal to the core module. It is bounded (256 KiB a side by the host's own hint, 5,000 lines a side,
 1,000 changed lines, 2,000 lines shown, 500 characters a line), shows no file that has a NUL character or bytes that are not
 UTF-8, swaps characters that reorder text on screen for a visible mark, and shows everything as plain text. A "Viewed" box per
-file appears only when the host says the changeset is reviewable and the connection is on the manage tier; changeset-scoped operations the host lists (`operations`) also appear as buttons on the manage tier.
+file appears only when the host says the changeset is reviewable and the connection is on the manage tier; changeset-scoped and per-file resource-scoped operations the host lists (`operations`) also appear as buttons on the changeset and file-diff screens on the manage tier.
 
 **Terminals** are watched, never typed into. A tool result that ran a command in a terminal gets an "Open live output" button, which
 shows that terminal's output as it arrives: plain text, the last 2,000 lines, with a Latest button when you scroll away. The pinned

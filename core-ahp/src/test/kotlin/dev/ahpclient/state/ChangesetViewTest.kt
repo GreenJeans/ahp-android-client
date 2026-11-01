@@ -133,6 +133,8 @@ class ChangesetViewTest {
         val view = ChangesetView.from(state)
 
         assertEquals(listOf("stage", "discard", "running-op", "err-op", "disabled-op"), view.operations.map { it.id })
+        assertEquals(listOf("file-only"), view.resourceOperations.map { it.id })
+        assertEquals("Stage file", view.resourceOperations[0].label)
         assertEquals("Stage all", view.operations[0].label)
         assertEquals("Stage all files", view.operations[0].description)
         assertNull(view.operations[0].confirmation)

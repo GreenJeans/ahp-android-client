@@ -14,6 +14,9 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.ahpclient.app.DiffLoad
+import dev.ahpclient.state.ChangesetOperationItem
+import dev.ahpclient.state.ChangesetOperationPhase
+import dev.ahpclient.state.ManageResult
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.DiffHunk
 import dev.ahpclient.state.DiffLine
@@ -163,5 +166,40 @@ class DiffUiTest {
         rule.onNodeWithTag("back").performClick()
 
         assertEquals(1, back)
+    }
+
+    @Test
+    fun resourceOperationsOnFileDiffScreenRunDirectlyOrAfterConfirmationDialog() {
+        val invoked = mutableListOf<String>()
+        val ops = listOf(
+            ChangesetOperationItem("stage-file", "Stage file", null, null, ChangesetOperationPhase.IDLE, null),
+            ChangesetOperationItem("revert-file", "Revert file", null, "Revert this file?", ChangesetOperationPhase.IDLE, null),
+        )
+        rule.setContent {
+            AhpTheme {
+                FileDiffScreen(
+                    path = "/work/a.kt",
+                    load = ready(oneChange),
+                    connection = ConnState.Online,
+                    onBack = {},
+                    operations = ops,
+                    onInvokeOperation = { opId ->
+                        invoked += opId
+                        ManageResult.Done("Ran $opId")
+                    },
+                )
+            }
+        }
+
+        rule.onNodeWithTag("diff_operations").assertIsDisplayed()
+        rule.onNodeWithTag("diff_op_stage-file").assertIsDisplayed().performClick()
+        rule.waitUntil(5_000) { invoked == listOf("stage-file") }
+        rule.onNodeWithTag("diff_operation_message").assertIsDisplayed().assertTextContains("Ran stage-file")
+
+        rule.onNodeWithTag("diff_op_revert-file").assertIsDisplayed().performClick()
+        rule.onNodeWithTag("diff_op_confirm_dialog").assertIsDisplayed()
+        rule.onNodeWithTag("diff_op_confirm_text").assertTextContains("Revert this file?", substring = true)
+        rule.onNodeWithTag("diff_op_confirm").performClick()
+        rule.waitUntil(5_000) { invoked == listOf("stage-file", "revert-file") }
     }
 }

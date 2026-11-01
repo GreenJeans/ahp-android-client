@@ -1,6 +1,7 @@
 package dev.ahpclient.state
 
 import com.microsoft.agenthostprotocol.generated.Changeset
+import com.microsoft.agenthostprotocol.generated.ChangesetOperation
 import com.microsoft.agenthostprotocol.generated.ChangesetOperationScope
 import com.microsoft.agenthostprotocol.generated.ChangesetState
 
@@ -89,6 +90,7 @@ data class ChangesetView(
     val totalAdded: Long,
     val totalRemoved: Long,
     val operations: List<ChangesetOperationItem> = emptyList(),
+    val resourceOperations: List<ChangesetOperationItem> = emptyList(),
 ) {
     companion object {
         const val MAX_ROWS = 500
@@ -121,18 +123,22 @@ data class ChangesetView(
                 totalRemoved = all.sumOf { it.removed ?: 0 },
                 operations = state.operations.orEmpty()
                     .filter { it.id.isNotBlank() && (it.scopes.isEmpty() || ChangesetOperationScope.CHANGESET in it.scopes) }
-                    .map { op ->
-                        ChangesetOperationItem(
-                            id = op.id,
-                            label = op.label.ifBlank { op.id }.take(MAX_OP_LABEL_CHARS),
-                            description = op.description?.takeIf { it.isNotBlank() }?.take(MAX_ERROR_CHARS),
-                            confirmation = SessionDetail.plain(op.confirmation)?.takeIf { it.isNotBlank() }?.take(MAX_ERROR_CHARS),
-                            phase = ChangesetOperationPhase.of(op.status.rawValue),
-                            error = op.error?.message?.take(MAX_ERROR_CHARS)?.takeIf { it.isNotBlank() },
-                        )
-                    },
+                    .map(::toOperationItem),
+                resourceOperations = state.operations.orEmpty()
+                    .filter { it.id.isNotBlank() && ChangesetOperationScope.RESOURCE in it.scopes }
+                    .map(::toOperationItem),
             )
         }
+
+        private fun toOperationItem(op: ChangesetOperation): ChangesetOperationItem =
+            ChangesetOperationItem(
+                id = op.id,
+                label = op.label.ifBlank { op.id }.take(MAX_OP_LABEL_CHARS),
+                description = op.description?.takeIf { it.isNotBlank() }?.take(MAX_ERROR_CHARS),
+                confirmation = SessionDetail.plain(op.confirmation)?.takeIf { it.isNotBlank() }?.take(MAX_ERROR_CHARS),
+                phase = ChangesetOperationPhase.of(op.status.rawValue),
+                error = op.error?.message?.take(MAX_ERROR_CHARS)?.takeIf { it.isNotBlank() },
+            )
     }
 }
 
