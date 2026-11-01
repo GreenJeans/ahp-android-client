@@ -287,4 +287,22 @@ class ChatStoreTest {
         assertFalse(store.loadingOlder.value)
         assertIs<TimeoutCancellationException>(store.olderError.value)
     }
+
+    @Test
+    fun `an empty turnsLoaded batch clears the cursor so paging stops`() = runTest {
+        val fetched = mutableListOf<String>()
+        val store = store { fetched += it }
+        store.seed(chatSnapshot(CHAT_A, 10, turns = listOf(turnJson("t3")), cursor = "c2"))
+
+        store.loadOlder()
+        runCurrent()
+        store.apply(env(turnsLoadedJson(emptyList(), "c2"), 11))
+        advance(100)
+
+        assertFalse(store.loadingOlder.value)
+        assertNull(store.state.value!!.turnsNextCursor)
+        store.loadOlder()
+        runCurrent()
+        assertEquals(listOf("c2"), fetched)
+    }
 }

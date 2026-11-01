@@ -226,7 +226,10 @@ class ChatStore internal constructor(
         if (envelope.serverSeq <= lastApplied) return
         lastApplied = envelope.serverSeq
         latest = latest?.let { chatReducer(it, envelope.action) }
-        if (envelope.action is StateActionChatTurnsLoaded) olderArrived?.complete(Unit)
+        if (envelope.action is StateActionChatTurnsLoaded) {
+            if ((envelope.action as StateActionChatTurnsLoaded).value.turns.isEmpty()) latest = latest?.copy(turnsNextCursor = null)
+            olderArrived?.complete(Unit)
+        }
         (envelope.action as? StateActionUnknown)?.let { noteConfig(it.raw) }
     }
 

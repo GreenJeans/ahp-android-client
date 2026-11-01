@@ -792,7 +792,7 @@ class HostSession(
     /**
      * Matches an echo of our own action to the [dispatch] waiting for it, after the state change it carries has been applied.
      *
-     * An echo with no `origin` is matched by what it carries instead: `ahpd` sends one when it has to wake a sleeping session
+     * An echo with no `origin` is matched by what it carries instead: a host may re-dispatch a turn without `origin` (for example, `ahpd` 0.14.0 when waking a sleeping session, fixed in `softov/ahpd#161`),
      * for a message, because the turn starts after the dispatch that asked for it has returned. Such an echo answers the oldest
      * waiting dispatch with the same [EchoKey] (on the same channel, except a turn, whose id alone names it); one that matches
      * none is only someone else's action. An echo naming another client is never ours.
