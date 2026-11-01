@@ -96,6 +96,7 @@ import dev.ahpclient.state.ModelOptions
 import dev.ahpclient.state.PendingMessageKind
 import dev.ahpclient.state.PendingMessageView
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -106,6 +107,13 @@ import dev.ahpclient.state.CustomizationCategory
 import dev.ahpclient.state.CustomizationsView
 import dev.ahpclient.state.HostFileTarget
 import dev.ahpclient.state.QuestionKind
+import dev.ahpclient.state.QuickReplies
+import dev.ahpclient.state.QuickReplyChip
+import dev.ahpclient.state.QuickReplyContext
+import dev.ahpclient.state.QuickReplyMode
+import dev.ahpclient.state.QuickReplyProvider
+import dev.ahpclient.state.QuickReplySource
+import dev.ahpclient.state.QuickReplySuggestion
 import dev.ahpclient.state.SlashCommand
 import dev.ahpclient.state.SlashCommandKind
 import dev.ahpclient.state.SlashCommandMatch
@@ -187,6 +195,10 @@ class ChatActionsUi(
     /** One-shot agent URI selection from the Customizations sheet. */
     val agentToUse: String? = null,
     val onAgentToUseConsumed: () -> Unit = {},
+    /** How quick-reply suggestions are offered after an agent turn finishes. */
+    val quickReplyMode: QuickReplyMode = QuickReplyMode.OFF,
+    /** Optional AI provider (such as on-device Gemini Nano) to refine quick replies beyond heuristics. */
+    val quickReplyProvider: QuickReplyProvider? = null,
 )
 
 /** The host's own words on a button or a field are untrusted display text: shown as plain text and cut to a sane length. */
@@ -791,6 +803,127 @@ private fun AgentMentionPopup(
 }
 
 @Composable
+private fun QuickReplyBar(
+    suggestion: QuickReplySuggestion,
+    aiLoading: Boolean,
+    selectedPrompt: String,
+    onSelectChip: (QuickReplyChip) -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        shape = RoundedCornerShape(16.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp, vertical = 4.dp)
+            .testTag("quick_reply_bar"),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 12.dp, end = 4.dp, top = 2.dp, bottom = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Icon(
+                        imageVector = AppIcons.Sparkle,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    val headerText = when {
+                        aiLoading -> "Quick replies · Thinking…"
+                        suggestion.source == QuickReplySource.GEMINI_NANO -> "Quick replies · Gemini Nano"
+                        suggestion.source == QuickReplySource.CLOUD_AI -> "Quick replies · Google AI"
+                        else -> "Quick replies"
+                    }
+                    Text(
+                        text = headerText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.testTag("quick_reply_source"),
+                    )
+                }
+                IconButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.size(48.dp).testTag("quick_reply_dismiss"),
+                ) {
+                    Icon(
+                        imageVector = AppIcons.Clear,
+                        contentDescription = "Dismiss quick replies",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            }
+            suggestion.summary?.let { summary ->
+                Text(
+                    text = summary,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(end = 8.dp, bottom = 2.dp)
+                        .testTag("quick_reply_summary"),
+                )
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(end = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                suggestion.chips.forEachIndexed { index, chip ->
+                    val selected = selectedPrompt == chip.prompt
+                    AssistChip(
+                        onClick = { onSelectChip(chip) },
+                        label = {
+                            Text(
+                                text = chip.label,
+                                style = MaterialTheme.typography.labelMedium,
+                                maxLines = 1,
+                            )
+                        },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = if (selected) {
+                                MaterialTheme.colorScheme.secondaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.surfaceContainerHighest
+                            },
+                            labelColor = if (selected) {
+                                MaterialTheme.colorScheme.onSecondaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            },
+                        ),
+                        border = null,
+                        modifier = Modifier
+                            .heightIn(min = 48.dp)
+                            .testTag("quick_reply_chip_$index"),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 internal fun Composer(
     actions: ChatActionsUi,
     modifier: Modifier = Modifier,
@@ -798,6 +931,7 @@ internal fun Composer(
     activeTurnId: String? = null,
     draftToLoad: String? = null,
     onDraftLoaded: () -> Unit = {},
+    quickReplyContext: QuickReplyContext? = null,
 ) {
     var text by rememberSaveable { mutableStateOf("") }
     LaunchedEffect(draftToLoad) {
@@ -1078,6 +1212,39 @@ internal fun Composer(
                     },
                 )
             }
+            val qrContext = if (!actions.running && actions.quickReplyMode != QuickReplyMode.OFF) quickReplyContext else null
+            var qrDismissed by rememberSaveable(qrContext?.turnKey) { mutableStateOf(false) }
+            var qrRequested by rememberSaveable(qrContext?.turnKey) { mutableStateOf(false) }
+            val showQuickReplyBar = qrContext != null && !qrDismissed &&
+                (actions.quickReplyMode == QuickReplyMode.AUTO || qrRequested) &&
+                slashMatches.isEmpty() && agentMention == null
+            if (showQuickReplyBar && qrContext != null) {
+                val heuristicSuggestion = remember(qrContext) { QuickReplies.heuristic(qrContext) }
+                var aiSuggestion by remember(qrContext.turnKey) { mutableStateOf<QuickReplySuggestion?>(null) }
+                var aiLoading by remember(qrContext.turnKey) { mutableStateOf(false) }
+                val provider = actions.quickReplyProvider
+                LaunchedEffect(qrContext, provider) {
+                    if (provider != null && aiSuggestion == null) {
+                        aiLoading = true
+                        val generated = provider.suggest(qrContext)
+                        if (generated != null && generated.chips.isNotEmpty()) {
+                            aiSuggestion = if (generated.summary == null && heuristicSuggestion.summary != null) {
+                                generated.copy(summary = heuristicSuggestion.summary)
+                            } else {
+                                generated
+                            }
+                        }
+                        aiLoading = false
+                    }
+                }
+                QuickReplyBar(
+                    suggestion = aiSuggestion ?: heuristicSuggestion,
+                    aiLoading = aiLoading,
+                    selectedPrompt = text,
+                    onSelectChip = { chip -> text = chip.prompt },
+                    onDismiss = { qrDismissed = true },
+                )
+            }
             TextField(
                 value = text,
                 onValueChange = { text = it },
@@ -1100,6 +1267,35 @@ internal fun Composer(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (qrContext != null && !showQuickReplyBar) {
+                        AssistChip(
+                            onClick = {
+                                qrDismissed = false
+                                qrRequested = true
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = AppIcons.Sparkle,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            },
+                            label = {
+                                Text(
+                                    text = "Suggest",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    maxLines = 1,
+                                )
+                            },
+                            colors = chipColors,
+                            border = null,
+                            modifier = Modifier
+                                .heightIn(min = 48.dp)
+                                .semantics { contentDescription = "Suggest quick replies" }
+                                .testTag("quick_reply_suggest_button"),
+                        )
+                    }
                     if (actions.slashCommands.isNotEmpty() || actions.onOpenCustomizations != null) {
                         AssistChip(
                             onClick = {

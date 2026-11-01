@@ -5,6 +5,7 @@ import android.content.pm.ApplicationInfo
 import android.os.Build
 import android.util.Log
 import androidx.datastore.preferences.preferencesDataStoreFile
+import dev.ahpclient.ai.GeminiNanoQuickReplyProvider
 import dev.ahpclient.app.AppController
 import dev.ahpclient.app.BillingGateway
 import dev.ahpclient.app.BillingResult
@@ -36,8 +37,10 @@ import dev.ahpclient.security.AndroidSessionListCache
 import dev.ahpclient.security.AndroidTokenVault
 import dev.ahpclient.security.DataStoreBlobStore
 import dev.ahpclient.security.DirectHostVault
+import dev.ahpclient.security.FileBlobStore
 import dev.ahpclient.security.KeystoreSecureBox
 import dev.ahpclient.security.BiometricApprovalGate
+import java.io.File
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.DirectHostConnector
 import dev.ahpclient.state.HostSession
@@ -84,6 +87,23 @@ class AppContainer(context: Context) {
 
     /** How the app looks. */
     val ui: UiSettings by lazy { UiSettings(appContext.getSharedPreferences("ahp_ui", Context.MODE_PRIVATE)) }
+
+    private val googleAiVault by lazy {
+        DirectHostVault(
+            KeystoreSecureBox("ahp-android-client.google-ai-key.v1"),
+            FileBlobStore(File(appContext.noBackupFilesDir, "google_ai_key.bin")),
+        )
+    }
+
+    /** Quick-reply provider supporting both PowerToys-style Google AI (API key + model + system prompt) and on-device Gemini Nano. */
+    val quickReplyProvider: GeminiNanoQuickReplyProvider by lazy {
+        GeminiNanoQuickReplyProvider(
+            scope = appScope,
+            http = http,
+            ui = ui,
+            apiKeyVault = googleAiVault,
+        )
+    }
 
     /** The phone's own prompt in front of every tool approval. Attached to the activity while it is on screen. */
     val approvalGate = BiometricApprovalGate()

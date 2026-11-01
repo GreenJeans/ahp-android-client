@@ -78,6 +78,7 @@ class MainActivity : FragmentActivity() {
                 onMonitorChange = ::setMonitoring,
                 alerts = FinishedAlertsUi(finishedWatch, monitorEnabled, container::setWatchAll, container::setWatched),
                 sessionRequests = sessionRequests,
+                quickReplyProvider = container.quickReplyProvider,
             )
         }
     }

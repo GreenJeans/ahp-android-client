@@ -1,5 +1,6 @@
 package dev.ahpclient.ui
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,7 +18,9 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -34,10 +37,16 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import dev.ahpclient.ai.NanoStatus
 import dev.ahpclient.app.BillingResult
 import dev.ahpclient.app.DirectEntry
 import dev.ahpclient.direct.DirectHost
+import dev.ahpclient.state.GoogleAiConfig
+import dev.ahpclient.state.QuickReplies
+import dev.ahpclient.state.QuickReplyMode
 import dev.ahpclient.state.TextScale
 import dev.ahpclient.state.ThemeMode
 import java.time.Instant
@@ -51,9 +60,9 @@ private val dateTimeFormat: DateTimeFormatter = DateTimeFormatter.ofLocalizedDat
 
 /**
  * Settings, away from the chat: the hosts (the GitHub sign-in, and the hosts added by address), how the app looks (the size of the text
- * in chats, the colours, the screen staying on), watching in the background, and what the app may do for you. Each switch keeps the
- * words that say what it does, and the two that change what the app can do still ask first in a dialog. Choosing a host is not here:
- * that is the hosts sheet of the side menu.
+ * in chats, the colours, the screen staying on, quick-reply suggestions), watching in the background, and what the app may do for you.
+ * Each switch keeps the words that say what it does, and the two that change what the app can do still ask first in a dialog. Choosing a
+ * host is not here: that is the hosts sheet of the side menu.
  */
 @Composable
 fun SettingsScreen(
@@ -92,6 +101,12 @@ fun SettingsScreen(
     onTheme: (ThemeMode) -> Unit = {},
     keepAwake: Boolean = false,
     onKeepAwake: (Boolean) -> Unit = {},
+    quickReplyMode: QuickReplyMode = QuickReplyMode.AUTO,
+    onQuickReplyMode: (QuickReplyMode) -> Unit = {},
+    nanoStatus: NanoStatus? = null,
+    onDownloadNano: (() -> Unit)? = null,
+    googleAiConfig: GoogleAiConfig = GoogleAiConfig(),
+    onSaveGoogleAiConfig: (suspend (enabled: Boolean, modelName: String, systemPrompt: String, newApiKey: String?, clearKey: Boolean) -> Boolean)? = null,
     /** Whether Pro features (background monitoring, acting, managing, and concurrent multi-host) are unlocked. */
     proUnlocked: Boolean = true,
     /** Starts the Pro unlock flow when tapped; when null and [onPurchasePro] or [onRestorePro] is set, opens [ProUpgradeDialog]. */
@@ -114,9 +129,22 @@ fun SettingsScreen(
         ) {
             HostsSection(signedIn, tokenExpiresAt, renews, onSignIn, onSignOut, direct, onAddHost, onRemoveHost, connectedId)
             SectionHeader("Display")
-            TileCard(shape = connectedShape(0, 2)) { TilePadding { ThemeRow(theme, onTheme) } }
+            TileCard(shape = connectedShape(0, 3)) { TilePadding { ThemeRow(theme, onTheme) } }
             Spacer(Modifier.height(Design.Gap))
-            TileCard(shape = connectedShape(1, 2)) { TilePadding { KeepAwakeToggle(keepAwake, onKeepAwake) } }
+            TileCard(shape = connectedShape(1, 3)) { TilePadding { KeepAwakeToggle(keepAwake, onKeepAwake) } }
+            Spacer(Modifier.height(Design.Gap))
+            TileCard(shape = connectedShape(2, 3)) {
+                TilePadding {
+                    QuickReplyRow(
+                        mode = quickReplyMode,
+                        onChange = onQuickReplyMode,
+                        nanoStatus = nanoStatus,
+                        onDownloadNano = onDownloadNano,
+                        googleAiConfig = googleAiConfig,
+                        onSaveGoogleAiConfig = onSaveGoogleAiConfig,
+                    )
+                }
+            }
             if (!proUnlocked || onDebugProChange != null) {
                 ProSection(proUnlocked, onUnlockPro, onPurchasePro, onRestorePro, onDebugProChange)
             }
@@ -481,6 +509,289 @@ private fun KeepAwakeToggle(on: Boolean, onChange: (Boolean) -> Unit) {
         Text("Keep screen on while an agent works", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
         Switch(checked = on, onCheckedChange = null)
     }
+}
+
+/**
+ * When quick-reply chips are suggested in the message box after an agent turn finishes: automatically, on demand via a
+ * Suggest button, or off. Shows on-device Gemini Nano status and PowerToys-style Google AI provider configuration.
+ */
+@Composable
+private fun QuickReplyRow(
+    mode: QuickReplyMode,
+    onChange: (QuickReplyMode) -> Unit,
+    nanoStatus: NanoStatus?,
+    onDownloadNano: (() -> Unit)?,
+    googleAiConfig: GoogleAiConfig,
+    onSaveGoogleAiConfig: (suspend (enabled: Boolean, modelName: String, systemPrompt: String, newApiKey: String?, clearKey: Boolean) -> Boolean)?,
+) {
+    val scope = rememberCoroutineScope()
+    var showingGoogleDialog by rememberSaveable { mutableStateOf(false) }
+
+    Column(Modifier.fillMaxWidth().testTag("quick_reply_row"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("Quick replies", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.heightIn(min = 36.dp).padding(top = 6.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            QuickReplyMode.entries.forEach { entry ->
+                FilterChip(
+                    selected = mode == entry,
+                    onClick = { onChange(entry) },
+                    label = { Text(entry.label) },
+                    modifier = Modifier.heightIn(min = 48.dp).testTag("quick_reply_${entry.name.lowercase()}"),
+                )
+            }
+        }
+        val modeHint = when (mode) {
+            QuickReplyMode.AUTO -> "Suggests tappable replies automatically when a turn finishes."
+            QuickReplyMode.ON_DEMAND -> "Offers a Suggest button in the message box after a turn."
+            QuickReplyMode.OFF -> "Off: no quick-reply suggestions are shown."
+        }
+        val statusSuffix = when {
+            mode == QuickReplyMode.OFF -> ""
+            googleAiConfig.isActive -> " Google AI (${googleAiConfig.modelName}) active."
+            nanoStatus != null -> " ${nanoStatus.label}."
+            else -> ""
+        }
+        Text(
+            text = modeHint + statusSuffix,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(bottom = 4.dp).testTag("quick_reply_hint"),
+        )
+        if (mode != QuickReplyMode.OFF && nanoStatus == NanoStatus.DOWNLOADABLE && onDownloadNano != null && !googleAiConfig.isActive) {
+            OutlinedButton(
+                onClick = onDownloadNano,
+                modifier = Modifier.heightIn(min = 48.dp).testTag("quick_reply_download_nano"),
+            ) {
+                Text("Download Gemini Nano")
+            }
+        }
+        if (mode != QuickReplyMode.OFF && onSaveGoogleAiConfig != null) {
+            if (googleAiConfig.hasApiKey) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .toggleable(
+                            value = googleAiConfig.enabled,
+                            role = Role.Switch,
+                            onValueChange = { on ->
+                                scope.launch {
+                                    onSaveGoogleAiConfig(
+                                        on,
+                                        googleAiConfig.modelName,
+                                        googleAiConfig.systemPrompt,
+                                        null,
+                                        false,
+                                    )
+                                }
+                            },
+                        )
+                        .testTag("google_ai_toggle"),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Use Google AI provider", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            googleAiConfig.modelName,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(checked = googleAiConfig.enabled, onCheckedChange = null)
+                }
+            }
+            OutlinedButton(
+                onClick = { showingGoogleDialog = true },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("google_ai_configure_button"),
+            ) {
+                Icon(AppIcons.Sparkle, contentDescription = null, modifier = Modifier.padding(end = 8.dp))
+                Text(if (googleAiConfig.hasApiKey) "Configure Google provider (${googleAiConfig.modelName})" else "Configure Google AI provider")
+            }
+        }
+    }
+
+    if (showingGoogleDialog && onSaveGoogleAiConfig != null) {
+        GoogleProviderConfigDialog(
+            config = googleAiConfig,
+            onDismiss = { showingGoogleDialog = false },
+            onSave = onSaveGoogleAiConfig,
+        )
+    }
+}
+
+/**
+ * PowerToys-style Google provider configuration dialog: lets the user set the Gemini model name, API key, and custom
+ * system prompt for AI-powered quick replies.
+ */
+@Composable
+private fun GoogleProviderConfigDialog(
+    config: GoogleAiConfig,
+    onDismiss: () -> Unit,
+    onSave: suspend (enabled: Boolean, modelName: String, systemPrompt: String, newApiKey: String?, clearKey: Boolean) -> Boolean,
+) {
+    val scope = rememberCoroutineScope()
+    var modelName by rememberSaveable { mutableStateOf(config.modelName.ifBlank { QuickReplies.DEFAULT_GOOGLE_MODEL }) }
+    var apiKey by rememberSaveable { mutableStateOf("") }
+    var showApiKey by rememberSaveable { mutableStateOf(false) }
+    var clearSavedKey by rememberSaveable { mutableStateOf(false) }
+    var systemPrompt by rememberSaveable { mutableStateOf(config.systemPrompt.ifBlank { QuickReplies.DEFAULT_SYSTEM_PROMPT }) }
+    var saving by remember { mutableStateOf(false) }
+    var errorMessage by rememberSaveable { mutableStateOf<String?>(null) }
+
+    val hasKeyAvailable = (config.hasApiKey && !clearSavedKey) || apiKey.isNotBlank()
+
+    AlertDialog(
+        onDismissRequest = { if (!saving) onDismiss() },
+        modifier = Modifier.testTag("google_ai_dialog"),
+        title = { Text("Google provider configuration") },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    "Your API key connects directly to Google services. By setting up this provider, you agree to comply with Google's usage policies and data handling practices.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
+                OutlinedTextField(
+                    value = modelName,
+                    onValueChange = { modelName = it },
+                    label = { Text("Model name") },
+                    placeholder = { Text(QuickReplies.DEFAULT_GOOGLE_MODEL) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("google_ai_model_input"),
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    QuickReplies.RECOMMENDED_GOOGLE_MODELS.forEach { preset ->
+                        SuggestionChip(
+                            onClick = { modelName = preset },
+                            label = { Text(preset, style = MaterialTheme.typography.labelSmall) },
+                            modifier = Modifier.heightIn(min = 36.dp).testTag("google_ai_preset_$preset"),
+                        )
+                    }
+                }
+
+                OutlinedTextField(
+                    value = apiKey,
+                    onValueChange = {
+                        apiKey = it
+                        if (it.isNotBlank()) clearSavedKey = false
+                        errorMessage = null
+                    },
+                    label = { Text("API key") },
+                    placeholder = {
+                        Text(
+                            if (config.hasApiKey && !clearSavedKey) {
+                                "Saved — leave blank to keep current key"
+                            } else {
+                                "Enter Gemini API key"
+                            },
+                        )
+                    },
+                    singleLine = true,
+                    visualTransformation = if (showApiKey) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        TextButton(
+                            onClick = { showApiKey = !showApiKey },
+                            modifier = Modifier.heightIn(min = 48.dp).testTag("google_ai_toggle_key_visibility"),
+                        ) {
+                            Text(if (showApiKey) "Hide" else "Show")
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().testTag("google_ai_api_key_input"),
+                )
+
+                if (config.hasApiKey && !clearSavedKey) {
+                    TextButton(
+                        onClick = {
+                            clearSavedKey = true
+                            apiKey = ""
+                        },
+                        modifier = Modifier.heightIn(min = 48.dp).testTag("google_ai_clear_key"),
+                    ) {
+                        Text("Remove saved API key")
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("System prompt", style = MaterialTheme.typography.labelLarge)
+                    TextButton(
+                        onClick = { systemPrompt = QuickReplies.DEFAULT_SYSTEM_PROMPT },
+                        modifier = Modifier.heightIn(min = 48.dp).testTag("google_ai_reset_prompt"),
+                    ) {
+                        Text("Reset default")
+                    }
+                }
+
+                OutlinedTextField(
+                    value = systemPrompt,
+                    onValueChange = { systemPrompt = it },
+                    minLines = 3,
+                    maxLines = 6,
+                    modifier = Modifier.fillMaxWidth().testTag("google_ai_system_prompt_input"),
+                )
+
+                errorMessage?.let { msg ->
+                    Text(
+                        msg,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.testTag("google_ai_error"),
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (!hasKeyAvailable && !clearSavedKey) {
+                        errorMessage = "Enter a Google Gemini API key to enable this provider."
+                        return@Button
+                    }
+                    saving = true
+                    errorMessage = null
+                    scope.launch {
+                        val saved = onSave(
+                            hasKeyAvailable,
+                            modelName,
+                            systemPrompt,
+                            apiKey.takeIf { it.isNotBlank() },
+                            clearSavedKey && apiKey.isBlank(),
+                        )
+                        saving = false
+                        if (saved) {
+                            onDismiss()
+                        } else {
+                            errorMessage = "Could not save the API key on this device."
+                        }
+                    }
+                },
+                enabled = !saving,
+                modifier = Modifier.heightIn(min = 48.dp).testTag("google_ai_save"),
+            ) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                enabled = !saving,
+                modifier = Modifier.heightIn(min = 48.dp).testTag("google_ai_cancel"),
+            ) {
+                Text("Cancel")
+            }
+        },
+    )
 }
 
 @Composable
