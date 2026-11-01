@@ -1,6 +1,42 @@
 package dev.ahpclient.ui
 
+import android.content.Context
 import androidx.activity.ComponentActivity
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithText
+import com.microsoft.agenthostprotocol.generated.Implementation
+import dev.ahpclient.app.AppController
+import dev.ahpclient.app.AppState
+import dev.ahpclient.app.DirectSessionFactory
+import dev.ahpclient.app.HostSessionFactory
+import dev.ahpclient.app.LastHostStore
+import dev.ahpclient.auth.GitHubDeviceAuth
+import dev.ahpclient.auth.GitHubToken
+import dev.ahpclient.auth.Secret
+import dev.ahpclient.data.UiSettings
+import dev.ahpclient.direct.InMemoryDirectHostStore
+import dev.ahpclient.security.BlobStore
+import dev.ahpclient.security.SecureBox
+import dev.ahpclient.security.TokenVault
+import dev.ahpclient.state.HostConnector
+import dev.ahpclient.state.HostSession
+import dev.ahpclient.tunnel.DevTunnelsClient
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.runBlocking
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
+import org.junit.After
+import org.junit.Assert.assertTrue
 import androidx.compose.foundation.layout.Column
 import androidx.compose.material3.Button
 import androidx.compose.material3.DrawerValue
@@ -32,6 +68,7 @@ import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeLeft
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.ahpclient.app.DirectEntry
 import dev.ahpclient.app.HostCatalog
@@ -593,6 +630,154 @@ class HomeDrawerTest {
         rule.waitForIdle()
 
         assertEquals(0, offered)
+    }
+
+    @Test
+    fun switchingHostsFromTheSheetInAppRootNeverFlashesNotConnectedAndClosesTheSheet() {
+        val controller = buildAppController(signedIn = false)
+        val ui = UiSettings(rule.activity.getSharedPreferences("test_ui_n42", Context.MODE_PRIVATE))
+        val observedStates = mutableListOf<AppState>()
+        var sawDisconnectedFrame = false
+        rule.setContent {
+            val current by controller.state.collectAsStateWithLifecycle()
+            observedStates += current
+            if (current !is AppState.Connected) sawDisconnectedFrame = true
+            AppRoot(controller = controller, ui = ui, onOpenGitHub = {}, onCopyCode = {})
+        }
+        rule.waitForIdle()
+        rule.onNodeWithTag("drawer_host_name", useUnmergedTree = true).assertTextEquals("Laptop")
+        rule.onAllNodesWithTag("drawer_no_host").assertCountEquals(0)
+
+        rule.onNodeWithTag("drawer_host").performClick()
+        rule.onNodeWithTag("host_sheet").assertIsDisplayed()
+        rule.onNodeWithTag("direct_${server.id}").assertIsDisplayed().performClick()
+
+        rule.waitUntil(5_000) { rule.onAllNodesWithTag("host_sheet").fetchSemanticsNodes().isEmpty() }
+        rule.waitForIdle()
+
+        assertFalse("AppRoot must never render a disconnected frame during a host switch", sawDisconnectedFrame)
+        assertTrue("Every observed controller state must stay Connected", observedStates.all { it is AppState.Connected })
+        rule.onAllNodesWithTag("drawer_no_host").assertCountEquals(0)
+        rule.onAllNodesWithText("Not connected").assertCountEquals(0)
+        rule.onNodeWithTag("drawer_host_name", useUnmergedTree = true).assertTextEquals("Server")
+    }
+
+    private val server = DirectHost("direct:22222222-bbbb", "Server", "wss://agents.example.com")
+    private var appScope: CoroutineScope? = null
+
+    @After
+    fun tearDownScope() {
+        appScope?.cancel()
+        appScope = null
+    }
+
+    private fun buildAppController(signedIn: Boolean = false): AppController {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        appScope = scope
+        val http = OkHttpClient.Builder()
+            .addInterceptor { chain ->
+                Response.Builder()
+                    .request(chain.request())
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(200)
+                    .message("OK")
+                    .body("""{"value":[]}""".toResponseBody("application/json".toMediaType()))
+                    .build()
+            }
+            .build()
+        val box = object : SecureBox {
+            override fun seal(plain: ByteArray, aad: ByteArray): ByteArray = plain.copyOf()
+            override fun open(blob: ByteArray, aad: ByteArray): ByteArray = blob.copyOf()
+            override fun destroyKey() {}
+        }
+        val blobStore = object : BlobStore {
+            var data: ByteArray? = null
+            override suspend fun read(): ByteArray? = data
+            override suspend fun write(blob: ByteArray) { data = blob }
+            override suspend fun delete() { data = null }
+        }
+        val vault = TokenVault(box, blobStore)
+        if (signedIn) {
+            runBlocking { vault.save(GitHubToken(Secret("ghu_test"), Secret("ghr_test"), null)) }
+        }
+        val lastHost = object : LastHostStore {
+            var saved: String? = null
+            override suspend fun get(): String? = saved
+            override suspend fun set(tunnelId: String) { saved = tunnelId }
+        }
+        val clientInfo = Implementation(name = "ahp-android-client-test", version = "0.1")
+        val directStore = InMemoryDirectHostStore()
+        runBlocking { directStore.save(listOf(direct, server)) }
+        val controller = AppController(
+            auth = GitHubDeviceAuth(http = http),
+            vault = vault,
+            devTunnels = DevTunnelsClient(http = http),
+            lastHost = lastHost,
+            sessions = HostSessionFactory { info, _ ->
+                HostSession(HostConnector { _, _, _ -> awaitCancellation() }, scope, clientInfo, clientId = "client-${info.tunnelId}")
+            },
+            scope = scope,
+            directStore = directStore,
+            directSessions = DirectSessionFactory { host, _, _ ->
+                HostSession(HostConnector { _, _, _ -> awaitCancellation() }, scope, clientInfo, clientId = "client-${host.id}")
+            },
+        )
+        controller.start()
+        rule.waitUntil(5_000) { controller.state.value is AppState.Hosts }
+        controller.connect(direct)
+        rule.waitUntil(5_000) { controller.state.value is AppState.Connected }
+        return controller
+    }
+
+    @Test
+    fun removingTheConnectedDirectHostFromSettingsInAppRootDisconnectsAndReturnsToTheChooseHostDrawer() {
+        val controller = buildAppController(signedIn = false)
+        val ui = UiSettings(rule.activity.getSharedPreferences("test_ui_n52", Context.MODE_PRIVATE))
+        rule.setContent {
+            AppRoot(controller = controller, ui = ui, onOpenGitHub = {}, onCopyCode = {})
+        }
+        rule.waitForIdle()
+
+        rule.onNodeWithTag("settings").performClick()
+        rule.onNodeWithTag("settings_title").assertIsDisplayed()
+
+        rule.onNodeWithTag("remove_${direct.id}").performClick()
+        rule.onNodeWithTag("remove_host_dialog").assertIsDisplayed()
+        rule.onNodeWithText("connection ends too", substring = true).assertIsDisplayed()
+        rule.onNodeWithTag("remove_host_confirm").performClick()
+
+        rule.waitUntil(5_000) { controller.state.value is AppState.Hosts }
+        rule.waitForIdle()
+
+        rule.onAllNodesWithTag("settings_title").assertCountEquals(0)
+        rule.onNodeWithTag("drawer_no_host").assertIsDisplayed()
+        rule.onNodeWithTag("choose_host").assertIsDisplayed()
+        assertEquals(listOf(server), controller.hosts.value.direct.map { it.host })
+    }
+
+    @Test
+    fun signingOutFromSettingsWhileConnectedInAppRootWarnsAndEndsTheConnectionWhileKeepingDirectHosts() {
+        val controller = buildAppController(signedIn = true)
+        val ui = UiSettings(rule.activity.getSharedPreferences("test_ui_n53", Context.MODE_PRIVATE))
+        rule.setContent {
+            AppRoot(controller = controller, ui = ui, onOpenGitHub = {}, onCopyCode = {})
+        }
+        rule.waitForIdle()
+
+        rule.onNodeWithTag("settings").performClick()
+        rule.onNodeWithTag("settings_title").assertIsDisplayed()
+
+        rule.onNodeWithTag("sign_out").performClick()
+        rule.onNodeWithTag("sign_out_dialog").assertIsDisplayed()
+        rule.onNodeWithText("connected now", substring = true).assertIsDisplayed()
+        rule.onNodeWithTag("sign_out_confirm").performClick()
+
+        rule.waitUntil(5_000) { controller.state.value is AppState.SignedOut }
+        rule.waitForIdle()
+
+        rule.onNodeWithTag("sign_in_button").assertIsDisplayed()
+        rule.onNodeWithTag("use_direct_hosts").assertIsDisplayed()
+        assertEquals(listOf(direct, server), controller.hosts.value.direct.map { it.host })
     }
 
     @Test

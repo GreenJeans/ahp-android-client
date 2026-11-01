@@ -175,6 +175,15 @@ class MonitorInstrumentedTest {
             assertTrue(service.foregroundServiceType and ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE != 0)
         }
         assertFalse("nothing outside the app may start it", service.exported)
+        assertEquals(0, MonitorService.foregroundServiceTypeFor(Build.VERSION_CODES.O))
+        assertEquals(0, MonitorService.foregroundServiceTypeFor(Build.VERSION_CODES.P))
+        assertEquals(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC, MonitorService.foregroundServiceTypeFor(Build.VERSION_CODES.Q))
+        assertEquals(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC, MonitorService.foregroundServiceTypeFor(Build.VERSION_CODES.TIRAMISU))
+        assertEquals(ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE, MonitorService.foregroundServiceTypeFor(Build.VERSION_CODES.UPSIDE_DOWN_CAKE))
+        val runtimeType = MonitorService.foregroundServiceTypeFor(Build.VERSION.SDK_INT)
+        if (runtimeType != 0) {
+            assertTrue("runtime foreground service type must be declared in the manifest", service.foregroundServiceType and runtimeType != 0)
+        }
 
         val requested = context.packageManager.getPackageInfo(context.packageName, PackageManager.GET_PERMISSIONS).requestedPermissions.orEmpty().toSet()
         assertTrue(
