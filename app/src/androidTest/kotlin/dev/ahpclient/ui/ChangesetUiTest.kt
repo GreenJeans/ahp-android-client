@@ -393,15 +393,15 @@ class ChangesetUiTest {
         rule.onNodeWithTag("changeset_op_confirm").performClick()
         rule.waitUntil(5_000) { invoked == listOf("stage", "discard") }
 
-        rule.onNodeWithTag("changeset_file_operations_work/a.kt").assertIsDisplayed()
-        rule.onNodeWithTag("changeset_file_op_work/a.kt_stage-file").assertIsDisplayed().performClick()
-        rule.waitUntil(5_000) { fileInvoked == listOf("work/a.kt" to "stage-file") }
+        rule.onNodeWithTag("changeset_file_operations_file:///work/a.kt").assertIsDisplayed()
+        rule.onNodeWithTag("changeset_file_op_file:///work/a.kt_stage-file").assertIsDisplayed().performClick()
+        rule.waitUntil(5_000) { fileInvoked == listOf("file:///work/a.kt" to "stage-file") }
 
-        rule.onNodeWithTag("changeset_file_op_work/a.kt_revert-file").assertIsDisplayed().performClick()
+        rule.onNodeWithTag("changeset_file_op_file:///work/a.kt_revert-file").assertIsDisplayed().performClick()
         rule.onNodeWithTag("changeset_op_confirm_dialog").assertIsDisplayed()
         rule.onNodeWithTag("changeset_op_confirm_text").assertTextContains("Revert this file?", substring = true)
         rule.onNodeWithTag("changeset_op_confirm").performClick()
-        rule.waitUntil(5_000) { fileInvoked == listOf("work/a.kt" to "stage-file", "work/a.kt" to "revert-file") }
+        rule.waitUntil(5_000) { fileInvoked == listOf("file:///work/a.kt" to "stage-file", "file:///work/a.kt" to "revert-file") }
     }
 
     @Test

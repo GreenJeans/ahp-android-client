@@ -80,7 +80,7 @@ class AppContainer(context: Context) {
     // No redirect from https to http, or back: cleartext is allowed in the manifest for hosts added by address (see DirectHostConnector and
     // HostAddress, which decide which), so a redirect must not be the way a GitHub or Dev Tunnels request ends up unencrypted.
     private val http = OkHttpClient.Builder().followSslRedirects(false).build()
-    private val wsHttp = http.newBuilder().pingInterval(30, TimeUnit.SECONDS).build()
+    private val wsHttp = http.newBuilder().pingInterval(WS_PING_SECONDS, TimeUnit.SECONDS).build()
     private val versionName: String = appContext.packageManager.getPackageInfo(appContext.packageName, 0).versionName ?: "0"
     private val debuggable: Boolean = appContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
     private val prefs by lazy { PrefsLastHostStore.dataStoreFor(appContext.preferencesDataStoreFile("ahp_prefs"), ioScope) }
@@ -364,5 +364,12 @@ class AppContainer(context: Context) {
         const val WIRE_TAG = "AhpWire"
         const val CONN_TAG = "AhpConn"
         const val AUTH_TAG = "AhpAuth"
+
+        /**
+         * WebSocket keep-alive ping interval for tunnel and direct-host sockets: 75 % of the 60 s idle ceiling across
+         * Dev Tunnels web-forwarding and mobile carrier NAT gateways, bounded to [25 s, 60 s] (see H3 in
+         * `docs/hardening-spec.md` and `docs/verification/relay-idle.md`).
+         */
+        const val WS_PING_SECONDS = 45L
     }
 }

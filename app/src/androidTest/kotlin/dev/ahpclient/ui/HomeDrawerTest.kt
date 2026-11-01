@@ -12,7 +12,9 @@ import dev.ahpclient.app.AppController
 import dev.ahpclient.app.AppState
 import dev.ahpclient.app.DirectSessionFactory
 import dev.ahpclient.app.HostSessionFactory
+import dev.ahpclient.app.InMemoryEntitlementSettings
 import dev.ahpclient.app.LastHostStore
+import dev.ahpclient.app.ProEntitlement
 import dev.ahpclient.auth.GitHubDeviceAuth
 import dev.ahpclient.auth.GitHubToken
 import dev.ahpclient.auth.Secret
@@ -721,6 +723,7 @@ class HomeDrawerTest {
             directSessions = DirectSessionFactory { host, _, _ ->
                 HostSession(HostConnector { _, _, _ -> awaitCancellation() }, scope, clientInfo, clientId = "client-${host.id}")
             },
+            pro = ProEntitlement(InMemoryEntitlementSettings(false)),
         )
         controller.start()
         rule.waitUntil(5_000) { controller.state.value is AppState.Hosts }
