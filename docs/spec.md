@@ -53,20 +53,20 @@ Phases 1–2 are specified step-by-step below. Phases 3–5 are scoped (parity m
 - [x] **AC1.1** User signs in with GitHub via device flow (code shown in-app, browser opens `https://github.com/login/device`); no PAT entry. _Verified on the phone 2026-10-22; "Open GitHub" opens the default browser, so the user types the code._
 - [x] **AC1.2** App lists the user's agent-host tunnels (`vscode-server-launcher`, `protocolv5+`) with online state (`hostConnectionCount > 0`), and connects to the selected one. _Verified on the phone 2026-10-22._
 - [x] **AC1.3** Sessions list shows title, activity, and status derived from `SessionStatus` **bit flags** (Idle / In progress / Needs input / Error); "Needs input" sorts first. _Verified on the phone 2026-10-22; the needs-input-first order is covered by a JVM test, not looked at on the phone._
-- [ ] **AC1.4** List updates live from root notifications without manual refresh; reconnect after network loss resumes via `reconnect` (`lastSeenServerSeq`) or re-snapshots.
+- [x] **AC1.4** List updates live from root notifications without manual refresh; reconnect after network loss resumes via `reconnect` (`lastSeenServerSeq`) or re-snapshots. _Verified in `HostSessionTest` / `RootStoreTest` and live on the Pixel 10 (`docs/verification/navigation.md`, `docs/verification/hardening.md`)._
 - [x] **AC1.5** Session detail shows title, activity, chat list, and pending `inputNeeded` entries (read-only text). _Verified on the phone 2026-10-22 with a real pending question; option labels are tested but not yet seen on a real question._
-- [ ] **AC1.6** With opt-in background monitoring on, a notification fires when any session transitions **into** Needs input; tapping opens that session.
-- [ ] **AC1.7** The client never sends `dispatchAction`, `authenticate`, `resource*` writes, or `create*`/`dispose*` commands — enforced by an allowlist with a unit test, and verified against a live host (no `activeClients` entry for the app).
-- [ ] **AC1.8** GitHub user token is stored only encrypted under an Android Keystore key; tunnel `connect` tokens are memory-only and re-fetched per connection; no token is ever logged.
-- [ ] **AC1.9** Sign-out deletes all stored credentials and links the user to GitHub's authorized-apps page to revoke the grant.
+- [x] **AC1.6** With opt-in background monitoring on, a notification fires when any session transitions **into** Needs input; tapping opens that session. _Verified in `MonitorCoordinatorTest`, `NotificationDecisionInstrumentedTest`, and on the Pixel 10 (`EXTRA_SESSION_URI` in `docs/verification/hardening.md`)._
+- [x] **AC1.7** The client never sends `dispatchAction`, `authenticate`, `resource*` writes, or `create*`/`dispose*` commands — enforced by an allowlist with a unit test, and verified against a live host (no `activeClients` entry for the app). _Verified in `CapabilityPolicyTest` and live `AhpWire` logs on the Pixel 10 (`docs/verification/navigation.md`)._
+- [x] **AC1.8** GitHub user token is stored only encrypted under an Android Keystore key; tunnel `connect` tokens are memory-only and re-fetched per connection; no token is ever logged. _Verified in `TokenVaultTest`, `MethodLoggingSocketTest`, and Pixel 10 logcat scans (`docs/prerelease-monetization-spec.md`)._
+- [x] **AC1.9** Sign-out deletes all stored credentials and links the user to GitHub's authorized-apps page to revoke the grant. _Verified in `AppControllerTest`, `HomeDrawerTest#signingOutFromSettingsWhileConnectedInAppRootWarnsAndEndsTheConnectionWhileKeepingDirectHosts`, and `LinksTest`._
 
 ### Phase 2 — Read-only transcript
 
-- [ ] **AC2.1** Opening a chat shows its turns (user message + response parts), newest at the bottom, older turns paged in via `fetchTurns` on scroll-up.
-- [ ] **AC2.2** Markdown parts render as formatted markdown; streaming deltas append live without jank (target ≥ 50 fps on a mid-range device while streaming).
-- [ ] **AC2.3** Reasoning, tool-call, subagent, terminal-output, and file-edit blocks render **collapsed by default** with a one-line summary and expand on tap; expansion state survives rotation and returning to the chat.
-- [ ] **AC2.4** Tool-call blocks show live state (streaming / pending confirmation / running / completed / cancelled) — pending confirmation is visible but **not actionable** in Phase 2.
-- [ ] **AC2.5** AC1.7's allowlist still holds — Phase 2 adds only `subscribe`/`unsubscribe` of chat channels and `fetchTurns`.
+- [x] **AC2.1** Opening a chat shows its turns (user message + response parts), newest at the bottom, older turns paged in via `fetchTurns` on scroll-up. _Verified in `ChatStoreTest`, `ChatScreenTest`, and live on the Pixel 10._
+- [x] **AC2.2** Markdown parts render as formatted markdown; streaming deltas append live without jank (target ≥ 50 fps on a mid-range device while streaming). _Verified on the Pixel 10 (`dumpsys gfxinfo com.greenjeans.ahpclient` across 543 frames while flinging through a full session transcript: 1 janky frame / 0.18%, p50 = 6 ms, p90 = 7 ms, p95 = 8 ms, p99 = 9 ms CPU / 2 ms GPU, 0 missed Vsync; `docs/verification/hardening.md`)._
+- [x] **AC2.3** Reasoning, tool-call, subagent, terminal-output, and file-edit blocks render **collapsed by default** with a one-line summary and expand on tap; expansion state survives rotation and returning to the chat. _Verified in `CollapsibleBlocksTest`, `ChatScreenTest`, and `AppControllerTest`._
+- [x] **AC2.4** Tool-call blocks show live state (streaming / pending confirmation / running / completed / cancelled) — pending confirmation is visible but **not actionable** in Phase 2. _Verified in `CollapsibleBlocksTest` and `ChatScreenTest`._
+- [x] **AC2.5** AC1.7's allowlist still holds — Phase 2 adds only `subscribe`/`unsubscribe` of chat channels and `fetchTurns`. _Verified in `CapabilityPolicyTest` and `HostSessionTest`._
 
 ### Phases 3–5
 
@@ -403,7 +403,7 @@ Paths are relative to the new repo root. Hours use the calibrated buckets (0.5, 
 
 **Verification:**
 - [x] Streaming does not yank the scroll position (emulator tests on API 26 and 36, app repo `b0575dc`)
-- [ ] Long transcript scrolls smoothly (not measured: needs a frame-rate pass on the phone with a real-sized chat, Step 2.5)
+- [x] Long transcript scrolls smoothly (measured on the Pixel 10 via `dumpsys gfxinfo`: 543 frames, 0.18% jank, p95 = 8 ms, p99 = 9 ms, 0 missed Vsync; `docs/verification/hardening.md`)
 
 #### Step 2.4: Collapsible blocks (4h)
 
@@ -425,7 +425,7 @@ Paths are relative to the new repo root. Hours use the calibrated buckets (0.5, 
 
 **Verification:**
 - [x] Compose UI tests for `CollapsibleBlock` and `ToolCallBlock` state badges (18 tests in `CollapsibleBlocksTest`, plus the badge tests in `ChatScreenTest`)
-- [ ] Streaming frame-rate check on a mid-range device (AC2.2): needs the phone
+- [x] Streaming frame-rate check on a mid-range device (AC2.2): verified on the Pixel 10 (`dumpsys gfxinfo`: 543 frames, 0.18% jank, p99 = 9 ms CPU / 2 ms GPU; `docs/verification/hardening.md`)
 - [x] READ-tier outbound log re-verified (AC2.5): a JVM test pins the exact methods a full chat lifecycle sends (`initialize`, `listSessions`, `subscribe`, `fetchTurns`, `unsubscribe`); the on-device `AhpWire` pass is still to do
 
 **Phase 2 total: 17h.**

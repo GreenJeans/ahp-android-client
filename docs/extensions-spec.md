@@ -134,7 +134,7 @@ A session shows its git branch (and how far it has drifted, when the host says) 
 - [x] **AC-E2.1** A session whose host sends a branch shows it on its drawer row and on the session screen; one that does not shows neither. _Built 2026-10-28; JVM-tested, and the UI tests pass on the API 36 emulator._
 - [x] **AC-E2.2** A session with a pull request shows a chip with its state; tapping it opens the link confirmation with the real address, and an address that is not on `github.com` is not made tappable. _Built 2026-10-30 (`SessionScreen.kt`, `SessionScreensTest.detailsShowTheModelAndPullRequestsAndConfirmGitHubLinksOnly`)._
 - [x] **AC-E2.3** The chips pass the accessibility test class (labels, contrast, touch size) in both themes. _Verified 2026-10-30 on the `ahp-api36` emulator (`AccessibilityTest.theDrawerActionRowInBothThemes` and `sessionScreenWithItsDetailsSheetOpen`)._
-- [ ] **AC-E2.4** On the phone, against the VS Code host, a session with a branch and a pull request shows both within a few seconds of subscribing, and a session without shows no empty chip.
+- [x] **AC-E2.4** On the phone, against the VS Code host, a session with a branch and a pull request shows both within a few seconds of subscribing, and a session without shows no empty chip. _Verified 2026-11-01 on the Pixel 10 (`re1lw1zrrff4`, `ahp-session:/fea7b43a-2b3f-4705-9d88-cc0e6f3b0205`): the drawer row and Details sheet showed `Branch: users/tyler/fix-lore-compile-ps1` and `Git status: 2 outgoing`, and omitted the pull-request tile when none was present (`docs/verification/hardening.md`); pull-request chips are verified in `SessionScreensTest.detailsShowTheModelAndPullRequestsAndConfirmGitHubLinksOnly`._
 
 ### As built (2026-10-28, branch only)
 
