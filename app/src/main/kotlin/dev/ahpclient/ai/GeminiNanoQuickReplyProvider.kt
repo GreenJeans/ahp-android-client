@@ -352,7 +352,7 @@ class GeminiNanoQuickReplyProvider(
                     AiProviderKind.OPENAI_COMPATIBLE -> QuickReplies.parseOpenAiChatResponseJson(context.turnKey, body, label)
                     AiProviderKind.ANTHROPIC -> QuickReplies.parseAnthropicMessagesResponseJson(context.turnKey, body, label)
                 }
-                parsed ?: failWith("Model response did not contain valid quick-reply JSON.")
+                parsed ?: failWith(QuickReplies.describeUnparsedResponse(body))
             }
         } catch (e: CancellationException) {
             throw e
