@@ -214,8 +214,8 @@ data class Transcript(
                 activeTurnId = chat.activeTurn?.id,
                 lastTurnId = chat.turns.lastOrNull()?.id,
                 usage = HostExtras.chatUsage(chat),
-                backgroundWork = chat.backgroundWork.orEmpty().mapIndexed(::backgroundWorkOf),
-                canvases = chat.canvases.orEmpty().mapNotNull(::canvasOf),
+                backgroundWork = backgroundWorkOf(chat),
+                canvases = canvasesOf(chat),
             )
         }
 
@@ -310,6 +310,12 @@ data class Transcript(
         private fun plain(text: StringOrMarkdown?): String? = SessionDetail.plain(text)
 
         private const val MAX_CANVAS_LABEL_CHARS = 80
+
+        fun backgroundWorkOf(chat: ChatState?): List<BackgroundWorkView> =
+            chat?.backgroundWork.orEmpty().mapIndexed(::backgroundWorkOf)
+
+        fun canvasesOf(chat: ChatState?): List<CanvasView> =
+            chat?.canvases.orEmpty().mapNotNull(::canvasOf)
 
         private fun backgroundWorkOf(index: Int, work: BackgroundWork): BackgroundWorkView = when (work) {
             is BackgroundWorkShell -> {

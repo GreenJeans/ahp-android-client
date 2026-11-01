@@ -8,6 +8,21 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.BottomSheetDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -116,6 +131,14 @@ fun ChatScreen(
         onBack = onBack,
         backLabel = backLabel,
         titleTag = "chat_title",
+        actions = {
+            BackgroundWorkChip(
+                items = transcript?.backgroundWork.orEmpty(),
+                canvases = transcript?.canvases.orEmpty(),
+                onOpenSubagent = onOpenSubagent,
+                onOpenTerminal = onOpenTerminal,
+            )
+        },
         large = false,
         modifier = modifier,
     ) {
@@ -210,20 +233,6 @@ fun ChatPane(
                 Column(modifier = Modifier.fillMaxSize()) {
                     if (connection != ConnState.Online) ConnectionLine(connection, Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
                     if (transcript?.running == true && !transcript.waitingOnYou) WorkingBar()
-                    if (!transcript?.backgroundWork.isNullOrEmpty()) {
-                        BackgroundWorkBar(
-                            items = transcript.backgroundWork,
-                            onOpenSubagent = onOpenSubagent,
-                            onOpenTerminal = onOpenTerminal,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                        )
-                    }
-                    if (!transcript?.canvases.isNullOrEmpty()) {
-                        CanvasesBar(
-                            canvases = transcript.canvases,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                        )
-                    }
                     when {
                         error is ChatGoneException -> ErrorText("This chat is no longer on the host.", Modifier.padding(horizontal = 16.dp).testTag("chat_gone"))
                         notLoaded != null && transcript == null ->
@@ -459,14 +468,80 @@ private const val OLDER_KEY = "older"
 
 private const val WORKING_KEY = "working"
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun BackgroundWorkBar(
+fun BackgroundWorkChip(
+    items: List<BackgroundWorkView>,
+    canvases: List<CanvasView> = emptyList(),
+    onOpenSubagent: ((String) -> Unit)? = null,
+    onOpenTerminal: ((String) -> Unit)? = null,
+) {
+    if (items.isEmpty() && canvases.isEmpty()) return
+    var showSheet by rememberSaveable { mutableStateOf(false) }
+    val count = if (items.isNotEmpty()) items.size else canvases.size
+    val spoken = when {
+        items.size == 1 -> "1 background task. Show background work"
+        items.size > 1 -> "${items.size} background tasks. Show background work"
+        canvases.size == 1 -> "1 canvas. Show canvases"
+        else -> "${canvases.size} canvases. Show canvases"
+    }
+    TextButton(
+        onClick = { showSheet = true },
+        modifier = Modifier
+            .heightIn(min = 48.dp)
+            .semantics { contentDescription = spoken }
+            .testTag("background_work_chip"),
+    ) {
+        Icon(AppIcons.AgentCode, contentDescription = null, modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(4.dp))
+        Text("$count", style = MaterialTheme.typography.labelLarge, maxLines = 1)
+    }
+    if (showSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showSheet = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+            dragHandle = { BottomSheetDefaults.DragHandle(width = 48.dp) },
+            contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
+            modifier = Modifier.testTag("background_work_sheet"),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .navigationBarsPadding()
+                    .padding(horizontal = 24.dp)
+                    .padding(bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(
+                    if (items.isNotEmpty()) "Background work" else "Canvases",
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.semantics { heading() },
+                )
+                if (items.isNotEmpty()) {
+                    BackgroundWorkBar(
+                        items = items,
+                        onOpenSubagent = onOpenSubagent?.let { open -> { uri -> showSheet = false; open(uri) } },
+                        onOpenTerminal = onOpenTerminal?.let { open -> { uri -> showSheet = false; open(uri) } },
+                    )
+                }
+                if (canvases.isNotEmpty()) {
+                    CanvasesBar(canvases = canvases)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun BackgroundWorkBar(
     items: List<BackgroundWorkView>,
     onOpenSubagent: ((String) -> Unit)?,
     onOpenTerminal: ((String) -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier = modifier.fillMaxWidth().testTag("background_work_bar"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(modifier = modifier.fillMaxWidth().testTag("background_work_bar"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         items.forEach { item ->
             Surface(
                 shape = MaterialTheme.shapes.small,
@@ -474,15 +549,22 @@ private fun BackgroundWorkBar(
                 modifier = Modifier.fillMaxWidth().testTag("background_work_${item.id}"),
             ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(item.kind.label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(item.label, style = MaterialTheme.typography.bodyMedium)
+                        Text(item.label, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         item.command?.let { cmd ->
-                            Text(cmd, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                cmd,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
                         }
                     }
                     val terminalUri = item.terminalUri
@@ -505,7 +587,7 @@ private fun BackgroundWorkBar(
 }
 
 @Composable
-private fun CanvasesBar(canvases: List<CanvasView>, modifier: Modifier = Modifier) {
+fun CanvasesBar(canvases: List<CanvasView>, modifier: Modifier = Modifier) {
     Surface(
         shape = MaterialTheme.shapes.small,
         color = MaterialTheme.colorScheme.surfaceContainerHigh,

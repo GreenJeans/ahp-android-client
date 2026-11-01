@@ -65,6 +65,10 @@ import dev.ahpclient.state.CustomizationCategory
 import dev.ahpclient.state.HostFileTarget
 import dev.ahpclient.state.SlashCommands
 import dev.ahpclient.state.TurnUsage
+import dev.ahpclient.state.BackgroundWorkView
+import dev.ahpclient.state.CanvasView
+import dev.ahpclient.ui.chat.BackgroundWorkBar
+import dev.ahpclient.ui.chat.BackgroundWorkChip
 import dev.ahpclient.state.ManageMessages
 import kotlinx.coroutines.launch
 import com.microsoft.agenthostprotocol.generated.RootState
@@ -112,6 +116,10 @@ fun SessionScreen(
     openCustomizationsRequest: Pair<CustomizationCategory?, String>? = null,
     onCustomizationsRequestConsumed: () -> Unit = {},
     chatUsage: TurnUsage? = null,
+    backgroundWork: List<BackgroundWorkView> = emptyList(),
+    canvases: List<CanvasView> = emptyList(),
+    onOpenSubagent: ((String) -> Unit)? = null,
+    onOpenTerminal: ((String) -> Unit)? = null,
     chat: @Composable () -> Unit = {},
 ) {
     val detail = remember(state, now, summary) { state?.let { SessionDetail.from(it, now, summary) } }
@@ -162,6 +170,12 @@ fun SessionScreen(
         modifier = modifier,
         actions = {
             if (detail != null) {
+                BackgroundWorkChip(
+                    items = backgroundWork,
+                    canvases = canvases,
+                    onOpenSubagent = onOpenSubagent,
+                    onOpenTerminal = onOpenTerminal,
+                )
                 ChangesChip(changes, detail.changesets, onOpenChangeset)
                 SessionMenu(
                     detail = detail,
@@ -220,6 +234,10 @@ fun SessionScreen(
             onOpenLink = onOpenLink,
             onShareLink = onShareLink,
             chatUsage = chatUsage,
+            backgroundWork = backgroundWork,
+            canvases = canvases,
+            onOpenSubagent = onOpenSubagent,
+            onOpenTerminal = onOpenTerminal,
         )
     }
     if (showCustomizations && detail != null) {
@@ -349,6 +367,10 @@ private fun DetailsSheet(
     onDismiss: () -> Unit,
     onOpenCustomizations: (() -> Unit)? = null,
     chatUsage: TurnUsage? = null,
+    backgroundWork: List<BackgroundWorkView> = emptyList(),
+    canvases: List<CanvasView> = emptyList(),
+    onOpenSubagent: ((String) -> Unit)? = null,
+    onOpenTerminal: ((String) -> Unit)? = null,
     onOpenLink: (String) -> Unit = {},
     onShareLink: ((String) -> Unit)? = null,
 ) {
@@ -390,7 +412,18 @@ private fun DetailsSheet(
                 PullRequestsSection(detail.pullRequests, onSelectUrl = { pendingPrUrl = it })
             }
 
-            Facts(detail, chatUsage)
+            if (backgroundWork.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Background work", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
+                    BackgroundWorkBar(
+                        items = backgroundWork,
+                        onOpenSubagent = onOpenSubagent?.let { open -> { uri -> onDismiss(); open(uri) } },
+                        onOpenTerminal = onOpenTerminal?.let { open -> { uri -> onDismiss(); open(uri) } },
+                    )
+                }
+            }
+
+            Facts(detail, chatUsage, canvases)
             if (onOpenCustomizations != null) {
                 OutlinedButton(
                     onClick = onOpenCustomizations,
@@ -452,7 +485,7 @@ private fun PullRequestsSection(pullRequests: List<PullRequest>, onSelectUrl: (S
 }
 
 @Composable
-private fun Facts(detail: SessionDetail, chatUsage: TurnUsage? = null) {
+private fun Facts(detail: SessionDetail, chatUsage: TurnUsage? = null, canvases: List<CanvasView> = emptyList()) {
     val facts = buildList {
         add("Agent" to detail.provider)
         detail.model?.let { add("Model" to it) }
@@ -462,6 +495,9 @@ private fun Facts(detail: SessionDetail, chatUsage: TurnUsage? = null) {
         detail.extras.countsText?.let { add("Git status" to it) }
         chatUsage?.detailText?.let { add("Token usage" to it) }
         detail.annotations?.summaryText?.let { add("Annotations" to it) }
+        if (canvases.isNotEmpty()) {
+            add("Canvases" to canvases.joinToString(" · ") { it.label })
+        }
     }
     Column {
         facts.forEachIndexed { index, (label, value) ->

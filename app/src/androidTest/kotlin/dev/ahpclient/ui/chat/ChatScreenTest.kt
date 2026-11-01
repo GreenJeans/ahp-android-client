@@ -568,16 +568,26 @@ class ChatScreenTest {
             }
         }
 
+        // No persistent banner inside the chat viewport by default; only the compact top-bar chip is shown.
+        rule.onAllNodesWithTag("background_work_bar").assertCountEquals(0)
+        rule.onNodeWithTag("background_work_chip").assertIsDisplayed().performClick()
+        rule.waitForIdle()
+
         rule.onNodeWithTag("background_work_bar").assertIsDisplayed()
         rule.onNodeWithTag("background_work_bw1").assertIsDisplayed()
         rule.onNodeWithTag("background_work_bw2").assertIsDisplayed()
-        rule.onNodeWithTag("background_work_open_bw1").performClick()
-        rule.onNodeWithTag("background_work_open_bw2").performClick()
-        assertEquals(listOf("ahp-terminal:/t1"), openedTerminals)
-        assertEquals(listOf("ahp-chat:/sub1"), openedSubagents)
-
         rule.onNodeWithTag("canvases_bar").assertIsDisplayed()
         rule.onNodeWithTag("canvases_text").assertTextEquals("arch-diagram")
+
+        rule.onNodeWithTag("background_work_open_bw1").performClick()
+        rule.waitForIdle()
+        assertEquals(listOf("ahp-terminal:/t1"), openedTerminals)
+
+        rule.onNodeWithTag("background_work_chip").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag("background_work_open_bw2").performClick()
+        rule.waitForIdle()
+        assertEquals(listOf("ahp-chat:/sub1"), openedSubagents)
     }
 
     @Test

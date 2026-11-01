@@ -45,6 +45,7 @@ import dev.ahpclient.state.CustomizationCategory
 import dev.ahpclient.state.HostExtras
 import dev.ahpclient.state.HostFileTarget
 import dev.ahpclient.state.SlashCommands
+import dev.ahpclient.state.Transcript
 import dev.ahpclient.ui.chat.RichModalRequest
 import com.microsoft.agenthostprotocol.generated.RootState
 import dev.ahpclient.state.HostSession
@@ -507,6 +508,8 @@ private fun SessionPage(
             null
         }
         val chatUsage = remember(openChatState) { HostExtras.chatUsage(openChatState) }
+        val backgroundWork = remember(openChatState) { Transcript.backgroundWorkOf(openChatState) }
+        val canvases = remember(openChatState) { Transcript.canvasesOf(openChatState) }
         var requestedChat by remember { mutableStateOf<String?>(null) }
         var prefillText by rememberSaveable { mutableStateOf<String?>(null) }
         var agentToUse by rememberSaveable { mutableStateOf<String?>(null) }
@@ -538,6 +541,10 @@ private fun SessionPage(
             openCustomizationsRequest = openCustomizationsRequest,
             onCustomizationsRequestConsumed = { openCustomizationsRequest = null },
             chatUsage = chatUsage,
+            backgroundWork = backgroundWork,
+            canvases = canvases,
+            onOpenSubagent = controller::openSubagentChat,
+            onOpenTerminal = controller::openTerminal,
         ) {
             if (chat != null) {
                 OpenChatView(
