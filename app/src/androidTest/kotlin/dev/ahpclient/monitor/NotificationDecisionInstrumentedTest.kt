@@ -3,6 +3,12 @@ package dev.ahpclient.monitor
 import android.Manifest
 import android.app.Notification
 import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.RemoteInput
+import android.os.Bundle
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import org.junit.After
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.ActivityInfo
@@ -42,15 +48,24 @@ class NotificationDecisionInstrumentedTest {
 
     // Cancelling is asynchronous, so a notification from an earlier test may still be up: every test uses tags of its own.
     private val run = System.nanoTime()
+    private val postedTags = mutableSetOf<String>()
 
-    private fun tag(name: String) = "ahp-session:/$run-$name"
+    private fun tag(name: String) = "ahp-session:/$run-$name".also { postedTags += it }
+
+
 
     @Before
     fun allowNotifications() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             instrumentation.uiAutomation.grantRuntimePermission(context.packageName, Manifest.permission.POST_NOTIFICATIONS)
         }
-        manager.cancelAll()
+        // Do not call manager.cancelAll(); clean up only the tags posted by this test in @After.
+    }
+
+    @After
+    fun clearPostedNotifications() {
+        val sink = NotificationInputNeededSink(context)
+        postedTags.forEach(sink::clear)
     }
 
     private fun shown(tag: String): StatusBarNotification {
@@ -212,6 +227,45 @@ class NotificationDecisionInstrumentedTest {
         sink.postReplyStatus(tag("q-allowed"), "Sent")
         val updated = checkNotNull(manager.activeNotifications.firstOrNull { it.tag == tag("q-allowed") }).notification
         assertEquals("Sent", updated.extras.getString(Notification.EXTRA_TEXT))
+        assertEquals(emptyList<String>(), titles(updated))
+    }
+
+    @Test
+    fun denyAndAnswerNotificationButtonsRunThroughTheirReceiversWithinBudget() {
+        val approvalNotification = post("ahp-session:/d-receiver", target)
+        val denyDone = CountDownLatch(1)
+        val denyStart = System.nanoTime()
+        approvalNotification.actions[0].actionIntent.send(
+            context,
+            0,
+            null,
+            PendingIntent.OnFinished { _, _, _, _, _ -> denyDone.countDown() },
+            null,
+        )
+        assertTrue("DecisionReceiver must finish within its 12 s budget", denyDone.await(13, TimeUnit.SECONDS))
+        val denyMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - denyStart)
+        assertTrue("DecisionReceiver finished in ${denyMs}ms", denyMs <= 12_500L)
+
+        val questionNotification = postQuestion("q-receiver", canDecide = true)
+        val fillIn = Intent()
+        RemoteInput.addResultsToIntent(
+            questionNotification.actions.single().remoteInputs,
+            fillIn,
+            Bundle().apply { putCharSequence(KEY_TEXT_REPLY, "Autumn") },
+        )
+        val answerDone = CountDownLatch(1)
+        questionNotification.actions.single().actionIntent.send(
+            context,
+            0,
+            fillIn,
+            PendingIntent.OnFinished { _, _, _, _, _ -> answerDone.countDown() },
+            null,
+        )
+        assertTrue("AnswerReceiver must finish within its 12 s budget", answerDone.await(13, TimeUnit.SECONDS))
+        val updated = checkNotNull(manager.activeNotifications.firstOrNull { it.tag == tag("q-receiver") }).notification
+        val statusText = updated.extras.getString(Notification.EXTRA_TEXT).orEmpty()
+        assertNotEquals("Which season do you prefer?", statusText)
+        assertFalse("must never claim Sent when the synthetic question does not exist", statusText == "Sent")
         assertEquals(emptyList<String>(), titles(updated))
     }
 }
