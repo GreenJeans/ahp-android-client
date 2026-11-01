@@ -342,6 +342,24 @@ private fun Shell(
                             provider.saveGoogleAiConfig(enabled, modelName, systemPrompt, newApiKey, clearKey)
                         }
                     },
+                    onSaveExternalAiConfig = quickReplyProvider?.let { provider ->
+                        { enabled, providerKind, endpointUrl, modelName, systemPrompt, newApiKey, clearKey ->
+                            provider.saveGoogleAiConfig(
+                                enabled = enabled,
+                                modelName = modelName,
+                                systemPrompt = systemPrompt,
+                                newApiKey = newApiKey,
+                                clearKey = clearKey,
+                                providerKind = providerKind,
+                                endpointUrl = endpointUrl,
+                            )
+                        }
+                    },
+                    onFetchAvailableModels = quickReplyProvider?.let { provider ->
+                        { providerKind, endpointUrl, overrideApiKey ->
+                            provider.fetchAvailableModels(providerKind, endpointUrl, overrideApiKey)
+                        }
+                    },
                     proUnlocked = proUnlocked,
                     onPurchasePro = controller::purchasePro,
                     onRestorePro = controller::restorePro,
@@ -637,6 +655,7 @@ private fun OpenChatView(
                 onAgentToUseConsumed = onAgentToUseConsumed,
                 quickReplyMode = quickReplyMode,
                 quickReplyProvider = quickReplyProvider,
+                quickReplyCacheKey = googleAiConfig.toString(),
                 openSideChat = { turnId, initialText, model, agent ->
                     val msg = initialText?.let { chat.interactor.buildInitialMessage(it, model, agent) }
                     val res = controller.manager.createSideChat(sessionUri, chat.uri, turnId, msg)

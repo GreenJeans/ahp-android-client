@@ -2,6 +2,7 @@ package dev.ahpclient.data
 
 import android.content.SharedPreferences
 import androidx.core.content.edit
+import dev.ahpclient.state.AiProviderKind
 import dev.ahpclient.state.GoogleAiConfig
 import dev.ahpclient.state.QuickReplies
 import dev.ahpclient.state.QuickReplyMode
@@ -26,12 +27,17 @@ class UiSettings(private val prefs: SharedPreferences) {
     private val _keepAwake = MutableStateFlow(prefs.getBoolean(KEEP_AWAKE, false))
     private val _quickReplyMode = MutableStateFlow(QuickReplyMode.of(prefs.getString(QUICK_REPLY_MODE, null)))
     private val _googleAiConfig = MutableStateFlow(
-        GoogleAiConfig(
-            enabled = prefs.getBoolean(GOOGLE_AI_ENABLED, false),
-            modelName = prefs.getString(GOOGLE_AI_MODEL, null)?.takeIf { it.isNotBlank() } ?: QuickReplies.DEFAULT_GOOGLE_MODEL,
-            systemPrompt = prefs.getString(GOOGLE_AI_SYSTEM_PROMPT, null)?.takeIf { it.isNotBlank() } ?: QuickReplies.DEFAULT_SYSTEM_PROMPT,
-            hasApiKey = prefs.getBoolean(GOOGLE_AI_HAS_KEY, false),
-        ),
+        run {
+            val kind = AiProviderKind.of(prefs.getString(GOOGLE_AI_PROVIDER_KIND, null))
+            GoogleAiConfig(
+                enabled = prefs.getBoolean(GOOGLE_AI_ENABLED, false),
+                providerKind = kind,
+                baseUrl = prefs.getString(GOOGLE_AI_BASE_URL, null)?.takeIf { it.isNotBlank() } ?: kind.defaultBaseUrl,
+                modelName = prefs.getString(GOOGLE_AI_MODEL, null)?.trim().orEmpty(),
+                systemPrompt = prefs.getString(GOOGLE_AI_SYSTEM_PROMPT, null)?.takeIf { it.isNotBlank() } ?: QuickReplies.DEFAULT_SYSTEM_PROMPT,
+                hasApiKey = prefs.getBoolean(GOOGLE_AI_HAS_KEY, false),
+            )
+        },
     )
     private val _sessionFilter = MutableStateFlow(
         SessionFilter(
@@ -78,12 +84,15 @@ class UiSettings(private val prefs: SharedPreferences) {
 
     fun setGoogleAiConfig(config: GoogleAiConfig) {
         val normalized = config.copy(
-            modelName = config.modelName.trim().ifEmpty { QuickReplies.DEFAULT_GOOGLE_MODEL },
+            baseUrl = config.baseUrl.trim().ifEmpty { config.providerKind.defaultBaseUrl },
+            modelName = config.modelName.trim(),
             systemPrompt = config.systemPrompt.trim().ifEmpty { QuickReplies.DEFAULT_SYSTEM_PROMPT },
         )
         _googleAiConfig.value = normalized
         prefs.edit {
             putBoolean(GOOGLE_AI_ENABLED, normalized.enabled)
+            putString(GOOGLE_AI_PROVIDER_KIND, normalized.providerKind.name)
+            putString(GOOGLE_AI_BASE_URL, normalized.baseUrl)
             putString(GOOGLE_AI_MODEL, normalized.modelName)
             putString(GOOGLE_AI_SYSTEM_PROMPT, normalized.systemPrompt)
             putBoolean(GOOGLE_AI_HAS_KEY, normalized.hasApiKey)
@@ -111,6 +120,8 @@ class UiSettings(private val prefs: SharedPreferences) {
         const val KEEP_AWAKE = "keep_awake"
         const val QUICK_REPLY_MODE = "quick_reply_mode"
         const val GOOGLE_AI_ENABLED = "google_ai_enabled"
+        const val GOOGLE_AI_PROVIDER_KIND = "google_ai_provider_kind"
+        const val GOOGLE_AI_BASE_URL = "google_ai_base_url"
         const val GOOGLE_AI_MODEL = "google_ai_model"
         const val GOOGLE_AI_SYSTEM_PROMPT = "google_ai_system_prompt"
         const val GOOGLE_AI_HAS_KEY = "google_ai_has_key"

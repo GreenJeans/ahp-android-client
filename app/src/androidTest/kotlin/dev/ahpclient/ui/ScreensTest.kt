@@ -373,6 +373,7 @@ class ScreensTest {
                     onBack = {},
                     quickReplyMode = QuickReplyMode.AUTO,
                     googleAiConfig = GoogleAiConfig(),
+                    onFetchAvailableModels = { _, _, _ -> Result.success(listOf("gemini-3.6-flash", "gemini-2.5-pro")) },
                     onSaveGoogleAiConfig = { enabled, model, _, key, _ ->
                         savedEnabled = enabled
                         savedModel = model
@@ -385,13 +386,37 @@ class ScreensTest {
 
         rule.onNodeWithTag("google_ai_configure_button").performScrollTo().assertIsDisplayed().assertTouchTargetAtLeast(48.dp).performClick()
         rule.onNodeWithTag("google_ai_dialog").assertIsDisplayed()
-        rule.onNodeWithTag("google_ai_preset_gemini-2.5-pro").performClick()
         rule.onNodeWithTag("google_ai_api_key_input").performTextInput("AIzaSyTestKey123")
+        rule.waitUntil(5_000) {
+            rule.onAllNodesWithTag("google_ai_preset_gemini-3.6-flash").fetchSemanticsNodes().isNotEmpty()
+        }
+        rule.onNodeWithTag("google_ai_preset_gemini-3.6-flash").performClick()
         rule.onNodeWithTag("google_ai_save").assertTouchTargetAtLeast(48.dp).performClick()
 
         rule.waitUntil(5_000) { savedKey == "AIzaSyTestKey123" }
         assertTrue(savedEnabled)
-        assertEquals("gemini-2.5-pro", savedModel)
+        assertEquals("gemini-3.6-flash", savedModel)
+    }
+
+    @Test
+    fun settingsQuickReplyAiSourceChipsToggleBetweenOnboardAndConfiguredCloudProvider() {
+        val toggledStates = mutableListOf<Boolean>()
+        rule.setContent {
+            AhpTheme {
+                SettingsScreen(
+                    onBack = {},
+                    quickReplyMode = QuickReplyMode.AUTO,
+                    googleAiConfig = GoogleAiConfig(enabled = true, modelName = "gemini-2.5-flash", hasApiKey = true),
+                    onSaveGoogleAiConfig = { enabled, _, _, _, _ ->
+                        toggledStates += enabled
+                        true
+                    },
+                )
+            }
+        }
+
+        rule.onNodeWithTag("quick_reply_provider_onboard").performScrollTo().assertIsDisplayed().assertTouchTargetAtLeast(48.dp).performClick()
+        rule.waitUntil(5_000) { toggledStates == listOf(false) }
     }
 
     // ---- connected --------------------------------------------------------------------------------------------

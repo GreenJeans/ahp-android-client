@@ -167,7 +167,7 @@ class QuickRepliesTest {
             outcome = TurnOutcome.DONE,
         )
         val doneSuggestion = QuickReplies.heuristic(doneCtx)
-        assertNotNull(doneSuggestion.summary)
+        assertNull(doneSuggestion.summary)
         assertTrue(doneSuggestion.chips.isNotEmpty())
     }
 
@@ -260,5 +260,102 @@ class QuickRepliesTest {
         assertNull(QuickReplies.parseGeminiApiResponseJson("t9", ""))
         assertNull(QuickReplies.parseGeminiApiResponseJson("t9", """{"candidates":[]}"""))
         assertNull(QuickReplies.parseGeminiApiResponseJson("t9", "not-json"))
+    }
+
+    @Test
+    fun `AiProviderKind and OpenAI and Anthropic and model listing and error parsers work`() {
+        assertEquals(AiProviderKind.GOOGLE_GEMINI, AiProviderKind.of("GOOGLE_GEMINI"))
+        assertEquals(AiProviderKind.OPENAI_COMPATIBLE, AiProviderKind.of("OPENAI_COMPATIBLE"))
+        assertEquals(AiProviderKind.ANTHROPIC, AiProviderKind.of("ANTHROPIC"))
+        assertEquals(AiProviderKind.GOOGLE_GEMINI, AiProviderKind.of("INVALID"))
+
+        val localCfg = GoogleAiConfig(
+            enabled = true,
+            providerKind = AiProviderKind.OPENAI_COMPATIBLE,
+            baseUrl = "http://192.168.1.50:11434/v1",
+            modelName = "llama3.2",
+            hasApiKey = false,
+        )
+        assertTrue(localCfg.isActive)
+        assertEquals("http://192.168.1.50:11434/v1", localCfg.effectiveBaseUrl)
+        assertTrue(localCfg.displayLabel.contains("llama3.2"))
+
+        assertEquals(
+            "http://192.168.1.50:11434/v1/chat/completions",
+            QuickReplies.resolveOpenAiEndpoint("http://192.168.1.50:11434", "chat/completions"),
+        )
+        assertEquals(
+            "https://api.openai.com/v1/models",
+            QuickReplies.resolveOpenAiEndpoint("https://api.openai.com/v1", "models"),
+        )
+
+        val ctx = QuickReplyContext(
+            turnKey = "t10",
+            userText = "Run locally",
+            agentText = "Should I run the benchmark suite or deploy to staging?",
+            outcome = TurnOutcome.DONE,
+        )
+        val openAiReq = QuickReplies.buildOpenAiChatRequestJson(ctx, "llama3.2", "Custom prompt")
+        assertTrue(openAiReq.contains("llama3.2"))
+        assertTrue(openAiReq.contains("Custom prompt"))
+
+        val openAiResp = """
+            {
+              "choices": [
+                {
+                  "message": {
+                    "role": "assistant",
+                    "content": "{\"tldr\":\"Asked whether to benchmark or deploy.\",\"replies\":[{\"label\":\"Run benchmarks\",\"prompt\":\"Run the benchmark suite first.\"}]}"
+                  }
+                }
+              ]
+            }
+        """.trimIndent()
+        val parsedOpenAi = QuickReplies.parseOpenAiChatResponseJson("t10", openAiResp, "OpenAI / Local · llama3.2")
+        assertNotNull(parsedOpenAi)
+        assertEquals("OpenAI / Local · llama3.2", parsedOpenAi.providerLabel)
+        assertEquals("Run benchmarks", parsedOpenAi.chips.first().label)
+        assertNull(QuickReplies.parseOpenAiChatResponseJson("t10", """{"choices":[]}"""))
+
+        val anthropicReq = QuickReplies.buildAnthropicMessagesRequestJson(ctx, "claude-sonnet-4-6", "System prompt")
+        assertTrue(anthropicReq.contains("claude-sonnet-4-6"))
+        val anthropicResp = """
+            {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"tldr\":\"Asked about next step.\",\"replies\":[{\"label\":\"Deploy staging\",\"prompt\":\"Deploy to staging now.\"}]}"
+                }
+              ]
+            }
+        """.trimIndent()
+        val parsedAnthropic = QuickReplies.parseAnthropicMessagesResponseJson("t10", anthropicResp, "Anthropic · claude-sonnet-4-6")
+        assertNotNull(parsedAnthropic)
+        assertEquals("Deploy staging", parsedAnthropic.chips.first().label)
+        assertNull(QuickReplies.parseAnthropicMessagesResponseJson("t10", """{"content":[]}"""))
+
+        val geminiModelsJson = """
+            {
+              "models": [
+                {"name": "models/gemini-3.6-flash", "supportedGenerationMethods": ["generateContent"]},
+                {"name": "models/text-embedding-004", "supportedGenerationMethods": ["embedContent"]}
+              ]
+            }
+        """.trimIndent()
+        assertEquals(listOf("gemini-3.6-flash"), QuickReplies.parseGeminiModelsJson(geminiModelsJson))
+
+        val openAiModelsJson = """
+            {
+              "data": [
+                {"id": "qwen2.5-coder:7b"},
+                {"id": "llama3.2:latest"}
+              ]
+            }
+        """.trimIndent()
+        assertEquals(listOf("qwen2.5-coder:7b", "llama3.2:latest"), QuickReplies.parseOpenAiModelsJson(openAiModelsJson))
+
+        val errMsg = QuickReplies.extractApiErrorMessage(404, """{"error":{"message":"models/gemini-3.6-flash is not found for API version v1beta"}}""")
+        assertEquals("HTTP 404: models/gemini-3.6-flash is not found for API version v1beta", errMsg)
+        assertEquals("HTTP 500", QuickReplies.extractApiErrorMessage(500, ""))
     }
 }
