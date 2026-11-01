@@ -100,6 +100,7 @@ data class HostCatalog(
     val tokenExpiresAt: Instant? = null,
     val renews: Boolean = false,
     val autoConnectPending: Boolean = false,
+    val signInStep: SignInStep = SignInStep.Idle,
 )
 
 /** What the app is showing, as one value. Screens are a pure function of this. */

@@ -9,6 +9,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -337,6 +338,7 @@ class AhpConnectionTest {
             assertFailsWith<CapabilityDeniedException> { connection.createChat("ahp-session:/new", "ahp-chat:/c1") }
             assertFailsWith<CapabilityDeniedException> { connection.disposeChat("ahp-chat:/c1") }
             assertFailsWith<CapabilityDeniedException> { connection.disposeSession("ahp-session:/new") }
+            assertFailsWith<CapabilityDeniedException> { connection.invokeChangesetOperation("ahp-changeset:/c", "stage") }
 
             assertTrue(socket.sent.isEmpty(), policy.name)
             assertEquals(false, connection.canManage)
@@ -361,9 +363,32 @@ class AhpConnectionTest {
 
         connection.dispatchAction("ahp-session:/a", stateAction("""{"type":"session/isReadChanged","isRead":true}"""), clientSeq = 1)
         connection.dispatchAction("ahp-session:/a", stateAction("""{"type":"session/isArchivedChanged","isArchived":true}"""), clientSeq = 2)
-        assertFailsWith<CapabilityDeniedException> { connection.dispatchAction("ahp-session:/a", renameSession, clientSeq = 3) }
+        connection.dispatchAction("ahp-session:/a", renameSession, clientSeq = 3)
+        assertFailsWith<CapabilityDeniedException> {
+            connection.dispatchAction("ahp-session:/a", stateAction("""{"type":"terminal/input","data":"ls"}"""), clientSeq = 4)
+        }
 
-        assertEquals(listOf("session/isReadChanged", "session/isArchivedChanged"), socket.sent.map { it["params"]!!.jsonObject["action"]!!.jsonObject["type"]!!.jsonPrimitive.content })
+        assertEquals(
+            listOf("session/isReadChanged", "session/isArchivedChanged", "session/titleChanged"),
+            socket.sent.map { it["params"]!!.jsonObject["action"]!!.jsonObject["type"]!!.jsonPrimitive.content },
+        )
+    }
+
+    @Test
+    fun `MANAGE may invoke a changeset operation`() = runTest {
+        val socket = FakeSocket { method, id, _ ->
+            if (method == "invokeChangesetOperation") result(id, """{"message":"Staged 2 files"}""") else null
+        }
+        val connection = connection(socket, policy = CapabilityPolicy.MANAGE)
+
+        val res = connection.invokeChangesetOperation("ahp-changeset:/c", "stage")
+
+        assertNotNull(res.message)
+        val frame = socket.sent.single()
+        assertEquals("invokeChangesetOperation", frame["method"]!!.jsonPrimitive.content)
+        val params = frame["params"]!!.jsonObject
+        assertEquals("ahp-changeset:/c", params["channel"]!!.jsonPrimitive.content)
+        assertEquals("stage", params["operationId"]!!.jsonPrimitive.content)
     }
 
     @Test

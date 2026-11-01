@@ -273,6 +273,20 @@ class AppController(
                 ?.takeIf { it.uri == uri && it.reviewable }
                 ?.store?.state?.value?.files?.map { it.id }?.toSet()
         },
+        operations = { uri ->
+            (_state.value as? AppState.Connected)?.open?.changeset
+                ?.takeIf { it.uri == uri }
+                ?.store?.state?.value?.operations
+        },
+        files = { uri ->
+            (_state.value as? AppState.Connected)?.open?.changeset
+                ?.takeIf { it.uri == uri }
+                ?.store?.state?.value?.files
+        },
+        gate = approvalGate,
+        invoke = { uri, operationId, target ->
+            liveSession().invokeChangesetOperation(uri, operationId, target)
+        },
         dispatch = { channel, action -> liveSession().dispatch(channel, action) },
     )
 
@@ -280,6 +294,12 @@ class AppController(
     suspend fun setFileReviewed(fileId: String, reviewed: Boolean): ManageResult {
         val uri = (_state.value as? AppState.Connected)?.open?.changeset?.uri ?: return ManageResult.NoSuchTarget
         return reviewer.setReviewed(uri, fileId, reviewed)
+    }
+
+    /** Runs [operationId] on the open changeset, or on [fileId] within it when [fileId] is given. */
+    suspend fun invokeChangesetOperation(operationId: String, fileId: String? = null): ManageResult {
+        val uri = (_state.value as? AppState.Connected)?.open?.changeset?.uri ?: return ManageResult.NoSuchTarget
+        return reviewer.invokeOperation(uri, operationId, fileId)
     }
 
     @Volatile
@@ -432,6 +452,12 @@ class AppController(
             if (_state.compareAndSet(current, AppState.SignedOut(SignInStep.Idle, null))) launchSignIn()
             return
         }
+        if (current is AppState.Connected && token == null) {
+            val step = _hosts.value.signInStep
+            if (step is SignInStep.RequestingCode || step is SignInStep.AwaitingApproval) return
+            launchSignIn()
+            return
+        }
         if (current !is AppState.SignedOut) return
         if (current.step is SignInStep.RequestingCode || current.step is SignInStep.AwaitingApproval) return
         launchSignIn()
@@ -559,6 +585,7 @@ class AppController(
     fun cancelSignIn() {
         cancelSignInJob()
         _state.update { if (it is AppState.SignedOut) AppState.SignedOut(SignInStep.Idle, null) else it }
+        _hosts.update { if (it.signInStep !is SignInStep.Idle) it.copy(signInStep = SignInStep.Idle) else it }
     }
 
     /**
@@ -1217,6 +1244,10 @@ class AppController(
                     vault.save(result.token)
                     token = result.token
                     refusedRefresh = null
+                    if (_state.value is AppState.Connected) {
+                        markLoading(keepList = false)
+                        launchHostsLoad()
+                    } else
                     showHosts()
                 }
                 DeviceFlowResult.Expired -> failSignIn("The code expired before it was approved. Start again.")
@@ -1238,10 +1269,12 @@ class AppController(
 
     private fun setStep(step: SignInStep) {
         _state.update { if (it is AppState.SignedOut) AppState.SignedOut(step, null) else it }
+        _hosts.update { if (token == null && _state.value !is AppState.SignedOut) it.copy(signInStep = step) else it.copy(signInStep = SignInStep.Idle) }
     }
 
     private fun failSignIn(message: String) {
         _state.update { if (it is AppState.SignedOut) AppState.SignedOut(SignInStep.Failed(message), null) else it }
+        _hosts.update { if (token == null && _state.value !is AppState.SignedOut) it.copy(signInStep = SignInStep.Failed(message)) else it.copy(signInStep = SignInStep.Idle) }
     }
 
     /**
@@ -1315,7 +1348,7 @@ class AppController(
         _hosts.update {
             if (signedIn == null) {
                 // Not signed in: the way here is a host added by address, which is listed on its own.
-                HostCatalog(HostList.NotSignedIn, directEntries())
+                HostCatalog(HostList.NotSignedIn, directEntries(), signInStep = it.signInStep)
             } else {
                 val shown = if (keepList && (it.list is HostList.Loaded || it.list is HostList.Empty)) it.list else HostList.Loading
                 HostCatalog(shown, directEntries(), signedIn.expiresAt, signedIn.refresh != null, autoConnectPending.get())

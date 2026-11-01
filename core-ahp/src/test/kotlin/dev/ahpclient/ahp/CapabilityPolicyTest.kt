@@ -101,7 +101,7 @@ class CapabilityPolicyTest {
         assertTrue(message.contains("resourceWrite"))
     }
 
-    private val manageCommands = setOf("createSession", "createChat", "disposeSession", "disposeChat")
+    private val manageCommands = setOf("createSession", "createChat", "disposeSession", "disposeChat", "invokeChangesetOperation")
 
     private val manageQueries = setOf("resolveSessionConfig")
 
@@ -117,7 +117,7 @@ class CapabilityPolicyTest {
         assertFailsWith<CapabilityDeniedException> { CapabilityPolicy.MANAGE.check("sessionConfigCompletions") }
     }
 
-    private val manageActions = setOf("session/isReadChanged", "session/isArchivedChanged", "changeset/filesReviewChanged")
+    private val manageActions = setOf("session/isReadChanged", "session/isArchivedChanged", "session/titleChanged", "changeset/filesReviewChanged")
 
     @Test
     fun `only MANAGE can create or remove sessions and chats`() {
@@ -157,7 +157,7 @@ class CapabilityPolicyTest {
         val notAllowed = listOf(
             null, "", "session/isReadChanged ", "Session/isReadChanged",
             "terminal/input", "terminal/resized", "terminal/claimed",
-            "session/activeClientSet", "session/titleChanged", "session/chatAdded", "session/chatRemoved", "session/workingDirectorySet",
+            "session/activeClientSet", "session/chatAdded", "session/chatRemoved", "session/workingDirectorySet",
             "session/mcpServerStarted", "session/mcpServerStopped", "session/customizationToggled",
             "chat/titleChanged", "chat/responsePart", "chat/toolCallStart", "chat/turnComplete",
             "root/activeSessionsChanged",

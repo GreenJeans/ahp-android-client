@@ -2,6 +2,8 @@ package dev.ahpclient.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -9,30 +11,44 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.ahpclient.app.DiffLoad
+import dev.ahpclient.state.ChangesetOperationItem
+import dev.ahpclient.state.ChangesetOperationPhase
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.DiffLine
 import dev.ahpclient.state.DiffLineKind
 import dev.ahpclient.state.DiffResult
 import dev.ahpclient.state.FileDiff
+import dev.ahpclient.state.ManageMessages
+import dev.ahpclient.state.ManageResult
+import kotlinx.coroutines.launch
 
 /** One row of the list: the label of a block of lines, or one line. [key] is stable so a long list keeps its place. */
 private sealed interface DiffRow {
@@ -53,8 +69,38 @@ private fun rowsOf(diff: FileDiff): List<DiffRow> =
  * only, never as markup or a link. Added and removed lines carry a "+" or "−" and are named for a screen reader, so the
  * colour is never the only sign. [load] says what is going on: loading, the diff, or why there is none.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun FileDiffScreen(path: String, load: DiffLoad, connection: ConnState, onBack: () -> Unit, modifier: Modifier = Modifier) {
+fun FileDiffScreen(
+    path: String,
+    load: DiffLoad,
+    connection: ConnState,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+    operations: List<ChangesetOperationItem> = emptyList(),
+    onInvokeOperation: (suspend (operationId: String) -> ManageResult)? = null,
+) {
+    val scope = rememberCoroutineScope()
+    val opsInFlight = remember { mutableStateListOf<String>() }
+    var confirmingOp by remember { mutableStateOf<ChangesetOperationItem?>(null) }
+    var notice by remember { mutableStateOf<String?>(null) }
+    var opMessage by remember { mutableStateOf<String?>(null) }
+    fun runOperation(opId: String) {
+        val invoke = onInvokeOperation ?: return
+        if (opId in opsInFlight) return
+        opsInFlight += opId
+        notice = null
+        opMessage = null
+        scope.launch {
+            try {
+                val res = invoke(opId)
+                notice = ManageMessages.describe(res)
+                if (res is ManageResult.Done) opMessage = res.created
+            } finally {
+                opsInFlight -= opId
+            }
+        }
+    }
     // The bar names the file; the whole path is in the body, because on a long path the bar would cut off the end, which is the file name.
     ScreenScaffold(title = path.substringAfterLast('/').ifEmpty { path }, onBack = onBack, backLabel = "Back to files", large = false, modifier = modifier) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -68,6 +114,68 @@ fun FileDiffScreen(path: String, load: DiffLoad, connection: ConnState, onBack: 
                     maxLines = 1,
                     overflow = TextOverflow.MiddleEllipsis,
                     modifier = Modifier.semantics { heading() }.testTag("diff_title"),
+                )
+                if (onInvokeOperation != null && operations.isNotEmpty()) {
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth().testTag("diff_operations"),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        operations.forEach { op ->
+                            val running = op.phase == ChangesetOperationPhase.RUNNING || op.id in opsInFlight
+                            OutlinedButton(
+                                onClick = { if (op.confirmation != null) confirmingOp = op else runOperation(op.id) },
+                                enabled = op.phase.canInvoke && !running,
+                                modifier = Modifier.testTag("diff_op_${op.id}"),
+                            ) {
+                                Text(if (running) "${op.label}…" else op.label)
+                            }
+                        }
+                    }
+                    operations.forEach { op ->
+                        op.error?.let { err ->
+                            ErrorText("${op.label}: $err", Modifier.testTag("diff_op_error_${op.id}"))
+                        }
+                    }
+                }
+                opMessage?.let { msg ->
+                    Text(
+                        msg,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("diff_operation_message").semantics { liveRegion = LiveRegionMode.Polite },
+                    )
+                }
+                ManageNotice(notice, "diff_operation_notice")
+            }
+            val pendingOp = confirmingOp
+            if (pendingOp != null && onInvokeOperation != null) {
+                AlertDialog(
+                    onDismissRequest = { confirmingOp = null },
+                    title = { Text("${pendingOp.label}?") },
+                    text = {
+                        Text(
+                            listOfNotNull(
+                                path,
+                                pendingOp.confirmation,
+                                "You will be asked for your fingerprint, face or screen lock.",
+                            ).joinToString(" "),
+                            modifier = Modifier.testTag("diff_op_confirm_text"),
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                confirmingOp = null
+                                runOperation(pendingOp.id)
+                            },
+                            modifier = Modifier.testTag("diff_op_confirm"),
+                        ) { Text("Run") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { confirmingOp = null }, modifier = Modifier.testTag("diff_op_cancel")) { Text("Cancel") }
+                    },
+                    modifier = Modifier.testTag("diff_op_confirm_dialog"),
                 )
             }
             val sideMargin = Modifier.padding(horizontal = 24.dp)

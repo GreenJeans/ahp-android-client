@@ -346,6 +346,65 @@ class ChangesetUiTest {
     }
 
     @Test
+    fun changesetOperationsShowButtonsAndConfirmationDialogAndResultMessage() {
+        val invoked = mutableListOf<String>()
+        val fileInvoked = mutableListOf<Pair<String, String>>()
+        val stateWithOps = Ahp.json.decodeFromString(
+            ChangesetState.serializer(),
+            """{
+                "status":"ready",
+                "files":[${file("work/a.kt")}],
+                "operations":[
+                    {"id":"stage","label":"Stage all","scopes":["changeset"],"status":"idle"},
+                    {"id":"discard","label":"Discard all","scopes":["changeset"],"status":"idle","confirmation":"Discard all uncommitted changes?"},
+                    {"id":"stage-file","label":"Stage file","scopes":["resource"],"status":"idle"},
+                    {"id":"revert-file","label":"Revert file","scopes":["resource"],"status":"idle","confirmation":"Revert this file?"}
+                ]
+            }""",
+        )
+        rule.setContent {
+            AhpTheme {
+                ChangesetScreen(
+                    title = "Uncommitted",
+                    state = stateWithOps,
+                    error = null,
+                    connection = ConnState.Online,
+                    onBack = {},
+                    onInvokeOperation = { opId ->
+                        invoked += opId
+                        ManageResult.Done("Completed $opId")
+                    },
+                    onInvokeFileOperation = { fileId, opId ->
+                        fileInvoked += fileId to opId
+                        ManageResult.Done("Completed $opId on $fileId")
+                    },
+                )
+            }
+        }
+
+        rule.onNodeWithTag("changeset_operations").assertIsDisplayed()
+        rule.onNodeWithTag("changeset_op_stage").assertIsDisplayed().performClick()
+        rule.waitUntil(5_000) { invoked == listOf("stage") }
+        rule.onNodeWithTag("operation_message").assertIsDisplayed().assertTextContains("Completed stage")
+
+        rule.onNodeWithTag("changeset_op_discard").assertIsDisplayed().performClick()
+        rule.onNodeWithTag("changeset_op_confirm_dialog").assertIsDisplayed()
+        rule.onNodeWithTag("changeset_op_confirm_text").assertTextContains("Discard all uncommitted changes?", substring = true)
+        rule.onNodeWithTag("changeset_op_confirm").performClick()
+        rule.waitUntil(5_000) { invoked == listOf("stage", "discard") }
+
+        rule.onNodeWithTag("changeset_file_operations_file:///work/a.kt").assertIsDisplayed()
+        rule.onNodeWithTag("changeset_file_op_file:///work/a.kt_stage-file").assertIsDisplayed().performClick()
+        rule.waitUntil(5_000) { fileInvoked == listOf("file:///work/a.kt" to "stage-file") }
+
+        rule.onNodeWithTag("changeset_file_op_file:///work/a.kt_revert-file").assertIsDisplayed().performClick()
+        rule.onNodeWithTag("changeset_op_confirm_dialog").assertIsDisplayed()
+        rule.onNodeWithTag("changeset_op_confirm_text").assertTextContains("Revert this file?", substring = true)
+        rule.onNodeWithTag("changeset_op_confirm").performClick()
+        rule.waitUntil(5_000) { fileInvoked == listOf("file:///work/a.kt" to "stage-file", "file:///work/a.kt" to "revert-file") }
+    }
+
+    @Test
     fun theDetailsSheetNoLongerListsTheChanges() {
         showBar("[$plain]", ChangeStats(3, 1))
         rule.onNodeWithTag("session_menu").performClick()

@@ -100,7 +100,7 @@ class MonitorService : Service() {
     @SuppressLint("InlinedApi")
     private fun enterForeground(status: MonitorStatus) {
         val notification = notification(status)
-        val type = when (ForegroundKind.forSdk(Build.VERSION.SDK_INT)) {
+        val type = foregroundServiceTypeFor(Build.VERSION.SDK_INT).takeIf { it >= 0 } ?: when (ForegroundKind.forSdk(Build.VERSION.SDK_INT)) {
             ForegroundKind.SPECIAL_USE -> ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
             ForegroundKind.DATA_SYNC -> ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
             ForegroundKind.NONE -> 0
@@ -135,9 +135,16 @@ class MonitorService : Service() {
         PendingIntent.FLAG_IMMUTABLE,
     )
 
-    private companion object {
+    companion object {
         const val ACTION_STOP = "dev.ahpclient.action.STOP_MONITORING"
         const val ID = 100
         const val TIMEOUT_ID = 101
+
+        @SuppressLint("InlinedApi")
+        internal fun foregroundServiceTypeFor(sdkInt: Int = Build.VERSION.SDK_INT): Int = when (ForegroundKind.forSdk(sdkInt)) {
+            ForegroundKind.SPECIAL_USE -> ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            ForegroundKind.DATA_SYNC -> ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            ForegroundKind.NONE -> 0
+        }
     }
 }

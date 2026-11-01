@@ -16,7 +16,11 @@ object SessionActions {
     fun setRead(isRead: Boolean): StateAction = action("session/isReadChanged") { put("isRead", isRead) }
 
     /** Archives or restores the session. Archiving removes nothing: the session stays on the host and can be brought back. */
+    /** Archives or restores the session. Archiving removes nothing: the session stays on the host and can be brought back. */
     fun setArchived(isArchived: Boolean): StateAction = action("session/isArchivedChanged") { put("isArchived", isArchived) }
+
+    /** Sets the session's title. Dispatched on the session's own channel. */
+    fun setTitle(title: String): StateAction = action("session/titleChanged") { put("title", title) }
 
     private fun action(type: String, fields: JsonObjectBuilder.() -> Unit): StateAction =
         Ahp.json.decodeFromJsonElement(

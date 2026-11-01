@@ -5,7 +5,9 @@ import com.microsoft.agenthostprotocol.generated.Changeset
 import com.microsoft.agenthostprotocol.generated.ChangesetState
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class ChangesetViewTest {
     private fun changeset(status: String = "ready", files: String = "") =
@@ -108,6 +110,45 @@ class ChangesetViewTest {
         assertNull(bare.directory)
         assertEquals("a.kt", root.fileName)
         assertNull(root.directory)
+    }
+
+    @Test
+    fun `changeset-scoped operations are extracted and resource-only operations are excluded`() {
+        val state = Ahp.json.decodeFromString(
+            ChangesetState.serializer(),
+            """{
+                "status":"ready",
+                "files":[],
+                "operations":[
+                    {"id":"stage","label":"Stage all","description":"Stage all files","scopes":["changeset"],"status":"idle"},
+                    {"id":"discard","label":"Discard all","scopes":["changeset"],"confirmation":"Discard all uncommitted changes?","status":"idle"},
+                    {"id":"file-only","label":"Stage file","scopes":["resource"],"status":"idle"},
+                    {"id":"running-op","label":"Commit","scopes":["changeset"],"status":"running"},
+                    {"id":"err-op","label":"Push","scopes":["changeset"],"status":"error","error":{"errorType":"E","message":"Push rejected"}},
+                    {"id":"disabled-op","label":"Rebase","scopes":["changeset"],"status":"disabled"}
+                ]
+            }""",
+        )
+
+        val view = ChangesetView.from(state)
+
+        assertEquals(listOf("stage", "discard", "running-op", "err-op", "disabled-op"), view.operations.map { it.id })
+        assertEquals(listOf("file-only"), view.resourceOperations.map { it.id })
+        assertEquals("Stage file", view.resourceOperations[0].label)
+        assertEquals("Stage all", view.operations[0].label)
+        assertEquals("Stage all files", view.operations[0].description)
+        assertNull(view.operations[0].confirmation)
+        assertTrue(view.operations[0].phase.canInvoke)
+
+        assertEquals("Discard all uncommitted changes?", view.operations[1].confirmation)
+        assertEquals(ChangesetOperationPhase.RUNNING, view.operations[2].phase)
+        assertFalse(view.operations[2].phase.canInvoke)
+        assertEquals(ChangesetOperationPhase.ERROR, view.operations[3].phase)
+        assertTrue(view.operations[3].phase.canInvoke)
+        assertEquals("Push rejected", view.operations[3].error)
+        assertEquals(ChangesetOperationPhase.DISABLED, view.operations[4].phase)
+        assertFalse(view.operations[4].phase.canInvoke)
+        assertEquals(ChangesetOperationPhase.DISABLED, ChangesetOperationPhase.of("unknown-word"))
     }
 
     private fun entry(template: String, label: String = "Uncommitted") = ChangesetEntry.from(

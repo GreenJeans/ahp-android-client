@@ -706,6 +706,23 @@ class SessionManagerTest {
         assertEquals("""{"type":"session/isReadChanged","isRead":false}""", wire(SessionActions.setRead(false)).toString())
         assertEquals("""{"type":"session/isArchivedChanged","isArchived":true}""", wire(SessionActions.setArchived(true)).toString())
         assertEquals("""{"type":"session/isArchivedChanged","isArchived":false}""", wire(SessionActions.setArchived(false)).toString())
+        assertEquals("""{"type":"session/titleChanged","title":"New title"}""", wire(SessionActions.setTitle("New title")).toString())
+    }
+
+    @Test
+    fun `setTitle trims the title, rejects blank or overly long titles, and dispatches on the session channel`() = runTest {
+        val rig = Rig()
+
+        assertEquals(ManageResult.Done(), rig.manager.setTitle(s1, "  Renamed session  "))
+        assertEquals(listOf(s1), rig.sent.map { it.first })
+        assertEquals("""{"type":"session/titleChanged","title":"Renamed session"}""", wire(rig.sent.single().second).toString())
+
+        assertEquals(ManageResult.InvalidChoice, rig.manager.setTitle(s1, "   "))
+        assertEquals(ManageResult.InvalidChoice, rig.manager.setTitle(s1, "x".repeat(SessionManager.MAX_TITLE_LENGTH + 1)))
+        assertEquals(ManageResult.NoSuchTarget, rig.manager.setTitle("ahp-session:/ghost", "Valid"))
+
+        rig.allowed = false
+        assertEquals(ManageResult.NotAllowed, rig.manager.setTitle(s1, "Valid"))
     }
 
     @Test
