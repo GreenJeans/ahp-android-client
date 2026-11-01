@@ -788,6 +788,21 @@ class SessionScreensTest {
     }
 
     @Test
+    fun detailsShowAnnotationsSummaryWhenPresent() {
+        val withAnnotations = Ahp.json.decodeFromString(
+            SessionState.serializer(),
+            """{"provider":"copilotcli","title":"Fix the build","status":1,"lifecycle":"ready","activeClients":[],
+                "annotations":{"resource":"ahp-annotations:/s1","annotationCount":2,"entryCount":5},
+                "chats":[{"resource":"$mainChatUri","title":"Main","status":1,"modifiedAt":"2026-10-26T10:29:00.000Z"}]}""",
+        )
+        showDetail(withAnnotations)
+        openDetails()
+
+        rule.onNodeWithText("Annotations").assertIsDisplayed()
+        rule.onNodeWithText("2 annotations \u00b7 5 entries").assertIsDisplayed()
+    }
+
+    @Test
     fun detailsShowTokenUsageBreakdownWhenChatUsageIsPresent() {
         val usage = TurnUsage(inputTokens = 68_002L, outputTokens = 3_214L, cacheReadTokens = 58_793L, costAmount = 0.04)
         rule.setContent {

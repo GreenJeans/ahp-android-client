@@ -260,6 +260,15 @@ class SessionDetailTest {
     }
 
     @Test
+    fun `session annotations summary is surfaced when annotationCount or entryCount is positive`() {
+        val withAnnotations = state(extra = ""","annotations":{"resource":"ahp-annotations:/s1","annotationCount":3,"entryCount":7}""")
+        val detail = SessionDetail.from(withAnnotations, now)
+
+        assertEquals(AnnotationsSummaryView("ahp-annotations:/s1", 3L, 7L), detail.annotations)
+        assertEquals("3 annotations \u00b7 7 entries", detail.annotations?.summaryText)
+    }
+
+    @Test
     fun `archived chats are counted and hidden from visibleTabs unless requested`() {
         val multi = Ahp.json.decodeFromString(
             SessionState.serializer(),

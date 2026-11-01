@@ -448,6 +448,7 @@ private fun Facts(detail: SessionDetail, chatUsage: TurnUsage? = null) {
         detail.extras.branchLabel?.let { add("Branch" to it) }
         detail.extras.countsText?.let { add("Git status" to it) }
         chatUsage?.detailText?.let { add("Token usage" to it) }
+        detail.annotations?.summaryText?.let { add("Annotations" to it) }
     }
     Column {
         facts.forEachIndexed { index, (label, value) ->

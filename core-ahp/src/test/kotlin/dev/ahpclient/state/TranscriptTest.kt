@@ -407,6 +407,41 @@ class TranscriptTest {
     }
 
     @Test
+    fun `backgroundWork and canvases are extracted onto Transcript`() {
+        val state = Ahp.json.decodeFromString(
+            ChatState.serializer(),
+            """{"resource":"ahp-chat:/c","title":"Chat","status":8,"modifiedAt":"2026-10-22T10:00:00.000Z",
+                "backgroundWork":[
+                    {"kind":"shell","id":"bw1","label":"Watch server","startedAt":"2026-10-22T10:00:00.000Z","command":"npm run watch","terminal":"ahp-terminal:/t1"},
+                    {"kind":"subagent","id":"bw2","label":"Researcher","startedAt":"2026-10-22T10:00:00.000Z","chat":"ahp-chat:/sub1"},
+                    {"kind":"indexer","id":"bw3","label":"Reindex workspace"}
+                ],
+                "canvases":[
+                    {"resource":"ahp-canvas:/session1/diagram-1"},
+                    {"resource":"ahp-canvas:/session1/preview"}
+                ],
+                "turns":[]}""",
+        )
+
+        val t = Transcript.from(state)
+        assertEquals(
+            listOf(
+                BackgroundWorkView("bw1", BackgroundWorkKindView.SHELL, "Watch server", command = "npm run watch", terminalUri = "ahp-terminal:/t1"),
+                BackgroundWorkView("bw2", BackgroundWorkKindView.SUBAGENT, "Researcher", chatUri = "ahp-chat:/sub1"),
+                BackgroundWorkView("bw3", BackgroundWorkKindView.OTHER, "Reindex workspace"),
+            ),
+            t.backgroundWork,
+        )
+        assertEquals(
+            listOf(
+                CanvasView("ahp-canvas:/session1/diagram-1", "diagram-1"),
+                CanvasView("ahp-canvas:/session1/preview", "preview"),
+            ),
+            t.canvases,
+        )
+    }
+
+    @Test
     fun `finished turns carry TurnUsage on TurnEnd and Transcript aggregates chat usage across turns`() {
         val state = Ahp.json.decodeFromString(
             ChatState.serializer(),

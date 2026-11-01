@@ -6,6 +6,7 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -23,6 +24,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -47,6 +50,8 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.microsoft.agenthostprotocol.generated.ResourceReadResult
+import dev.ahpclient.state.BackgroundWorkView
+import dev.ahpclient.state.CanvasView
 import dev.ahpclient.state.ChatGoneException
 import dev.ahpclient.state.ChatNotLoadedException
 import dev.ahpclient.state.ConnState
@@ -205,6 +210,20 @@ fun ChatPane(
                 Column(modifier = Modifier.fillMaxSize()) {
                     if (connection != ConnState.Online) ConnectionLine(connection, Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
                     if (transcript?.running == true && !transcript.waitingOnYou) WorkingBar()
+                    if (!transcript?.backgroundWork.isNullOrEmpty()) {
+                        BackgroundWorkBar(
+                            items = transcript.backgroundWork,
+                            onOpenSubagent = onOpenSubagent,
+                            onOpenTerminal = onOpenTerminal,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                        )
+                    }
+                    if (!transcript?.canvases.isNullOrEmpty()) {
+                        CanvasesBar(
+                            canvases = transcript.canvases,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                        )
+                    }
                     when {
                         error is ChatGoneException -> ErrorText("This chat is no longer on the host.", Modifier.padding(horizontal = 16.dp).testTag("chat_gone"))
                         notLoaded != null && transcript == null ->
@@ -439,6 +458,73 @@ private fun TranscriptRowModel.isUser(): Boolean = this is TranscriptRowModel.Si
 private const val OLDER_KEY = "older"
 
 private const val WORKING_KEY = "working"
+
+@Composable
+private fun BackgroundWorkBar(
+    items: List<BackgroundWorkView>,
+    onOpenSubagent: ((String) -> Unit)?,
+    onOpenTerminal: ((String) -> Unit)?,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier.fillMaxWidth().testTag("background_work_bar"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        items.forEach { item ->
+            Surface(
+                shape = MaterialTheme.shapes.small,
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier.fillMaxWidth().testTag("background_work_${item.id}"),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(item.kind.label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(item.label, style = MaterialTheme.typography.bodyMedium)
+                        item.command?.let { cmd ->
+                            Text(cmd, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                    val terminalUri = item.terminalUri
+                    val chatUri = item.chatUri
+                    if (terminalUri != null && onOpenTerminal != null) {
+                        TextButton(
+                            onClick = { onOpenTerminal(terminalUri) },
+                            modifier = Modifier.heightIn(min = 48.dp).testTag("background_work_open_${item.id}"),
+                        ) { Text("Open terminal") }
+                    } else if (chatUri != null && onOpenSubagent != null) {
+                        TextButton(
+                            onClick = { onOpenSubagent(chatUri) },
+                            modifier = Modifier.heightIn(min = 48.dp).testTag("background_work_open_${item.id}"),
+                        ) { Text("Open subagent") }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CanvasesBar(canvases: List<CanvasView>, modifier: Modifier = Modifier) {
+    Surface(
+        shape = MaterialTheme.shapes.small,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = modifier.fillMaxWidth().testTag("canvases_bar"),
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                if (canvases.size == 1) "Canvas" else "Canvases (${canvases.size})",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                canvases.joinToString(" · ") { it.label },
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.testTag("canvases_text"),
+            )
+        }
+    }
+}
 
 private fun LazyListState.atNewest(): Boolean = firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset == 0
 

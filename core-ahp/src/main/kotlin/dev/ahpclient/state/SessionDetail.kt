@@ -73,6 +73,19 @@ data class ChatRow(
 )
 
 /** A working directory as a person reads it: a `file:` URI becomes its decoded path, anything else is shown unchanged. */
+/** Summary of annotations attached to a session (`SessionState.annotations` or `SessionSummary.annotations`). */
+data class AnnotationsSummaryView(
+    val resource: String,
+    val annotationCount: Long,
+    val entryCount: Long,
+) {
+    val summaryText: String
+        get() = buildList {
+            add("$annotationCount ${if (annotationCount == 1L) "annotation" else "annotations"}")
+            if (entryCount > 0L) add("$entryCount ${if (entryCount == 1L) "entry" else "entries"}")
+        }.joinToString(" · ")
+}
+
 fun displayPath(uri: String): String {
     val parsed = try {
         java.net.URI(uri)
@@ -108,6 +121,8 @@ data class SessionDetail(
     val pullRequests: List<PullRequest> = extras.pullRequests,
     /** The model id the host reports for this session (E6), or null when the host reports none. */
     val model: String? = extras.model,
+    /** Summary of annotations attached to this session, or null when the host reports none. */
+    val annotations: AnnotationsSummaryView? = null,
 ) {
     /** The chat to show first: the session's main chat, or else the first the host lists. Null while the host lists none. */
     val mainChat: ChatRow? get() = chats.firstOrNull { it.isMain } ?: chats.firstOrNull()
@@ -173,6 +188,9 @@ data class SessionDetail(
                 extras = mergedExtras,
                 pullRequests = mergedExtras.pullRequests,
                 model = mergedExtras.model,
+                annotations = (state.annotations ?: summary?.annotations)?.takeIf { it.annotationCount > 0L || it.entryCount > 0L }?.let {
+                    AnnotationsSummaryView(resource = it.resource, annotationCount = it.annotationCount, entryCount = it.entryCount)
+                },
             )
         }
 
