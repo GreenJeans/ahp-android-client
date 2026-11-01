@@ -20,7 +20,14 @@ object SessionActions {
     fun setArchived(isArchived: Boolean): StateAction = action("session/isArchivedChanged") { put("isArchived", isArchived) }
 
     /** Sets the session's title. Dispatched on the session's own channel. */
+    /** Sets the session's title. Dispatched on the session's own channel. */
     fun setTitle(title: String): StateAction = action("session/titleChanged") { put("title", title) }
+
+    /** Marks a chat read or unread. Dispatched on the chat's own channel. */
+    fun setChatRead(isRead: Boolean): StateAction = action("chat/isReadChanged") { put("isRead", isRead) }
+
+    /** Archives or restores a chat. Dispatched on the chat's own channel. */
+    fun setChatArchived(isArchived: Boolean): StateAction = action("chat/isArchivedChanged") { put("isArchived", isArchived) }
 
     private fun action(type: String, fields: JsonObjectBuilder.() -> Unit): StateAction =
         Ahp.json.decodeFromJsonElement(

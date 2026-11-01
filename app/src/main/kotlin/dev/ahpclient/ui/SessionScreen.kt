@@ -132,7 +132,9 @@ fun SessionScreen(
         if (requestedChat != null) pendingChat = requestedChat
     }
 
-    val tabUris = detail?.tabs?.map { it.uri }.orEmpty()
+    var showArchivedChats by rememberSaveable { mutableStateOf(false) }
+    val visibleTabs = remember(detail, showArchivedChats) { detail?.visibleTabs(showArchivedChats).orEmpty() }
+    val tabUris = visibleTabs.map { it.uri }
     val canShowChat = detail != null && detail.phase != SessionPhase.FAILED
     LaunchedEffect(tabUris, shownChat, canShowChat) {
         if (canShowChat && (shownChat == null || shownChat !in tabUris)) detail.mainChat?.let { onSelectChat(it.uri) }
@@ -167,6 +169,8 @@ fun SessionScreen(
                     onChatCreated = { pendingChat = it },
                     onRemoved = onRemoved,
                     alerts = alerts,
+                    showArchivedChats = showArchivedChats,
+                    onToggleArchivedChats = { showArchivedChats = !showArchivedChats },
                     customizationsCount = customizations.totalCount,
                     onShowCustomizations = {
                         customizationsCategory = null
@@ -183,7 +187,7 @@ fun SessionScreen(
                 error is SessionGoneException -> ErrorText("This session is no longer on the host.", Modifier.padding(24.dp).testTag("session_gone"))
                 detail != null -> {
                     SessionBanners(detail, notice)
-                    ChatTabs(detail.tabs, shownChat, onSelectChat)
+                    ChatTabs(visibleTabs, shownChat, onSelectChat)
                     Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                         when {
                             detail.phase == SessionPhase.FAILED -> Unit
@@ -295,7 +299,13 @@ private fun ChatTabs(chats: List<ChatRow>, shownChat: String?, onSelect: (String
                 onClick = { onSelect(chat.uri) },
                 modifier = Modifier
                     .heightIn(min = 48.dp)
-                    .semantics { contentDescription = if (chat.state == ActivityState.NEEDS_INPUT) "${chat.title}, ${chat.state.label}" else chat.title }
+                    .semantics {
+                        contentDescription = buildList {
+                            add(chat.title)
+                            if (chat.state == ActivityState.NEEDS_INPUT) add(chat.state.label)
+                            if (chat.isArchived) add("Archived")
+                        }.joinToString(", ")
+                    }
                     .testTag("chat_tab"),
                 text = {
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -306,7 +316,7 @@ private fun ChatTabs(chats: List<ChatRow>, shownChat: String?, onSelect: (String
                                 modifier = Modifier.size(8.dp).testTag("chat_tab_dot").clearAndSetSemantics {},
                             ) {}
                         }
-                        Text(chat.title, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 180.dp))
+                        Text(if (chat.isArchived) "${chat.title} (archived)" else chat.title, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 180.dp))
                     }
                 },
             )

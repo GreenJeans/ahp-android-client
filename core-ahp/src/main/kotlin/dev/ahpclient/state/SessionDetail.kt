@@ -68,6 +68,8 @@ data class ChatRow(
     val removable: Boolean = true,
     /** The session's main chat, the one it was started with. */
     val isMain: Boolean = false,
+    val isArchived: Boolean = false,
+    val isRead: Boolean = false,
 )
 
 /** A working directory as a person reads it: a `file:` URI becomes its decoded path, anything else is shown unchanged. */
@@ -113,6 +115,13 @@ data class SessionDetail(
     /** The chats in the order of the tabs: the main chat first, then the others as the host lists them. */
     val tabs: List<ChatRow> get() = mainChat?.let { main -> listOf(main) + chats.filter { it.uri != main.uri } }.orEmpty()
 
+    /** How many non-main chats in this session are archived. */
+    val archivedChatCount: Int get() = chats.count { it.isArchived && !it.isMain }
+
+    /** The tabs to show on screen: archived non-main chats are hidden unless [showArchived] is true. */
+    fun visibleTabs(showArchived: Boolean = false): List<ChatRow> =
+        tabs.filter { showArchived || !it.isArchived || it.isMain }
+
     companion object {
         /** The hint every pending request carries: answering happens in VS Code, never here. */
         const val ANSWER_ELSEWHERE = "Answer in VS Code."
@@ -151,6 +160,8 @@ data class SessionDetail(
                         whenText = RelativeTime.format(chat.modifiedAt, now),
                         removable = canRemoveChat(state, chat.resource),
                         isMain = chat.resource == state.defaultChat,
+                        isArchived = chat.status.isArchived || summary?.chats?.firstOrNull { it.resource == chat.resource }?.status?.isArchived == true,
+                        isRead = chat.status.isRead,
                     )
                 },
                 inputNeeded = state.inputNeeded.orEmpty().map(::describe),

@@ -242,6 +242,8 @@ private fun Shell(
                 disposeChat = controller.manager::disposeChat,
                 hosts = orderedManageTargets,
                 setTitle = controller.manager::setTitle,
+                setChatRead = controller.manager::setChatRead,
+                setChatArchived = controller.manager::setChatArchived,
             )
         }
     } else {

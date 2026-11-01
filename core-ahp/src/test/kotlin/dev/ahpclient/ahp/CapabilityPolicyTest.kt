@@ -117,7 +117,14 @@ class CapabilityPolicyTest {
         assertFailsWith<CapabilityDeniedException> { CapabilityPolicy.MANAGE.check("sessionConfigCompletions") }
     }
 
-    private val manageActions = setOf("session/isReadChanged", "session/isArchivedChanged", "session/titleChanged", "changeset/filesReviewChanged")
+    private val manageActions = setOf(
+        "session/isReadChanged",
+        "session/isArchivedChanged",
+        "session/titleChanged",
+        "chat/isReadChanged",
+        "chat/isArchivedChanged",
+        "changeset/filesReviewChanged",
+    )
 
     @Test
     fun `only MANAGE can create or remove sessions and chats`() {

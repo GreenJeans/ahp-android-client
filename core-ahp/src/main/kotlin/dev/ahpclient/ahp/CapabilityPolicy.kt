@@ -108,7 +108,14 @@ class CapabilityPolicy private constructor(
          * What marking a session read or archived, or a changed file reviewed, dispatches. Each is reversible with the same
          * action, and none of them changes anything the agent runs or any file.
          */
-        val MANAGE_ACTIONS = setOf("session/isReadChanged", "session/isArchivedChanged", "session/titleChanged", "changeset/filesReviewChanged")
+        val MANAGE_ACTIONS = setOf(
+            "session/isReadChanged",
+            "session/isArchivedChanged",
+            "session/titleChanged",
+            "chat/isReadChanged",
+            "chat/isArchivedChanged",
+            "changeset/filesReviewChanged",
+        )
 
         /**
          * INTERACT plus looking after sessions: mark one read or archived, mark a changed file reviewed, start a chat or a session, and remove one. A
