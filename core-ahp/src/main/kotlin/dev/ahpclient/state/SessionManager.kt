@@ -109,6 +109,19 @@ class SessionManager(
         return chatAction(sessionUri, chatUri, SessionActions.setChatArchived(archived))
     }
 
+    /** Requests starting, stopping, or backgrounding MCP server [serverId] in [sessionUri]. */
+    suspend fun controlMcpServer(sessionUri: String, serverId: String, control: McpServerControlAction): ManageResult {
+        if (!allowed()) return ManageResult.NotAllowed
+        val trimmed = serverId.trim()
+        if (trimmed.isEmpty()) return ManageResult.InvalidChoice
+        val stateAction = when (control) {
+            McpServerControlAction.START -> SessionActions.startMcpServer(trimmed)
+            McpServerControlAction.STOP -> SessionActions.stopMcpServer(trimmed)
+            McpServerControlAction.BACKGROUND -> SessionActions.backgroundMcpServer(trimmed)
+        }
+        return action(sessionUri, stateAction)
+    }
+
     /** Renames [sessionUri] to [title] (trimmed). Refuses a blank title or one longer than [MAX_TITLE_LENGTH]. */
     suspend fun setTitle(sessionUri: String, title: String): ManageResult {
         if (!allowed()) return ManageResult.NotAllowed

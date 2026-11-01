@@ -55,6 +55,7 @@ import dev.ahpclient.state.ConfigPick
 import dev.ahpclient.state.ChatRow
 import dev.ahpclient.state.ManageMessages
 import dev.ahpclient.state.ManageResult
+import dev.ahpclient.state.McpServerControlAction
 import dev.ahpclient.state.RecentFolders
 import dev.ahpclient.state.SessionConfigForm
 import dev.ahpclient.state.SessionDetail
@@ -101,6 +102,7 @@ class ManageActionsUi(
     val setTitle: suspend (sessionUri: String, title: String) -> ManageResult = { _, _ -> ManageResult.NotAllowed },
     val setChatRead: suspend (sessionUri: String, chatUri: String, read: Boolean) -> ManageResult = { _, _, _ -> ManageResult.NotAllowed },
     val setChatArchived: suspend (sessionUri: String, chatUri: String, archived: Boolean) -> ManageResult = { _, _, _ -> ManageResult.NotAllowed },
+    val controlMcpServer: suspend (sessionUri: String, serverId: String, control: McpServerControlAction) -> ManageResult = { _, _, _ -> ManageResult.NotAllowed },
 )
 
 @Composable

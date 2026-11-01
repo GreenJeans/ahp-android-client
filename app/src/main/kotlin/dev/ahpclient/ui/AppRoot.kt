@@ -244,6 +244,7 @@ private fun Shell(
                 setTitle = controller.manager::setTitle,
                 setChatRead = controller.manager::setChatRead,
                 setChatArchived = controller.manager::setChatArchived,
+                controlMcpServer = controller.manager::controlMcpServer,
             )
         }
     } else {

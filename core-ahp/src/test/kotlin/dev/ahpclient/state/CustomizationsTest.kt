@@ -307,7 +307,16 @@ class CustomizationsTest {
         assertEquals("[signals]", skillEntry.argumentHint)
         assertTrue(skillEntry.canViewFile)
 
+        val readyMcp = view.entriesIn(CustomizationCategory.MCP_SERVERS, query = "github").single()
+        assertEquals("m-github", readyMcp.mcpServerId)
+        assertTrue(readyMcp.canStopMcp)
+        assertFalse(readyMcp.canStartMcp)
+        assertFalse(readyMcp.canBackgroundMcp)
+
         val errorMcp = view.entriesIn(CustomizationCategory.MCP_SERVERS, query = "sqlite").single()
+        assertEquals("m-sqlite", errorMcp.mcpServerId)
+        assertTrue(errorMcp.canStartMcp)
+        assertFalse(errorMcp.canStopMcp)
         assertTrue(errorMcp.isError)
         assertEquals("Error", errorMcp.statusLabel)
         assertEquals("Connection refused", errorMcp.description)

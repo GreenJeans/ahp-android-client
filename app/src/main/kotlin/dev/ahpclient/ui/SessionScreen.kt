@@ -35,6 +35,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -64,6 +65,8 @@ import dev.ahpclient.state.CustomizationCategory
 import dev.ahpclient.state.HostFileTarget
 import dev.ahpclient.state.SlashCommands
 import dev.ahpclient.state.TurnUsage
+import dev.ahpclient.state.ManageMessages
+import kotlinx.coroutines.launch
 import com.microsoft.agenthostprotocol.generated.RootState
 import com.microsoft.agenthostprotocol.generated.SessionState
 import com.microsoft.agenthostprotocol.generated.SessionSummary
@@ -126,6 +129,7 @@ fun SessionScreen(
         }
     }
     var notice by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
     // A chat the user has just started is not in the host's list until the host echoes it, so the tab is brought forward then.
     var pendingChat by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(requestedChat) {
@@ -227,6 +231,15 @@ fun SessionScreen(
             onUseSlashCommand = onUseSlashCommand,
             onUseAgent = onUseAgent,
             onViewFile = onViewHostFile,
+            onControlMcpServer = if (manage != null && sessionUri.isNotEmpty()) {
+                { serverId, control ->
+                    scope.launch {
+                        notice = ManageMessages.describe(manage.controlMcpServer(sessionUri, serverId, control))
+                    }
+                }
+            } else {
+                null
+            },
         )
     }
 }

@@ -36,6 +36,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.ahpclient.state.ActivityState
+import dev.ahpclient.state.CustomizationCategory
+import dev.ahpclient.state.CustomizationEntry
+import dev.ahpclient.state.CustomizationsView
+import dev.ahpclient.state.McpServerControlAction
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.ManageResult
 import dev.ahpclient.state.RelativeTime
@@ -785,6 +789,60 @@ class SessionScreensTest {
 
         rule.onAllNodesWithText("Branch").assertCountEquals(0)
         rule.onAllNodesWithText("Git status").assertCountEquals(0)
+    }
+
+    @Test
+    fun customizationsSheetRendersAndDispatchesMcpServerLifecycleControls() {
+        val controls = mutableListOf<Pair<String, McpServerControlAction>>()
+        val view = CustomizationsView(
+            entries = listOf(
+                CustomizationEntry(
+                    id = "mcp:1",
+                    category = CustomizationCategory.MCP_SERVERS,
+                    name = "github-mcp",
+                    mcpServerId = "github-id",
+                    statusLabel = "Ready",
+                    isReady = true,
+                ),
+                CustomizationEntry(
+                    id = "mcp:2",
+                    category = CustomizationCategory.MCP_SERVERS,
+                    name = "sqlite-mcp",
+                    mcpServerId = "sqlite-id",
+                    statusLabel = "Stopped",
+                ),
+                CustomizationEntry(
+                    id = "mcp:3",
+                    category = CustomizationCategory.MCP_SERVERS,
+                    name = "docker-mcp",
+                    mcpServerId = "docker-id",
+                    statusLabel = "Starting",
+                ),
+            ),
+        )
+        rule.setContent {
+            AhpTheme {
+                CustomizationsSheetContent(
+                    customizations = view,
+                    initialCategory = CustomizationCategory.MCP_SERVERS,
+                    onDismiss = {},
+                    onControlMcpServer = { id, action -> controls += id to action },
+                )
+            }
+        }
+
+        rule.onNodeWithTag("customization_mcp_stop_github-mcp").assertIsDisplayed().performClick()
+        rule.onNodeWithTag("customization_mcp_start_sqlite-mcp").assertIsDisplayed().performClick()
+        rule.onNodeWithTag("customization_mcp_background_docker-mcp").assertIsDisplayed().performClick()
+
+        assertEquals(
+            listOf(
+                "github-id" to McpServerControlAction.STOP,
+                "sqlite-id" to McpServerControlAction.START,
+                "docker-id" to McpServerControlAction.BACKGROUND,
+            ),
+            controls,
+        )
     }
 
     @Test

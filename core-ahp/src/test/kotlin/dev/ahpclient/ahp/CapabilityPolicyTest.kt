@@ -123,6 +123,9 @@ class CapabilityPolicyTest {
         "session/titleChanged",
         "chat/isReadChanged",
         "chat/isArchivedChanged",
+        "session/mcpServerStartRequested",
+        "session/mcpServerStopRequested",
+        "session/mcpServerBackgroundRequested",
         "changeset/filesReviewChanged",
     )
 
