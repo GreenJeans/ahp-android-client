@@ -53,7 +53,13 @@ import dev.ahpclient.state.ManageResult
 import dev.ahpclient.state.PendingMessageKind
 import dev.ahpclient.state.PendingMessageView
 import dev.ahpclient.state.QuestionKind
+import dev.ahpclient.state.CustomizationCategory
+import dev.ahpclient.state.CustomizationEntry
+import dev.ahpclient.state.CustomizationsView
+import dev.ahpclient.state.SlashCommand
+import dev.ahpclient.state.SlashCommandKind
 import dev.ahpclient.state.ToolState
+import dev.ahpclient.ui.CustomizationsSheetContent
 import dev.ahpclient.state.Transcript
 import dev.ahpclient.state.TranscriptItem
 import dev.ahpclient.state.TurnOutcome
@@ -114,6 +120,8 @@ class InteractionUiTest {
         agentInUse: String? = null,
         canFork: Boolean = false,
         canSideChat: Boolean = false,
+        slashCommands: List<SlashCommand> = emptyList(),
+        onOpenCustomizations: ((CustomizationCategory?, String) -> Unit)? = null,
     ) = ChatActionsUi(
         running = running,
         send = { text, model, agent -> calls.sent += text; calls.sentModels += model; calls.sentAgents += agent; calls.result },
@@ -143,6 +151,8 @@ class InteractionUiTest {
         editAsFork = { prevTurnId, newText, _, _ -> calls.editedForks += prevTurnId to newText; calls.manageResult },
         canSideChat = canSideChat,
         openSideChat = { turnId, initialText, _, _ -> calls.openedSideChats += turnId to initialText; calls.manageResult },
+        slashCommands = slashCommands,
+        onOpenCustomizations = onOpenCustomizations,
     )
 
     private fun transcript(vararg items: TranscriptItem) = Transcript("Fix the build", ActivityState.IN_PROGRESS, null, items.toList(), hasOlder = false)
@@ -1174,6 +1184,68 @@ class InteractionUiTest {
         rule.onNodeWithTag("composer_send_options").performClick()
         rule.onNodeWithTag("composer_mode_side_chat").performClick()
         rule.waitUntil(5_000) { calls.openedSideChats == listOf("t1" to "side question") }
+    }
+
+    @Test
+    fun slashShortcutAndTypingSlashShowMatchingSkillsAndSendInvokesSkill() {
+        val calls = Calls()
+        val skills = listOf(
+            SlashCommand("skill-eval", "Score a skill pack against the quality rubric", argumentHint = "[signals]", kind = SlashCommandKind.SKILL, uri = "file:///s/eval/SKILL.md"),
+            SlashCommand("skill-kb", "Build a pack's KB", kind = SlashCommandKind.SKILL, uri = "file:///s/kb/SKILL.md"),
+            SlashCommand("clear", "Start over and clear all turns in this chat", kind = SlashCommandKind.BUILT_IN),
+        )
+        show(transcript(), actions(calls, slashCommands = skills))
+
+        rule.onNodeWithTag("slash_button").performClick()
+        rule.onNodeWithTag("composer_slash_menu").assertIsDisplayed()
+        rule.onNodeWithTag("slash_option_skill-eval").assertIsDisplayed()
+        rule.onNodeWithTag("slash_option_skill-kb").assertIsDisplayed()
+
+        rule.onNodeWithTag("slash_option_skill-eval").performClick()
+        rule.onNodeWithTag("composer_active_skill").assertIsDisplayed().assertTextContains("[signals]", substring = true)
+
+        rule.onNodeWithTag("composer_send").performClick()
+        rule.waitUntil(5_000) { calls.sent == listOf("/skill-eval") }
+    }
+
+    @Test
+    fun customizationsSheetFiltersCategoriesAndInsertsSelectedSkill() {
+        val pickedSkill = mutableListOf<String>()
+        val view = CustomizationsView(
+            listOf(
+                CustomizationEntry(
+                    id = "skill:1",
+                    category = CustomizationCategory.SKILLS,
+                    name = "skill-eval",
+                    description = "Score a skill pack",
+                    uri = "file:///s/eval/SKILL.md",
+                    argumentHint = "[signals]",
+                ),
+                CustomizationEntry(
+                    id = "mcp:1",
+                    category = CustomizationCategory.MCP_SERVERS,
+                    name = "github",
+                    statusLabel = "Ready",
+                    isReady = true,
+                ),
+            ),
+        )
+        rule.setContent {
+            AhpTheme {
+                CustomizationsSheetContent(
+                    customizations = view,
+                    onDismiss = {},
+                    onUseSlashCommand = { pickedSkill += it },
+                )
+            }
+        }
+
+        rule.onNodeWithTag("customizations_overview_card").assertIsDisplayed()
+        rule.onNodeWithTag("customizations_count_SKILLS").assertTextContains("1")
+        rule.onNodeWithTag("customizations_count_MCP_SERVERS").assertTextContains("1")
+
+        rule.onNodeWithTag("customization_use_skill_skill-eval").performClick()
+        assertEquals(listOf("skill-eval"), pickedSkill)
     }
 
     // ---- helpers ------------------------------------------------------------------------------------------------

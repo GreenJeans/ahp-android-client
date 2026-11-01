@@ -437,6 +437,8 @@ fun SessionMenu(
     onRemoved: () -> Unit,
     modifier: Modifier = Modifier,
     alerts: FinishedAlertsUi? = null,
+    customizationsCount: Int = 0,
+    onShowCustomizations: (() -> Unit)? = null,
 ) {
     var open by rememberSaveable { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
@@ -465,6 +467,14 @@ fun SessionMenu(
                 onClick = { open = false; onShowDetails() },
                 modifier = Modifier.testTag("menu_details"),
             )
+            if (onShowCustomizations != null) {
+                DropdownMenuItem(
+                    text = { Text(if (customizationsCount > 0) "Customizations ($customizationsCount)" else "Customizations") },
+                    leadingIcon = { Icon(AppIcons.Plug, contentDescription = null) },
+                    onClick = { open = false; onShowCustomizations() },
+                    modifier = Modifier.testTag("menu_customizations"),
+                )
+            }
             if (alerts != null && sessionUri.isNotEmpty() && !detail.isArchived) {
                 val everySession = alerts.watch.all
                 val on = everySession || sessionUri in alerts.watch.sessions

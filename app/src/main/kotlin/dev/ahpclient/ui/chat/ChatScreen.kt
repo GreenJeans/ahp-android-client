@@ -95,6 +95,8 @@ fun ChatScreen(
     onOpenSubagent: ((String) -> Unit)? = null,
     onOpenTerminal: ((String) -> Unit)? = null,
     backLabel: String = "Back to session",
+    externalRichRequest: RichModalRequest? = null,
+    onExternalRichConsumed: () -> Unit = {},
     onRetry: (() -> Unit)? = null,
     textScale: Float = 1f,
     onTextScale: ((Float) -> Unit)? = null,
@@ -128,6 +130,8 @@ fun ChatScreen(
             onRetry = onRetry,
             textScale = textScale,
             onTextScale = onTextScale,
+            externalRichRequest = externalRichRequest,
+            onExternalRichConsumed = onExternalRichConsumed,
             onReadResource = onReadResource,
             workingDirectories = workingDirectories,
         )
@@ -158,6 +162,8 @@ fun ChatPane(
     onOpenTerminal: ((String) -> Unit)? = null,
     onRetry: (() -> Unit)? = null,
     /** The size of the text, as a multiple of the system's; [onTextScale], when given, is asked to change it as the person pinches the chat. */
+    externalRichRequest: RichModalRequest? = null,
+    onExternalRichConsumed: () -> Unit = {},
     textScale: Float = 1f,
     onTextScale: ((Float) -> Unit)? = null,
     onReadResource: (suspend (String) -> ResourceReadResult)? = null,
@@ -167,6 +173,12 @@ fun ChatPane(
     var pendingRaw by rememberSaveable { mutableStateOf<String?>(null) }
     val pendingLink = pendingRaw?.let(LinkTarget::of)
     var activeRichRequest by remember { mutableStateOf<RichModalRequest?>(null) }
+    LaunchedEffect(externalRichRequest) {
+        if (externalRichRequest != null) {
+            activeRichRequest = externalRichRequest
+            onExternalRichConsumed()
+        }
+    }
     val notLoaded = error as? ChatNotLoadedException
     // The text of the chat, and the box under it, follow the person's size; the bars around them keep the system's.
     val base = LocalDensity.current

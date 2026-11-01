@@ -6,6 +6,7 @@ import com.microsoft.agenthostprotocol.generated.ChildCustomizationAgent
 import com.microsoft.agenthostprotocol.generated.CustomizationDirectory
 import com.microsoft.agenthostprotocol.generated.CustomizationEnablement
 import com.microsoft.agenthostprotocol.generated.CustomizationPlugin
+import com.microsoft.agenthostprotocol.generated.RootState
 import com.microsoft.agenthostprotocol.generated.SessionState
 
 /** A custom agent (an agent file such as `plan.agent.md`) the person may pick for a message. [name] and [description] are the host's words, bounded. */
@@ -37,8 +38,8 @@ object CustomAgents {
      * The agents the person may pick: those the session's customizations list under a plugin or a folder that is turned on, that are
      * not turned off themselves, and that the host has not reserved for its own delegation. In the order the host lists them, each once.
      */
-    fun of(session: SessionState?): List<AgentChoice> =
-        session?.customizations.orEmpty()
+    fun of(session: SessionState?, root: RootState? = null): List<AgentChoice> =
+        SlashCommands.combinedCustomizations(session, root)
             .flatMap { container ->
                 when (container) {
                     is CustomizationPlugin -> if (enabled(container.value.enablement)) agentsIn(container.value.children) else emptyList()

@@ -60,6 +60,10 @@ import dev.ahpclient.state.SessionGoneException
 import dev.ahpclient.state.SessionPhase
 import dev.ahpclient.state.label
 import dev.ahpclient.ui.chat.LinkConfirmDialog
+import dev.ahpclient.state.CustomizationCategory
+import dev.ahpclient.state.HostFileTarget
+import dev.ahpclient.state.SlashCommands
+import com.microsoft.agenthostprotocol.generated.RootState
 import com.microsoft.agenthostprotocol.generated.SessionState
 import com.microsoft.agenthostprotocol.generated.SessionSummary
 import java.time.Instant
@@ -97,10 +101,28 @@ fun SessionScreen(
     onOpenLink: (String) -> Unit = {},
     onShareLink: ((String) -> Unit)? = null,
     requestedChat: String? = null,
+    rootState: RootState? = null,
+    onUseSlashCommand: ((String) -> Unit)? = null,
+    onUseAgent: ((String) -> Unit)? = null,
+    onViewHostFile: ((HostFileTarget) -> Unit)? = null,
+    openCustomizationsRequest: Pair<CustomizationCategory?, String>? = null,
+    onCustomizationsRequestConsumed: () -> Unit = {},
     chat: @Composable () -> Unit = {},
 ) {
     val detail = remember(state, now, summary) { state?.let { SessionDetail.from(it, now, summary) } }
     var showDetails by rememberSaveable { mutableStateOf(false) }
+    val customizations = remember(state, rootState) { SlashCommands.customizationsOf(state, rootState) }
+    var showCustomizations by rememberSaveable { mutableStateOf(false) }
+    var customizationsCategory by rememberSaveable { mutableStateOf<CustomizationCategory?>(null) }
+    var customizationsQuery by rememberSaveable { mutableStateOf("") }
+    LaunchedEffect(openCustomizationsRequest) {
+        if (openCustomizationsRequest != null) {
+            customizationsCategory = openCustomizationsRequest.first
+            customizationsQuery = openCustomizationsRequest.second
+            showCustomizations = true
+            onCustomizationsRequestConsumed()
+        }
+    }
     var notice by remember { mutableStateOf<String?>(null) }
     // A chat the user has just started is not in the host's list until the host echoes it, so the tab is brought forward then.
     var pendingChat by remember { mutableStateOf<String?>(null) }
@@ -143,6 +165,12 @@ fun SessionScreen(
                     onChatCreated = { pendingChat = it },
                     onRemoved = onRemoved,
                     alerts = alerts,
+                    customizationsCount = customizations.totalCount,
+                    onShowCustomizations = {
+                        customizationsCategory = null
+                        customizationsQuery = ""
+                        showCustomizations = true
+                    },
                 )
             }
         },
@@ -169,7 +197,30 @@ fun SessionScreen(
         }
     }
     if (showDetails && detail != null) {
-        DetailsSheet(detail, onDismiss = { showDetails = false }, onOpenLink = onOpenLink, onShareLink = onShareLink)
+        DetailsSheet(
+            detail = detail,
+            customizationsCount = customizations.totalCount,
+            onDismiss = { showDetails = false },
+            onOpenCustomizations = {
+                showDetails = false
+                customizationsCategory = null
+                customizationsQuery = ""
+                showCustomizations = true
+            },
+            onOpenLink = onOpenLink,
+            onShareLink = onShareLink,
+        )
+    }
+    if (showCustomizations && detail != null) {
+        CustomizationsSheet(
+            customizations = customizations,
+            initialCategory = customizationsCategory,
+            initialQuery = customizationsQuery,
+            onDismiss = { showCustomizations = false },
+            onUseSlashCommand = onUseSlashCommand,
+            onUseAgent = onUseAgent,
+            onViewFile = onViewHostFile,
+        )
     }
 }
 
@@ -266,7 +317,14 @@ private fun ChatTabs(chats: List<ChatRow>, shownChat: String?, onSelect: (String
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DetailsSheet(detail: SessionDetail, onDismiss: () -> Unit, onOpenLink: (String) -> Unit = {}, onShareLink: ((String) -> Unit)? = null) {
+private fun DetailsSheet(
+    detail: SessionDetail,
+    customizationsCount: Int = 0,
+    onDismiss: () -> Unit,
+    onOpenCustomizations: (() -> Unit)? = null,
+    onOpenLink: (String) -> Unit = {},
+    onShareLink: ((String) -> Unit)? = null,
+) {
     var pendingPrUrl by rememberSaveable { mutableStateOf<String?>(null) }
     val pendingTarget = pendingPrUrl?.let(LinkTarget::of)
     ModalBottomSheet(
@@ -306,6 +364,14 @@ private fun DetailsSheet(detail: SessionDetail, onDismiss: () -> Unit, onOpenLin
             }
 
             Facts(detail)
+            if (onOpenCustomizations != null) {
+                OutlinedButton(
+                    onClick = onOpenCustomizations,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("details_open_customizations"),
+                ) {
+                    Text(if (customizationsCount > 0) "Customizations ($customizationsCount)" else "Customizations")
+                }
+            }
         }
     }
     pendingTarget?.let { target ->

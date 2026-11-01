@@ -95,7 +95,21 @@ import dev.ahpclient.state.ModelOption
 import dev.ahpclient.state.ModelOptions
 import dev.ahpclient.state.PendingMessageKind
 import dev.ahpclient.state.PendingMessageView
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.withStyle
+import dev.ahpclient.state.ActiveSlashCommand
+import dev.ahpclient.state.AgentMentionQuery
+import dev.ahpclient.state.CustomizationCategory
+import dev.ahpclient.state.CustomizationsView
+import dev.ahpclient.state.HostFileTarget
 import dev.ahpclient.state.QuestionKind
+import dev.ahpclient.state.SlashCommand
+import dev.ahpclient.state.SlashCommandKind
+import dev.ahpclient.state.SlashCommandMatch
+import dev.ahpclient.state.SlashCommands
 import dev.ahpclient.ui.AppIcons
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -157,6 +171,20 @@ class ChatActionsUi(
     val canSideChat: Boolean = false,
     /** Opens a side chat anchored to [turnId], optionally sending [initialText] right away. */
     val openSideChat: suspend (turnId: String, initialText: String?, model: ModelChoice?, agent: AgentPick) -> ManageResult = { _, _, _, _ -> ManageResult.NotAllowed },
+    /** User-invokable slash commands (installed skills, prompts, and built-in commands) for `/` autocomplete in the composer. */
+    val slashCommands: List<SlashCommand> = emptyList(),
+    /** Full environment customizations summary for the Customizations sheet. */
+    val customizations: CustomizationsView = CustomizationsView.EMPTY,
+    /** Opens the environment Customizations sheet, optionally filtered to a category or search query. */
+    val onOpenCustomizations: ((CustomizationCategory?, String) -> Unit)? = null,
+    /** Opens a host file (such as `SKILL.md` or `.agent.md`) in the rich file viewer modal. */
+    val onViewHostFile: ((HostFileTarget) -> Unit)? = null,
+    /** One-shot command or text prefill from the Customizations sheet (e.g. `"/skill-eval "`). */
+    val prefillText: String? = null,
+    val onPrefillConsumed: () -> Unit = {},
+    /** One-shot agent URI selection from the Customizations sheet. */
+    val agentToUse: String? = null,
+    val onAgentToUseConsumed: () -> Unit = {},
 )
 
 /** The host's own words on a button or a field are untrusted display text: shown as plain text and cut to a sane length. */
@@ -522,6 +550,261 @@ private fun PendingMessageTray(
  * confirmed the message, so a failed send loses nothing, and it survives rotation.
  */
 @Composable
+internal fun SlashCommandPopup(
+    matches: List<SlashCommandMatch>,
+    onSelect: (SlashCommand) -> Unit,
+    onOpenCustomizations: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+) {
+    if (matches.isEmpty()) return
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        shape = RoundedCornerShape(16.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp, vertical = 4.dp)
+            .testTag("composer_slash_menu"),
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+            if (onOpenCustomizations != null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 2.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Slash commands",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    TextButton(
+                        onClick = onOpenCustomizations,
+                        modifier = Modifier.testTag("composer_open_customizations"),
+                    ) {
+                        Text("Customizations", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            }
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 240.dp),
+            ) {
+                items(matches, key = { it.command.name }) { match ->
+                    val cmd = match.command
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .clickable { onSelect(cmd) }
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                            .testTag("slash_option_${cmd.name}"),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        val primaryColor = MaterialTheme.colorScheme.primary
+                        val normalColor = MaterialTheme.colorScheme.onSurface
+                        val nameText = buildAnnotatedString {
+                            val hStart = match.highlightStart.coerceIn(0, cmd.name.length)
+                            val hEnd = match.highlightEnd.coerceIn(hStart, cmd.name.length)
+                            if (hEnd > hStart) {
+                                if (hStart == 0) {
+                                    withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = primaryColor)) {
+                                        append("/")
+                                        append(cmd.name.substring(0, hEnd))
+                                    }
+                                    append(cmd.name.substring(hEnd))
+                                } else {
+                                    withStyle(SpanStyle(color = normalColor)) {
+                                        append("/")
+                                        append(cmd.name.substring(0, hStart))
+                                    }
+                                    withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = primaryColor)) {
+                                        append(cmd.name.substring(hStart, hEnd))
+                                    }
+                                    append(cmd.name.substring(hEnd))
+                                }
+                            } else {
+                                withStyle(SpanStyle(fontWeight = FontWeight.SemiBold, color = normalColor)) {
+                                    append("/")
+                                    append(cmd.name)
+                                }
+                            }
+                        }
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.weight(1f, fill = false),
+                        ) {
+                            Text(
+                                text = nameText,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontFamily = FontFamily.Monospace,
+                                maxLines = 1,
+                            )
+                            cmd.argumentHint?.let { hint ->
+                                Text(
+                                    text = hint,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                        cmd.description?.let { desc ->
+                            Text(
+                                text = desc,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ActiveSlashCommandBar(
+    active: ActiveSlashCommand,
+    onViewFile: ((HostFileTarget) -> Unit)?,
+    onClearCommand: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val cmd = active.command
+    val fileTarget = cmd.uri?.let { HostFileTarget.of(it) }
+    Surface(
+        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f),
+        shape = RoundedCornerShape(12.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 6.dp, vertical = 2.dp)
+            .testTag("composer_active_skill"),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = if (cmd.kind == SlashCommandKind.SKILL) AppIcons.Lightbulb else AppIcons.Slash,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                modifier = Modifier.size(16.dp),
+            )
+            Text(
+                text = "/${cmd.name}",
+                style = MaterialTheme.typography.labelMedium,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+            )
+            val detail = cmd.argumentHint ?: cmd.description
+            if (detail != null) {
+                Text(
+                    text = detail,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.85f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+            } else {
+                Box(Modifier.weight(1f))
+            }
+            if (fileTarget != null && onViewFile != null) {
+                TextButton(
+                    onClick = { onViewFile(fileTarget) },
+                    modifier = Modifier.testTag("composer_active_skill_view"),
+                ) {
+                    Text("View file", style = MaterialTheme.typography.labelSmall)
+                }
+            }
+            IconButton(
+                onClick = onClearCommand,
+                modifier = Modifier.size(32.dp).testTag("composer_active_skill_clear"),
+            ) {
+                Icon(
+                    imageVector = AppIcons.Clear,
+                    contentDescription = "Remove slash command",
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AgentMentionPopup(
+    mention: AgentMentionQuery,
+    onSelect: (AgentChoice) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        shape = RoundedCornerShape(16.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp, vertical = 4.dp)
+            .testTag("composer_agent_mention_menu"),
+    ) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 200.dp)
+                .padding(vertical = 4.dp),
+        ) {
+            items(mention.matches, key = { it.uri }) { agent ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .clickable { onSelect(agent) }
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                        .testTag("agent_mention_${agent.name}"),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        imageVector = AppIcons.AgentCode,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Text(
+                        text = "@${agent.name}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    agent.description?.let { desc ->
+                        Text(
+                            text = desc,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 internal fun Composer(
     actions: ChatActionsUi,
     modifier: Modifier = Modifier,
@@ -542,6 +825,19 @@ internal fun Composer(
     var agentPick by rememberSaveable(stateSaver = AgentPickSaver) { mutableStateOf<AgentPick>(AgentPick.Keep) }
     var choosingAgent by rememberSaveable { mutableStateOf(false) }
     var sendMenuOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(actions.prefillText) {
+        if (actions.prefillText != null) {
+            text = actions.prefillText
+            actions.onPrefillConsumed()
+        }
+    }
+    LaunchedEffect(actions.agentToUse) {
+        val uri = actions.agentToUse
+        if (uri != null) {
+            agentPick = if (uri == actions.agentInUse) AgentPick.Keep else AgentPick.Use(uri)
+            actions.onAgentToUseConsumed()
+        }
+    }
     // A pick the host no longer offers is dropped, so the box never shows or sends a model that has gone.
     val chosen = pick?.takeIf { ModelOptions.isOffered(actions.models, it) } ?: actions.modelInUse
     // The same for an agent: a pick that is gone becomes "keep what the chat is on". What is shown is what a message is sent with.
@@ -556,6 +852,152 @@ internal fun Composer(
     val scope = rememberCoroutineScope()
     val canSend = text.isNotBlank() && !busy
     val chipColors = AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest)
+    val effectiveCommands = remember(actions.slashCommands, actions.canFork, actions.canSideChat) {
+        actions.slashCommands.ifEmpty {
+            SlashCommands.builtInCommands(canFork = actions.canFork, canSideChat = actions.canSideChat)
+        }
+    }
+    val slashMatches = remember(text, effectiveCommands) {
+        SlashCommands.match(text, effectiveCommands)
+    }
+    val activeSlashCommand = remember(text, effectiveCommands) {
+        SlashCommands.active(text, effectiveCommands)
+    }
+    val agentMention = remember(text, actions.agents) {
+        SlashCommands.matchAgentMention(text, actions.agents)
+    }
+    val executeBuiltInCommand: (SlashCommand, String) -> Boolean = { cmd, args ->
+        when (cmd.name.lowercase()) {
+            "customizations" -> {
+                actions.onOpenCustomizations?.invoke(null, args)
+                text = ""
+                true
+            }
+            "skills", "skills list" -> {
+                actions.onOpenCustomizations?.invoke(CustomizationCategory.SKILLS, args)
+                text = ""
+                true
+            }
+            "skills info" -> {
+                val targetSkill = effectiveCommands.firstOrNull {
+                    it.kind == SlashCommandKind.SKILL && it.name.equals(args.trim(), ignoreCase = true)
+                }
+                val fileTarget = targetSkill?.uri?.let { HostFileTarget.of(it) }
+                if (fileTarget != null && actions.onViewHostFile != null) {
+                    actions.onViewHostFile.invoke(fileTarget)
+                    text = ""
+                    true
+                } else if (actions.onOpenCustomizations != null) {
+                    actions.onOpenCustomizations.invoke(CustomizationCategory.SKILLS, args.trim())
+                    text = ""
+                    true
+                } else {
+                    false
+                }
+            }
+            "mcp" -> {
+                actions.onOpenCustomizations?.invoke(CustomizationCategory.MCP_SERVERS, args)
+                text = ""
+                true
+            }
+            "tools" -> {
+                actions.onOpenCustomizations?.invoke(CustomizationCategory.TOOLS, args)
+                text = ""
+                true
+            }
+            "clear" -> {
+                text = ""
+                scope.launch {
+                    busy = true
+                    notice = InteractMessages.describe(actions.startOver())
+                    busy = false
+                }
+                true
+            }
+            "agent" -> {
+                val arg = args.trim()
+                when {
+                    arg.equals("default", ignoreCase = true) || arg.equals("none", ignoreCase = true) -> {
+                        agentPick = AgentPick.None
+                        text = ""
+                        true
+                    }
+                    arg.isNotEmpty() -> {
+                        val matched = actions.agents.firstOrNull { it.name.equals(arg, ignoreCase = true) }
+                        if (matched != null) {
+                            agentPick = if (matched.uri == actions.agentInUse) AgentPick.Keep else AgentPick.Use(matched.uri)
+                            text = ""
+                            true
+                        } else {
+                            choosingAgent = true
+                            text = ""
+                            true
+                        }
+                    }
+                    actions.agents.isNotEmpty() || actions.agentInUse != null || actions.config.controls.isNotEmpty() -> {
+                        choosingAgent = true
+                        text = ""
+                        true
+                    }
+                    else -> false
+                }
+            }
+            "model" -> {
+                val arg = args.trim()
+                if (arg.isNotEmpty()) {
+                    val matched = actions.models.firstOrNull {
+                        it.id.equals(arg, ignoreCase = true) || it.name.equals(arg, ignoreCase = true)
+                    }
+                    if (matched != null) {
+                        pick = ModelChoice(matched.id)
+                        text = ""
+                        true
+                    } else {
+                        choosing = true
+                        text = ""
+                        true
+                    }
+                } else if (actions.models.isNotEmpty()) {
+                    choosing = true
+                    text = ""
+                    true
+                } else {
+                    false
+                }
+            }
+            "fork" -> if (actions.canFork) {
+                val forkText = args.trim()
+                text = ""
+                scope.launch {
+                    busy = true
+                    val res = if (forkText.isEmpty() && activeTurnId != null) {
+                        actions.forkFromTurn(activeTurnId)
+                    } else {
+                        actions.editAsFork(activeTurnId, forkText, chosen, agentChosen)
+                    }
+                    notice = ManageMessages.describe(res)
+                    busy = false
+                }
+                true
+            } else {
+                false
+            }
+            "side" -> if (actions.canSideChat && activeTurnId != null) {
+                val sideText = args.trim().ifEmpty { null }
+                text = ""
+                scope.launch {
+                    busy = true
+                    val res = actions.openSideChat(activeTurnId, sideText, chosen, agentChosen)
+                    notice = ManageMessages.describe(res)
+                    busy = false
+                }
+                true
+            } else {
+                false
+            }
+            else -> false
+        }
+    }
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         shape = RoundedCornerShape(28.dp),
@@ -598,6 +1040,36 @@ internal fun Composer(
                 },
             )
             Notice(notice, "composer_notice", Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+            if (slashMatches.isNotEmpty()) {
+                SlashCommandPopup(
+                    matches = slashMatches,
+                    onSelect = { cmd ->
+                        if (cmd.kind == SlashCommandKind.BUILT_IN && cmd.argumentHint == null) {
+                            executeBuiltInCommand(cmd, "")
+                        } else {
+                            text = "/${cmd.name} "
+                        }
+                    },
+                    onOpenCustomizations = actions.onOpenCustomizations?.let { open -> { open(null, "") } },
+                )
+            } else if (agentMention != null) {
+                AgentMentionPopup(
+                    mention = agentMention,
+                    onSelect = { pickedAgent ->
+                        agentPick = if (pickedAgent.uri == actions.agentInUse) AgentPick.Keep else AgentPick.Use(pickedAgent.uri)
+                        text = SlashCommands.stripAgentMention(text, agentMention)
+                    },
+                )
+            }
+            if (activeSlashCommand != null && slashMatches.isEmpty()) {
+                ActiveSlashCommandBar(
+                    active = activeSlashCommand,
+                    onViewFile = actions.onViewHostFile,
+                    onClearCommand = {
+                        text = activeSlashCommand.arguments
+                    },
+                )
+            }
             TextField(
                 value = text,
                 onValueChange = { text = it },
@@ -620,6 +1092,26 @@ internal fun Composer(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (actions.slashCommands.isNotEmpty() || actions.onOpenCustomizations != null) {
+                        AssistChip(
+                            onClick = {
+                                text = if (text == "/") "" else if (text.startsWith("/")) text else "/$text"
+                            },
+                            label = {
+                                Text(
+                                    text = "/",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            },
+                            colors = chipColors,
+                            border = null,
+                            modifier = Modifier
+                                .semantics { contentDescription = "Slash commands" }
+                                .testTag("slash_button"),
+                        )
+                    }
                     if (actions.agents.isNotEmpty() || actions.agentInUse != null || actions.config.controls.isNotEmpty()) {
                         AssistChip(
                             onClick = { choosingAgent = true },
@@ -724,7 +1216,13 @@ internal fun Composer(
                                     val sending = text
                                     scope.launch {
                                         busy = true
-                                        val result = actions.send(sending, chosen, agentChosen)
+                                        val currentActive = activeSlashCommand
+                            if (currentActive != null && currentActive.command.kind == SlashCommandKind.BUILT_IN && executeBuiltInCommand(currentActive.command, currentActive.arguments)) {
+                                busy = false
+                                return@launch
+                            }
+                            val payload = if (currentActive != null && currentActive.arguments.isEmpty() && sending.endsWith(" ")) sending.trimEnd() else sending
+                            val result = actions.send(payload, chosen, agentChosen)
                                         notice = InteractMessages.describe(result)
                                         if (InteractMessages.succeeded(result) && text == sending) text = ""
                                         busy = false
@@ -779,7 +1277,13 @@ internal fun Composer(
                         val sending = text
                         scope.launch {
                             busy = true
-                            val result = actions.send(sending, chosen, agentChosen)
+                            val currentActive = activeSlashCommand
+                            if (currentActive != null && currentActive.command.kind == SlashCommandKind.BUILT_IN && executeBuiltInCommand(currentActive.command, currentActive.arguments)) {
+                                busy = false
+                                return@launch
+                            }
+                            val payload = if (currentActive != null && currentActive.arguments.isEmpty() && sending.endsWith(" ")) sending.trimEnd() else sending
+                            val result = actions.send(payload, chosen, agentChosen)
                             notice = InteractMessages.describe(result)
                             // Only a message the host has taken is cleared, and only if the box still holds what was sent.
                             if (InteractMessages.succeeded(result) && text == sending) text = ""
