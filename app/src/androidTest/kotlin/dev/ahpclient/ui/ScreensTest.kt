@@ -419,6 +419,43 @@ class ScreensTest {
         rule.waitUntil(5_000) { toggledStates == listOf(false) }
     }
 
+    @Test
+    fun gitHubSignInDialogShowsDeviceCodeAndActionsAndHandlesFailure() {
+        val copied = mutableListOf<String>()
+        val opened = mutableListOf<String>()
+        var cancelled = 0
+        var retried = 0
+        val stepState = androidx.compose.runtime.mutableStateOf<SignInStep>(
+            SignInStep.AwaitingApproval("WXYZ-9876", "https://github.com/login/device", expires),
+        )
+        rule.setContent {
+            AhpTheme {
+                GitHubSignInDialog(
+                    step = stepState.value,
+                    onRetry = { retried++ },
+                    onCancel = { cancelled++ },
+                    onOpenGitHub = { opened += it },
+                    onCopyCode = { copied += it },
+                )
+            }
+        }
+
+        rule.onNodeWithTag("github_sign_in_dialog").assertIsDisplayed()
+        rule.onNodeWithTag("user_code").assertIsDisplayed().assertContentDescriptionEquals("Code W X Y Z dash 9 8 7 6")
+        rule.onNodeWithTag("copy_code").assertTouchTargetAtLeast(48.dp).performClick()
+        rule.onNodeWithTag("open_github").assertTouchTargetAtLeast(48.dp).performClick()
+        rule.onNodeWithTag("cancel_sign_in").assertTouchTargetAtLeast(48.dp).performClick()
+
+        assertEquals(listOf("WXYZ-9876"), copied)
+        assertEquals(listOf("https://github.com/login/device"), opened)
+        assertEquals(1, cancelled)
+
+        rule.runOnIdle { stepState.value = SignInStep.Failed("Network unreachable") }
+        rule.onNodeWithTag("sign_in_error").assertIsDisplayed().assertTextContains("Network unreachable", substring = true)
+        rule.onNodeWithTag("sign_in_retry").assertTouchTargetAtLeast(48.dp).performClick()
+        assertEquals(1, retried)
+    }
+
     // ---- connected --------------------------------------------------------------------------------------------
 
     @Test

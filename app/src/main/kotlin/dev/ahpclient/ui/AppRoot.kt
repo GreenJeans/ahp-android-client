@@ -77,7 +77,7 @@ fun AppRoot(
     val state by controller.state.collectAsStateWithLifecycle()
     val catalog by controller.hosts.collectAsStateWithLifecycle()
     val theme by ui.theme.collectAsStateWithLifecycle()
-    BackHandler(enabled = (state as? AppState.SignedOut)?.step is SignInStep.AwaitingApproval) { controller.cancelSignIn() }
+    BackHandler(enabled = (state as? AppState.SignedOut)?.step is SignInStep.AwaitingApproval || catalog.signInStep is SignInStep.AwaitingApproval) { controller.cancelSignIn() }
     AhpTheme(theme) {
         // Every screen but the loading one brings its own bar and applies the system-bar insets itself.
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -85,7 +85,7 @@ fun AppRoot(
                 AppState.Restoring -> Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars).testTag("restoring"), contentAlignment = Alignment.Center) { Busy("Loading…") }
                 is AppState.SignedOut -> SignInScreen(current, controller::signIn, controller::cancelSignIn, onOpenGitHub, onCopyCode, onUseDirect = controller::useDirectHosts)
                 // One call for both, so that going from the host list to a host (and back) keeps the menu, and the sheet over it, as they are.
-                AppState.Hosts, is AppState.Connected -> Shell(controller, ui, catalog, current as? AppState.Connected, monitorEnabled, notificationsAllowed, onMonitorChange, alerts, sessionRequests, quickReplyProvider)
+                AppState.Hosts, is AppState.Connected -> Shell(controller, ui, catalog, current as? AppState.Connected, monitorEnabled, notificationsAllowed, onMonitorChange, alerts, sessionRequests, quickReplyProvider, onOpenGitHub, onCopyCode)
             }
         }
     }
@@ -112,6 +112,8 @@ private fun Shell(
     alerts: FinishedAlertsUi,
     sessionRequests: Int,
     quickReplyProvider: GeminiNanoQuickReplyProvider? = null,
+    onOpenGitHub: (String) -> Unit = {},
+    onCopyCode: (String) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -302,8 +304,7 @@ private fun Shell(
                     signedIn = controller.isSignedIn,
                     tokenExpiresAt = hosts.tokenExpiresAt,
                     renews = hosts.renews,
-                    // Signing in ends the screen it is started from, so it is offered only with no host to lose.
-                    onSignIn = if (connected == null) controller::signIn else null,
+                    onSignIn = controller::signIn,
                     onSignOut = controller::signOut,
                     direct = hosts.direct,
                     onAddHost = addHost,
@@ -413,11 +414,19 @@ private fun Shell(
             // Settings is where hosts are managed; it opens over the menu as the gear does.
             onManageHosts = { page = Page.SETTINGS; menu.close() },
             onAddHost = addHost,
-            // Signing in ends the screen the sheet is on, so it is offered only with no host to lose.
-            onSignIn = if (connected == null) controller::signIn else null,
+            onSignIn = controller::signIn,
             connectedHosts = hostConnections,
             onConnectHost = controller::connectHost,
             onDisconnectHost = controller::disconnectHost,
+        )
+    }
+    if (hosts.signInStep !is SignInStep.Idle) {
+        GitHubSignInDialog(
+            step = hosts.signInStep,
+            onRetry = controller::signIn,
+            onCancel = controller::cancelSignIn,
+            onOpenGitHub = onOpenGitHub,
+            onCopyCode = onCopyCode,
         )
     }
 }

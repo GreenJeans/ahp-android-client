@@ -199,7 +199,7 @@ fun HostSheet(
                         is OtherHost.Direct -> DirectRow(other.entry, shape, { pickHost(HostRef.Direct(it)); close() }, onRemove = null, color = card)
                     }
                 }
-            } else if (hasConnected) {
+            } else if (hasConnected && !(catalog.list == HostList.NotSignedIn && onSignIn != null)) {
                 Text("No other hosts.", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).testTag("no_other_hosts"))
             }
             if (onAddHost != null) {

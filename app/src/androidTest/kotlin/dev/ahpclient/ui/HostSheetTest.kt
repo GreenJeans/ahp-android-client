@@ -217,6 +217,24 @@ class HostSheetTest {
 
         rule.onNodeWithText("Other hosts").assertIsDisplayed()
         rule.onNodeWithTag("sign_in_hint").assertIsDisplayed().assertTextContains("sign in from Settings", substring = true)
+    }
+
+    @Test
+    fun connectedToADirectHostWithSignInOfferedShowsSignInRowWithoutHintOrNoOtherHostsLine() {
+        var signedIn = 0
+        catalog = HostCatalog(HostList.NotSignedIn, direct = listOf(DirectEntry(laptop, isLastUsed = true)))
+        show(connected = HostRef.Direct(laptop), connection = ConnState.Online, onSignIn = { signedIn++ })
+
+        rule.onAllNodesWithTag("sign_in_hint").assertCountEquals(0)
+        rule.onAllNodesWithTag("no_other_hosts").assertCountEquals(0)
+        rule.onNodeWithTag("sign_in_from_hosts").performScrollTo().assertTouchTargetAtLeast(48.dp).performClick()
+        assertEquals(1, signedIn)
+    }
+
+    @Test
+    fun connectedToADirectHostWithoutSignInKeepsSignInHidden() {
+        catalog = HostCatalog(HostList.NotSignedIn, direct = listOf(DirectEntry(laptop, isLastUsed = true)))
+        show(connected = HostRef.Direct(laptop), connection = ConnState.Online, onSignIn = null)
         rule.onAllNodesWithTag("sign_in_from_hosts").assertCountEquals(0)
     }
 

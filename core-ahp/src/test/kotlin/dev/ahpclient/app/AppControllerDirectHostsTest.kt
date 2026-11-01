@@ -614,6 +614,63 @@ class AppControllerDirectHostsTest {
     }
 
     @Test
+    fun `signing in with GitHub while connected to a direct host keeps the direct connection up and loads the tunnel hosts`() = runTest {
+        withRig(saved = listOf(laptop)) {
+            val deviceCode = """{"device_code":"dc","user_code":"ABCD-1234","verification_uri":"https://github.com/login/device","expires_in":900,"interval":0}"""
+            val approved = """{"access_token":"ghu_secret","token_type":"bearer","expires_in":28800,"refresh_token":"ghr_secret"}"""
+            server.enqueue(MockResponse().setBody(deviceCode).addHeader("Content-Type", "application/json"))
+            server.enqueue(MockResponse().setBody(approved).addHeader("Content-Type", "application/json"))
+            server.enqueue(MockResponse().setBody(fixture("list-tunnels.json")).addHeader("Content-Type", "application/json"))
+            controller.start()
+            awaitHosts()
+            controller.connect(laptop)
+            val connected = assertIs<AppState.Connected>(state)
+            connected.session.connection.first { it == ConnState.Online }
+
+            controller.signIn()
+            val hosts = controller.hosts.first { it.list is HostList.Loaded }
+
+            assertSame(connected, state, "the direct host connection was never dropped")
+            assertEquals(ConnState.Online, connected.session.connection.value)
+            assertTrue(controller.isSignedIn)
+            assertEquals(SignInStep.Idle, hosts.signInStep)
+            assertEquals(listOf("test-tunnel-1", "test-tunnel-2"), (hosts.list as HostList.Loaded).hosts.map { it.tunnel.tunnelId })
+            assertEquals(listOf(laptop), hosts.direct.map { it.host })
+        }
+    }
+
+    @Test
+    fun `cancelling or failing a sign-in while connected to a direct host leaves the direct connection untouched`() = runTest {
+        withRig(saved = listOf(laptop)) {
+            val deviceCode = """{"device_code":"dc","user_code":"ABCD-1234","verification_uri":"https://github.com/login/device","expires_in":900,"interval":60}"""
+            server.enqueue(MockResponse().setBody(deviceCode).addHeader("Content-Type", "application/json"))
+            controller.start()
+            awaitHosts()
+            controller.connect(laptop)
+            val connected = assertIs<AppState.Connected>(state)
+            connected.session.connection.first { it == ConnState.Online }
+
+            controller.signIn()
+            val awaiting = controller.hosts.first { it.signInStep is SignInStep.AwaitingApproval }
+            assertEquals("ABCD-1234", (awaiting.signInStep as SignInStep.AwaitingApproval).userCode)
+            // A second call while awaiting approval is ignored.
+            controller.signIn()
+            assertEquals(1, server.requestCount)
+
+            controller.cancelSignIn()
+            assertEquals(SignInStep.Idle, controller.hosts.value.signInStep)
+            assertSame(connected, state)
+
+            // A failed device-code request records the error on HostCatalog.signInStep without disturbing the direct host.
+            server.enqueue(MockResponse().setResponseCode(503))
+            controller.signIn()
+            val failed = controller.hosts.first { it.signInStep is SignInStep.Failed }
+            assertTrue((failed.signInStep as SignInStep.Failed).message.isNotBlank())
+            assertSame(connected, state)
+        }
+    }
+
+    @Test
     fun `without a way to build direct sessions nothing can be added`() = runTest {
         withRig {
             val bare = AppController(
