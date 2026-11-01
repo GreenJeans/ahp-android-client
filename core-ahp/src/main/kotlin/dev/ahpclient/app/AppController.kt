@@ -273,6 +273,15 @@ class AppController(
                 ?.takeIf { it.uri == uri && it.reviewable }
                 ?.store?.state?.value?.files?.map { it.id }?.toSet()
         },
+        operations = { uri ->
+            (_state.value as? AppState.Connected)?.open?.changeset
+                ?.takeIf { it.uri == uri }
+                ?.store?.state?.value?.operations
+        },
+        gate = approvalGate,
+        invoke = { uri, operationId ->
+            liveSession().invokeChangesetOperation(uri, operationId)
+        },
         dispatch = { channel, action -> liveSession().dispatch(channel, action) },
     )
 
@@ -280,6 +289,12 @@ class AppController(
     suspend fun setFileReviewed(fileId: String, reviewed: Boolean): ManageResult {
         val uri = (_state.value as? AppState.Connected)?.open?.changeset?.uri ?: return ManageResult.NoSuchTarget
         return reviewer.setReviewed(uri, fileId, reviewed)
+    }
+
+    /** Runs [operationId] on the open changeset. */
+    suspend fun invokeChangesetOperation(operationId: String): ManageResult {
+        val uri = (_state.value as? AppState.Connected)?.open?.changeset?.uri ?: return ManageResult.NoSuchTarget
+        return reviewer.invokeOperation(uri, operationId)
     }
 
     @Volatile

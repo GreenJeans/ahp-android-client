@@ -1,9 +1,12 @@
 package dev.ahpclient.state
 
-import dev.ahpclient.ahp.CapabilityDeniedException
 import com.microsoft.agenthostprotocol.Ahp
 import com.microsoft.agenthostprotocol.generated.Changeset
+import com.microsoft.agenthostprotocol.generated.ChangesetOperation
+import com.microsoft.agenthostprotocol.generated.InvokeChangesetOperationResult
 import com.microsoft.agenthostprotocol.generated.StateAction
+import dev.ahpclient.ahp.AhpException
+import dev.ahpclient.ahp.CapabilityDeniedException
 import java.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -14,10 +17,26 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.jsonObject
 
 class ChangesetReviewerTest {
-    private class Rig(var allowed: Boolean = true, var files: Set<String>? = setOf("f1", "f2")) {
+    private class Rig(
+        var allowed: Boolean = true,
+        var files: Set<String>? = setOf("f1", "f2"),
+        var ops: List<ChangesetOperation>? = listOf(
+            Ahp.json.decodeFromString(ChangesetOperation.serializer(), """{"id":"stage","label":"Stage all","scopes":["changeset"],"status":"idle"}"""),
+            Ahp.json.decodeFromString(ChangesetOperation.serializer(), """{"id":"discard","label":"Discard all","scopes":["changeset"],"confirmation":"Discard all changes?","status":"idle"}"""),
+            Ahp.json.decodeFromString(ChangesetOperation.serializer(), """{"id":"file-op","label":"Stage file","scopes":["resource"],"status":"idle"}"""),
+            Ahp.json.decodeFromString(ChangesetOperation.serializer(), """{"id":"running-op","label":"Running","scopes":["changeset"],"status":"running"}"""),
+        ),
+    ) {
         val sent = mutableListOf<Pair<String, StateAction>>()
+        val invoked = mutableListOf<Pair<String, String>>()
+        val asked = mutableListOf<ApprovalRequest>()
+        var answer = true
+        var gateFailure: Exception? = null
+        var whileAsking: () -> Unit = {}
         var outcome: DispatchOutcome = DispatchOutcome.Accepted
         var failure: Exception? = null
+        var invokeResult: InvokeChangesetOperationResult =
+            Ahp.json.decodeFromString(InvokeChangesetOperationResult.serializer(), """{"message":"Done"}""")
         val reviewer = ChangesetReviewer(
             allowed = { allowed },
             reviewableFiles = { files },
@@ -25,6 +44,18 @@ class ChangesetReviewerTest {
                 failure?.let { throw it }
                 sent += channel to action
                 outcome
+            },
+            operations = { ops },
+            invoke = { uri, opId ->
+                failure?.let { throw it }
+                invoked += uri to opId
+                invokeResult
+            },
+            gate = ApprovalGate { req ->
+                asked += req
+                gateFailure?.let { throw it }
+                whileAsking()
+                answer
             },
         )
 
@@ -114,5 +145,57 @@ class ChangesetReviewerTest {
         assertTrue(reviewable(""","capabilities":{"review":{}}"""))
         assertFalse(reviewable(""))
         assertFalse(reviewable(""","capabilities":{}"""))
+    }
+
+    @Test
+    fun `invoking an operation without confirmation calls invoke directly and returns its message`() = runTest {
+        val rig = Rig()
+
+        assertEquals(ManageResult.Done("Done"), rig.reviewer.invokeOperation("ahp-changeset:/c", "stage"))
+        assertEquals(listOf("ahp-changeset:/c" to "stage"), rig.invoked)
+        assertTrue(rig.asked.isEmpty())
+    }
+
+    @Test
+    fun `invoking an operation with confirmation requires the device check and re-verifies state`() = runTest {
+        val rig = Rig()
+
+        assertEquals(ManageResult.Done("Done"), rig.reviewer.invokeOperation("ahp-changeset:/c", "discard"))
+        assertEquals(
+            listOf(ApprovalRequest(toolName = "Discard all", summary = "Discard all changes?", title = ChangesetReviewer.OPERATION_TITLE)),
+            rig.asked,
+        )
+        assertEquals(listOf("ahp-changeset:/c" to "discard"), rig.invoked)
+
+        val declined = Rig().apply { answer = false }
+        assertEquals(ManageResult.NotConfirmed, declined.reviewer.invokeOperation("ahp-changeset:/c", "discard"))
+        assertTrue(declined.invoked.isEmpty())
+
+        val vanished = Rig().apply { whileAsking = { ops = emptyList() } }
+        assertEquals(ManageResult.NoSuchTarget, vanished.reviewer.invokeOperation("ahp-changeset:/c", "discard"))
+        assertTrue(vanished.invoked.isEmpty())
+    }
+
+    @Test
+    fun `invoking an unknown or non-changeset or running operation is refused`() = runTest {
+        val rig = Rig()
+
+        assertEquals(ManageResult.NoSuchTarget, rig.reviewer.invokeOperation("ahp-changeset:/c", "unknown"))
+        assertEquals(ManageResult.NoSuchTarget, rig.reviewer.invokeOperation("ahp-changeset:/c", ""))
+        assertEquals(ManageResult.NoSuchTarget, rig.reviewer.invokeOperation("ahp-changeset:/c", "file-op"))
+        assertEquals(ManageResult.NoSuchTarget, rig.reviewer.invokeOperation("ahp-changeset:/c", "running-op"))
+
+        rig.allowed = false
+        assertEquals(ManageResult.NotAllowed, rig.reviewer.invokeOperation("ahp-changeset:/c", "stage"))
+
+        rig.allowed = true
+        rig.failure = AhpException.Rpc(-32000, "git failed", null)
+        assertIs<ManageResult.Refused>(rig.reviewer.invokeOperation("ahp-changeset:/c", "stage"))
+
+        rig.failure = CapabilityDeniedException("invokeChangesetOperation", null)
+        assertEquals(ManageResult.NotAllowed, rig.reviewer.invokeOperation("ahp-changeset:/c", "stage"))
+
+        rig.failure = IOException("offline")
+        assertIs<ManageResult.NotSent>(rig.reviewer.invokeOperation("ahp-changeset:/c", "stage"))
     }
 }

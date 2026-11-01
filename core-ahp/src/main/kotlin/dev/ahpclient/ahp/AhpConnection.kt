@@ -6,7 +6,10 @@ import dev.ahpclient.tunnel.TextSocket
 import com.microsoft.agenthostprotocol.Ahp
 import com.microsoft.agenthostprotocol.generated.ActionEnvelope
 import com.microsoft.agenthostprotocol.generated.AhpErrorCodes
+import com.microsoft.agenthostprotocol.generated.ChangesetOperationTarget
 import com.microsoft.agenthostprotocol.generated.ChatSource
+import com.microsoft.agenthostprotocol.generated.InvokeChangesetOperationParams
+import com.microsoft.agenthostprotocol.generated.InvokeChangesetOperationResult
 import com.microsoft.agenthostprotocol.generated.ContentEncoding
 import com.microsoft.agenthostprotocol.generated.CreateChatParams
 import com.microsoft.agenthostprotocol.generated.CreateSessionParams
@@ -251,6 +254,20 @@ class AhpConnection(
     /** Removes the chat at [uri]. Cannot be undone. */
     suspend fun disposeChat(uri: String) {
         requestRaw("disposeChat", json.encodeToJsonElement(DisposeChatParams.serializer(), DisposeChatParams(channel = uri)).jsonObject)
+    }
+
+    /** Invokes [operationId] on the changeset at [changesetUri]. Refused unless the tier lists `invokeChangesetOperation`. */
+    suspend fun invokeChangesetOperation(
+        changesetUri: String,
+        operationId: String,
+        target: ChangesetOperationTarget? = null,
+    ): InvokeChangesetOperationResult {
+        return request(
+            "invokeChangesetOperation",
+            InvokeChangesetOperationParams.serializer(),
+            InvokeChangesetOperationParams(channel = changesetUri, operationId = operationId, target = target),
+            InvokeChangesetOperationResult.serializer(),
+        )
     }
 
     /** The raw-reply facts of the last snapshot received for [channel] on this connection, or null. Read straight after the `subscribe` or `initialize` that brought it. */

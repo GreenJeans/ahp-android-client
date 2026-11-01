@@ -1,6 +1,7 @@
 package dev.ahpclient.state
 
 import com.microsoft.agenthostprotocol.generated.Changeset
+import com.microsoft.agenthostprotocol.generated.ChangesetOperationScope
 import com.microsoft.agenthostprotocol.generated.ChangesetState
 
 /** What changed in one file, from which sides the host reports: only an after side is an addition, only a before side a deletion. */
@@ -43,6 +44,38 @@ enum class ChangesetPhase {
     }
 }
 
+/** The status of a changeset operation offered by the host. Unknown values are treated as [DISABLED]. */
+enum class ChangesetOperationPhase {
+    IDLE,
+    RUNNING,
+    ERROR,
+    DISABLED,
+    ;
+
+    val canInvoke: Boolean
+        get() = this == IDLE || this == ERROR
+
+    companion object {
+        fun of(raw: String?): ChangesetOperationPhase = when (raw) {
+            null, "idle" -> IDLE
+            "running" -> RUNNING
+            "error" -> ERROR
+            "disabled" -> DISABLED
+            else -> DISABLED
+        }
+    }
+}
+
+/** One changeset-scoped operation the host offers on the open changeset. */
+data class ChangesetOperationItem(
+    val id: String,
+    val label: String,
+    val description: String?,
+    val confirmation: String?,
+    val phase: ChangesetOperationPhase,
+    val error: String?,
+)
+
 /**
  * A changeset as a screen shows it: the files that changed with their line counts. The files' contents are fetched only when a
  * file is opened (see [ChangesetDiffs]); here nothing is read. At most [MAX_ROWS] files are listed, and how many
@@ -55,10 +88,12 @@ data class ChangesetView(
     val omitted: Int,
     val totalAdded: Long,
     val totalRemoved: Long,
+    val operations: List<ChangesetOperationItem> = emptyList(),
 ) {
     companion object {
         const val MAX_ROWS = 500
         private const val MAX_ERROR_CHARS = 200
+        private const val MAX_OP_LABEL_CHARS = 80
 
         fun from(state: ChangesetState): ChangesetView {
             val all = state.files.map { file ->
@@ -84,6 +119,18 @@ data class ChangesetView(
                 omitted = (all.size - MAX_ROWS).coerceAtLeast(0),
                 totalAdded = all.sumOf { it.added ?: 0 },
                 totalRemoved = all.sumOf { it.removed ?: 0 },
+                operations = state.operations.orEmpty()
+                    .filter { it.id.isNotBlank() && (it.scopes.isEmpty() || ChangesetOperationScope.CHANGESET in it.scopes) }
+                    .map { op ->
+                        ChangesetOperationItem(
+                            id = op.id,
+                            label = op.label.ifBlank { op.id }.take(MAX_OP_LABEL_CHARS),
+                            description = op.description?.takeIf { it.isNotBlank() }?.take(MAX_ERROR_CHARS),
+                            confirmation = SessionDetail.plain(op.confirmation)?.takeIf { it.isNotBlank() }?.take(MAX_ERROR_CHARS),
+                            phase = ChangesetOperationPhase.of(op.status.rawValue),
+                            error = op.error?.message?.take(MAX_ERROR_CHARS)?.takeIf { it.isNotBlank() },
+                        )
+                    },
             )
         }
     }

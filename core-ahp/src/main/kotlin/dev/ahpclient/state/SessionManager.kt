@@ -96,6 +96,14 @@ class SessionManager(
     suspend fun setArchived(sessionUri: String, archived: Boolean): ManageResult =
         action(sessionUri, SessionActions.setArchived(archived))
 
+    /** Renames [sessionUri] to [title] (trimmed). Refuses a blank title or one longer than [MAX_TITLE_LENGTH]. */
+    suspend fun setTitle(sessionUri: String, title: String): ManageResult {
+        if (!allowed()) return ManageResult.NotAllowed
+        val trimmed = title.trim()
+        if (trimmed.isEmpty() || trimmed.length > MAX_TITLE_LENGTH) return ManageResult.InvalidChoice
+        return action(sessionUri, SessionActions.setTitle(trimmed))
+    }
+
     /** Starts a new, empty chat in a session that is ready. */
     suspend fun newChat(sessionUri: String): ManageResult {
         if (!allowed()) return ManageResult.NotAllowed
@@ -297,6 +305,7 @@ class SessionManager(
     companion object {
         const val SESSION_SCHEME = "ahp-session:/"
         const val CHAT_SCHEME = "ahp-chat:/"
+        const val MAX_TITLE_LENGTH = 200
         private const val READY = "ready"
     }
 }

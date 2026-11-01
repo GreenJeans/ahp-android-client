@@ -346,6 +346,48 @@ class ChangesetUiTest {
     }
 
     @Test
+    fun changesetOperationsShowButtonsAndConfirmationDialogAndResultMessage() {
+        val invoked = mutableListOf<String>()
+        val stateWithOps = Ahp.json.decodeFromString(
+            ChangesetState.serializer(),
+            """{
+                "status":"ready",
+                "files":[${file("work/a.kt")}],
+                "operations":[
+                    {"id":"stage","label":"Stage all","scopes":["changeset"],"status":"idle"},
+                    {"id":"discard","label":"Discard all","scopes":["changeset"],"status":"idle","confirmation":"Discard all uncommitted changes?"}
+                ]
+            }""",
+        )
+        rule.setContent {
+            AhpTheme {
+                ChangesetScreen(
+                    title = "Uncommitted",
+                    state = stateWithOps,
+                    error = null,
+                    connection = ConnState.Online,
+                    onBack = {},
+                    onInvokeOperation = { opId ->
+                        invoked += opId
+                        ManageResult.Done("Completed $opId")
+                    },
+                )
+            }
+        }
+
+        rule.onNodeWithTag("changeset_operations").assertIsDisplayed()
+        rule.onNodeWithTag("changeset_op_stage").assertIsDisplayed().performClick()
+        rule.waitUntil(5_000) { invoked == listOf("stage") }
+        rule.onNodeWithTag("operation_message").assertIsDisplayed().assertTextContains("Completed stage")
+
+        rule.onNodeWithTag("changeset_op_discard").assertIsDisplayed().performClick()
+        rule.onNodeWithTag("changeset_op_confirm_dialog").assertIsDisplayed()
+        rule.onNodeWithTag("changeset_op_confirm_text").assertTextContains("Discard all uncommitted changes?", substring = true)
+        rule.onNodeWithTag("changeset_op_confirm").performClick()
+        rule.waitUntil(5_000) { invoked == listOf("stage", "discard") }
+    }
+
+    @Test
     fun theDetailsSheetNoLongerListsTheChanges() {
         showBar("[$plain]", ChangeStats(3, 1))
         rule.onNodeWithTag("session_menu").performClick()

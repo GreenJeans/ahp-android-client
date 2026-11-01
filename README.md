@@ -156,8 +156,8 @@ a new decision: `terminal/input`, file writes, and signing in to anything on the
 **Looking after sessions is a second switch**, "Let this app look after sessions", also off by default, with its own dialog. It
 is only ever on while acting for the user is on, is cleared with it (on screen and on disk), is ignored on load without it, and
 is saved before it counts; turning it on or off reconnects under the new tier. It adds `session/isReadChanged`,
-`session/isArchivedChanged` and `changeset/filesReviewChanged` (mark read and mark a file viewed need no check; archiving asks first, because this host may remove the session's working copy with it, but needs no device check) and four commands: `createChat` (only in a session
-the host reports as ready, no check), and `createSession`, `disposeSession` and `disposeChat`, which **do** go through the same
+`session/isArchivedChanged`, `session/titleChanged` and `changeset/filesReviewChanged` (mark read, rename session and mark a file viewed need no check; archiving asks first, because this host may remove the session's working copy with it, but needs no device check) and five commands: `createChat` (only in a session
+the host reports as ready, no check), `invokeChangesetOperation` (for changeset-scoped operations the host lists; operations with a confirmation prompt ask first and go through the device check, re-checked after the prompt), and `createSession`, `disposeSession` and `disposeChat`, which **do** go through the same
 device check, looked up again after the prompt. Removing asks first and offers archiving as the gentler alternative. A new session
 can only use an agent the host lists and either no folder (nothing is sent for it and the host chooses where the agent works, which the device check says; it is the only choice on a host with no sessions yet) or a folder one of the host's own sessions already uses (most recent first, eight shown and the rest one tap away, never a working copy of a project: its project folder is offered instead), so nothing the host did not offer is
 sent. None of the controls exist on a connection that is not on the `MANAGE` tier. A session's main chat (and a lone chat) has no "Remove this chat…" menu item, because the host refuses it, but only after it has shut the chat down. The three switches (monitoring, acting,
@@ -179,7 +179,7 @@ diff worked out on the phone. The app asks only for the two content addresses th
 method that reads is internal to the core module. It is bounded (256 KiB a side by the host's own hint, 5,000 lines a side,
 1,000 changed lines, 2,000 lines shown, 500 characters a line), shows no file that has a NUL character or bytes that are not
 UTF-8, swaps characters that reorder text on screen for a visible mark, and shows everything as plain text. A "Viewed" box per
-file appears only when the host says the changeset is reviewable and the connection is on the manage tier.
+file appears only when the host says the changeset is reviewable and the connection is on the manage tier; changeset-scoped operations the host lists (`operations`) also appear as buttons on the manage tier.
 
 **Terminals** are watched, never typed into. A tool result that ran a command in a terminal gets an "Open live output" button, which
 shows that terminal's output as it arrives: plain text, the last 2,000 lines, with a Latest button when you scroll away. The pinned

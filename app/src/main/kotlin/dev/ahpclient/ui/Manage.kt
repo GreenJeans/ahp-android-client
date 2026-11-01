@@ -22,6 +22,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -57,6 +58,7 @@ import dev.ahpclient.state.ManageResult
 import dev.ahpclient.state.RecentFolders
 import dev.ahpclient.state.SessionConfigForm
 import dev.ahpclient.state.SessionDetail
+import dev.ahpclient.state.SessionManager
 import dev.ahpclient.state.SessionPhase
 import dev.ahpclient.state.displayPath
 import kotlinx.coroutines.launch
@@ -96,6 +98,7 @@ class ManageActionsUi(
     val sessionSettings: suspend (provider: String, folder: String?, picks: Map<String, ConfigPick>) -> ConfigOffer = { _, _, _ -> ConfigOffer.NoSettings },
     /** Connected hosts that can start a new session; when more than one is present, the dialog offers a host picker. */
     val hosts: List<HostManageTarget> = emptyList(),
+    val setTitle: suspend (sessionUri: String, title: String) -> ManageResult = { _, _ -> ManageResult.NotAllowed },
 )
 
 @Composable
@@ -444,6 +447,7 @@ fun SessionMenu(
     var busy by remember { mutableStateOf(false) }
     var confirmRemove by rememberSaveable { mutableStateOf(false) }
     var confirmArchive by rememberSaveable { mutableStateOf(false) }
+    var renaming by rememberSaveable { mutableStateOf(false) }
     var removingChat by rememberSaveable { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     fun run(call: suspend () -> ManageResult, then: (ManageResult) -> Unit = {}) {
@@ -495,6 +499,13 @@ fun SessionMenu(
             if (manage != null && manageable) {
                 HorizontalDivider()
                 DropdownMenuItem(
+                    text = { Text("Rename session…") },
+                    leadingIcon = { Icon(AppIcons.Edit, contentDescription = null) },
+                    enabled = !busy,
+                    onClick = { open = false; renaming = true },
+                    modifier = Modifier.testTag("rename_session"),
+                )
+                DropdownMenuItem(
                     text = { Text(if (detail.isRead) "Mark unread" else "Mark read") },
                     leadingIcon = { Icon(AppIcons.Mail, contentDescription = null) },
                     enabled = !busy,
@@ -539,6 +550,16 @@ fun SessionMenu(
                 )
             }
         }
+    }
+    if (renaming && manage != null) {
+        RenameSessionDialog(
+            initialTitle = detail.title,
+            onDismiss = { renaming = false },
+            onSave = { newTitle ->
+                renaming = false
+                run({ manage.setTitle(sessionUri, newTitle) })
+            },
+        )
     }
     if (confirmArchive && manage != null) {
         AlertDialog(
@@ -596,3 +617,34 @@ private fun ConfirmRemoveDialog(title: String, text: String, onConfirm: () -> Un
 
 /** The host's own words (agent names, folder paths, titles) are untrusted display text: shown as plain text and cut to a sane length. */
 private const val MAX_SHOWN = 120
+
+@Composable
+private fun RenameSessionDialog(initialTitle: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
+    var title by rememberSaveable { mutableStateOf(initialTitle.take(SessionManager.MAX_TITLE_LENGTH)) }
+    val trimmed = title.trim()
+    val valid = trimmed.isNotEmpty() && trimmed.length <= SessionManager.MAX_TITLE_LENGTH
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Rename session") },
+        text = {
+            OutlinedTextField(
+                value = title,
+                onValueChange = { if (it.length <= SessionManager.MAX_TITLE_LENGTH) title = it },
+                label = { Text("Title") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().testTag("rename_session_input"),
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { if (valid) onSave(trimmed) },
+                enabled = valid,
+                modifier = Modifier.testTag("rename_session_confirm"),
+            ) { Text("Save") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, modifier = Modifier.testTag("rename_session_cancel")) { Text("Cancel") }
+        },
+        modifier = Modifier.testTag("rename_session_dialog"),
+    )
+}

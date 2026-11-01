@@ -9,7 +9,9 @@ import dev.ahpclient.tunnel.DevTunnelsException
 import dev.ahpclient.tunnel.UpgradeRejectedException
 import com.microsoft.agenthostprotocol.generated.ActionEnvelope
 import com.microsoft.agenthostprotocol.generated.AhpErrorCodes
+import com.microsoft.agenthostprotocol.generated.ChangesetOperationTarget
 import com.microsoft.agenthostprotocol.generated.ChangesetState
+import com.microsoft.agenthostprotocol.generated.InvokeChangesetOperationResult
 import com.microsoft.agenthostprotocol.generated.ChatSource
 import com.microsoft.agenthostprotocol.generated.Implementation
 import com.microsoft.agenthostprotocol.generated.Message
@@ -488,6 +490,14 @@ class HostSession(
     override suspend fun disposeSession(uri: String) = live().disposeSession(uri)
 
     override suspend fun disposeChat(uri: String) = live().disposeChat(uri)
+
+    /** Invokes [operationId] on the changeset at [changesetUri]. */
+    suspend fun invokeChangesetOperation(
+        changesetUri: String,
+        operationId: String,
+        target: ChangesetOperationTarget? = null,
+    ): InvokeChangesetOperationResult =
+        live().invokeChangesetOperation(changesetUri, operationId, target)
 
     /** Shows the list saved last time, marked stale, unless the host's own has already arrived. */
     private suspend fun seedFromCache(target: CacheTarget) {

@@ -29,6 +29,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.compose.ui.unit.dp
 import dev.ahpclient.state.ChatRow
@@ -74,6 +75,7 @@ class ManageUiTest {
         var offer: suspend (provider: String, folder: String?, picks: Map<String, ConfigPick>) -> ConfigOffer = { _, _, _ -> ConfigOffer.NoSettings }
         val disposedSessions = mutableListOf<String>()
         val disposedChats = mutableListOf<Pair<String, String>>()
+        val renamed = mutableListOf<Pair<String, String>>()
         var result: ManageResult = ManageResult.Done()
         var created: String? = null
     }
@@ -96,6 +98,7 @@ class ManageUiTest {
         disposeSession = { calls.disposedSessions += it; calls.result },
         disposeChat = { s, c -> calls.disposedChats += s to c; calls.result },
         sessionSettings = { p, f, picks -> calls.asked += Triple(p, f, picks); calls.offer(p, f, picks) },
+        setTitle = { s, t -> calls.renamed += s to t; calls.result },
     )
 
     private fun detail(read: Boolean = false, archived: Boolean = false, phase: SessionPhase = SessionPhase.READY) = SessionDetail(
@@ -1178,6 +1181,24 @@ class ManageUiTest {
         rule.onNodeWithTag("new_session").assertIsDisplayed()
         val right = rule.onNodeWithTag("new_session").getUnclippedBoundsInRoot().right
         assertTrue("the New session button ends at $right, past the 360 dp screen", right <= 360.dp)
+    }
+
+    @Test
+    fun renamingASessionPreFillsTheCurrentTitleAndSavesTheTrimmedTitle() {
+        val calls = Calls()
+        showBar(calls, detail())
+        openMenu()
+
+        rule.onNodeWithTag("rename_session").assertIsDisplayed().performClick()
+        rule.onNodeWithTag("rename_session_dialog").assertIsDisplayed()
+        rule.onNodeWithTag("rename_session_input").assertTextContains("Fix the build")
+        rule.onNodeWithTag("rename_session_input").performTextReplacement("   ")
+        rule.onNodeWithTag("rename_session_confirm").assertIsNotEnabled()
+        rule.onNodeWithTag("rename_session_input").performTextReplacement("  Ship the release  ")
+        rule.onNodeWithTag("rename_session_confirm").assertIsEnabled().performClick()
+
+        rule.waitUntil(5_000) { calls.renamed.isNotEmpty() }
+        assertEquals(listOf(uri to "Ship the release"), calls.renamed)
     }
 
     @Test

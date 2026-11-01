@@ -240,6 +240,7 @@ private fun Shell(
                 disposeSession = controller.manager::disposeSession,
                 disposeChat = controller.manager::disposeChat,
                 hosts = orderedManageTargets,
+                setTitle = controller.manager::setTitle,
             )
         }
     } else {
@@ -474,6 +475,7 @@ private fun SessionPage(
                 onBack = controller::closeChangeset,
                 onSetReviewed = if (canManage && changeset.reviewable) controller::setFileReviewed else null,
                 onOpenFile = controller::openDiff,
+                onInvokeOperation = if (canManage) controller::invokeChangesetOperation else null,
             )
         }
     } else if (chat != null && chat.parent != null) {

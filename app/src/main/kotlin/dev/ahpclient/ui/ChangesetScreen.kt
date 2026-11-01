@@ -3,6 +3,8 @@ package dev.ahpclient.ui
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -11,11 +13,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -41,15 +45,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import com.microsoft.agenthostprotocol.generated.ChangesetState
 import dev.ahpclient.state.ChangeKind
 import dev.ahpclient.state.ChangeRow
+import dev.ahpclient.state.ChangesetOperationItem
+import dev.ahpclient.state.ChangesetOperationPhase
 import dev.ahpclient.state.ChangesetPhase
 import dev.ahpclient.state.ChangesetView
 import dev.ahpclient.state.ChannelGoneException
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.ManageMessages
 import dev.ahpclient.state.ManageResult
-import com.microsoft.agenthostprotocol.generated.ChangesetState
 import kotlinx.coroutines.launch
 
 /**
@@ -70,13 +76,14 @@ fun ChangesetScreen(
     modifier: Modifier = Modifier,
     onSetReviewed: (suspend (fileId: String, reviewed: Boolean) -> ManageResult)? = null,
     onOpenFile: ((fileId: String) -> Unit)? = null,
+    onInvokeOperation: (suspend (operationId: String) -> ManageResult)? = null,
 ) {
     ScreenScaffold(title = title, titleTag = "changeset_title", onBack = onBack, backLabel = "Back to session", large = false, modifier = modifier) {
         Column(modifier = Modifier.fillMaxSize()) {
             if (connection != ConnState.Online) ConnectionLine(connection, Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
             when {
                 error is ChannelGoneException -> ErrorText("These changes are no longer on the host.", Modifier.padding(horizontal = 24.dp).testTag("changeset_gone"))
-                state != null -> ChangesetBody(remember(state) { ChangesetView.from(state) }, onSetReviewed, onOpenFile)
+                state != null -> ChangesetBody(remember(state) { ChangesetView.from(state) }, onSetReviewed, onOpenFile, onInvokeOperation)
                 error != null -> ErrorText("Could not load these changes (${error.javaClass.simpleName}).", Modifier.padding(horizontal = 24.dp).testTag("changeset_error"))
                 else -> Busy("Loading changes…", Modifier.padding(horizontal = 24.dp).testTag("changeset_loading"))
             }
@@ -84,15 +91,40 @@ fun ChangesetScreen(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ChangesetBody(view: ChangesetView, onSetReviewed: (suspend (String, Boolean) -> ManageResult)?, onOpenFile: ((String) -> Unit)?) {
+private fun ChangesetBody(
+    view: ChangesetView,
+    onSetReviewed: (suspend (String, Boolean) -> ManageResult)?,
+    onOpenFile: ((String) -> Unit)?,
+    onInvokeOperation: (suspend (String) -> ManageResult)?,
+) {
     val scope = rememberCoroutineScope()
     val inFlight = remember { mutableStateListOf<String>() }
+    val opsInFlight = remember { mutableStateListOf<String>() }
+    var confirmingOp by remember { mutableStateOf<ChangesetOperationItem?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
+    var opMessage by remember { mutableStateOf<String?>(null) }
     val note = listOfNotNull(
         if (onOpenFile != null) "Tap a file to see what changed in it." else null,
         if (onSetReviewed != null) "Tick “Viewed” to mark a file reviewed on the host." else null,
     ).joinToString(" ").ifEmpty { "Read only: you can look at what changed, not change it." }
+    fun runOperation(opId: String) {
+        val invoke = onInvokeOperation ?: return
+        if (opId in opsInFlight) return
+        opsInFlight += opId
+        notice = null
+        opMessage = null
+        scope.launch {
+            try {
+                val res = invoke(opId)
+                notice = ManageMessages.describe(res)
+                if (res is ManageResult.Done) opMessage = res.created
+            } finally {
+                opsInFlight -= opId
+            }
+        }
+    }
     Column(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             when (view.phase) {
@@ -117,6 +149,37 @@ private fun ChangesetBody(view: ChangesetView, onSetReviewed: (suspend (String, 
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.testTag("changeset_note"),
             )
+            if (onInvokeOperation != null && view.operations.isNotEmpty()) {
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth().testTag("changeset_operations"),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    view.operations.forEach { op ->
+                        val running = op.phase == ChangesetOperationPhase.RUNNING || op.id in opsInFlight
+                        OutlinedButton(
+                            onClick = { if (op.confirmation != null) confirmingOp = op else runOperation(op.id) },
+                            enabled = op.phase.canInvoke && !running,
+                            modifier = Modifier.testTag("changeset_op_${op.id}"),
+                        ) {
+                            Text(if (running) "${op.label}…" else op.label)
+                        }
+                    }
+                }
+                view.operations.forEach { op ->
+                    op.error?.let { err ->
+                        ErrorText("${op.label}: $err", Modifier.testTag("changeset_op_error_${op.id}"))
+                    }
+                }
+            }
+            opMessage?.let { msg ->
+                Text(
+                    msg,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.testTag("operation_message").semantics { liveRegion = LiveRegionMode.Polite },
+                )
+            }
             ManageNotice(notice, "review_notice")
         }
         LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth().testTag("changeset_list")) {
@@ -149,6 +212,35 @@ private fun ChangesetBody(view: ChangesetView, onSetReviewed: (suspend (String, 
                 }
             }
         }
+    }
+    val pendingOp = confirmingOp
+    if (pendingOp != null && onInvokeOperation != null) {
+        AlertDialog(
+            onDismissRequest = { confirmingOp = null },
+            title = { Text("${pendingOp.label}?") },
+            text = {
+                Text(
+                    listOfNotNull(
+                        pendingOp.confirmation,
+                        "You will be asked for your fingerprint, face or screen lock.",
+                    ).joinToString(" "),
+                    modifier = Modifier.testTag("changeset_op_confirm_text"),
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmingOp = null
+                        runOperation(pendingOp.id)
+                    },
+                    modifier = Modifier.testTag("changeset_op_confirm"),
+                ) { Text("Run") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmingOp = null }, modifier = Modifier.testTag("changeset_op_cancel")) { Text("Cancel") }
+            },
+            modifier = Modifier.testTag("changeset_op_confirm_dialog"),
+        )
     }
 }
 
