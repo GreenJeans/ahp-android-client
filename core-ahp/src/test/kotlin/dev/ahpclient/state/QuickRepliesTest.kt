@@ -167,7 +167,7 @@ class QuickRepliesTest {
             outcome = TurnOutcome.DONE,
         )
         val doneSuggestion = QuickReplies.heuristic(doneCtx)
-        assertNotNull(doneSuggestion.summary)
+        assertNull(doneSuggestion.summary)
         assertTrue(doneSuggestion.chips.isNotEmpty())
     }
 

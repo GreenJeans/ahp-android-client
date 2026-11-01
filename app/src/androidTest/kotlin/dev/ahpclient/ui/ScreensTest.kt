@@ -394,6 +394,27 @@ class ScreensTest {
         assertEquals("gemini-2.5-pro", savedModel)
     }
 
+    @Test
+    fun settingsQuickReplyAiSourceChipsToggleBetweenOnboardAndConfiguredCloudProvider() {
+        val toggledStates = mutableListOf<Boolean>()
+        rule.setContent {
+            AhpTheme {
+                SettingsScreen(
+                    onBack = {},
+                    quickReplyMode = QuickReplyMode.AUTO,
+                    googleAiConfig = GoogleAiConfig(enabled = true, modelName = "gemini-2.5-flash", hasApiKey = true),
+                    onSaveGoogleAiConfig = { enabled, _, _, _, _ ->
+                        toggledStates += enabled
+                        true
+                    },
+                )
+            }
+        }
+
+        rule.onNodeWithTag("quick_reply_provider_onboard").performScrollTo().assertIsDisplayed().assertTouchTargetAtLeast(48.dp).performClick()
+        rule.waitUntil(5_000) { toggledStates == listOf(false) }
+    }
+
     // ---- connected --------------------------------------------------------------------------------------------
 
     @Test

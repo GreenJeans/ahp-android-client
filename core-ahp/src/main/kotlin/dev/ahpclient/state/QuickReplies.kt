@@ -100,7 +100,7 @@ fun interface QuickReplyProvider {
 object QuickReplies {
     const val MAX_LABEL_CHARS = 36
     const val MAX_PROMPT_CHARS = 600
-    const val MAX_SUMMARY_CHARS = 160
+    const val MAX_SUMMARY_CHARS = 600
     const val MAX_CHIPS = 4
     private const val PROMPT_HEAD_CHARS = 400
     private const val PROMPT_TAIL_CHARS = 1_600
@@ -113,7 +113,7 @@ object QuickReplies {
             "propose 3 to 4 concise, actionable replies the user might want to send next. " +
             "If the agent asked a question or offered options, prioritize answering or choosing among them. " +
             "Respond ONLY with valid JSON matching: " +
-            "{\"tldr\":\"Optional 1-sentence summary if the agent message is long\",\"replies\":[{\"label\":\"2-4 word button label\",\"prompt\":\"Full message to populate in the chat box\"}]}"
+            "{\"replies\":[{\"label\":\"2-4 word button label\",\"prompt\":\"Full message to populate in the chat box\"}]}"
 
     private val NUMBERED_ITEM_REGEX = Regex("""^\s*(?:(?:Option|Choice|Approach|Step)\s+)?([1-6]|[A-D])[.):\-]\s+(.+)$""", RegexOption.IGNORE_CASE)
     private val BULLET_ITEM_REGEX = Regex("""^\s*[-*•]\s+(.+)$""")
@@ -177,14 +177,12 @@ object QuickReplies {
      */
     fun heuristic(context: QuickReplyContext): QuickReplySuggestion {
         val cleanText = stripCodeBlocks(context.agentText)
-        val summary = extractHeuristicSummary(cleanText)
 
         if (context.outcome == TurnOutcome.FAILED || (context.failedTools.isNotEmpty() && cleanText.isBlank())) {
             val toolNote = context.failedTools.firstOrNull()?.let { " in $it" }.orEmpty()
             return QuickReplySuggestion(
                 turnKey = context.turnKey,
                 source = QuickReplySource.HEURISTIC,
-                summary = summary,
                 chips = listOf(
                     QuickReplyChip("Fix the error", "Please investigate the failure$toolNote and fix the error."),
                     QuickReplyChip("Explain failure", "Why did that fail$toolNote, and what are the options to resolve it?"),
@@ -197,7 +195,6 @@ object QuickReplies {
             return QuickReplySuggestion(
                 turnKey = context.turnKey,
                 source = QuickReplySource.HEURISTIC,
-                summary = summary,
                 chips = listOf(
                     QuickReplyChip("Continue", "Please continue from where you left off."),
                     QuickReplyChip("Change approach", "Instead of that approach, let's "),
@@ -211,7 +208,6 @@ object QuickReplies {
             return QuickReplySuggestion(
                 turnKey = context.turnKey,
                 source = QuickReplySource.HEURISTIC,
-                summary = summary,
                 chips = optionChips.take(MAX_CHIPS),
             )
         }
@@ -221,7 +217,6 @@ object QuickReplies {
             return QuickReplySuggestion(
                 turnKey = context.turnKey,
                 source = QuickReplySource.HEURISTIC,
-                summary = summary,
                 chips = questionChips.take(MAX_CHIPS),
             )
         }
@@ -230,7 +225,6 @@ object QuickReplies {
         return QuickReplySuggestion(
             turnKey = context.turnKey,
             source = QuickReplySource.HEURISTIC,
-            summary = summary,
             chips = followUpChips.take(MAX_CHIPS),
         )
     }
@@ -496,22 +490,6 @@ object QuickReplies {
             }
             add(QuickReplyChip("Summarize briefly", "Give me a brief 2-sentence summary of the key changes."))
         }
-    }
-
-    private fun extractHeuristicSummary(cleanText: String): String? {
-        // Only show a TL;DR summary when the agent's message is long enough to warrant one (~500+ chars).
-        if (cleanText.length < 500) return null
-        val paragraphs = cleanText.lineSequence()
-            .map { it.trim() }
-            .filter { it.isNotEmpty() && !it.startsWith("#") && !it.startsWith("-") && !it.startsWith("*") && !it.startsWith("|") }
-            .map(::cleanInlineMarkdown)
-            .filter { it.length >= 25 }
-            .toList()
-        if (paragraphs.isEmpty()) return null
-        val lastQuestion = paragraphs.lastOrNull { it.endsWith("?") }
-        val candidate = lastQuestion ?: paragraphs.first()
-        val firstSentence = candidate.split(Regex("""(?<=[.!?])\s+""")).firstOrNull()?.trim() ?: candidate
-        return truncateEllipsis(firstSentence, MAX_SUMMARY_CHARS)
     }
 
     private fun summarizeItemTitle(body: String): String {

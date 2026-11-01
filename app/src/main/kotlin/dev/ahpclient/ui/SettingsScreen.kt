@@ -565,40 +565,60 @@ private fun QuickReplyRow(
             }
         }
         if (mode != QuickReplyMode.OFF && onSaveGoogleAiConfig != null) {
-            if (googleAiConfig.hasApiKey) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 48.dp)
-                        .toggleable(
-                            value = googleAiConfig.enabled,
-                            role = Role.Switch,
-                            onValueChange = { on ->
+            Text(
+                "AI source",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = !googleAiConfig.isActive,
+                    onClick = {
+                        if (googleAiConfig.enabled) {
+                            scope.launch {
+                                onSaveGoogleAiConfig(
+                                    false,
+                                    googleAiConfig.modelName,
+                                    googleAiConfig.systemPrompt,
+                                    null,
+                                    false,
+                                )
+                            }
+                        }
+                    },
+                    label = { Text("On-device AI") },
+                    modifier = Modifier.heightIn(min = 48.dp).testTag("quick_reply_provider_onboard"),
+                )
+                FilterChip(
+                    selected = googleAiConfig.isActive,
+                    onClick = {
+                        if (googleAiConfig.hasApiKey) {
+                            if (!googleAiConfig.enabled) {
                                 scope.launch {
                                     onSaveGoogleAiConfig(
-                                        on,
+                                        true,
                                         googleAiConfig.modelName,
                                         googleAiConfig.systemPrompt,
                                         null,
                                         false,
                                     )
                                 }
+                            }
+                        } else {
+                            showingGoogleDialog = true
+                        }
+                    },
+                    label = {
+                        Text(
+                            if (googleAiConfig.hasApiKey) {
+                                "Google AI (${googleAiConfig.modelName})"
+                            } else {
+                                "Google AI"
                             },
                         )
-                        .testTag("google_ai_toggle"),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Use Google AI provider", style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            googleAiConfig.modelName,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Switch(checked = googleAiConfig.enabled, onCheckedChange = null)
-                }
+                    },
+                    modifier = Modifier.heightIn(min = 48.dp).testTag("quick_reply_provider_cloud"),
+                )
             }
             OutlinedButton(
                 onClick = { showingGoogleDialog = true },

@@ -869,14 +869,16 @@ private fun QuickReplyBar(
                 }
             }
             suggestion.summary?.let { summary ->
+                var summaryExpanded by rememberSaveable(suggestion.turnKey) { mutableStateOf(false) }
                 Text(
                     text = summary,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
+                    maxLines = if (summaryExpanded) Int.MAX_VALUE else 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier
                         .fillMaxWidth()
+                        .clickable { summaryExpanded = !summaryExpanded }
                         .padding(end = 8.dp, bottom = 2.dp)
                         .testTag("quick_reply_summary"),
                 )
@@ -1220,19 +1222,15 @@ internal fun Composer(
                 slashMatches.isEmpty() && agentMention == null
             if (showQuickReplyBar && qrContext != null) {
                 val heuristicSuggestion = remember(qrContext) { QuickReplies.heuristic(qrContext) }
-                var aiSuggestion by remember(qrContext.turnKey) { mutableStateOf<QuickReplySuggestion?>(null) }
-                var aiLoading by remember(qrContext.turnKey) { mutableStateOf(false) }
                 val provider = actions.quickReplyProvider
+                var aiSuggestion by remember(qrContext.turnKey, provider) { mutableStateOf<QuickReplySuggestion?>(null) }
+                var aiLoading by remember(qrContext.turnKey, provider) { mutableStateOf(false) }
                 LaunchedEffect(qrContext, provider) {
                     if (provider != null && aiSuggestion == null) {
                         aiLoading = true
                         val generated = provider.suggest(qrContext)
                         if (generated != null && generated.chips.isNotEmpty()) {
-                            aiSuggestion = if (generated.summary == null && heuristicSuggestion.summary != null) {
-                                generated.copy(summary = heuristicSuggestion.summary)
-                            } else {
-                                generated
-                            }
+                            aiSuggestion = generated
                         }
                         aiLoading = false
                     }
