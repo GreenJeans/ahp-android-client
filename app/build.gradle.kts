@@ -71,6 +71,7 @@ dependencies {
     implementation(libs.work.runtime.ktx)
     implementation(libs.markdown.renderer.m3)
     implementation(libs.billing.ktx)
+    implementation(libs.mlkit.genai.prompt)
     debugImplementation(libs.compose.ui.tooling)
     debugImplementation(libs.compose.ui.test.manifest)
 

@@ -13,12 +13,16 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import dev.ahpclient.ai.NanoStatus
 import dev.ahpclient.app.AppState
 import dev.ahpclient.app.SignInStep
 import dev.ahpclient.state.ConnState
+import dev.ahpclient.state.GoogleAiConfig
+import dev.ahpclient.state.QuickReplyMode
 import dev.ahpclient.ui.theme.AhpTheme
 import java.time.Instant
 import org.junit.Assert.assertEquals
@@ -331,6 +335,63 @@ class ScreensTest {
 
         rule.onNodeWithTag("about_tab_licenses").assertIsDisplayed().assertTouchTargetAtLeast(48.dp).performClick()
         rule.onNodeWithTag("about_licenses_content").assertIsDisplayed()
+    }
+
+    @Test
+    fun settingsQuickReplyRowSwitchesModesAndOffersNanoDownloadWhenDownloadable() {
+        val picked = mutableListOf<QuickReplyMode>()
+        var downloads = 0
+        rule.setContent {
+            AhpTheme {
+                SettingsScreen(
+                    onBack = {},
+                    quickReplyMode = QuickReplyMode.AUTO,
+                    onQuickReplyMode = { picked += it },
+                    nanoStatus = NanoStatus.DOWNLOADABLE,
+                    onDownloadNano = { downloads++ },
+                )
+            }
+        }
+
+        rule.onNodeWithTag("quick_reply_row").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithTag("quick_reply_on_demand").assertTouchTargetAtLeast(48.dp).performClick()
+        rule.onNodeWithTag("quick_reply_off").assertTouchTargetAtLeast(48.dp).performClick()
+        assertEquals(listOf(QuickReplyMode.ON_DEMAND, QuickReplyMode.OFF), picked)
+
+        rule.onNodeWithTag("quick_reply_download_nano").performScrollTo().assertIsDisplayed().assertTouchTargetAtLeast(48.dp).performClick()
+        assertEquals(1, downloads)
+    }
+
+    @Test
+    fun settingsGoogleProviderDialogSavesModelApiKeyAndSystemPrompt() {
+        var savedModel: String? = null
+        var savedKey: String? = null
+        var savedEnabled = false
+        rule.setContent {
+            AhpTheme {
+                SettingsScreen(
+                    onBack = {},
+                    quickReplyMode = QuickReplyMode.AUTO,
+                    googleAiConfig = GoogleAiConfig(),
+                    onSaveGoogleAiConfig = { enabled, model, _, key, _ ->
+                        savedEnabled = enabled
+                        savedModel = model
+                        savedKey = key
+                        true
+                    },
+                )
+            }
+        }
+
+        rule.onNodeWithTag("google_ai_configure_button").performScrollTo().assertIsDisplayed().assertTouchTargetAtLeast(48.dp).performClick()
+        rule.onNodeWithTag("google_ai_dialog").assertIsDisplayed()
+        rule.onNodeWithTag("google_ai_preset_gemini-2.5-pro").performClick()
+        rule.onNodeWithTag("google_ai_api_key_input").performTextInput("AIzaSyTestKey123")
+        rule.onNodeWithTag("google_ai_save").assertTouchTargetAtLeast(48.dp).performClick()
+
+        rule.waitUntil(5_000) { savedKey == "AIzaSyTestKey123" }
+        assertTrue(savedEnabled)
+        assertEquals("gemini-2.5-pro", savedModel)
     }
 
     // ---- connected --------------------------------------------------------------------------------------------

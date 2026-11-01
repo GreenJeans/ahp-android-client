@@ -53,6 +53,11 @@ import dev.ahpclient.state.ManageResult
 import dev.ahpclient.state.PendingMessageKind
 import dev.ahpclient.state.PendingMessageView
 import dev.ahpclient.state.QuestionKind
+import dev.ahpclient.state.QuickReplyChip
+import dev.ahpclient.state.QuickReplyMode
+import dev.ahpclient.state.QuickReplyProvider
+import dev.ahpclient.state.QuickReplySource
+import dev.ahpclient.state.QuickReplySuggestion
 import dev.ahpclient.state.CustomizationCategory
 import dev.ahpclient.state.CustomizationEntry
 import dev.ahpclient.state.CustomizationsView
@@ -122,6 +127,8 @@ class InteractionUiTest {
         canSideChat: Boolean = false,
         slashCommands: List<SlashCommand> = emptyList(),
         onOpenCustomizations: ((CustomizationCategory?, String) -> Unit)? = null,
+        quickReplyMode: QuickReplyMode = QuickReplyMode.OFF,
+        quickReplyProvider: QuickReplyProvider? = null,
     ) = ChatActionsUi(
         running = running,
         send = { text, model, agent -> calls.sent += text; calls.sentModels += model; calls.sentAgents += agent; calls.result },
@@ -153,6 +160,8 @@ class InteractionUiTest {
         openSideChat = { turnId, initialText, _, _ -> calls.openedSideChats += turnId to initialText; calls.manageResult },
         slashCommands = slashCommands,
         onOpenCustomizations = onOpenCustomizations,
+        quickReplyMode = quickReplyMode,
+        quickReplyProvider = quickReplyProvider,
     )
 
     private fun transcript(vararg items: TranscriptItem) = Transcript("Fix the build", ActivityState.IN_PROGRESS, null, items.toList(), hasOlder = false)
@@ -1265,6 +1274,54 @@ class InteractionUiTest {
 
         rule.onNodeWithTag("customization_use_skill_skill-eval").performClick()
         assertEquals(listOf("skill-eval"), pickedSkill)
+    }
+
+    @Test
+    fun quickReplyBarShowsInAutoModeAndTappingChipFillsComposerInputForEditing() {
+        val calls = Calls()
+        val items = listOf(
+            TranscriptItem.User("t1/user", "Can you update the parser?", turnId = "t1"),
+            TranscriptItem.Markdown("t1/m1", "Should I proceed with refactoring the parser?"),
+            TranscriptItem.TurnEnd("t1/end", TurnOutcome.DONE, 100L, "t1"),
+        )
+        show(
+            Transcript("Fix parser", ActivityState.IDLE, null, items, hasOlder = false, running = false, lastTurnId = "t1"),
+            actions(calls, running = false, quickReplyMode = QuickReplyMode.AUTO),
+        )
+
+        rule.onNodeWithTag("quick_reply_bar").assertIsDisplayed()
+        rule.onNodeWithTag("quick_reply_chip_0").assertIsDisplayed().performClick()
+        rule.waitUntil(5_000) { textInBox("Yes, please proceed.") }
+        assertTrue(calls.sent.isEmpty())
+    }
+
+    @Test
+    fun quickReplyOnDemandModeShowsSuggestButtonAndAiProviderUpgradesSuggestions() {
+        val calls = Calls()
+        val provider = QuickReplyProvider { ctx ->
+            QuickReplySuggestion(
+                turnKey = ctx.turnKey,
+                source = QuickReplySource.GEMINI_NANO,
+                summary = "AI proposed options",
+                chips = listOf(QuickReplyChip("Run unit tests", "Please run the unit tests now.")),
+            )
+        }
+        val items = listOf(
+            TranscriptItem.Markdown("t1/m1", "I finished updating the parser implementation."),
+            TranscriptItem.TurnEnd("t1/end", TurnOutcome.DONE, 100L, "t1"),
+        )
+        show(
+            Transcript("Fix parser", ActivityState.IDLE, null, items, hasOlder = false, running = false, lastTurnId = "t1"),
+            actions(calls, running = false, quickReplyMode = QuickReplyMode.ON_DEMAND, quickReplyProvider = provider),
+        )
+
+        rule.onNodeWithTag("quick_reply_bar").assertDoesNotExist()
+        rule.onNodeWithTag("quick_reply_suggest_button").assertIsDisplayed().performClick()
+
+        rule.onNodeWithTag("quick_reply_bar").assertIsDisplayed()
+        rule.onNodeWithTag("quick_reply_summary").assertTextContains("AI proposed options", substring = true)
+        rule.onNodeWithTag("quick_reply_chip_0").assertTextContains("Run unit tests", substring = true).performClick()
+        rule.waitUntil(5_000) { textInBox("Please run the unit tests now.") }
     }
 
     // ---- helpers ------------------------------------------------------------------------------------------------

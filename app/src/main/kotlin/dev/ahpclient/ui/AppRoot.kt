@@ -27,6 +27,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.microsoft.agenthostprotocol.generated.SessionState
 import com.microsoft.agenthostprotocol.generated.SessionSummary
+import dev.ahpclient.ai.GeminiNanoQuickReplyProvider
 import dev.ahpclient.app.AppController
 import dev.ahpclient.app.AppState
 import dev.ahpclient.app.ConnectedHost
@@ -71,6 +72,7 @@ fun AppRoot(
     alerts: FinishedAlertsUi = FinishedAlertsUi(),
     /** How many notification taps asked for a session; each one closes the side menu, even when that session is already open. */
     sessionRequests: Int = 0,
+    quickReplyProvider: GeminiNanoQuickReplyProvider? = null,
 ) {
     val state by controller.state.collectAsStateWithLifecycle()
     val catalog by controller.hosts.collectAsStateWithLifecycle()
@@ -83,7 +85,7 @@ fun AppRoot(
                 AppState.Restoring -> Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars).testTag("restoring"), contentAlignment = Alignment.Center) { Busy("Loading…") }
                 is AppState.SignedOut -> SignInScreen(current, controller::signIn, controller::cancelSignIn, onOpenGitHub, onCopyCode, onUseDirect = controller::useDirectHosts)
                 // One call for both, so that going from the host list to a host (and back) keeps the menu, and the sheet over it, as they are.
-                AppState.Hosts, is AppState.Connected -> Shell(controller, ui, catalog, current as? AppState.Connected, monitorEnabled, notificationsAllowed, onMonitorChange, alerts, sessionRequests)
+                AppState.Hosts, is AppState.Connected -> Shell(controller, ui, catalog, current as? AppState.Connected, monitorEnabled, notificationsAllowed, onMonitorChange, alerts, sessionRequests, quickReplyProvider)
             }
         }
     }
@@ -109,6 +111,7 @@ private fun Shell(
     onMonitorChange: (Boolean) -> Unit,
     alerts: FinishedAlertsUi,
     sessionRequests: Int,
+    quickReplyProvider: GeminiNanoQuickReplyProvider? = null,
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -118,6 +121,9 @@ private fun Shell(
     val textScale by ui.textScale.collectAsStateWithLifecycle()
     val theme by ui.theme.collectAsStateWithLifecycle()
     val keepAwake by ui.keepAwake.collectAsStateWithLifecycle()
+    val quickReplyMode by ui.quickReplyMode.collectAsStateWithLifecycle()
+    val googleAiConfig by ui.googleAiConfig.collectAsStateWithLifecycle()
+    val nanoStatus = quickReplyProvider?.status?.collectAsStateWithLifecycle()?.value
     val savedFilter by ui.sessionFilter.collectAsStateWithLifecycle()
     val connectedHosts by controller.connectedHosts.collectAsStateWithLifecycle()
     var page by rememberSaveable { mutableStateOf(Page.MAIN) }
@@ -287,48 +293,63 @@ private fun Shell(
         },
     ) {
         when (page) {
-            Page.SETTINGS -> SettingsScreen(
-                onBack = { page = Page.MAIN },
-                signedIn = controller.isSignedIn,
-                tokenExpiresAt = hosts.tokenExpiresAt,
-                renews = hosts.renews,
-                // Signing in ends the screen it is started from, so it is offered only with no host to lose.
-                onSignIn = if (connected == null) controller::signIn else null,
-                onSignOut = controller::signOut,
-                direct = hosts.direct,
-                onAddHost = addHost,
-                // Removing the host that is connected ends its connection first (the controller does that).
-                onRemoveHost = { host -> scope.launch { controller.removeDirectHost(host.id) } },
-                connectedId = connected?.host?.id,
-                monitorEnabled = monitorEnabled,
-                notificationsAllowed = notificationsAllowed,
-                onMonitorChange = onMonitorChange,
-                finishedAll = alerts.watch.all,
-                onFinishedAll = alerts.onAll,
-                interactionAllowed = interactionAllowed,
-                interactionSupported = controller.interactionSupported,
-                onInteractionChange = { on ->
-                    scope.launch {
-                        val saved = controller.setInteraction(on) && (!on || controller.setManagement(true))
-                        if (!saved) Toast.makeText(context, "Could not save the setting", Toast.LENGTH_SHORT).show()
-                    }
-                },
-                managementAllowed = managementAllowed,
-                appliesTo = controller.consentScope,
-                onManagementChange = {},
-                textScale = textScale,
-                onTextScale = ui::setTextScale,
-                theme = theme,
-                onTheme = ui::setTheme,
-                keepAwake = keepAwake,
-                onKeepAwake = ui::setKeepAwake,
-                proUnlocked = proUnlocked,
-                onPurchasePro = controller::purchasePro,
-                onRestorePro = controller::restorePro,
-                onDebugProChange = if (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
-                    { on -> scope.launch { controller.setProUnlocked(on) } }
-                } else null,
-            )
+            Page.SETTINGS -> {
+                if (quickReplyProvider != null) {
+                    LaunchedEffect(quickReplyProvider) { quickReplyProvider.refreshStatus() }
+                }
+                SettingsScreen(
+                    onBack = { page = Page.MAIN },
+                    signedIn = controller.isSignedIn,
+                    tokenExpiresAt = hosts.tokenExpiresAt,
+                    renews = hosts.renews,
+                    // Signing in ends the screen it is started from, so it is offered only with no host to lose.
+                    onSignIn = if (connected == null) controller::signIn else null,
+                    onSignOut = controller::signOut,
+                    direct = hosts.direct,
+                    onAddHost = addHost,
+                    // Removing the host that is connected ends its connection first (the controller does that).
+                    onRemoveHost = { host -> scope.launch { controller.removeDirectHost(host.id) } },
+                    connectedId = connected?.host?.id,
+                    monitorEnabled = monitorEnabled,
+                    notificationsAllowed = notificationsAllowed,
+                    onMonitorChange = onMonitorChange,
+                    finishedAll = alerts.watch.all,
+                    onFinishedAll = alerts.onAll,
+                    interactionAllowed = interactionAllowed,
+                    interactionSupported = controller.interactionSupported,
+                    onInteractionChange = { on ->
+                        scope.launch {
+                            val saved = controller.setInteraction(on) && (!on || controller.setManagement(true))
+                            if (!saved) Toast.makeText(context, "Could not save the setting", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    managementAllowed = managementAllowed,
+                    appliesTo = controller.consentScope,
+                    onManagementChange = {},
+                    textScale = textScale,
+                    onTextScale = ui::setTextScale,
+                    theme = theme,
+                    onTheme = ui::setTheme,
+                    keepAwake = keepAwake,
+                    onKeepAwake = ui::setKeepAwake,
+                    quickReplyMode = quickReplyMode,
+                    onQuickReplyMode = ui::setQuickReplyMode,
+                    nanoStatus = nanoStatus,
+                    onDownloadNano = quickReplyProvider?.let { { it.triggerDownload() } },
+                    googleAiConfig = googleAiConfig,
+                    onSaveGoogleAiConfig = quickReplyProvider?.let { provider ->
+                        { enabled, modelName, systemPrompt, newApiKey, clearKey ->
+                            provider.saveGoogleAiConfig(enabled, modelName, systemPrompt, newApiKey, clearKey)
+                        }
+                    },
+                    proUnlocked = proUnlocked,
+                    onPurchasePro = controller::purchasePro,
+                    onRestorePro = controller::restorePro,
+                    onDebugProChange = if (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+                        { on -> scope.launch { controller.setProUnlocked(on) } }
+                    } else null,
+                )
+            }
             Page.INBOX -> {
                 val reader = remember(controller) { InboxReader(controller::readWaiting) }
                 val details by reader.details.collectAsStateWithLifecycle()
@@ -354,6 +375,7 @@ private fun Shell(
                 SessionPage(
                     controller, ui, connected, open, connection, rootState, canManage, manageActions, listed, changesetTitle,
                     onChangesetTitle = { changesetTitle = it }, onMenu = menu::open, alerts = alerts,
+                    quickReplyProvider = quickReplyProvider,
                 )
             } else {
                 // The menu is the page here, held open over this strip of background; there is nothing to say behind it.
@@ -398,6 +420,7 @@ private fun SessionPage(
     onChangesetTitle: (String?) -> Unit,
     onMenu: () -> Unit,
     alerts: FinishedAlertsUi,
+    quickReplyProvider: GeminiNanoQuickReplyProvider? = null,
 ) {
     val chat = open.chat
     val sessionState by open.store.state.collectAsStateWithLifecycle()
@@ -428,7 +451,7 @@ private fun SessionPage(
         }
     } else if (chat != null && chat.parent != null) {
         // A subagent's transcript is a screen of its own over the session.
-        OpenChatView(open.uri, chat, connected.session, connection, rootState, sessionState, chatMutable, canManage, controller, ui, screen = true, modifier = Modifier)
+        OpenChatView(open.uri, chat, connected.session, connection, rootState, sessionState, chatMutable, canManage, controller, ui, screen = true, quickReplyProvider = quickReplyProvider, modifier = Modifier)
     } else {
         val error by open.store.error.collectAsStateWithLifecycle()
         val now by rememberNow()
@@ -487,6 +510,7 @@ private fun SessionPage(
                     externalRichRequest = externalRichRequest,
                     onExternalRichConsumed = { externalRichRequest = null },
                     onOpenCustomizations = { cat, q -> openCustomizationsRequest = cat to q },
+                    quickReplyProvider = quickReplyProvider,
                     modifier = Modifier,
                 )
             }
@@ -516,6 +540,7 @@ private fun OpenChatView(
     externalRichRequest: RichModalRequest? = null,
     onExternalRichConsumed: () -> Unit = {},
     onOpenCustomizations: ((CustomizationCategory?, String) -> Unit)? = null,
+    quickReplyProvider: GeminiNanoQuickReplyProvider? = null,
     modifier: Modifier,
 ) {
     val context = LocalContext.current
@@ -528,6 +553,8 @@ private fun OpenChatView(
     val canInteract by session.canInteract.collectAsStateWithLifecycle()
     val textScale by ui.textScale.collectAsStateWithLifecycle()
     val keepAwake by ui.keepAwake.collectAsStateWithLifecycle()
+    val quickReplyMode by ui.quickReplyMode.collectAsStateWithLifecycle()
+    val googleAiConfig by ui.googleAiConfig.collectAsStateWithLifecycle()
     val running = chatState?.activeTurn != null
     // The screen stays on while an agent works, when the person asked for that, and never otherwise.
     val view = LocalView.current
@@ -556,7 +583,7 @@ private fun OpenChatView(
         SlashCommands.of(sessionState, rootTyped, canFork = canFork, canSideChat = canSideChat)
     }
     val actions = if (ChatInteractor.available(chatState, canInteract)) {
-        remember(chat.interactor, running, models, inUse, agents, agentInUse, config, canFork, canSideChat, slashCommands, customizations, prefillText, agentToUse, sessionUri, chat.uri) {
+        remember(chat.interactor, running, models, inUse, agents, agentInUse, config, canFork, canSideChat, slashCommands, customizations, prefillText, agentToUse, sessionUri, chat.uri, quickReplyMode, googleAiConfig, quickReplyProvider) {
             ChatActionsUi(
                 running = running,
                 send = chat.interactor::send,
@@ -608,6 +635,8 @@ private fun OpenChatView(
                 onPrefillConsumed = onPrefillConsumed,
                 agentToUse = agentToUse,
                 onAgentToUseConsumed = onAgentToUseConsumed,
+                quickReplyMode = quickReplyMode,
+                quickReplyProvider = quickReplyProvider,
                 openSideChat = { turnId, initialText, model, agent ->
                     val msg = initialText?.let { chat.interactor.buildInitialMessage(it, model, agent) }
                     val res = controller.manager.createSideChat(sessionUri, chat.uri, turnId, msg)

@@ -52,6 +52,8 @@ import dev.ahpclient.state.ChatNotLoadedException
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.HostFileTarget
 import dev.ahpclient.state.LinkTarget
+import dev.ahpclient.state.QuickReplies
+import dev.ahpclient.state.QuickReplyMode
 import dev.ahpclient.state.Transcript
 import dev.ahpclient.state.TranscriptItem
 import dev.ahpclient.state.TranscriptRowModel
@@ -395,6 +397,9 @@ private fun TranscriptList(
             ) { Icon(AppIcons.ArrowDown, contentDescription = "Jump to latest") }
         }
         if (actions != null) {
+            val quickReplyContext = remember(transcript, actions.quickReplyMode) {
+                if (actions.quickReplyMode != QuickReplyMode.OFF) QuickReplies.extractContext(transcript) else null
+            }
             AnimatedVisibility(
                 visible = !away,
                 enter = slideInVertically { it },
@@ -410,6 +415,7 @@ private fun TranscriptList(
                         activeTurnId = transcript.activeTurnId ?: transcript.lastTurnId,
                         draftToLoad = composerDraft,
                         onDraftLoaded = { composerDraft = null },
+                        quickReplyContext = quickReplyContext,
                     )
                 }
             }
