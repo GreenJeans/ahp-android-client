@@ -36,10 +36,15 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.ahpclient.state.ActivityState
+import dev.ahpclient.state.CustomizationCategory
+import dev.ahpclient.state.CustomizationEntry
+import dev.ahpclient.state.CustomizationsView
+import dev.ahpclient.state.McpServerControlAction
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.ManageResult
 import dev.ahpclient.state.RelativeTime
 import dev.ahpclient.state.SessionGoneException
+import dev.ahpclient.state.TurnUsage
 import dev.ahpclient.tunnel.TunnelInfo
 import dev.ahpclient.ui.theme.AhpTheme
 import com.microsoft.agenthostprotocol.Ahp
@@ -784,6 +789,97 @@ class SessionScreensTest {
 
         rule.onAllNodesWithText("Branch").assertCountEquals(0)
         rule.onAllNodesWithText("Git status").assertCountEquals(0)
+    }
+
+    @Test
+    fun customizationsSheetRendersAndDispatchesMcpServerLifecycleControls() {
+        val controls = mutableListOf<Pair<String, McpServerControlAction>>()
+        val view = CustomizationsView(
+            entries = listOf(
+                CustomizationEntry(
+                    id = "mcp:1",
+                    category = CustomizationCategory.MCP_SERVERS,
+                    name = "github-mcp",
+                    mcpServerId = "github-id",
+                    statusLabel = "Ready",
+                    isReady = true,
+                ),
+                CustomizationEntry(
+                    id = "mcp:2",
+                    category = CustomizationCategory.MCP_SERVERS,
+                    name = "sqlite-mcp",
+                    mcpServerId = "sqlite-id",
+                    statusLabel = "Stopped",
+                ),
+                CustomizationEntry(
+                    id = "mcp:3",
+                    category = CustomizationCategory.MCP_SERVERS,
+                    name = "docker-mcp",
+                    mcpServerId = "docker-id",
+                    statusLabel = "Starting",
+                ),
+            ),
+        )
+        rule.setContent {
+            AhpTheme {
+                CustomizationsSheetContent(
+                    customizations = view,
+                    initialCategory = CustomizationCategory.MCP_SERVERS,
+                    onDismiss = {},
+                    onControlMcpServer = { id, action -> controls += id to action },
+                )
+            }
+        }
+
+        rule.onNodeWithTag("customization_mcp_stop_github-mcp").assertIsDisplayed().performClick()
+        rule.onNodeWithTag("customization_mcp_start_sqlite-mcp").assertIsDisplayed().performClick()
+        rule.onNodeWithTag("customization_mcp_background_docker-mcp").assertIsDisplayed().performClick()
+
+        assertEquals(
+            listOf(
+                "github-id" to McpServerControlAction.STOP,
+                "sqlite-id" to McpServerControlAction.START,
+                "docker-id" to McpServerControlAction.BACKGROUND,
+            ),
+            controls,
+        )
+    }
+
+    @Test
+    fun detailsShowAnnotationsSummaryWhenPresent() {
+        val withAnnotations = Ahp.json.decodeFromString(
+            SessionState.serializer(),
+            """{"provider":"copilotcli","title":"Fix the build","status":1,"lifecycle":"ready","activeClients":[],
+                "annotations":{"resource":"ahp-annotations:/s1","annotationCount":2,"entryCount":5},
+                "chats":[{"resource":"$mainChatUri","title":"Main","status":1,"modifiedAt":"2026-10-26T10:29:00.000Z"}]}""",
+        )
+        showDetail(withAnnotations)
+        openDetails()
+
+        rule.onNodeWithText("Annotations").assertIsDisplayed()
+        rule.onNodeWithText("2 annotations \u00b7 5 entries").assertIsDisplayed()
+    }
+
+    @Test
+    fun detailsShowTokenUsageBreakdownWhenChatUsageIsPresent() {
+        val usage = TurnUsage(inputTokens = 68_002L, outputTokens = 3_214L, cacheReadTokens = 58_793L, costAmount = 0.04)
+        rule.setContent {
+            AhpTheme {
+                SessionScreen(
+                    detailState(),
+                    null,
+                    ConnState.Online,
+                    now,
+                    {},
+                    shownChat = mainChatUri,
+                    chatUsage = usage,
+                )
+            }
+        }
+        openDetails()
+
+        rule.onNodeWithText("Token usage").assertIsDisplayed()
+        rule.onNodeWithText("68k in, 3.2k out \u00b7 58.8k cached \u00b7 $0.04").assertIsDisplayed()
     }
 
     @Test

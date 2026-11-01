@@ -68,9 +68,24 @@ data class ChatRow(
     val removable: Boolean = true,
     /** The session's main chat, the one it was started with. */
     val isMain: Boolean = false,
+    val isArchived: Boolean = false,
+    val isRead: Boolean = false,
 )
 
 /** A working directory as a person reads it: a `file:` URI becomes its decoded path, anything else is shown unchanged. */
+/** Summary of annotations attached to a session (`SessionState.annotations` or `SessionSummary.annotations`). */
+data class AnnotationsSummaryView(
+    val resource: String,
+    val annotationCount: Long,
+    val entryCount: Long,
+) {
+    val summaryText: String
+        get() = buildList {
+            add("$annotationCount ${if (annotationCount == 1L) "annotation" else "annotations"}")
+            if (entryCount > 0L) add("$entryCount ${if (entryCount == 1L) "entry" else "entries"}")
+        }.joinToString(" · ")
+}
+
 fun displayPath(uri: String): String {
     val parsed = try {
         java.net.URI(uri)
@@ -106,12 +121,21 @@ data class SessionDetail(
     val pullRequests: List<PullRequest> = extras.pullRequests,
     /** The model id the host reports for this session (E6), or null when the host reports none. */
     val model: String? = extras.model,
+    /** Summary of annotations attached to this session, or null when the host reports none. */
+    val annotations: AnnotationsSummaryView? = null,
 ) {
     /** The chat to show first: the session's main chat, or else the first the host lists. Null while the host lists none. */
     val mainChat: ChatRow? get() = chats.firstOrNull { it.isMain } ?: chats.firstOrNull()
 
     /** The chats in the order of the tabs: the main chat first, then the others as the host lists them. */
     val tabs: List<ChatRow> get() = mainChat?.let { main -> listOf(main) + chats.filter { it.uri != main.uri } }.orEmpty()
+
+    /** How many non-main chats in this session are archived. */
+    val archivedChatCount: Int get() = chats.count { it.isArchived && !it.isMain }
+
+    /** The tabs to show on screen: archived non-main chats are hidden unless [showArchived] is true. */
+    fun visibleTabs(showArchived: Boolean = false): List<ChatRow> =
+        tabs.filter { showArchived || !it.isArchived || it.isMain }
 
     companion object {
         /** The hint every pending request carries: answering happens in VS Code, never here. */
@@ -151,6 +175,8 @@ data class SessionDetail(
                         whenText = RelativeTime.format(chat.modifiedAt, now),
                         removable = canRemoveChat(state, chat.resource),
                         isMain = chat.resource == state.defaultChat,
+                        isArchived = chat.status.isArchived || summary?.chats?.firstOrNull { it.resource == chat.resource }?.status?.isArchived == true,
+                        isRead = chat.status.isRead,
                     )
                 },
                 inputNeeded = state.inputNeeded.orEmpty().map(::describe),
@@ -162,6 +188,9 @@ data class SessionDetail(
                 extras = mergedExtras,
                 pullRequests = mergedExtras.pullRequests,
                 model = mergedExtras.model,
+                annotations = (state.annotations ?: summary?.annotations)?.takeIf { it.annotationCount > 0L || it.entryCount > 0L }?.let {
+                    AnnotationsSummaryView(resource = it.resource, annotationCount = it.annotationCount, entryCount = it.entryCount)
+                },
             )
         }
 

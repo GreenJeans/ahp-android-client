@@ -96,6 +96,32 @@ class SessionManager(
     suspend fun setArchived(sessionUri: String, archived: Boolean): ManageResult =
         action(sessionUri, SessionActions.setArchived(archived))
 
+    /** Marks [chatUri] of [sessionUri] read or unread. */
+    suspend fun setChatRead(sessionUri: String, chatUri: String, read: Boolean): ManageResult =
+        chatAction(sessionUri, chatUri, SessionActions.setChatRead(read))
+
+    /** Archives or restores [chatUri] of [sessionUri]. Refuses to archive the session's main chat (`defaultChat`). */
+    suspend fun setChatArchived(sessionUri: String, chatUri: String, archived: Boolean): ManageResult {
+        if (!allowed()) return ManageResult.NotAllowed
+        val state = sessionState(sessionUri) ?: return ManageResult.NoSuchTarget
+        if (state.chats.none { it.resource == chatUri }) return ManageResult.NoSuchTarget
+        if (archived && !SessionDetail.canRemoveChat(state, chatUri)) return ManageResult.NotRemovable
+        return chatAction(sessionUri, chatUri, SessionActions.setChatArchived(archived))
+    }
+
+    /** Requests starting, stopping, or backgrounding MCP server [serverId] in [sessionUri]. */
+    suspend fun controlMcpServer(sessionUri: String, serverId: String, control: McpServerControlAction): ManageResult {
+        if (!allowed()) return ManageResult.NotAllowed
+        val trimmed = serverId.trim()
+        if (trimmed.isEmpty()) return ManageResult.InvalidChoice
+        val stateAction = when (control) {
+            McpServerControlAction.START -> SessionActions.startMcpServer(trimmed)
+            McpServerControlAction.STOP -> SessionActions.stopMcpServer(trimmed)
+            McpServerControlAction.BACKGROUND -> SessionActions.backgroundMcpServer(trimmed)
+        }
+        return action(sessionUri, stateAction)
+    }
+
     /** Renames [sessionUri] to [title] (trimmed). Refuses a blank title or one longer than [MAX_TITLE_LENGTH]. */
     suspend fun setTitle(sessionUri: String, title: String): ManageResult {
         if (!allowed()) return ManageResult.NotAllowed
@@ -255,6 +281,24 @@ class SessionManager(
         // Looked up again after the check: a chat that went away meanwhile is not removed blind.
         if (!allowed() || sessionState(sessionUri)?.chats?.any { it.resource == chatUri } != true) return ManageResult.NoSuchTarget
         return command { commands.disposeChat(chatUri) }
+    }
+
+    private suspend fun chatAction(sessionUri: String, chatUri: String, action: StateAction): ManageResult {
+        if (!allowed()) return ManageResult.NotAllowed
+        if (sessions().none { it.resource == sessionUri }) return ManageResult.NoSuchTarget
+        if (sessionState(sessionUri)?.chats?.any { it.resource == chatUri } != true) return ManageResult.NoSuchTarget
+        return try {
+            when (val outcome = dispatch(chatUri, action)) {
+                DispatchOutcome.Accepted -> ManageResult.Done()
+                else -> ManageResult.Unconfirmed(outcome)
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: CapabilityDeniedException) {
+            ManageResult.NotAllowed
+        } catch (e: IOException) {
+            ManageResult.NotSent(e)
+        }
     }
 
     private suspend fun action(sessionUri: String, action: StateAction): ManageResult {

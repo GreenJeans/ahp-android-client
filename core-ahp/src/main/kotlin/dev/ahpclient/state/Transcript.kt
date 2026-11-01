@@ -1,5 +1,10 @@
 package dev.ahpclient.state
 
+import com.microsoft.agenthostprotocol.generated.BackgroundWork
+import com.microsoft.agenthostprotocol.generated.BackgroundWorkShell
+import com.microsoft.agenthostprotocol.generated.BackgroundWorkSubagent
+import com.microsoft.agenthostprotocol.generated.BackgroundWorkUnknown
+import com.microsoft.agenthostprotocol.generated.CanvasReference
 import com.microsoft.agenthostprotocol.generated.ChatState
 import com.microsoft.agenthostprotocol.generated.Message
 import com.microsoft.agenthostprotocol.generated.ResponsePart
@@ -20,6 +25,8 @@ import com.microsoft.agenthostprotocol.generated.ToolCallStatePendingResultConfi
 import com.microsoft.agenthostprotocol.generated.ToolCallStateRunning
 import com.microsoft.agenthostprotocol.generated.ToolCallStateStreaming
 import com.microsoft.agenthostprotocol.generated.TurnState
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 
 /** How far a tool call has got, as the one-line badge says it. */
 enum class ToolState(val label: String) {
@@ -37,7 +44,31 @@ enum class ToolState(val label: String) {
 enum class TurnOutcome { DONE, STOPPED, FAILED }
 
 /** Kind of pending message waiting in the chat. */
+/** Kind of pending message waiting in the chat. */
 enum class PendingMessageKind { STEERING, QUEUED }
+
+/** Kind of active background work reported on a chat. */
+enum class BackgroundWorkKindView(val label: String) {
+    SHELL("Background shell"),
+    SUBAGENT("Background subagent"),
+    OTHER("Background task"),
+}
+
+/** An active background task (shell command or subagent) reported on the chat by the host. */
+data class BackgroundWorkView(
+    val id: String,
+    val kind: BackgroundWorkKindView,
+    val label: String,
+    val command: String? = null,
+    val terminalUri: String? = null,
+    val chatUri: String? = null,
+)
+
+/** A canvas referenced by the chat. */
+data class CanvasView(
+    val resource: String,
+    val label: String,
+)
 
 /** A steering or queued message waiting to be consumed by the agent. */
 data class PendingMessageView(
@@ -90,6 +121,7 @@ sealed interface TranscriptItem {
         val durationMs: Long?,
         val turnId: String = key.removeSuffix("/end"),
         val resumable: Boolean = false,
+        val usage: TurnUsage? = null,
     ) : TranscriptItem
 
     data class Question(override val key: String, val request: InputRequestView, val answered: Boolean, val form: InputForm? = null) : TranscriptItem
@@ -119,6 +151,12 @@ data class Transcript(
     val activeTurnId: String? = null,
     /** Identifier of the most recent completed turn, if any. */
     val lastTurnId: String? = null,
+    /** Aggregated token and cost telemetry across the turns in this chat, or null when the host reported none. */
+    val usage: TurnUsage? = null,
+    /** Active background tasks (shell processes or subagents) reported by the host on this chat. */
+    val backgroundWork: List<BackgroundWorkView> = emptyList(),
+    /** Canvases referenced by this chat. */
+    val canvases: List<CanvasView> = emptyList(),
 ) {
     /** The turn that is running has stopped for the person: a call waiting to be approved or signed in, or a question to answer. Nothing is being worked on then. */
     val waitingOnYou: Boolean
@@ -153,6 +191,7 @@ data class Transcript(
                         durationMs = turn.duration?.takeIf { it >= 0 },
                         turnId = turn.id,
                         resumable = resumable,
+                        usage = turn.usage?.extras,
                     )
                 }
             }
@@ -174,6 +213,9 @@ data class Transcript(
                 pendingMessages = pending,
                 activeTurnId = chat.activeTurn?.id,
                 lastTurnId = chat.turns.lastOrNull()?.id,
+                usage = HostExtras.chatUsage(chat),
+                backgroundWork = backgroundWorkOf(chat),
+                canvases = canvasesOf(chat),
             )
         }
 
@@ -266,6 +308,55 @@ data class Transcript(
         }
 
         private fun plain(text: StringOrMarkdown?): String? = SessionDetail.plain(text)
+
+        private const val MAX_CANVAS_LABEL_CHARS = 80
+
+        fun backgroundWorkOf(chat: ChatState?): List<BackgroundWorkView> =
+            chat?.backgroundWork.orEmpty().mapIndexed(::backgroundWorkOf)
+
+        fun canvasesOf(chat: ChatState?): List<CanvasView> =
+            chat?.canvases.orEmpty().mapNotNull(::canvasOf)
+
+        private fun backgroundWorkOf(index: Int, work: BackgroundWork): BackgroundWorkView = when (work) {
+            is BackgroundWorkShell -> {
+                val v = work.value
+                val id = v.id.ifBlank { "shell-$index" }
+                val cmd = v.command.trim().takeIf { it.isNotEmpty() }
+                val label = v.label.trim().ifEmpty { cmd ?: id }
+                BackgroundWorkView(
+                    id = id,
+                    kind = BackgroundWorkKindView.SHELL,
+                    label = label,
+                    command = cmd?.takeIf { it != label },
+                    terminalUri = v.terminal?.trim()?.takeIf { it.isNotEmpty() },
+                )
+            }
+            is BackgroundWorkSubagent -> {
+                val v = work.value
+                val id = v.id.ifBlank { "subagent-$index" }
+                val label = v.label.trim().ifEmpty { id }
+                BackgroundWorkView(
+                    id = id,
+                    kind = BackgroundWorkKindView.SUBAGENT,
+                    label = label,
+                    chatUri = v.chat.trim().takeIf { it.isNotEmpty() },
+                )
+            }
+            is BackgroundWorkUnknown -> {
+                val raw = work.raw
+                val id = raw["id"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() } ?: "work-$index"
+                val label = raw["label"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() } ?: id
+                BackgroundWorkView(id = id, kind = BackgroundWorkKindView.OTHER, label = label)
+            }
+        }
+
+        private fun canvasOf(ref: CanvasReference): CanvasView? {
+            val resource = ref.resource.trim()
+            if (resource.isEmpty()) return null
+            val tail = resource.substringAfterLast('/').substringAfterLast(':').trim()
+            val label = (if (tail.isNotEmpty()) tail else resource).take(MAX_CANVAS_LABEL_CHARS)
+            return CanvasView(resource = resource, label = label)
+        }
     }
 }
 

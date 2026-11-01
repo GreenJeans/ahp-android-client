@@ -35,6 +35,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -63,6 +64,13 @@ import dev.ahpclient.ui.chat.LinkConfirmDialog
 import dev.ahpclient.state.CustomizationCategory
 import dev.ahpclient.state.HostFileTarget
 import dev.ahpclient.state.SlashCommands
+import dev.ahpclient.state.TurnUsage
+import dev.ahpclient.state.BackgroundWorkView
+import dev.ahpclient.state.CanvasView
+import dev.ahpclient.ui.chat.BackgroundWorkBar
+import dev.ahpclient.ui.chat.BackgroundWorkChip
+import dev.ahpclient.state.ManageMessages
+import kotlinx.coroutines.launch
 import com.microsoft.agenthostprotocol.generated.RootState
 import com.microsoft.agenthostprotocol.generated.SessionState
 import com.microsoft.agenthostprotocol.generated.SessionSummary
@@ -107,6 +115,11 @@ fun SessionScreen(
     onViewHostFile: ((HostFileTarget) -> Unit)? = null,
     openCustomizationsRequest: Pair<CustomizationCategory?, String>? = null,
     onCustomizationsRequestConsumed: () -> Unit = {},
+    chatUsage: TurnUsage? = null,
+    backgroundWork: List<BackgroundWorkView> = emptyList(),
+    canvases: List<CanvasView> = emptyList(),
+    onOpenSubagent: ((String) -> Unit)? = null,
+    onOpenTerminal: ((String) -> Unit)? = null,
     chat: @Composable () -> Unit = {},
 ) {
     val detail = remember(state, now, summary) { state?.let { SessionDetail.from(it, now, summary) } }
@@ -124,13 +137,16 @@ fun SessionScreen(
         }
     }
     var notice by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
     // A chat the user has just started is not in the host's list until the host echoes it, so the tab is brought forward then.
     var pendingChat by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(requestedChat) {
         if (requestedChat != null) pendingChat = requestedChat
     }
 
-    val tabUris = detail?.tabs?.map { it.uri }.orEmpty()
+    var showArchivedChats by rememberSaveable { mutableStateOf(false) }
+    val visibleTabs = remember(detail, showArchivedChats) { detail?.visibleTabs(showArchivedChats).orEmpty() }
+    val tabUris = visibleTabs.map { it.uri }
     val canShowChat = detail != null && detail.phase != SessionPhase.FAILED
     LaunchedEffect(tabUris, shownChat, canShowChat) {
         if (canShowChat && (shownChat == null || shownChat !in tabUris)) detail.mainChat?.let { onSelectChat(it.uri) }
@@ -154,6 +170,12 @@ fun SessionScreen(
         modifier = modifier,
         actions = {
             if (detail != null) {
+                BackgroundWorkChip(
+                    items = backgroundWork,
+                    canvases = canvases,
+                    onOpenSubagent = onOpenSubagent,
+                    onOpenTerminal = onOpenTerminal,
+                )
                 ChangesChip(changes, detail.changesets, onOpenChangeset)
                 SessionMenu(
                     detail = detail,
@@ -165,6 +187,8 @@ fun SessionScreen(
                     onChatCreated = { pendingChat = it },
                     onRemoved = onRemoved,
                     alerts = alerts,
+                    showArchivedChats = showArchivedChats,
+                    onToggleArchivedChats = { showArchivedChats = !showArchivedChats },
                     customizationsCount = customizations.totalCount,
                     onShowCustomizations = {
                         customizationsCategory = null
@@ -181,7 +205,7 @@ fun SessionScreen(
                 error is SessionGoneException -> ErrorText("This session is no longer on the host.", Modifier.padding(24.dp).testTag("session_gone"))
                 detail != null -> {
                     SessionBanners(detail, notice)
-                    ChatTabs(detail.tabs, shownChat, onSelectChat)
+                    ChatTabs(visibleTabs, shownChat, onSelectChat)
                     Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                         when {
                             detail.phase == SessionPhase.FAILED -> Unit
@@ -209,6 +233,11 @@ fun SessionScreen(
             },
             onOpenLink = onOpenLink,
             onShareLink = onShareLink,
+            chatUsage = chatUsage,
+            backgroundWork = backgroundWork,
+            canvases = canvases,
+            onOpenSubagent = onOpenSubagent,
+            onOpenTerminal = onOpenTerminal,
         )
     }
     if (showCustomizations && detail != null) {
@@ -220,6 +249,15 @@ fun SessionScreen(
             onUseSlashCommand = onUseSlashCommand,
             onUseAgent = onUseAgent,
             onViewFile = onViewHostFile,
+            onControlMcpServer = if (manage != null && sessionUri.isNotEmpty()) {
+                { serverId, control ->
+                    scope.launch {
+                        notice = ManageMessages.describe(manage.controlMcpServer(sessionUri, serverId, control))
+                    }
+                }
+            } else {
+                null
+            },
         )
     }
 }
@@ -292,7 +330,13 @@ private fun ChatTabs(chats: List<ChatRow>, shownChat: String?, onSelect: (String
                 onClick = { onSelect(chat.uri) },
                 modifier = Modifier
                     .heightIn(min = 48.dp)
-                    .semantics { contentDescription = if (chat.state == ActivityState.NEEDS_INPUT) "${chat.title}, ${chat.state.label}" else chat.title }
+                    .semantics {
+                        contentDescription = buildList {
+                            add(chat.title)
+                            if (chat.state == ActivityState.NEEDS_INPUT) add(chat.state.label)
+                            if (chat.isArchived) add("Archived")
+                        }.joinToString(", ")
+                    }
                     .testTag("chat_tab"),
                 text = {
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -303,7 +347,7 @@ private fun ChatTabs(chats: List<ChatRow>, shownChat: String?, onSelect: (String
                                 modifier = Modifier.size(8.dp).testTag("chat_tab_dot").clearAndSetSemantics {},
                             ) {}
                         }
-                        Text(chat.title, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 180.dp))
+                        Text(if (chat.isArchived) "${chat.title} (archived)" else chat.title, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 180.dp))
                     }
                 },
             )
@@ -322,6 +366,11 @@ private fun DetailsSheet(
     customizationsCount: Int = 0,
     onDismiss: () -> Unit,
     onOpenCustomizations: (() -> Unit)? = null,
+    chatUsage: TurnUsage? = null,
+    backgroundWork: List<BackgroundWorkView> = emptyList(),
+    canvases: List<CanvasView> = emptyList(),
+    onOpenSubagent: ((String) -> Unit)? = null,
+    onOpenTerminal: ((String) -> Unit)? = null,
     onOpenLink: (String) -> Unit = {},
     onShareLink: ((String) -> Unit)? = null,
 ) {
@@ -363,7 +412,18 @@ private fun DetailsSheet(
                 PullRequestsSection(detail.pullRequests, onSelectUrl = { pendingPrUrl = it })
             }
 
-            Facts(detail)
+            if (backgroundWork.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Background work", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
+                    BackgroundWorkBar(
+                        items = backgroundWork,
+                        onOpenSubagent = onOpenSubagent?.let { open -> { uri -> onDismiss(); open(uri) } },
+                        onOpenTerminal = onOpenTerminal?.let { open -> { uri -> onDismiss(); open(uri) } },
+                    )
+                }
+            }
+
+            Facts(detail, chatUsage, canvases)
             if (onOpenCustomizations != null) {
                 OutlinedButton(
                     onClick = onOpenCustomizations,
@@ -425,7 +485,7 @@ private fun PullRequestsSection(pullRequests: List<PullRequest>, onSelectUrl: (S
 }
 
 @Composable
-private fun Facts(detail: SessionDetail) {
+private fun Facts(detail: SessionDetail, chatUsage: TurnUsage? = null, canvases: List<CanvasView> = emptyList()) {
     val facts = buildList {
         add("Agent" to detail.provider)
         detail.model?.let { add("Model" to it) }
@@ -433,6 +493,11 @@ private fun Facts(detail: SessionDetail) {
         detail.workingDirectories.forEach { add("Folder" to it) }
         detail.extras.branchLabel?.let { add("Branch" to it) }
         detail.extras.countsText?.let { add("Git status" to it) }
+        chatUsage?.detailText?.let { add("Token usage" to it) }
+        detail.annotations?.summaryText?.let { add("Annotations" to it) }
+        if (canvases.isNotEmpty()) {
+            add("Canvases" to canvases.joinToString(" · ") { it.label })
+        }
     }
     Column {
         facts.forEachIndexed { index, (label, value) ->

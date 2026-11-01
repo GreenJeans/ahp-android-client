@@ -114,4 +114,20 @@ class HostQuirksTest {
         assertTrue(assertFailsWith<AhpException.Protocol> { connection.initialize(clientInfo) }.message!!.contains("initialize"))
         assertEquals(JsonPrimitive("x"), HostQuirks.result(JsonPrimitive("x")))
     }
+
+    @Test
+    fun `archived true on chat summaries in listSessions is folded into SessionStatus IS_ARCHIVED`() {
+        val raw = parse(
+            """{"items":[{"resource":"ahp-session:/s1","provider":"copilotcli","title":"T","status":1,"createdAt":"2026-10-20T09:00:00Z","modifiedAt":"2026-10-20T10:00:00Z",
+                "chats":[
+                    {"resource":"ahp-chat:/c1","title":"Main","status":1,"modifiedAt":"2026-10-20T10:00:00Z"},
+                    {"resource":"ahp-chat:/c2","title":"Old side","status":1,"archived":true,"modifiedAt":"2026-10-20T09:30:00Z"}
+                ]}]}""",
+        )
+        val fixed = HostQuirks.result(raw) as JsonObject
+        val chats = fixed["items"]!!.jsonArray.single().jsonObject["chats"]!!.jsonArray
+
+        assertEquals("1", chats[0].jsonObject["status"]!!.jsonPrimitive.content)
+        assertEquals("65", chats[1].jsonObject["status"]!!.jsonPrimitive.content)
+    }
 }

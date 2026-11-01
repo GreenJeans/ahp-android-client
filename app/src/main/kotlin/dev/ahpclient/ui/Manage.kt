@@ -55,6 +55,7 @@ import dev.ahpclient.state.ConfigPick
 import dev.ahpclient.state.ChatRow
 import dev.ahpclient.state.ManageMessages
 import dev.ahpclient.state.ManageResult
+import dev.ahpclient.state.McpServerControlAction
 import dev.ahpclient.state.RecentFolders
 import dev.ahpclient.state.SessionConfigForm
 import dev.ahpclient.state.SessionDetail
@@ -99,6 +100,9 @@ class ManageActionsUi(
     /** Connected hosts that can start a new session; when more than one is present, the dialog offers a host picker. */
     val hosts: List<HostManageTarget> = emptyList(),
     val setTitle: suspend (sessionUri: String, title: String) -> ManageResult = { _, _ -> ManageResult.NotAllowed },
+    val setChatRead: suspend (sessionUri: String, chatUri: String, read: Boolean) -> ManageResult = { _, _, _ -> ManageResult.NotAllowed },
+    val setChatArchived: suspend (sessionUri: String, chatUri: String, archived: Boolean) -> ManageResult = { _, _, _ -> ManageResult.NotAllowed },
+    val controlMcpServer: suspend (sessionUri: String, serverId: String, control: McpServerControlAction) -> ManageResult = { _, _, _ -> ManageResult.NotAllowed },
 )
 
 @Composable
@@ -442,6 +446,8 @@ fun SessionMenu(
     alerts: FinishedAlertsUi? = null,
     customizationsCount: Int = 0,
     onShowCustomizations: (() -> Unit)? = null,
+    showArchivedChats: Boolean = false,
+    onToggleArchivedChats: (() -> Unit)? = null,
 ) {
     var open by rememberSaveable { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
@@ -496,6 +502,23 @@ fun SessionMenu(
                     modifier = Modifier.semantics { stateDescription = if (everySession) "On for every session" else if (on) "On" else "Off" }.testTag("toggle_alert"),
                 )
             }
+            if (onToggleArchivedChats != null && (detail.archivedChatCount > 0 || showArchivedChats)) {
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            if (detail.archivedChatCount > 0 && !showArchivedChats) {
+                                "Show archived chats (${detail.archivedChatCount})"
+                            } else {
+                                "Show archived chats"
+                            },
+                        )
+                    },
+                    leadingIcon = { Icon(AppIcons.Archive, contentDescription = null) },
+                    trailingIcon = if (showArchivedChats) ({ Icon(AppIcons.Check, contentDescription = null) }) else null,
+                    onClick = { open = false; onToggleArchivedChats() },
+                    modifier = Modifier.semantics { stateDescription = if (showArchivedChats) "On" else "Off" }.testTag("toggle_show_archived_chats"),
+                )
+            }
             if (manage != null && manageable) {
                 HorizontalDivider()
                 DropdownMenuItem(
@@ -526,6 +549,24 @@ fun SessionMenu(
                     onClick = { open = false; run({ manage.newChat(sessionUri) }) { result -> (result as? ManageResult.Done)?.created?.let(onChatCreated) } },
                     modifier = Modifier.testTag("new_chat"),
                 )
+                if (detail.chats.size > 1 && shownChat != null) {
+                    DropdownMenuItem(
+                        text = { Text(if (shownChat.isRead) "Mark chat unread" else "Mark chat read") },
+                        leadingIcon = { Icon(AppIcons.Mail, contentDescription = null) },
+                        enabled = !busy,
+                        onClick = { open = false; run({ manage.setChatRead(sessionUri, shownChat.uri, !shownChat.isRead) }) },
+                        modifier = Modifier.testTag("toggle_chat_read"),
+                    )
+                    if (shownChat.removable) {
+                        DropdownMenuItem(
+                            text = { Text(if (shownChat.isArchived) "Restore chat" else "Archive chat") },
+                            leadingIcon = { Icon(if (shownChat.isArchived) AppIcons.Refresh else AppIcons.Archive, contentDescription = null) },
+                            enabled = !busy,
+                            onClick = { open = false; run({ manage.setChatArchived(sessionUri, shownChat.uri, !shownChat.isArchived) }) },
+                            modifier = Modifier.testTag("toggle_chat_archive"),
+                        )
+                    }
+                }
                 val destructiveColors = MenuDefaults.itemColors(
                     textColor = MaterialTheme.colorScheme.error,
                     leadingIconColor = MaterialTheme.colorScheme.error,

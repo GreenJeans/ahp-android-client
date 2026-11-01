@@ -76,6 +76,8 @@ class ManageUiTest {
         val disposedSessions = mutableListOf<String>()
         val disposedChats = mutableListOf<Pair<String, String>>()
         val renamed = mutableListOf<Pair<String, String>>()
+        val chatRead = mutableListOf<Triple<String, String, Boolean>>()
+        val chatArchived = mutableListOf<Triple<String, String, Boolean>>()
         var result: ManageResult = ManageResult.Done()
         var created: String? = null
     }
@@ -99,6 +101,8 @@ class ManageUiTest {
         disposeChat = { s, c -> calls.disposedChats += s to c; calls.result },
         sessionSettings = { p, f, picks -> calls.asked += Triple(p, f, picks); calls.offer(p, f, picks) },
         setTitle = { s, t -> calls.renamed += s to t; calls.result },
+        setChatRead = { s, c, r -> calls.chatRead += Triple(s, c, r); calls.result },
+        setChatArchived = { s, c, a -> calls.chatArchived += Triple(s, c, a); calls.result },
     )
 
     private fun detail(read: Boolean = false, archived: Boolean = false, phase: SessionPhase = SessionPhase.READY) = SessionDetail(
@@ -1199,6 +1203,58 @@ class ManageUiTest {
 
         rule.waitUntil(5_000) { calls.renamed.isNotEmpty() }
         assertEquals(listOf(uri to "Ship the release"), calls.renamed)
+    }
+
+    @Test
+    fun multiChatSessionMenuTogglesChatReadArchiveAndShowArchivedChats() {
+        val calls = Calls()
+        val mainChat = ChatRow("ahp-chat:/c1", "Main", dev.ahpclient.state.ActivityState.IDLE, null, "1m", removable = false, isArchived = false, isRead = false)
+        val sideChat = ChatRow("ahp-chat:/c2", "Side", dev.ahpclient.state.ActivityState.IDLE, null, "2m", removable = true, isArchived = true, isRead = true)
+        val multiDetail = SessionDetail(
+            title = "Multi",
+            state = dev.ahpclient.state.ActivityState.IDLE,
+            provider = "copilotcli",
+            activity = null,
+            project = null,
+            workingDirectories = emptyList(),
+            chats = listOf(mainChat, sideChat),
+            inputNeeded = emptyList(),
+            isArchived = false,
+            isRead = true,
+            phase = SessionPhase.READY,
+        )
+        var showArchivedChats by mutableStateOf(false)
+        rule.setContent {
+            AhpTheme {
+                SessionMenu(
+                    detail = multiDetail,
+                    sessionUri = uri,
+                    manage = actions(calls),
+                    shownChat = sideChat,
+                    onShowDetails = {},
+                    onNotice = {},
+                    onChatCreated = {},
+                    onRemoved = {},
+                    showArchivedChats = showArchivedChats,
+                    onToggleArchivedChats = { showArchivedChats = !showArchivedChats },
+                )
+            }
+        }
+        openMenu()
+
+        rule.onNodeWithTag("toggle_show_archived_chats").assertTextEquals("Show archived chats (1)").assert(hasState("Off")).performClick()
+        assertTrue(showArchivedChats)
+
+        openMenu()
+        rule.onNodeWithTag("toggle_show_archived_chats").assertTextEquals("Show archived chats").assert(hasState("On"))
+        rule.onNodeWithTag("toggle_chat_read").assertTextEquals("Mark chat unread").performClick()
+        rule.waitUntil(5_000) { calls.chatRead.isNotEmpty() }
+        assertEquals(listOf(Triple(uri, "ahp-chat:/c2", false)), calls.chatRead)
+
+        openMenu()
+        rule.onNodeWithTag("toggle_chat_archive").assertTextEquals("Restore chat").performClick()
+        rule.waitUntil(5_000) { calls.chatArchived.isNotEmpty() }
+        assertEquals(listOf(Triple(uri, "ahp-chat:/c2", false)), calls.chatArchived)
     }
 
     @Test

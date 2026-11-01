@@ -2,6 +2,7 @@ package dev.ahpclient.state
 
 import dev.ahpclient.app.SafeLinks
 import com.microsoft.agenthostprotocol.generated.ChatOrigin
+import com.microsoft.agenthostprotocol.generated.ChatState
 import com.microsoft.agenthostprotocol.generated.Message
 import com.microsoft.agenthostprotocol.generated.SessionOriginAutomation
 import com.microsoft.agenthostprotocol.generated.SessionOriginUnknown
@@ -15,6 +16,8 @@ import com.microsoft.agenthostprotocol.generated.ToolCallStatePendingConfirmatio
 import com.microsoft.agenthostprotocol.generated.ToolCallStatePendingResultConfirmation
 import com.microsoft.agenthostprotocol.generated.ToolCallStateRunning
 import com.microsoft.agenthostprotocol.generated.ToolCallStateStreaming
+import com.microsoft.agenthostprotocol.generated.UsageInfo
+import java.util.Locale
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -122,6 +125,74 @@ data class MessageExtras(
  * Reads host extensions out of a decoded `_meta`. Every field is optional: a missing key, a value of the wrong type, an oversized or
  * hostile value gives `null` or the default, never an exception, so a host that sends something new cannot break a screen.
  */
+/**
+ * Token counts and optional cost reported for a turn or aggregated across a chat (`UsageInfo` and its `_meta`, E1).
+ * Every count and cost is positive and bounded; when no positive count or cost is present, [HostExtras.usage] returns `null`.
+ */
+data class TurnUsage(
+    val inputTokens: Long? = null,
+    val outputTokens: Long? = null,
+    val cacheReadTokens: Long? = null,
+    val cacheWriteTokens: Long? = null,
+    val costAmount: Double? = null,
+    val costCurrency: String? = null,
+    val model: String? = null,
+) {
+    /** Total input + output tokens (or cache tokens when input/output are omitted), or null when none are positive. */
+    val totalTokens: Long?
+        get() {
+            val inOut = (inputTokens ?: 0L) + (outputTokens ?: 0L)
+            if (inOut > 0L) return inOut
+            val cache = (cacheReadTokens ?: 0L) + (cacheWriteTokens ?: 0L)
+            return cache.takeIf { it > 0L }
+        }
+
+    /** Cost formatted for display (`"$0.04"`, `"$0.0025"`, `"0.04 EUR"`), or null when unreported or zero. */
+    val costText: String?
+        get() {
+            val amount = costAmount?.takeIf { it > 0.0 && it.isFinite() } ?: return null
+            val digits = if (amount < 0.01) {
+                String.format(Locale.US, "%.4f", amount).trimEnd('0').trimEnd('.')
+            } else {
+                String.format(Locale.US, "%.2f", amount)
+            }
+            val cur = costCurrency?.trim()?.takeIf { it.isNotEmpty() }
+            return if (cur == null || cur.equals("USD", ignoreCase = true)) "$$digits" else "$digits $cur"
+        }
+
+    /** Compact one-line summary for a `TurnEnd` row (`"71.2k tok"`, `"71.2k tok · $0.04"`), or null when empty. */
+    val summaryText: String?
+        get() = listOfNotNull(
+            totalTokens?.let { "${formatTokens(it)} tok" },
+            costText,
+        ).joinToString(" \u00b7 ").ifEmpty { null }
+
+    /** Full breakdown for the session `DetailsSheet` (`"68k in, 3.2k out · 58.8k cached · $0.04"`), or null when empty. */
+    val detailText: String?
+        get() {
+            val inOut = listOfNotNull(
+                inputTokens?.takeIf { it > 0L }?.let { "${formatTokens(it)} in" },
+                outputTokens?.takeIf { it > 0L }?.let { "${formatTokens(it)} out" },
+            ).joinToString(", ").ifEmpty { null }
+            return listOfNotNull(
+                inOut,
+                cacheReadTokens?.takeIf { it > 0L }?.let { "${formatTokens(it)} cached" },
+                cacheWriteTokens?.takeIf { it > 0L }?.let { "${formatTokens(it)} cache write" },
+                costText,
+            ).joinToString(" \u00b7 ").ifEmpty { null }
+        }
+
+    companion object {
+        fun formatTokens(tokens: Long): String {
+            if (tokens < 1_000L) return tokens.toString()
+            if (tokens < 999_950L) {
+                return String.format(Locale.US, "%.1f", tokens / 1_000.0).removeSuffix(".0") + "k"
+            }
+            return String.format(Locale.US, "%.1f", tokens / 1_000_000.0).removeSuffix(".0") + "M"
+        }
+    }
+}
+
 object HostExtras {
     const val MAX_TEXT = 200
     const val MAX_URL = 500
@@ -130,6 +201,12 @@ object HostExtras {
     private const val MAX_ROOTS = 16
     private const val MAX_COUNT = 1_000_000
     private const val MAX_DURATION_MS = 86_400_000L
+    private const val MAX_TOKENS = 1_000_000_000L
+    private const val MAX_COST = 1_000_000.0
+
+    private val CACHE_WRITE_KEYS = listOf("ahpd.cacheWriteTokens", "cacheWriteTokens", "vscode.cacheWriteTokens")
+    private val COST_AMOUNT_KEYS = listOf("cost", "ahpd.cost.amount", "cost.amount", "vscode.cost")
+    private val COST_CURRENCY_KEYS = listOf("ahpd.cost.currency", "cost.currency", "currency")
 
     private val PROGRESS_KEYS = listOf("progressMessage", "vscode.toolCall.progressMessage", "ahpd.progressMessage")
     private val TOOL_KIND_KEYS = listOf("toolKind", "vscode.toolCall.toolKind", "ahpd.toolKind")
@@ -228,6 +305,71 @@ object HostExtras {
     }
 
     /** Reads [MessageExtras] from a message's `_meta` (E4). */
+    /** Reads [TurnUsage] from a turn's [UsageInfo] and its `_meta`, or returns `null` when no positive token count or cost was reported. */
+    fun usage(info: UsageInfo?): TurnUsage? {
+        info ?: return null
+        val root = info.meta?.takeIf { it.isNotEmpty() }?.let(::JsonObject)
+        val input = info.inputTokens?.takeIf { it in 1L..MAX_TOKENS }
+        val output = info.outputTokens?.takeIf { it in 1L..MAX_TOKENS }
+        val cacheRead = info.cacheReadTokens?.takeIf { it in 1L..MAX_TOKENS }
+        val cacheWrite = root?.let { r -> CACHE_WRITE_KEYS.firstNotNullOfOrNull { r.tokens(it) } }
+        val costAmount = root?.let { r -> COST_AMOUNT_KEYS.firstNotNullOfOrNull { r.amount(it) } }
+        val costCurrency = if (costAmount != null) root.let { r -> COST_CURRENCY_KEYS.firstNotNullOfOrNull { r.text(it, MAX_STATE) } } else null
+        val model = info.model?.filterNot { it.isISOControl() }?.trim()?.take(MAX_TEXT)?.trim()?.ifEmpty { null }
+        if (input == null && output == null && cacheRead == null && cacheWrite == null && costAmount == null) return null
+        return TurnUsage(
+            inputTokens = input,
+            outputTokens = output,
+            cacheReadTokens = cacheRead,
+            cacheWriteTokens = cacheWrite,
+            costAmount = costAmount,
+            costCurrency = costCurrency,
+            model = model,
+        )
+    }
+
+    /** Aggregates [TurnUsage] across all completed turns and the active turn of [chat], or returns `null` when none report usage. */
+    fun chatUsage(chat: ChatState?): TurnUsage? {
+        chat ?: return null
+        val turns = (chat.turns.map { it.usage } + listOfNotNull(chat.activeTurn?.usage)).mapNotNull(::usage)
+        if (turns.isEmpty()) return null
+        fun sumTokens(selector: (TurnUsage) -> Long?): Long? {
+            val values = turns.mapNotNull(selector)
+            if (values.isEmpty()) return null
+            return values.sumOf { it }.coerceAtMost(MAX_TOKENS).takeIf { it > 0L }
+        }
+        val costTurns = turns.filter { it.costAmount != null }
+        val currencies = costTurns.mapNotNull { it.costCurrency?.uppercase(Locale.US) }.distinct()
+        val compatibleCost = currencies.size <= 1 && (currencies.isEmpty() || costTurns.all { it.costCurrency == null || it.costCurrency.equals(currencies.single(), ignoreCase = true) })
+        val totalCost = if (costTurns.isNotEmpty() && compatibleCost) {
+            costTurns.sumOf { it.costAmount!! }.coerceAtMost(MAX_COST).takeIf { it > 0.0 }
+        } else {
+            null
+        }
+        val currency = if (totalCost != null) costTurns.firstNotNullOfOrNull { it.costCurrency } else null
+        return TurnUsage(
+            inputTokens = sumTokens { it.inputTokens },
+            outputTokens = sumTokens { it.outputTokens },
+            cacheReadTokens = sumTokens { it.cacheReadTokens },
+            cacheWriteTokens = sumTokens { it.cacheWriteTokens },
+            costAmount = totalCost,
+            costCurrency = currency,
+            model = turns.lastOrNull { it.model != null }?.model,
+        )
+    }
+
+    private fun JsonObject.tokens(key: String): Long? {
+        val primitive = at(key) as? JsonPrimitive ?: return null
+        if (primitive.isString) return null
+        return primitive.content.toLongOrNull()?.takeIf { it in 1L..MAX_TOKENS }
+    }
+
+    private fun JsonObject.amount(key: String): Double? {
+        val primitive = at(key) as? JsonPrimitive ?: return null
+        if (primitive.isString) return null
+        return primitive.content.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0.0 && it <= MAX_COST }
+    }
+
     fun message(meta: Map<String, JsonElement>?): MessageExtras {
         if (meta.isNullOrEmpty()) return MessageExtras.NONE
         val root = JsonObject(meta)
@@ -340,3 +482,5 @@ val SessionState.extras: SessionExtras get() = HostExtras.session(meta)
 val ToolCallState.extras: StepExtras get() = HostExtras.step(this)
 
 val Message.extras: MessageExtras get() = HostExtras.message(meta)
+
+val UsageInfo.extras: TurnUsage? get() = HostExtras.usage(this)

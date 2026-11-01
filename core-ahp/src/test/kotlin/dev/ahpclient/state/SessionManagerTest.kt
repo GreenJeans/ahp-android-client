@@ -707,6 +707,46 @@ class SessionManagerTest {
         assertEquals("""{"type":"session/isArchivedChanged","isArchived":true}""", wire(SessionActions.setArchived(true)).toString())
         assertEquals("""{"type":"session/isArchivedChanged","isArchived":false}""", wire(SessionActions.setArchived(false)).toString())
         assertEquals("""{"type":"session/titleChanged","title":"New title"}""", wire(SessionActions.setTitle("New title")).toString())
+        assertEquals("""{"type":"chat/isReadChanged","isRead":true}""", wire(SessionActions.setChatRead(true)).toString())
+        assertEquals("""{"type":"chat/isArchivedChanged","isArchived":true}""", wire(SessionActions.setChatArchived(true)).toString())
+        assertEquals("""{"type":"session/mcpServerStartRequested","id":"srv-1"}""", wire(SessionActions.startMcpServer("srv-1")).toString())
+        assertEquals("""{"type":"session/mcpServerStopRequested","id":"srv-1"}""", wire(SessionActions.stopMcpServer("srv-1")).toString())
+        assertEquals("""{"type":"session/mcpServerBackgroundRequested","id":"srv-1"}""", wire(SessionActions.backgroundMcpServer("srv-1")).toString())
+    }
+
+    @Test
+    fun `setChatRead and setChatArchived dispatch on the chat channel and refuse archiving the main chat`() = runTest {
+        val rig = Rig()
+
+        assertEquals(ManageResult.Done(), rig.manager.setChatRead(s1, c1, true))
+        assertEquals(ManageResult.Done(), rig.manager.setChatArchived(s1, c2, true))
+        assertEquals(listOf(c1, c2), rig.sent.map { it.first })
+        assertEquals("""{"type":"chat/isReadChanged","isRead":true}""", wire(rig.sent[0].second).toString())
+        assertEquals("""{"type":"chat/isArchivedChanged","isArchived":true}""", wire(rig.sent[1].second).toString())
+
+        // Main chat cannot be archived
+        rig.states[s1] = state("ready", c1 to "Main", c2 to "Side", defaultChat = c1)
+        assertEquals(ManageResult.NotRemovable, rig.manager.setChatArchived(s1, c1, true))
+        // Unlisted chat -> NoSuchTarget
+        assertEquals(ManageResult.NoSuchTarget, rig.manager.setChatRead(s1, "ahp-chat:/other", true))
+        assertEquals(ManageResult.NoSuchTarget, rig.manager.setChatArchived(s1, "ahp-chat:/other", true))
+    }
+
+    @Test
+    fun `controlMcpServer dispatches start, stop, and background actions on the session channel`() = runTest {
+        val rig = Rig()
+
+        assertEquals(ManageResult.Done(), rig.manager.controlMcpServer(s1, " github ", McpServerControlAction.START))
+        assertEquals(ManageResult.Done(), rig.manager.controlMcpServer(s1, "github", McpServerControlAction.BACKGROUND))
+        assertEquals(ManageResult.Done(), rig.manager.controlMcpServer(s1, "github", McpServerControlAction.STOP))
+        assertEquals(listOf(s1, s1, s1), rig.sent.map { it.first })
+        assertEquals("""{"type":"session/mcpServerStartRequested","id":"github"}""", wire(rig.sent[0].second).toString())
+        assertEquals("""{"type":"session/mcpServerBackgroundRequested","id":"github"}""", wire(rig.sent[1].second).toString())
+        assertEquals("""{"type":"session/mcpServerStopRequested","id":"github"}""", wire(rig.sent[2].second).toString())
+
+        assertEquals(ManageResult.InvalidChoice, rig.manager.controlMcpServer(s1, "   ", McpServerControlAction.START))
+        rig.allowed = false
+        assertEquals(ManageResult.NotAllowed, rig.manager.controlMcpServer(s1, "github", McpServerControlAction.START))
     }
 
     @Test

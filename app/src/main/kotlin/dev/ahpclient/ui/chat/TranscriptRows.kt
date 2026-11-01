@@ -498,7 +498,7 @@ private fun TurnEndRow(item: TranscriptItem.TurnEnd, actions: ChatActionsUi?, mo
         TurnOutcome.STOPPED -> Glyph.QUIET to "Stopped"
         TurnOutcome.FAILED -> Glyph.FAILED to "Failed"
     }
-    val text = listOfNotNull(word, TurnDuration.format(item.durationMs)).joinToString(" \u00b7 ")
+    val text = listOfNotNull(word, TurnDuration.format(item.durationMs), item.usage?.summaryText).joinToString(" \u00b7 ")
     var confirmRetry by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<String?>(null) }

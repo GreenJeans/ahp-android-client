@@ -93,6 +93,13 @@ data class AgentMentionQuery(
 /**
  * Categories shown in the environment Customizations sheet, matching the VS Code Agents panel.
  */
+/** Lifecycle actions a client on the MANAGE tier can request for an MCP server in a session. */
+enum class McpServerControlAction(val label: String) {
+    START("Start"),
+    STOP("Stop"),
+    BACKGROUND("Background"),
+}
+
 enum class CustomizationCategory(val label: String) {
     PLUGINS("Plugins"),
     MCP_SERVERS("MCP Servers"),
@@ -115,6 +122,7 @@ data class CustomizationEntry(
     val source: String? = null,
     val enabled: Boolean = true,
     val userInvokable: Boolean = true,
+    val mcpServerId: String? = null,
     val statusLabel: String? = null,
     val isError: Boolean = false,
     val isReady: Boolean = false,
@@ -123,6 +131,21 @@ data class CustomizationEntry(
 ) {
     /** Whether this customization is backed by a host `file://` URI that can be opened in the file viewer. */
     val canViewFile: Boolean get() = uri?.let { HostFileTarget.of(it) } != null
+
+    /** Whether this MCP server entry can be started (or restarted after an error/auth prompt). */
+    val canStartMcp: Boolean
+        get() = category == CustomizationCategory.MCP_SERVERS && enabled && !mcpServerId.isNullOrBlank() &&
+            (statusLabel == "Stopped" || statusLabel == "Error" || statusLabel == "Auth required")
+
+    /** Whether this MCP server entry can be stopped. */
+    val canStopMcp: Boolean
+        get() = category == CustomizationCategory.MCP_SERVERS && enabled && !mcpServerId.isNullOrBlank() &&
+            (statusLabel == "Ready" || statusLabel == "Starting")
+
+    /** Whether this starting MCP server entry can be moved to the background. */
+    val canBackgroundMcp: Boolean
+        get() = category == CustomizationCategory.MCP_SERVERS && enabled && !mcpServerId.isNullOrBlank() &&
+            statusLabel == "Starting"
 }
 
 /**
@@ -951,6 +974,7 @@ object SlashCommands {
         }
         return CustomizationEntry(
             id = "mcp:${m.uri.ifBlank { m.id.ifBlank { name } }}",
+            mcpServerId = m.id.trim().takeIf { it.isNotEmpty() },
             category = CustomizationCategory.MCP_SERVERS,
             name = name,
             description = cleanText(detail, MAX_DESCRIPTION),

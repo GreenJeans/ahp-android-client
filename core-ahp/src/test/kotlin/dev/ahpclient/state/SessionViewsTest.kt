@@ -200,7 +200,7 @@ class SessionDetailTest {
         assertEquals("copilotcli", d.provider)
         assertEquals("repo", d.project)
         assertEquals(listOf("file:///work/repo").map(::displayPath), d.workingDirectories)
-        assertEquals(listOf(ChatRow("ahp-chat://default/x", "Main", ActivityState.NEEDS_INPUT, null, "1m", removable = false)), d.chats, "a lone chat is the main one")
+        assertEquals(listOf(ChatRow("ahp-chat://default/x", "Main", ActivityState.NEEDS_INPUT, null, "1m", removable = false, isRead = true)), d.chats, "a lone chat is the main one")
         assertEquals(emptyList(), d.inputNeeded)
     }
 
@@ -257,6 +257,36 @@ class SessionDetailTest {
         assertEquals("c:/Users/me/source/repos/app", displayPath("file:///c%3A/Users/me/source/repos/app"))
         assertEquals("C:/My Projects/app", displayPath("file:///C:/My%20Projects/app"))
         assertEquals("/home/me/app", displayPath("file:///home/me/app"))
+    }
+
+    @Test
+    fun `session annotations summary is surfaced when annotationCount or entryCount is positive`() {
+        val withAnnotations = state(extra = ""","annotations":{"resource":"ahp-annotations:/s1","annotationCount":3,"entryCount":7}""")
+        val detail = SessionDetail.from(withAnnotations, now)
+
+        assertEquals(AnnotationsSummaryView("ahp-annotations:/s1", 3L, 7L), detail.annotations)
+        assertEquals("3 annotations \u00b7 7 entries", detail.annotations?.summaryText)
+    }
+
+    @Test
+    fun `archived chats are counted and hidden from visibleTabs unless requested`() {
+        val multi = Ahp.json.decodeFromString(
+            SessionState.serializer(),
+            """{"provider":"copilotcli","title":"Multi","status":1,"lifecycle":"ready","activeClients":[],
+                "defaultChat":"ahp-chat:/c1",
+                "chats":[
+                    {"resource":"ahp-chat:/c1","title":"Main","status":33,"modifiedAt":"2026-10-26T10:29:00.000Z"},
+                    {"resource":"ahp-chat:/c2","title":"Side 1","status":65,"modifiedAt":"2026-10-26T10:28:00.000Z"},
+                    {"resource":"ahp-chat:/c3","title":"Side 2","status":1,"modifiedAt":"2026-10-26T10:27:00.000Z"}
+                ]}""",
+        )
+        val detail = SessionDetail.from(multi, now)
+
+        assertEquals(1, detail.archivedChatCount)
+        assertEquals(listOf(false, true, false), detail.chats.map { it.isArchived })
+        assertEquals(listOf(true, false, false), detail.chats.map { it.isRead })
+        assertEquals(listOf("ahp-chat:/c1", "ahp-chat:/c3"), detail.visibleTabs(showArchived = false).map { it.uri })
+        assertEquals(listOf("ahp-chat:/c1", "ahp-chat:/c2", "ahp-chat:/c3"), detail.visibleTabs(showArchived = true).map { it.uri })
     }
 
     @Test

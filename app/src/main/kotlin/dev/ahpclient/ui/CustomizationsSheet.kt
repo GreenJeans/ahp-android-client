@@ -55,6 +55,7 @@ import dev.ahpclient.state.CustomizationCategory
 import dev.ahpclient.state.CustomizationEntry
 import dev.ahpclient.state.CustomizationsView
 import dev.ahpclient.state.HostFileTarget
+import dev.ahpclient.state.McpServerControlAction
 import dev.ahpclient.state.SlashCommand
 import dev.ahpclient.state.SlashCommandKind
 import dev.ahpclient.state.SlashCommandMatch
@@ -76,6 +77,7 @@ fun CustomizationsSheet(
     onDismiss: () -> Unit,
     onUseSlashCommand: ((String) -> Unit)? = null,
     onUseAgent: ((String) -> Unit)? = null,
+    onControlMcpServer: ((String, McpServerControlAction) -> Unit)? = null,
     onViewFile: ((HostFileTarget) -> Unit)? = null,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -90,6 +92,7 @@ fun CustomizationsSheet(
             onDismiss = onDismiss,
             onUseSlashCommand = onUseSlashCommand,
             onUseAgent = onUseAgent,
+            onControlMcpServer = onControlMcpServer,
             onViewFile = onViewFile,
         )
     }
@@ -104,6 +107,7 @@ fun CustomizationsSheetContent(
     onDismiss: () -> Unit,
     onUseSlashCommand: ((String) -> Unit)? = null,
     onUseAgent: ((String) -> Unit)? = null,
+    onControlMcpServer: ((String, McpServerControlAction) -> Unit)? = null,
     onViewFile: ((HostFileTarget) -> Unit)? = null,
 ) {
     var selectedCategoryName by rememberSaveable(initialCategory) { mutableStateOf(initialCategory?.name) }
@@ -316,6 +320,7 @@ fun CustomizationsSheetContent(
             } else {
                 items(matchingEntries, key = { it.id }) { entry ->
                     CustomizationEntryCard(
+                        onControlMcpServer = onControlMcpServer,
                         entry = entry,
                         onUseSlashCommand = onUseSlashCommand?.let { use ->
                             { cmdName ->
@@ -348,6 +353,7 @@ private fun CustomizationEntryCard(
     entry: CustomizationEntry,
     onUseSlashCommand: ((String) -> Unit)?,
     onUseAgent: ((String) -> Unit)?,
+    onControlMcpServer: ((String, McpServerControlAction) -> Unit)? = null,
     onViewFile: ((HostFileTarget) -> Unit)?,
 ) {
     val isSlashInvokable = (entry.category == CustomizationCategory.SKILLS ||
@@ -493,7 +499,9 @@ private fun CustomizationEntryCard(
             }
 
             val agentUri = entry.uri
-            if ((isSlashInvokable && onUseSlashCommand != null) ||
+            val mcpId = entry.mcpServerId
+            val hasMcpActions = onControlMcpServer != null && mcpId != null && (entry.canStartMcp || entry.canStopMcp || entry.canBackgroundMcp)
+            if ((isSlashInvokable && onUseSlashCommand != null) || hasMcpActions ||
                 (isAgentInvokable && onUseAgent != null && agentUri != null) ||
                 (fileTarget != null && onViewFile != null)
             ) {
@@ -502,6 +510,32 @@ private fun CustomizationEntryCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    if (onControlMcpServer != null && mcpId != null) {
+                        if (entry.canStartMcp) {
+                            OutlinedButton(
+                                onClick = { onControlMcpServer(mcpId, McpServerControlAction.START) },
+                                modifier = Modifier.testTag("customization_mcp_start_${entry.name}"),
+                            ) {
+                                Text(if (entry.statusLabel == "Stopped") "Start" else "Restart")
+                            }
+                        }
+                        if (entry.canBackgroundMcp) {
+                            TextButton(
+                                onClick = { onControlMcpServer(mcpId, McpServerControlAction.BACKGROUND) },
+                                modifier = Modifier.testTag("customization_mcp_background_${entry.name}"),
+                            ) {
+                                Text("Background")
+                            }
+                        }
+                        if (entry.canStopMcp) {
+                            TextButton(
+                                onClick = { onControlMcpServer(mcpId, McpServerControlAction.STOP) },
+                                modifier = Modifier.testTag("customization_mcp_stop_${entry.name}"),
+                            ) {
+                                Text("Stop")
+                            }
+                        }
+                    }
                     if (isSlashInvokable && onUseSlashCommand != null) {
                         OutlinedButton(
                             onClick = { onUseSlashCommand(entry.name) },

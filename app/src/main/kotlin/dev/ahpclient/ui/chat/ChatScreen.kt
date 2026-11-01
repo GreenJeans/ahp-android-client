@@ -6,7 +6,23 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.BottomSheetDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -23,6 +39,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -47,6 +65,8 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.microsoft.agenthostprotocol.generated.ResourceReadResult
+import dev.ahpclient.state.BackgroundWorkView
+import dev.ahpclient.state.CanvasView
 import dev.ahpclient.state.ChatGoneException
 import dev.ahpclient.state.ChatNotLoadedException
 import dev.ahpclient.state.ConnState
@@ -111,6 +131,14 @@ fun ChatScreen(
         onBack = onBack,
         backLabel = backLabel,
         titleTag = "chat_title",
+        actions = {
+            BackgroundWorkChip(
+                items = transcript?.backgroundWork.orEmpty(),
+                canvases = transcript?.canvases.orEmpty(),
+                onOpenSubagent = onOpenSubagent,
+                onOpenTerminal = onOpenTerminal,
+            )
+        },
         large = false,
         modifier = modifier,
     ) {
@@ -439,6 +467,146 @@ private fun TranscriptRowModel.isUser(): Boolean = this is TranscriptRowModel.Si
 private const val OLDER_KEY = "older"
 
 private const val WORKING_KEY = "working"
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun BackgroundWorkChip(
+    items: List<BackgroundWorkView>,
+    canvases: List<CanvasView> = emptyList(),
+    onOpenSubagent: ((String) -> Unit)? = null,
+    onOpenTerminal: ((String) -> Unit)? = null,
+) {
+    if (items.isEmpty() && canvases.isEmpty()) return
+    var showSheet by rememberSaveable { mutableStateOf(false) }
+    val count = if (items.isNotEmpty()) items.size else canvases.size
+    val spoken = when {
+        items.size == 1 -> "1 background task. Show background work"
+        items.size > 1 -> "${items.size} background tasks. Show background work"
+        canvases.size == 1 -> "1 canvas. Show canvases"
+        else -> "${canvases.size} canvases. Show canvases"
+    }
+    TextButton(
+        onClick = { showSheet = true },
+        modifier = Modifier
+            .heightIn(min = 48.dp)
+            .semantics { contentDescription = spoken }
+            .testTag("background_work_chip"),
+    ) {
+        Icon(AppIcons.AgentCode, contentDescription = null, modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(4.dp))
+        Text("$count", style = MaterialTheme.typography.labelLarge, maxLines = 1)
+    }
+    if (showSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showSheet = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+            dragHandle = { BottomSheetDefaults.DragHandle(width = 48.dp) },
+            contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
+            modifier = Modifier.testTag("background_work_sheet"),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .navigationBarsPadding()
+                    .padding(horizontal = 24.dp)
+                    .padding(bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(
+                    if (items.isNotEmpty()) "Background work" else "Canvases",
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.semantics { heading() },
+                )
+                if (items.isNotEmpty()) {
+                    BackgroundWorkBar(
+                        items = items,
+                        onOpenSubagent = onOpenSubagent?.let { open -> { uri -> showSheet = false; open(uri) } },
+                        onOpenTerminal = onOpenTerminal?.let { open -> { uri -> showSheet = false; open(uri) } },
+                    )
+                }
+                if (canvases.isNotEmpty()) {
+                    CanvasesBar(canvases = canvases)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun BackgroundWorkBar(
+    items: List<BackgroundWorkView>,
+    onOpenSubagent: ((String) -> Unit)?,
+    onOpenTerminal: ((String) -> Unit)?,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier.fillMaxWidth().testTag("background_work_bar"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        items.forEach { item ->
+            Surface(
+                shape = MaterialTheme.shapes.small,
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier.fillMaxWidth().testTag("background_work_${item.id}"),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(item.kind.label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(item.label, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        item.command?.let { cmd ->
+                            Text(
+                                cmd,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                    val terminalUri = item.terminalUri
+                    val chatUri = item.chatUri
+                    if (terminalUri != null && onOpenTerminal != null) {
+                        TextButton(
+                            onClick = { onOpenTerminal(terminalUri) },
+                            modifier = Modifier.heightIn(min = 48.dp).testTag("background_work_open_${item.id}"),
+                        ) { Text("Open terminal") }
+                    } else if (chatUri != null && onOpenSubagent != null) {
+                        TextButton(
+                            onClick = { onOpenSubagent(chatUri) },
+                            modifier = Modifier.heightIn(min = 48.dp).testTag("background_work_open_${item.id}"),
+                        ) { Text("Open subagent") }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun CanvasesBar(canvases: List<CanvasView>, modifier: Modifier = Modifier) {
+    Surface(
+        shape = MaterialTheme.shapes.small,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = modifier.fillMaxWidth().testTag("canvases_bar"),
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                if (canvases.size == 1) "Canvas" else "Canvases (${canvases.size})",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                canvases.joinToString(" · ") { it.label },
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.testTag("canvases_text"),
+            )
+        }
+    }
+}
 
 private fun LazyListState.atNewest(): Boolean = firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset == 0
 

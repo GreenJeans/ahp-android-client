@@ -405,4 +405,68 @@ class TranscriptTest {
         assertEquals("t2", t.lastTurnId)
         assertNull(t.activeTurnId)
     }
+
+    @Test
+    fun `backgroundWork and canvases are extracted onto Transcript`() {
+        val state = Ahp.json.decodeFromString(
+            ChatState.serializer(),
+            """{"resource":"ahp-chat:/c","title":"Chat","status":8,"modifiedAt":"2026-10-22T10:00:00.000Z",
+                "backgroundWork":[
+                    {"kind":"shell","id":"bw1","label":"Watch server","startedAt":"2026-10-22T10:00:00.000Z","command":"npm run watch","terminal":"ahp-terminal:/t1"},
+                    {"kind":"subagent","id":"bw2","label":"Researcher","startedAt":"2026-10-22T10:00:00.000Z","chat":"ahp-chat:/sub1"},
+                    {"kind":"indexer","id":"bw3","label":"Reindex workspace"}
+                ],
+                "canvases":[
+                    {"resource":"ahp-canvas:/session1/diagram-1"},
+                    {"resource":"ahp-canvas:/session1/preview"}
+                ],
+                "turns":[]}""",
+        )
+
+        val t = Transcript.from(state)
+        assertEquals(
+            listOf(
+                BackgroundWorkView("bw1", BackgroundWorkKindView.SHELL, "Watch server", command = "npm run watch", terminalUri = "ahp-terminal:/t1"),
+                BackgroundWorkView("bw2", BackgroundWorkKindView.SUBAGENT, "Researcher", chatUri = "ahp-chat:/sub1"),
+                BackgroundWorkView("bw3", BackgroundWorkKindView.OTHER, "Reindex workspace"),
+            ),
+            t.backgroundWork,
+        )
+        assertEquals(
+            listOf(
+                CanvasView("ahp-canvas:/session1/diagram-1", "diagram-1"),
+                CanvasView("ahp-canvas:/session1/preview", "preview"),
+            ),
+            t.canvases,
+        )
+    }
+
+    @Test
+    fun `finished turns carry TurnUsage on TurnEnd and Transcript aggregates chat usage across turns`() {
+        val state = Ahp.json.decodeFromString(
+            ChatState.serializer(),
+            """{"resource":"ahp-chat:/c","title":"Chat","status":8,"modifiedAt":"2026-10-22T10:00:00.000Z",
+                "turns":[
+                  {"id":"t1","message":{"text":"first","origin":{"kind":"user"}},"responseParts":[${markdown("m1", "ok")}],
+                    "startedAt":"2026-10-22T10:00:00.000Z","duration":12000,"state":"complete",
+                    "usage":{"inputTokens":10000,"outputTokens":2400,"cacheReadTokens":8000,"model":"model-a","_meta":{"cost":0.03}}},
+                  {"id":"t2","message":{"text":"second","origin":{"kind":"user"}},"responseParts":[${markdown("m2", "done")}],
+                    "startedAt":"2026-10-22T10:01:00.000Z","duration":5000,"state":"complete",
+                    "usage":{"inputTokens":15000,"outputTokens":600,"cacheReadTokens":12000,"model":"model-a","_meta":{"ahpd.cacheWriteTokens":500,"cost":0.02}}}
+                ]}""",
+        )
+
+        val t = Transcript.from(state)
+        val ends = t.items.filterIsInstance<TranscriptItem.TurnEnd>()
+        assertEquals(2, ends.size)
+        assertEquals("12.4k tok \u00b7 $0.03", ends[0].usage?.summaryText)
+        assertEquals("15.6k tok \u00b7 $0.02", ends[1].usage?.summaryText)
+
+        val total = t.usage!!
+        assertEquals(25_000L, total.inputTokens)
+        assertEquals(3_000L, total.outputTokens)
+        assertEquals(20_000L, total.cacheReadTokens)
+        assertEquals(500L, total.cacheWriteTokens)
+        assertEquals("25k in, 3k out \u00b7 20k cached \u00b7 500 cache write \u00b7 $0.05", total.detailText)
+    }
 }

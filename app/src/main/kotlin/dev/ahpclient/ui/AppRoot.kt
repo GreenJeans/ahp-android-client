@@ -42,8 +42,10 @@ import dev.ahpclient.state.ChatInteractor
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.CustomAgents
 import dev.ahpclient.state.CustomizationCategory
+import dev.ahpclient.state.HostExtras
 import dev.ahpclient.state.HostFileTarget
 import dev.ahpclient.state.SlashCommands
+import dev.ahpclient.state.Transcript
 import dev.ahpclient.ui.chat.RichModalRequest
 import com.microsoft.agenthostprotocol.generated.RootState
 import dev.ahpclient.state.HostSession
@@ -241,6 +243,9 @@ private fun Shell(
                 disposeChat = controller.manager::disposeChat,
                 hosts = orderedManageTargets,
                 setTitle = controller.manager::setTitle,
+                setChatRead = controller.manager::setChatRead,
+                setChatArchived = controller.manager::setChatArchived,
+                controlMcpServer = controller.manager::controlMcpServer,
             )
         }
     } else {
@@ -496,6 +501,15 @@ private fun SessionPage(
         val context = LocalContext.current
         val summary = remember(listed, open.uri) { listed.firstOrNull { it.resource == open.uri } }
         val changes = remember(summary) { ChangeStats.of(summary?.changes) }
+        val openChatState = if (chat != null) {
+            val s by chat.store.state.collectAsStateWithLifecycle()
+            s
+        } else {
+            null
+        }
+        val chatUsage = remember(openChatState) { HostExtras.chatUsage(openChatState) }
+        val backgroundWork = remember(openChatState) { Transcript.backgroundWorkOf(openChatState) }
+        val canvases = remember(openChatState) { Transcript.canvasesOf(openChatState) }
         var requestedChat by remember { mutableStateOf<String?>(null) }
         var prefillText by rememberSaveable { mutableStateOf<String?>(null) }
         var agentToUse by rememberSaveable { mutableStateOf<String?>(null) }
@@ -526,6 +540,11 @@ private fun SessionPage(
             onViewHostFile = { target -> externalRichRequest = RichModalRequest.HostFile(target) },
             openCustomizationsRequest = openCustomizationsRequest,
             onCustomizationsRequestConsumed = { openCustomizationsRequest = null },
+            chatUsage = chatUsage,
+            backgroundWork = backgroundWork,
+            canvases = canvases,
+            onOpenSubagent = controller::openSubagentChat,
+            onOpenTerminal = controller::openTerminal,
         ) {
             if (chat != null) {
                 OpenChatView(

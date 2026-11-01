@@ -20,7 +20,24 @@ object SessionActions {
     fun setArchived(isArchived: Boolean): StateAction = action("session/isArchivedChanged") { put("isArchived", isArchived) }
 
     /** Sets the session's title. Dispatched on the session's own channel. */
+    /** Sets the session's title. Dispatched on the session's own channel. */
     fun setTitle(title: String): StateAction = action("session/titleChanged") { put("title", title) }
+
+    /** Marks a chat read or unread. Dispatched on the chat's own channel. */
+    fun setChatRead(isRead: Boolean): StateAction = action("chat/isReadChanged") { put("isRead", isRead) }
+
+    /** Archives or restores a chat. Dispatched on the chat's own channel. */
+    /** Archives or restores a chat. Dispatched on the chat's own channel. */
+    fun setChatArchived(isArchived: Boolean): StateAction = action("chat/isArchivedChanged") { put("isArchived", isArchived) }
+
+    /** Requests starting an MCP server in the session. Dispatched on the session's own channel. */
+    fun startMcpServer(id: String): StateAction = action("session/mcpServerStartRequested") { put("id", id) }
+
+    /** Requests stopping an MCP server in the session. Dispatched on the session's own channel. */
+    fun stopMcpServer(id: String): StateAction = action("session/mcpServerStopRequested") { put("id", id) }
+
+    /** Requests moving a starting MCP server to the background. Dispatched on the session's own channel. */
+    fun backgroundMcpServer(id: String): StateAction = action("session/mcpServerBackgroundRequested") { put("id", id) }
 
     private fun action(type: String, fields: JsonObjectBuilder.() -> Unit): StateAction =
         Ahp.json.decodeFromJsonElement(
