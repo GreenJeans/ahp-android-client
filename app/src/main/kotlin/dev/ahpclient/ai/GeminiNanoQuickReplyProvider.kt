@@ -11,6 +11,7 @@ import com.google.mlkit.genai.prompt.TextPart
 import dev.ahpclient.auth.Secret
 import dev.ahpclient.data.UiSettings
 import dev.ahpclient.security.DirectHostVault
+import dev.ahpclient.state.AiProviderKind
 import dev.ahpclient.state.GoogleAiConfig
 import dev.ahpclient.state.QuickReplies
 import dev.ahpclient.state.QuickReplyContext
@@ -45,11 +46,10 @@ enum class NanoStatus(val label: String) {
 
 /**
  * Quick-reply generator supporting both:
- * 1. **PowerToys-style Google AI Provider** (`generativelanguage.googleapis.com` with user-configured Model name, encrypted API key,
- *    and custom System Prompt) when enabled in settings.
- * 2. **On-device Gemini Nano** (`com.google.mlkit:genai-prompt`) through Android AICore as a zero-key local AI provider or fallback.
- *
- * Gracefully degrades to null when neither AI path produces chips, allowing the caller to keep instant heuristic quick replies.
+ * 1. **External / Local AI Provider** (Google Gemini, OpenAI-compatible / Ollama / LM Studio / OpenRouter, or Anthropic)
+ *    when enabled in settings. Surfaces explicit errors when the configured provider fails rather than silently masquerading
+ *    as Gemini Nano.
+ * 2. **On-device Gemini Nano** (`com.google.mlkit:genai-prompt`) through Android AICore when On-device AI is selected.
  */
 class GeminiNanoQuickReplyProvider(
     private val scope: CoroutineScope,
@@ -69,13 +69,13 @@ class GeminiNanoQuickReplyProvider(
     private var client: GenerativeModel? = null
 
     init {
-        // Synchronize hasApiKey in UiSettings with the encrypted vault on startup.
         if (ui != null && apiKeyVault != null) {
             scope.launch(Dispatchers.IO) {
                 val hasKey = runCatching { apiKeyVault.has(GOOGLE_AI_VAULT_KEY) }.getOrDefault(false)
                 val current = ui.googleAiConfig.value
                 if (current.hasApiKey != hasKey) {
-                    ui.setGoogleAiConfig(current.copy(hasApiKey = hasKey, enabled = current.enabled && hasKey))
+                    val stillValid = !current.providerKind.requiresApiKey || hasKey
+                    ui.setGoogleAiConfig(current.copy(hasApiKey = hasKey, enabled = current.enabled && stillValid))
                 }
             }
         }
@@ -87,13 +87,7 @@ class GeminiNanoQuickReplyProvider(
     }
 
     /**
-     * Saves the user's PowerToys-style Google AI provider configuration, sealing any new API key in [apiKeyVault].
-     *
-     * @param enabled Whether the Google AI provider is enabled.
-     * @param modelName The Gemini model ID (e.g. `gemini-2.5-flash` or `gemini-2.5-pro`).
-     * @param systemPrompt Custom system instruction for generating quick replies.
-     * @param newApiKey A new API key to store, or blank/null to keep the existing key unless [clearKey] is true.
-     * @param clearKey When true, removes any saved API key from the encrypted vault.
+     * Saves the user's external AI provider configuration, sealing any new API key in [apiKeyVault].
      */
     suspend fun saveGoogleAiConfig(
         enabled: Boolean,
@@ -101,6 +95,8 @@ class GeminiNanoQuickReplyProvider(
         systemPrompt: String,
         newApiKey: String? = null,
         clearKey: Boolean = false,
+        providerKind: AiProviderKind = ui?.googleAiConfig?.value?.providerKind ?: AiProviderKind.GOOGLE_GEMINI,
+        endpointUrl: String = ui?.googleAiConfig?.value?.baseUrl ?: providerKind.defaultBaseUrl,
     ): Boolean = withContext(Dispatchers.IO) {
         val settings = ui ?: return@withContext false
         val vault = apiKeyVault
@@ -127,11 +123,15 @@ class GeminiNanoQuickReplyProvider(
             !clearKey && (trimmedKey.isNotEmpty() || settings.googleAiConfig.value.hasApiKey)
         }
 
-        val cleanModel = modelName.trim().removePrefix("models/").ifEmpty { QuickReplies.DEFAULT_GOOGLE_MODEL }
+        val cleanModel = modelName.trim().removePrefix("models/")
+        val cleanBaseUrl = endpointUrl.trim().ifEmpty { providerKind.defaultBaseUrl }
         val cleanPrompt = systemPrompt.trim().ifEmpty { QuickReplies.DEFAULT_SYSTEM_PROMPT }
+        val canEnable = cleanModel.isNotEmpty() && (!providerKind.requiresApiKey || hasKeyNow)
         settings.setGoogleAiConfig(
             GoogleAiConfig(
-                enabled = enabled && hasKeyNow,
+                enabled = enabled && canEnable,
+                providerKind = providerKind,
+                baseUrl = cleanBaseUrl,
                 modelName = cleanModel,
                 systemPrompt = cleanPrompt,
                 hasApiKey = hasKeyNow,
@@ -139,6 +139,74 @@ class GeminiNanoQuickReplyProvider(
         )
         synchronized(cache) { cache.evictAll() }
         true
+    }
+
+    /**
+     * Fetches the live list of available model IDs from the given provider endpoint so the UI can present
+     * relevant, up-to-date model chips instead of hardcoded names.
+     */
+    suspend fun fetchAvailableModels(
+        providerKind: AiProviderKind,
+        endpointUrl: String,
+        overrideApiKey: String? = null,
+    ): Result<List<String>> = withContext(Dispatchers.IO) {
+        val client = http ?: return@withContext Result.failure(IllegalStateException("HTTP client unavailable."))
+        val savedKey = apiKeyVault?.get(GOOGLE_AI_VAULT_KEY)?.reveal()?.trim()
+        val apiKey = overrideApiKey?.trim()?.takeIf { it.isNotEmpty() } ?: savedKey
+        if (providerKind.requiresApiKey && apiKey.isNullOrEmpty()) {
+            return@withContext Result.failure(IllegalStateException("Enter an API key first to load models from ${providerKind.label}."))
+        }
+
+        val effectiveBase = endpointUrl.trim().ifEmpty { providerKind.defaultBaseUrl }.trimEnd('/')
+        try {
+            val request = when (providerKind) {
+                AiProviderKind.GOOGLE_GEMINI -> {
+                    Request.Builder()
+                        .url("$effectiveBase/v1beta/models?pageSize=100")
+                        .apply { if (!apiKey.isNullOrEmpty()) header("x-goog-api-key", apiKey) }
+                        .get()
+                        .build()
+                }
+                AiProviderKind.OPENAI_COMPATIBLE -> {
+                    val modelsUrl = QuickReplies.resolveOpenAiEndpoint(effectiveBase, "/models")
+                    Request.Builder()
+                        .url(modelsUrl)
+                        .apply { if (!apiKey.isNullOrEmpty()) header("Authorization", "Bearer $apiKey") }
+                        .get()
+                        .build()
+                }
+                AiProviderKind.ANTHROPIC -> {
+                    Request.Builder()
+                        .url("$effectiveBase/v1/models")
+                        .apply { if (!apiKey.isNullOrEmpty()) header("x-api-key", apiKey) }
+                        .header("anthropic-version", ANTHROPIC_VERSION)
+                        .get()
+                        .build()
+                }
+            }
+
+            client.newCall(request).execute().use { response ->
+                val body = response.body.string()
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(
+                        IllegalStateException(QuickReplies.extractApiErrorMessage(response.code, body)),
+                    )
+                }
+                val models = when (providerKind) {
+                    AiProviderKind.GOOGLE_GEMINI -> QuickReplies.parseGeminiModelsJson(body)
+                    AiProviderKind.OPENAI_COMPATIBLE, AiProviderKind.ANTHROPIC -> QuickReplies.parseOpenAiModelsJson(body)
+                }
+                if (models.isEmpty()) {
+                    Result.failure(IllegalStateException("Connected, but the endpoint returned no models."))
+                } else {
+                    Result.success(models)
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            Result.failure(IllegalStateException(e.message ?: e.javaClass.simpleName))
+        }
     }
 
     /**
@@ -193,18 +261,19 @@ class GeminiNanoQuickReplyProvider(
     override suspend fun suggest(context: QuickReplyContext): QuickReplySuggestion? = withContext(Dispatchers.IO) {
         val config = ui?.googleAiConfig?.value
         val customSystemPrompt = config?.systemPrompt?.takeIf { it.isNotBlank() } ?: QuickReplies.DEFAULT_SYSTEM_PROMPT
-        val cacheKey = "${context.turnKey}|${config?.isActive == true}|${config?.modelName.orEmpty()}|${customSystemPrompt.hashCode()}"
+        val cacheKey = "${context.turnKey}|${config?.enabled == true}|${config?.providerKind}|${config?.effectiveBaseUrl}|${config?.modelName.orEmpty()}|${customSystemPrompt.hashCode()}"
         synchronized(cache) { cache.get(cacheKey) }?.let { return@withContext it }
 
-        // 1. Try cloud Google AI provider if enabled and configured with an API key.
-        if (config != null && config.isActive) {
-            suggestWithGoogleCloud(context, config)?.let { cloudSuggestion ->
-                synchronized(cache) { cache.put(cacheKey, cloudSuggestion) }
-                return@withContext cloudSuggestion
+        // When the user explicitly enabled the external AI provider, run ONLY that provider and surface any error directly.
+        if (config != null && config.enabled) {
+            val externalResult = suggestWithExternalProvider(context, config)
+            if (externalResult.error == null) {
+                synchronized(cache) { cache.put(cacheKey, externalResult) }
             }
+            return@withContext externalResult
         }
 
-        // 2. Fall back to on-device Gemini Nano via Android AICore.
+        // Otherwise, use on-device Gemini Nano via Android AICore.
         val nanoSuggestion = suggestWithNano(context, customSystemPrompt)
         if (nanoSuggestion != null) {
             synchronized(cache) { cache.put(cacheKey, nanoSuggestion) }
@@ -212,34 +281,83 @@ class GeminiNanoQuickReplyProvider(
         nanoSuggestion
     }
 
-    private suspend fun suggestWithGoogleCloud(
+    private suspend fun suggestWithExternalProvider(
         context: QuickReplyContext,
         config: GoogleAiConfig,
-    ): QuickReplySuggestion? {
-        val client = http ?: return null
-        val apiKey = apiKeyVault?.get(GOOGLE_AI_VAULT_KEY)?.reveal()?.trim()?.takeIf { it.isNotEmpty() } ?: return null
-        val rawModel = config.modelName.trim().removePrefix("models/").ifEmpty { QuickReplies.DEFAULT_GOOGLE_MODEL }
-        val encodedModel = URLEncoder.encode(rawModel, "UTF-8")
-        val url = "${baseUrl.trimEnd('/')}/v1beta/models/$encodedModel:generateContent"
-        val bodyJson = QuickReplies.buildGeminiApiRequestJson(context, config.systemPrompt)
+    ): QuickReplySuggestion {
+        val label = config.displayLabel
+        fun failWith(reason: String): QuickReplySuggestion =
+            QuickReplies.heuristic(context).copy(
+                providerLabel = label,
+                error = "$label: $reason",
+            )
 
-        val request = Request.Builder()
-            .url(url)
-            .header("x-goog-api-key", apiKey)
-            .header("Content-Type", "application/json")
-            .post(bodyJson.toRequestBody(JSON_MEDIA_TYPE))
-            .build()
+        val client = http ?: return failWith("HTTP client unavailable.")
+        val rawModel = config.modelName.trim().removePrefix("models/")
+        if (rawModel.isEmpty()) {
+            return failWith("No model name configured.")
+        }
+        val apiKey = apiKeyVault?.get(GOOGLE_AI_VAULT_KEY)?.reveal()?.trim()?.takeIf { it.isNotEmpty() }
+        if (config.providerKind.requiresApiKey && apiKey == null) {
+            return failWith("API key is missing.")
+        }
+
+        val effectiveBase = config.baseUrl.trim().ifEmpty {
+            if (config.providerKind == AiProviderKind.GOOGLE_GEMINI) baseUrl else config.providerKind.defaultBaseUrl
+        }.trimEnd('/')
 
         return try {
+            val request = when (config.providerKind) {
+                AiProviderKind.GOOGLE_GEMINI -> {
+                    val encodedModel = URLEncoder.encode(rawModel, "UTF-8")
+                    val url = "$effectiveBase/v1beta/models/$encodedModel:generateContent"
+                    val bodyJson = QuickReplies.buildGeminiApiRequestJson(context, config.systemPrompt)
+                    Request.Builder()
+                        .url(url)
+                        .apply { if (apiKey != null) header("x-goog-api-key", apiKey) }
+                        .header("Content-Type", "application/json")
+                        .post(bodyJson.toRequestBody(JSON_MEDIA_TYPE))
+                        .build()
+                }
+                AiProviderKind.OPENAI_COMPATIBLE -> {
+                    val url = QuickReplies.resolveOpenAiEndpoint(effectiveBase, "/chat/completions")
+                    val bodyJson = QuickReplies.buildOpenAiChatRequestJson(context, rawModel, config.systemPrompt)
+                    Request.Builder()
+                        .url(url)
+                        .apply { if (apiKey != null) header("Authorization", "Bearer $apiKey") }
+                        .header("Content-Type", "application/json")
+                        .post(bodyJson.toRequestBody(JSON_MEDIA_TYPE))
+                        .build()
+                }
+                AiProviderKind.ANTHROPIC -> {
+                    val url = "$effectiveBase/v1/messages"
+                    val bodyJson = QuickReplies.buildAnthropicMessagesRequestJson(context, rawModel, config.systemPrompt)
+                    Request.Builder()
+                        .url(url)
+                        .apply { if (apiKey != null) header("x-api-key", apiKey) }
+                        .header("anthropic-version", ANTHROPIC_VERSION)
+                        .header("Content-Type", "application/json")
+                        .post(bodyJson.toRequestBody(JSON_MEDIA_TYPE))
+                        .build()
+                }
+            }
+
             client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return null
                 val body = response.body.string()
-                QuickReplies.parseGeminiApiResponseJson(context.turnKey, body)
+                if (!response.isSuccessful) {
+                    return failWith(QuickReplies.extractApiErrorMessage(response.code, body))
+                }
+                val parsed = when (config.providerKind) {
+                    AiProviderKind.GOOGLE_GEMINI -> QuickReplies.parseGeminiApiResponseJson(context.turnKey, body, label)
+                    AiProviderKind.OPENAI_COMPATIBLE -> QuickReplies.parseOpenAiChatResponseJson(context.turnKey, body, label)
+                    AiProviderKind.ANTHROPIC -> QuickReplies.parseAnthropicMessagesResponseJson(context.turnKey, body, label)
+                }
+                parsed ?: failWith("Model response did not contain valid quick-reply JSON.")
             }
         } catch (e: CancellationException) {
             throw e
-        } catch (_: Throwable) {
-            null
+        } catch (e: Throwable) {
+            failWith(e.message ?: e.javaClass.simpleName)
         }
     }
 
@@ -299,6 +417,7 @@ class GeminiNanoQuickReplyProvider(
     companion object {
         const val GOOGLE_AI_VAULT_KEY = "google_ai_api_key"
         const val DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com"
+        const val ANTHROPIC_VERSION = "2023-06-01"
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
 }

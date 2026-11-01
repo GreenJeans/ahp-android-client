@@ -25,6 +25,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,6 +45,7 @@ import dev.ahpclient.ai.NanoStatus
 import dev.ahpclient.app.BillingResult
 import dev.ahpclient.app.DirectEntry
 import dev.ahpclient.direct.DirectHost
+import dev.ahpclient.state.AiProviderKind
 import dev.ahpclient.state.GoogleAiConfig
 import dev.ahpclient.state.QuickReplies
 import dev.ahpclient.state.QuickReplyMode
@@ -107,6 +109,8 @@ fun SettingsScreen(
     onDownloadNano: (() -> Unit)? = null,
     googleAiConfig: GoogleAiConfig = GoogleAiConfig(),
     onSaveGoogleAiConfig: (suspend (enabled: Boolean, modelName: String, systemPrompt: String, newApiKey: String?, clearKey: Boolean) -> Boolean)? = null,
+    onSaveExternalAiConfig: (suspend (enabled: Boolean, providerKind: AiProviderKind, baseUrl: String, modelName: String, systemPrompt: String, newApiKey: String?, clearKey: Boolean) -> Boolean)? = null,
+    onFetchAvailableModels: (suspend (providerKind: AiProviderKind, baseUrl: String, overrideApiKey: String?) -> Result<List<String>>)? = null,
     /** Whether Pro features (background monitoring, acting, managing, and concurrent multi-host) are unlocked. */
     proUnlocked: Boolean = true,
     /** Starts the Pro unlock flow when tapped; when null and [onPurchasePro] or [onRestorePro] is set, opens [ProUpgradeDialog]. */
@@ -142,6 +146,8 @@ fun SettingsScreen(
                         onDownloadNano = onDownloadNano,
                         googleAiConfig = googleAiConfig,
                         onSaveGoogleAiConfig = onSaveGoogleAiConfig,
+                        onSaveExternalAiConfig = onSaveExternalAiConfig,
+                        onFetchAvailableModels = onFetchAvailableModels,
                     )
                 }
             }
@@ -523,9 +529,15 @@ private fun QuickReplyRow(
     onDownloadNano: (() -> Unit)?,
     googleAiConfig: GoogleAiConfig,
     onSaveGoogleAiConfig: (suspend (enabled: Boolean, modelName: String, systemPrompt: String, newApiKey: String?, clearKey: Boolean) -> Boolean)?,
+    onSaveExternalAiConfig: (suspend (enabled: Boolean, providerKind: AiProviderKind, baseUrl: String, modelName: String, systemPrompt: String, newApiKey: String?, clearKey: Boolean) -> Boolean)? = null,
+    onFetchAvailableModels: (suspend (providerKind: AiProviderKind, baseUrl: String, overrideApiKey: String?) -> Result<List<String>>)? = null,
 ) {
     val scope = rememberCoroutineScope()
     var showingGoogleDialog by rememberSaveable { mutableStateOf(false) }
+    val saveAction: (suspend (Boolean, AiProviderKind, String, String, String, String?, Boolean) -> Boolean)? =
+        onSaveExternalAiConfig ?: onSaveGoogleAiConfig?.let { legacy ->
+            { enabled, _, _, model, prompt, key, clear -> legacy(enabled, model, prompt, key, clear) }
+        }
 
     Column(Modifier.fillMaxWidth().testTag("quick_reply_row"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text("Quick replies", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.heightIn(min = 36.dp).padding(top = 6.dp))
@@ -546,7 +558,7 @@ private fun QuickReplyRow(
         }
         val statusSuffix = when {
             mode == QuickReplyMode.OFF -> ""
-            googleAiConfig.isActive -> " Google AI (${googleAiConfig.modelName}) active."
+            googleAiConfig.isActive -> " ${googleAiConfig.displayLabel} active."
             nanoStatus != null -> " ${nanoStatus.label}."
             else -> ""
         }
@@ -564,73 +576,103 @@ private fun QuickReplyRow(
                 Text("Download Gemini Nano")
             }
         }
-        if (mode != QuickReplyMode.OFF && onSaveGoogleAiConfig != null) {
-            if (googleAiConfig.hasApiKey) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 48.dp)
-                        .toggleable(
-                            value = googleAiConfig.enabled,
-                            role = Role.Switch,
-                            onValueChange = { on ->
+        if (mode != QuickReplyMode.OFF && saveAction != null) {
+            Text(
+                "AI source",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+            val isExternalReady = googleAiConfig.modelName.isNotBlank() && (!googleAiConfig.providerKind.requiresApiKey || googleAiConfig.hasApiKey)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = !googleAiConfig.isActive,
+                    onClick = {
+                        if (googleAiConfig.enabled) {
+                            scope.launch {
+                                saveAction(
+                                    false,
+                                    googleAiConfig.providerKind,
+                                    googleAiConfig.baseUrl,
+                                    googleAiConfig.modelName,
+                                    googleAiConfig.systemPrompt,
+                                    null,
+                                    false,
+                                )
+                            }
+                        }
+                    },
+                    label = { Text("On-device AI") },
+                    modifier = Modifier.heightIn(min = 48.dp).testTag("quick_reply_provider_onboard"),
+                )
+                FilterChip(
+                    selected = googleAiConfig.isActive,
+                    onClick = {
+                        if (isExternalReady) {
+                            if (!googleAiConfig.enabled) {
                                 scope.launch {
-                                    onSaveGoogleAiConfig(
-                                        on,
+                                    saveAction(
+                                        true,
+                                        googleAiConfig.providerKind,
+                                        googleAiConfig.baseUrl,
                                         googleAiConfig.modelName,
                                         googleAiConfig.systemPrompt,
                                         null,
                                         false,
                                     )
                                 }
+                            }
+                        } else {
+                            showingGoogleDialog = true
+                        }
+                    },
+                    label = {
+                        Text(
+                            if (isExternalReady) {
+                                googleAiConfig.displayLabel
+                            } else {
+                                "External / Local AI"
                             },
                         )
-                        .testTag("google_ai_toggle"),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Use Google AI provider", style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            googleAiConfig.modelName,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Switch(checked = googleAiConfig.enabled, onCheckedChange = null)
-                }
+                    },
+                    modifier = Modifier.heightIn(min = 48.dp).testTag("quick_reply_provider_cloud"),
+                )
             }
             OutlinedButton(
                 onClick = { showingGoogleDialog = true },
                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("google_ai_configure_button"),
             ) {
                 Icon(AppIcons.Sparkle, contentDescription = null, modifier = Modifier.padding(end = 8.dp))
-                Text(if (googleAiConfig.hasApiKey) "Configure Google provider (${googleAiConfig.modelName})" else "Configure Google AI provider")
+                Text(if (isExternalReady) "Configure AI provider (${googleAiConfig.displayLabel})" else "Configure AI provider")
             }
         }
     }
 
-    if (showingGoogleDialog && onSaveGoogleAiConfig != null) {
+    if (showingGoogleDialog && saveAction != null) {
         GoogleProviderConfigDialog(
             config = googleAiConfig,
             onDismiss = { showingGoogleDialog = false },
-            onSave = onSaveGoogleAiConfig,
+            onSave = saveAction,
+            onFetchAvailableModels = onFetchAvailableModels,
         )
     }
 }
 
 /**
- * PowerToys-style Google provider configuration dialog: lets the user set the Gemini model name, API key, and custom
- * system prompt for AI-powered quick replies.
+ * External & local AI provider configuration dialog: supports Google Gemini, OpenAI-compatible endpoints (including local
+ * Ollama / LM Studio / llama.cpp for data privacy as well as OpenRouter / OpenAI / Groq), and Anthropic. Fetches live models
+ * directly from the configured endpoint instead of showing hardcoded model names.
  */
 @Composable
 private fun GoogleProviderConfigDialog(
     config: GoogleAiConfig,
     onDismiss: () -> Unit,
-    onSave: suspend (enabled: Boolean, modelName: String, systemPrompt: String, newApiKey: String?, clearKey: Boolean) -> Boolean,
+    onSave: suspend (enabled: Boolean, providerKind: AiProviderKind, baseUrl: String, modelName: String, systemPrompt: String, newApiKey: String?, clearKey: Boolean) -> Boolean,
+    onFetchAvailableModels: (suspend (providerKind: AiProviderKind, baseUrl: String, overrideApiKey: String?) -> Result<List<String>>)? = null,
 ) {
     val scope = rememberCoroutineScope()
-    var modelName by rememberSaveable { mutableStateOf(config.modelName.ifBlank { QuickReplies.DEFAULT_GOOGLE_MODEL }) }
+    var providerKind by rememberSaveable { mutableStateOf(config.providerKind) }
+    var baseUrl by rememberSaveable { mutableStateOf(config.baseUrl.ifBlank { config.providerKind.defaultBaseUrl }) }
+    var modelName by rememberSaveable { mutableStateOf(config.modelName) }
     var apiKey by rememberSaveable { mutableStateOf("") }
     var showApiKey by rememberSaveable { mutableStateOf(false) }
     var clearSavedKey by rememberSaveable { mutableStateOf(false) }
@@ -638,44 +680,91 @@ private fun GoogleProviderConfigDialog(
     var saving by remember { mutableStateOf(false) }
     var errorMessage by rememberSaveable { mutableStateOf<String?>(null) }
 
+    var availableModels by remember { mutableStateOf<List<String>>(emptyList()) }
+    var loadingModels by remember { mutableStateOf(false) }
+    var modelsMessage by remember { mutableStateOf<String?>(null) }
+
     val hasKeyAvailable = (config.hasApiKey && !clearSavedKey) || apiKey.isNotBlank()
+
+    fun triggerFetchModels() {
+        val fetcher = onFetchAvailableModels ?: return
+        if (loadingModels) return
+        loadingModels = true
+        modelsMessage = null
+        scope.launch {
+            val result = fetcher(providerKind, baseUrl, apiKey.takeIf { it.isNotBlank() })
+            loadingModels = false
+            result.fold(
+                onSuccess = { models ->
+                    availableModels = models
+                    modelsMessage = null
+                    if (modelName.isBlank() && models.isNotEmpty()) {
+                        modelName = models.first()
+                    }
+                },
+                onFailure = { err ->
+                    modelsMessage = err.message ?: "Could not load models from endpoint."
+                },
+            )
+        }
+    }
+
+    LaunchedEffect(providerKind) {
+        if (onFetchAvailableModels != null && (hasKeyAvailable || !providerKind.requiresApiKey)) {
+            triggerFetchModels()
+        }
+    }
 
     AlertDialog(
         onDismissRequest = { if (!saving) onDismiss() },
         modifier = Modifier.testTag("google_ai_dialog"),
-        title = { Text("Google provider configuration") },
+        title = { Text("AI provider configuration") },
         text = {
             Column(
                 modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text(
-                    "Your API key connects directly to Google services. By setting up this provider, you agree to comply with Google's usage policies and data handling practices.",
+                    "Connect to Google Gemini, Anthropic, or any OpenAI-compatible server — including locally hosted models (Ollama, LM Studio, llama.cpp) on your LAN or Tailscale for complete data privacy.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
 
-                OutlinedTextField(
-                    value = modelName,
-                    onValueChange = { modelName = it },
-                    label = { Text("Model name") },
-                    placeholder = { Text(QuickReplies.DEFAULT_GOOGLE_MODEL) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth().testTag("google_ai_model_input"),
-                )
-
+                Text("Provider type", style = MaterialTheme.typography.labelLarge)
                 Row(
                     modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    QuickReplies.RECOMMENDED_GOOGLE_MODELS.forEach { preset ->
-                        SuggestionChip(
-                            onClick = { modelName = preset },
-                            label = { Text(preset, style = MaterialTheme.typography.labelSmall) },
-                            modifier = Modifier.heightIn(min = 36.dp).testTag("google_ai_preset_$preset"),
+                    AiProviderKind.entries.forEach { entry ->
+                        FilterChip(
+                            selected = providerKind == entry,
+                            onClick = {
+                                val oldDefault = providerKind.defaultBaseUrl
+                                providerKind = entry
+                                if (baseUrl.isBlank() || baseUrl == oldDefault) {
+                                    baseUrl = entry.defaultBaseUrl
+                                }
+                                availableModels = emptyList()
+                                modelsMessage = null
+                                errorMessage = null
+                            },
+                            label = { Text(entry.label) },
+                            modifier = Modifier.heightIn(min = 48.dp).testTag("google_ai_kind_${entry.name}"),
                         )
                     }
                 }
+
+                OutlinedTextField(
+                    value = baseUrl,
+                    onValueChange = {
+                        baseUrl = it
+                        errorMessage = null
+                    },
+                    label = { Text("Endpoint URL") },
+                    placeholder = { Text(providerKind.endpointHint) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("google_ai_base_url_input"),
+                )
 
                 OutlinedTextField(
                     value = apiKey,
@@ -684,13 +773,15 @@ private fun GoogleProviderConfigDialog(
                         if (it.isNotBlank()) clearSavedKey = false
                         errorMessage = null
                     },
-                    label = { Text("API key") },
+                    label = {
+                        Text(if (providerKind.requiresApiKey) "API key" else "API key (optional for local models)")
+                    },
                     placeholder = {
                         Text(
-                            if (config.hasApiKey && !clearSavedKey) {
-                                "Saved — leave blank to keep current key"
-                            } else {
-                                "Enter Gemini API key"
+                            when {
+                                config.hasApiKey && !clearSavedKey -> "Saved — leave blank to keep current key"
+                                !providerKind.requiresApiKey -> "Leave blank for local Ollama / LM Studio"
+                                else -> "Enter API key"
                             },
                         )
                     },
@@ -717,6 +808,59 @@ private fun GoogleProviderConfigDialog(
                     ) {
                         Text("Remove saved API key")
                     }
+                }
+
+                OutlinedTextField(
+                    value = modelName,
+                    onValueChange = {
+                        modelName = it
+                        errorMessage = null
+                    },
+                    label = { Text("Model name") },
+                    placeholder = { Text("e.g. type or load from endpoint below") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("google_ai_model_input"),
+                )
+
+                if (onFetchAvailableModels != null || availableModels.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (onFetchAvailableModels != null) {
+                            SuggestionChip(
+                                onClick = { triggerFetchModels() },
+                                enabled = !loadingModels,
+                                label = {
+                                    Text(
+                                        if (loadingModels) "Loading models…" else "Load models from endpoint",
+                                        style = MaterialTheme.typography.labelSmall,
+                                    )
+                                },
+                                modifier = Modifier.heightIn(min = 36.dp).testTag("google_ai_load_models"),
+                            )
+                        }
+                        availableModels.forEach { liveModel ->
+                            SuggestionChip(
+                                onClick = {
+                                    modelName = liveModel
+                                    errorMessage = null
+                                },
+                                label = { Text(liveModel, style = MaterialTheme.typography.labelSmall) },
+                                modifier = Modifier.heightIn(min = 36.dp).testTag("google_ai_preset_$liveModel"),
+                            )
+                        }
+                    }
+                }
+
+                modelsMessage?.let { msg ->
+                    Text(
+                        msg,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.testTag("google_ai_models_error"),
+                    )
                 }
 
                 Row(
@@ -754,16 +898,24 @@ private fun GoogleProviderConfigDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    if (!hasKeyAvailable && !clearSavedKey) {
-                        errorMessage = "Enter a Google Gemini API key to enable this provider."
+                    val cleanModel = modelName.trim()
+                    if (cleanModel.isEmpty() && !clearSavedKey) {
+                        errorMessage = "Enter a model name (or tap Load models from endpoint)."
+                        return@Button
+                    }
+                    if (providerKind.requiresApiKey && !hasKeyAvailable && !clearSavedKey) {
+                        errorMessage = "Enter an API key for ${providerKind.label} (or switch to OpenAI / Local for keyless local models)."
                         return@Button
                     }
                     saving = true
                     errorMessage = null
                     scope.launch {
+                        val canEnable = cleanModel.isNotEmpty() && (!providerKind.requiresApiKey || hasKeyAvailable)
                         val saved = onSave(
-                            hasKeyAvailable,
-                            modelName,
+                            canEnable,
+                            providerKind,
+                            baseUrl.trim().ifEmpty { providerKind.defaultBaseUrl },
+                            cleanModel,
                             systemPrompt,
                             apiKey.takeIf { it.isNotBlank() },
                             clearSavedKey && apiKey.isBlank(),
@@ -772,7 +924,7 @@ private fun GoogleProviderConfigDialog(
                         if (saved) {
                             onDismiss()
                         } else {
-                            errorMessage = "Could not save the API key on this device."
+                            errorMessage = "Could not save the provider settings on this device."
                         }
                     }
                 },

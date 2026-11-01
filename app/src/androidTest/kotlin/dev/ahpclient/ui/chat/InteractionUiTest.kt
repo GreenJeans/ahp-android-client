@@ -1324,6 +1324,35 @@ class InteractionUiTest {
         rule.waitUntil(5_000) { textInBox("Please run the unit tests now.") }
     }
 
+    @Test
+    fun quickReplyBarSurfacesProviderErrorWithoutClaimingGeminiNano() {
+        val calls = Calls()
+        val provider = QuickReplyProvider { ctx ->
+            QuickReplySuggestion(
+                turnKey = ctx.turnKey,
+                source = QuickReplySource.HEURISTIC,
+                providerLabel = "Google Gemini · gemini-3.6-flash",
+                error = "Google Gemini · gemini-3.6-flash: models/gemini-3.6-flash is not found for API version v1beta",
+                chips = listOf(QuickReplyChip("Yes, proceed", "Yes, please proceed.")),
+            )
+        }
+        val items = listOf(
+            TranscriptItem.Markdown("t1/m1", "Should I proceed with refactoring the parser?"),
+            TranscriptItem.TurnEnd("t1/end", TurnOutcome.DONE, 100L, "t1"),
+        )
+        show(
+            Transcript("Fix parser", ActivityState.IDLE, null, items, hasOlder = false, running = false, lastTurnId = "t1"),
+            actions(calls, running = false, quickReplyMode = QuickReplyMode.AUTO, quickReplyProvider = provider),
+        )
+
+        rule.waitUntil(5_000) {
+            rule.onAllNodes(androidx.compose.ui.test.hasTestTag("quick_reply_error")).fetchSemanticsNodes().isNotEmpty()
+        }
+        rule.onNodeWithTag("quick_reply_error")
+            .assertIsDisplayed()
+            .assertTextContains("gemini-3.6-flash is not found", substring = true)
+    }
+
     // ---- helpers ------------------------------------------------------------------------------------------------
 
     private fun androidx.compose.ui.test.junit4.ComposeContentTestRule.onAllNodesWithTagCount(tag: String) =

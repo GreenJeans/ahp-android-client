@@ -39,8 +39,47 @@ enum class QuickReplySource(val label: String) {
     /** On-device Gemini Nano via Android AICore / ML Kit GenAI Prompt API. */
     GEMINI_NANO("Gemini Nano"),
 
-    /** Cloud AI provider (e.g. Google Gemini API with user API key). */
-    CLOUD_AI("Google AI"),
+    /** External cloud or local AI provider (Google Gemini, OpenAI / Ollama / LM Studio, Anthropic). */
+    CLOUD_AI("External AI"),
+}
+
+/**
+ * Protocol / provider type for an external or locally hosted AI model.
+ */
+enum class AiProviderKind(
+    val label: String,
+    val defaultBaseUrl: String,
+    val requiresApiKey: Boolean,
+    val endpointHint: String,
+) {
+    /** Google Gemini REST API (`v1beta/models/{model}:generateContent`). */
+    GOOGLE_GEMINI(
+        label = "Google Gemini",
+        defaultBaseUrl = "https://generativelanguage.googleapis.com",
+        requiresApiKey = true,
+        endpointHint = "https://generativelanguage.googleapis.com",
+    ),
+
+    /** OpenAI-compatible Chat Completions (`/v1/chat/completions`) — works with Ollama, LM Studio, llama.cpp, vLLM, OpenRouter, OpenAI, Groq, etc. */
+    OPENAI_COMPATIBLE(
+        label = "OpenAI / Local",
+        defaultBaseUrl = "http://localhost:11434/v1",
+        requiresApiKey = false,
+        endpointHint = "http://192.168.1.x:11434/v1 or https://api.openai.com/v1",
+    ),
+
+    /** Anthropic Messages API (`/v1/messages`). */
+    ANTHROPIC(
+        label = "Anthropic",
+        defaultBaseUrl = "https://api.anthropic.com",
+        requiresApiKey = true,
+        endpointHint = "https://api.anthropic.com",
+    ),
+    ;
+
+    companion object {
+        fun of(name: String?): AiProviderKind = entries.firstOrNull { it.name == name } ?: GOOGLE_GEMINI
+    }
 }
 
 /**
@@ -59,6 +98,8 @@ data class QuickReplySuggestion(
     val chips: List<QuickReplyChip>,
     val source: QuickReplySource,
     val summary: String? = null,
+    val providerLabel: String? = null,
+    val error: String? = null,
 )
 
 /**
@@ -73,17 +114,28 @@ data class QuickReplyContext(
 )
 
 /**
- * Configuration for the PowerToys-style Google AI quick-reply provider.
+ * Configuration for the external/custom AI quick-reply provider (Google Gemini, OpenAI-compatible / local Ollama / LM Studio, or Anthropic).
  * The API key itself is stored separately in the keystore-backed vault; [hasApiKey] indicates whether one is saved.
  */
 data class GoogleAiConfig(
     val enabled: Boolean = false,
-    val modelName: String = QuickReplies.DEFAULT_GOOGLE_MODEL,
+    val providerKind: AiProviderKind = AiProviderKind.GOOGLE_GEMINI,
+    val baseUrl: String = providerKind.defaultBaseUrl,
+    val modelName: String = "",
     val systemPrompt: String = QuickReplies.DEFAULT_SYSTEM_PROMPT,
     val hasApiKey: Boolean = false,
 ) {
-    /** Whether the Google AI provider is both enabled and has a saved API key. */
-    val isActive: Boolean get() = enabled && hasApiKey && modelName.isNotBlank()
+    /** Effective endpoint URL, falling back to [AiProviderKind.defaultBaseUrl] when blank. */
+    val effectiveBaseUrl: String
+        get() = baseUrl.trim().ifEmpty { providerKind.defaultBaseUrl }
+
+    /** Whether the external AI provider is enabled and has the required model and credentials. */
+    val isActive: Boolean
+        get() = enabled && modelName.isNotBlank() && (!providerKind.requiresApiKey || hasApiKey)
+
+    /** Short display name for UI headers and chips. */
+    val displayLabel: String
+        get() = if (modelName.isNotBlank()) "${providerKind.label} · ${modelName.trim()}" else providerKind.label
 }
 
 /**
@@ -100,20 +152,19 @@ fun interface QuickReplyProvider {
 object QuickReplies {
     const val MAX_LABEL_CHARS = 36
     const val MAX_PROMPT_CHARS = 600
-    const val MAX_SUMMARY_CHARS = 160
+    const val MAX_SUMMARY_CHARS = 600
     const val MAX_CHIPS = 4
     private const val PROMPT_HEAD_CHARS = 400
     private const val PROMPT_TAIL_CHARS = 1_600
 
-    const val DEFAULT_GOOGLE_MODEL = "gemini-2.5-flash"
-    val RECOMMENDED_GOOGLE_MODELS = listOf("gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro")
+    const val DEFAULT_GOOGLE_MODEL = ""
 
     const val DEFAULT_SYSTEM_PROMPT =
         "You are a mobile coding assistant helper. Given the user's last prompt and the coding agent's response, " +
             "propose 3 to 4 concise, actionable replies the user might want to send next. " +
             "If the agent asked a question or offered options, prioritize answering or choosing among them. " +
             "Respond ONLY with valid JSON matching: " +
-            "{\"tldr\":\"Optional 1-sentence summary if the agent message is long\",\"replies\":[{\"label\":\"2-4 word button label\",\"prompt\":\"Full message to populate in the chat box\"}]}"
+            "{\"replies\":[{\"label\":\"2-4 word button label\",\"prompt\":\"Full message to populate in the chat box\"}]}"
 
     private val NUMBERED_ITEM_REGEX = Regex("""^\s*(?:(?:Option|Choice|Approach|Step)\s+)?([1-6]|[A-D])[.):\-]\s+(.+)$""", RegexOption.IGNORE_CASE)
     private val BULLET_ITEM_REGEX = Regex("""^\s*[-*•]\s+(.+)$""")
@@ -177,14 +228,12 @@ object QuickReplies {
      */
     fun heuristic(context: QuickReplyContext): QuickReplySuggestion {
         val cleanText = stripCodeBlocks(context.agentText)
-        val summary = extractHeuristicSummary(cleanText)
 
         if (context.outcome == TurnOutcome.FAILED || (context.failedTools.isNotEmpty() && cleanText.isBlank())) {
             val toolNote = context.failedTools.firstOrNull()?.let { " in $it" }.orEmpty()
             return QuickReplySuggestion(
                 turnKey = context.turnKey,
                 source = QuickReplySource.HEURISTIC,
-                summary = summary,
                 chips = listOf(
                     QuickReplyChip("Fix the error", "Please investigate the failure$toolNote and fix the error."),
                     QuickReplyChip("Explain failure", "Why did that fail$toolNote, and what are the options to resolve it?"),
@@ -197,7 +246,6 @@ object QuickReplies {
             return QuickReplySuggestion(
                 turnKey = context.turnKey,
                 source = QuickReplySource.HEURISTIC,
-                summary = summary,
                 chips = listOf(
                     QuickReplyChip("Continue", "Please continue from where you left off."),
                     QuickReplyChip("Change approach", "Instead of that approach, let's "),
@@ -211,7 +259,6 @@ object QuickReplies {
             return QuickReplySuggestion(
                 turnKey = context.turnKey,
                 source = QuickReplySource.HEURISTIC,
-                summary = summary,
                 chips = optionChips.take(MAX_CHIPS),
             )
         }
@@ -221,7 +268,6 @@ object QuickReplies {
             return QuickReplySuggestion(
                 turnKey = context.turnKey,
                 source = QuickReplySource.HEURISTIC,
-                summary = summary,
                 chips = questionChips.take(MAX_CHIPS),
             )
         }
@@ -230,7 +276,6 @@ object QuickReplies {
         return QuickReplySuggestion(
             turnKey = context.turnKey,
             source = QuickReplySource.HEURISTIC,
-            summary = summary,
             chips = followUpChips.take(MAX_CHIPS),
         )
     }
@@ -324,7 +369,11 @@ object QuickReplies {
     /**
      * Parses the JSON response body returned by the Google Gemini `generateContent` REST endpoint and extracts a [QuickReplySuggestion].
      */
-    fun parseGeminiApiResponseJson(turnKey: String, responseBody: String): QuickReplySuggestion? {
+    fun parseGeminiApiResponseJson(
+        turnKey: String,
+        responseBody: String,
+        providerLabel: String? = null,
+    ): QuickReplySuggestion? {
         if (responseBody.isBlank()) return null
         return try {
             val root = Json.parseToJsonElement(responseBody).jsonObject
@@ -335,10 +384,213 @@ object QuickReplies {
             val combinedText = parts.mapNotNull { part ->
                 (part as? JsonObject)?.string("text")
             }.joinToString("\n").trim()
-            if (combinedText.isEmpty()) null else parseAiResponse(turnKey, combinedText, QuickReplySource.CLOUD_AI)
+            if (combinedText.isEmpty()) null else parseAiResponse(turnKey, combinedText, QuickReplySource.CLOUD_AI)?.copy(providerLabel = providerLabel)
         } catch (_: Exception) {
             null
         }
+    }
+
+    /**
+     * Resolves an OpenAI-compatible endpoint URL (e.g. `/chat/completions` or `/models`) from a user-provided [baseUrl],
+     * automatically appending `/v1` when the user entered a bare host root like `http://192.168.1.50:11434`.
+     */
+    fun resolveOpenAiEndpoint(baseUrl: String, path: String): String {
+        val cleanBase = baseUrl.trim().trimEnd('/')
+        val cleanPath = "/" + path.trim().trimStart('/')
+        return when {
+            cleanBase.endsWith("/chat/completions") -> cleanBase.removeSuffix("/chat/completions") + cleanPath
+            cleanBase.endsWith("/models") -> cleanBase.removeSuffix("/models") + cleanPath
+            cleanBase.endsWith("/v1") || Regex("""/v\d+$""").containsMatchIn(cleanBase) -> cleanBase + cleanPath
+            else -> "$cleanBase/v1$cleanPath"
+        }
+    }
+
+    /**
+     * Builds the JSON request body for an OpenAI-compatible `/v1/chat/completions` endpoint (Ollama, LM Studio, vLLM, OpenRouter, OpenAI, etc.).
+     */
+    fun buildOpenAiChatRequestJson(
+        context: QuickReplyContext,
+        modelName: String,
+        systemPrompt: String = DEFAULT_SYSTEM_PROMPT,
+    ): String {
+        val (effectiveSystem, userPrompt) = buildPrompt(context, systemPrompt)
+        val payload = buildJsonObject {
+            put("model", modelName.trim())
+            put(
+                "messages",
+                buildJsonArray {
+                    add(
+                        buildJsonObject {
+                            put("role", "system")
+                            put("content", effectiveSystem)
+                        },
+                    )
+                    add(
+                        buildJsonObject {
+                            put("role", "user")
+                            put("content", userPrompt)
+                        },
+                    )
+                },
+            )
+            put("temperature", 0.2)
+            put("max_tokens", 350)
+        }
+        return payload.toString()
+    }
+
+    /**
+     * Parses the JSON response body returned by an OpenAI-compatible `/v1/chat/completions` endpoint.
+     */
+    fun parseOpenAiChatResponseJson(
+        turnKey: String,
+        responseBody: String,
+        providerLabel: String? = null,
+    ): QuickReplySuggestion? {
+        if (responseBody.isBlank()) return null
+        return try {
+            val root = Json.parseToJsonElement(responseBody).jsonObject
+            val choices = root["choices"] as? JsonArray ?: return null
+            val firstChoice = choices.firstOrNull() as? JsonObject ?: return null
+            val message = firstChoice["message"] as? JsonObject
+            val text = message?.string("content") ?: firstChoice.string("text") ?: return null
+            if (text.isBlank()) null else parseAiResponse(turnKey, text, QuickReplySource.CLOUD_AI)?.copy(providerLabel = providerLabel)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Builds the JSON request body for the Anthropic `/v1/messages` endpoint.
+     */
+    fun buildAnthropicMessagesRequestJson(
+        context: QuickReplyContext,
+        modelName: String,
+        systemPrompt: String = DEFAULT_SYSTEM_PROMPT,
+    ): String {
+        val (effectiveSystem, userPrompt) = buildPrompt(context, systemPrompt)
+        val payload = buildJsonObject {
+            put("model", modelName.trim())
+            put("max_tokens", 350)
+            put("temperature", 0.2)
+            put("system", effectiveSystem)
+            put(
+                "messages",
+                buildJsonArray {
+                    add(
+                        buildJsonObject {
+                            put("role", "user")
+                            put("content", userPrompt)
+                        },
+                    )
+                },
+            )
+        }
+        return payload.toString()
+    }
+
+    /**
+     * Parses the JSON response body returned by the Anthropic `/v1/messages` endpoint.
+     */
+    fun parseAnthropicMessagesResponseJson(
+        turnKey: String,
+        responseBody: String,
+        providerLabel: String? = null,
+    ): QuickReplySuggestion? {
+        if (responseBody.isBlank()) return null
+        return try {
+            val root = Json.parseToJsonElement(responseBody).jsonObject
+            val content = root["content"] as? JsonArray ?: return null
+            val combinedText = content.mapNotNull { block ->
+                (block as? JsonObject)?.string("text")
+            }.joinToString("\n").trim()
+            if (combinedText.isEmpty()) null else parseAiResponse(turnKey, combinedText, QuickReplySource.CLOUD_AI)?.copy(providerLabel = providerLabel)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Parses the model list returned by Google Gemini `GET /v1beta/models`, keeping models that support `generateContent`
+     * and sorting newer Gemini models first.
+     */
+    fun parseGeminiModelsJson(responseBody: String): List<String> {
+        if (responseBody.isBlank()) return emptyList()
+        return try {
+            val root = Json.parseToJsonElement(responseBody).jsonObject
+            val models = root["models"] as? JsonArray ?: return emptyList()
+            models.mapNotNull { item ->
+                val obj = item as? JsonObject ?: return@mapNotNull null
+                val rawName = obj.string("name")?.removePrefix("models/")?.trim() ?: return@mapNotNull null
+                val methods = (obj["supportedGenerationMethods"] as? JsonArray)
+                    ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+                if (methods != null && "generateContent" !in methods) return@mapNotNull null
+                val lower = rawName.lowercase()
+                if (lower.contains("embedding") || lower.contains("imagen") || lower.contains("veo") || lower.contains("aqa") || lower.contains("tts") || lower.contains("audio")) {
+                    return@mapNotNull null
+                }
+                rawName
+            }
+                .distinct()
+                .sortedWith(
+                    compareByDescending<String> { it.startsWith("gemini-", ignoreCase = true) }
+                        .thenByDescending { it },
+                )
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    /**
+     * Parses the model list returned by OpenAI-compatible `GET /v1/models`, Anthropic `GET /v1/models`, or Ollama `GET /api/tags`.
+     */
+    fun parseOpenAiModelsJson(responseBody: String): List<String> {
+        if (responseBody.isBlank()) return emptyList()
+        return try {
+            val root = Json.parseToJsonElement(responseBody).jsonObject
+            val dataArray = root["data"] as? JsonArray ?: root["models"] as? JsonArray ?: return emptyList()
+            dataArray.mapNotNull { item ->
+                val obj = item as? JsonObject ?: return@mapNotNull null
+                (obj.string("id") ?: obj.string("name"))?.removePrefix("models/")?.trim()?.takeIf { it.isNotEmpty() }
+            }.distinct()
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    /**
+     * Extracts a human-readable error message from a failed HTTP response body across Google Gemini, OpenAI, Anthropic, and Ollama formats.
+     */
+    fun extractApiErrorMessage(httpCode: Int, responseBody: String?): String {
+        val body = responseBody?.trim().orEmpty()
+        if (body.isNotEmpty()) {
+            try {
+                val parsed = Json.parseToJsonElement(body)
+                val rootObj = when (parsed) {
+                    is JsonObject -> parsed
+                    is JsonArray -> parsed.firstOrNull() as? JsonObject
+                    else -> null
+                }
+                if (rootObj != null) {
+                    val errNode = rootObj["error"]
+                    val msg = when (errNode) {
+                        is JsonObject -> errNode.string("message") ?: errNode.string("status")
+                        is JsonPrimitive -> errNode.contentOrNull
+                        else -> rootObj.string("message") ?: rootObj.string("detail")
+                    }
+                    if (!msg.isNullOrBlank()) {
+                        return truncateEllipsis("HTTP $httpCode: ${msg.trim()}", 220)
+                    }
+                }
+            } catch (_: Exception) {
+                // Fall through to plain text snippet
+            }
+            val oneLine = body.lineSequence().firstOrNull { it.isNotBlank() }?.trim()
+            if (!oneLine.isNullOrEmpty() && !oneLine.startsWith("<")) {
+                return truncateEllipsis("HTTP $httpCode: $oneLine", 220)
+            }
+        }
+        return "HTTP $httpCode"
     }
 
     private fun parseJsonSuggestion(turnKey: String, text: String, source: QuickReplySource): QuickReplySuggestion? {
@@ -496,22 +748,6 @@ object QuickReplies {
             }
             add(QuickReplyChip("Summarize briefly", "Give me a brief 2-sentence summary of the key changes."))
         }
-    }
-
-    private fun extractHeuristicSummary(cleanText: String): String? {
-        // Only show a TL;DR summary when the agent's message is long enough to warrant one (~500+ chars).
-        if (cleanText.length < 500) return null
-        val paragraphs = cleanText.lineSequence()
-            .map { it.trim() }
-            .filter { it.isNotEmpty() && !it.startsWith("#") && !it.startsWith("-") && !it.startsWith("*") && !it.startsWith("|") }
-            .map(::cleanInlineMarkdown)
-            .filter { it.length >= 25 }
-            .toList()
-        if (paragraphs.isEmpty()) return null
-        val lastQuestion = paragraphs.lastOrNull { it.endsWith("?") }
-        val candidate = lastQuestion ?: paragraphs.first()
-        val firstSentence = candidate.split(Regex("""(?<=[.!?])\s+""")).firstOrNull()?.trim() ?: candidate
-        return truncateEllipsis(firstSentence, MAX_SUMMARY_CHARS)
     }
 
     private fun summarizeItemTitle(body: String): String {

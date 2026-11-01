@@ -197,8 +197,10 @@ class ChatActionsUi(
     val onAgentToUseConsumed: () -> Unit = {},
     /** How quick-reply suggestions are offered after an agent turn finishes. */
     val quickReplyMode: QuickReplyMode = QuickReplyMode.OFF,
-    /** Optional AI provider (such as on-device Gemini Nano) to refine quick replies beyond heuristics. */
+    /** Optional AI provider (such as on-device Gemini Nano or an external AI endpoint) to refine quick replies beyond heuristics. */
     val quickReplyProvider: QuickReplyProvider? = null,
+    /** Key representing the active AI provider configuration so changing settings re-triggers suggestion generation. */
+    val quickReplyCacheKey: String = "",
 )
 
 /** The host's own words on a button or a field are untrusted display text: shown as plain text and cut to a sane length. */
@@ -835,22 +837,25 @@ private fun QuickReplyBar(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.weight(1f),
                 ) {
+                    val hasError = suggestion.error != null
                     Icon(
-                        imageVector = AppIcons.Sparkle,
+                        imageVector = if (hasError) AppIcons.ErrorCircle else AppIcons.Sparkle,
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
+                        tint = if (hasError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(16.dp),
                     )
                     val headerText = when {
                         aiLoading -> "Quick replies · Thinking…"
+                        hasError -> "Quick replies · ${suggestion.providerLabel ?: "AI"} error (using smart extract)"
+                        !suggestion.providerLabel.isNullOrBlank() -> "Quick replies · ${suggestion.providerLabel}"
                         suggestion.source == QuickReplySource.GEMINI_NANO -> "Quick replies · Gemini Nano"
-                        suggestion.source == QuickReplySource.CLOUD_AI -> "Quick replies · Google AI"
+                        suggestion.source == QuickReplySource.CLOUD_AI -> "Quick replies · External AI"
                         else -> "Quick replies"
                     }
                     Text(
                         text = headerText,
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = if (hasError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.testTag("quick_reply_source"),
@@ -868,15 +873,32 @@ private fun QuickReplyBar(
                     )
                 }
             }
+            suggestion.error?.let { err ->
+                var errorExpanded by rememberSaveable(suggestion.turnKey, err) { mutableStateOf(false) }
+                Text(
+                    text = err,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    maxLines = if (errorExpanded) Int.MAX_VALUE else 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { errorExpanded = !errorExpanded }
+                        .padding(end = 8.dp, bottom = 2.dp)
+                        .testTag("quick_reply_error"),
+                )
+            }
             suggestion.summary?.let { summary ->
+                var summaryExpanded by rememberSaveable(suggestion.turnKey) { mutableStateOf(false) }
                 Text(
                     text = summary,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
+                    maxLines = if (summaryExpanded) Int.MAX_VALUE else 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier
                         .fillMaxWidth()
+                        .clickable { summaryExpanded = !summaryExpanded }
                         .padding(end = 8.dp, bottom = 2.dp)
                         .testTag("quick_reply_summary"),
                 )
@@ -1220,19 +1242,16 @@ internal fun Composer(
                 slashMatches.isEmpty() && agentMention == null
             if (showQuickReplyBar && qrContext != null) {
                 val heuristicSuggestion = remember(qrContext) { QuickReplies.heuristic(qrContext) }
-                var aiSuggestion by remember(qrContext.turnKey) { mutableStateOf<QuickReplySuggestion?>(null) }
-                var aiLoading by remember(qrContext.turnKey) { mutableStateOf(false) }
                 val provider = actions.quickReplyProvider
-                LaunchedEffect(qrContext, provider) {
+                val cacheKey = actions.quickReplyCacheKey
+                var aiSuggestion by remember(qrContext.turnKey, provider, cacheKey) { mutableStateOf<QuickReplySuggestion?>(null) }
+                var aiLoading by remember(qrContext.turnKey, provider, cacheKey) { mutableStateOf(false) }
+                LaunchedEffect(qrContext, provider, cacheKey) {
                     if (provider != null && aiSuggestion == null) {
                         aiLoading = true
                         val generated = provider.suggest(qrContext)
                         if (generated != null && generated.chips.isNotEmpty()) {
-                            aiSuggestion = if (generated.summary == null && heuristicSuggestion.summary != null) {
-                                generated.copy(summary = heuristicSuggestion.summary)
-                            } else {
-                                generated
-                            }
+                            aiSuggestion = generated
                         }
                         aiLoading = false
                     }
