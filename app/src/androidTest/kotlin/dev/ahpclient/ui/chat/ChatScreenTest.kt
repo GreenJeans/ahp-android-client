@@ -42,6 +42,7 @@ import dev.ahpclient.state.ToolState
 import dev.ahpclient.state.Transcript
 import dev.ahpclient.state.TranscriptItem
 import dev.ahpclient.state.TurnOutcome
+import dev.ahpclient.state.TurnUsage
 import dev.ahpclient.ui.theme.AhpTheme
 import java.io.IOException
 import org.junit.Assert.assertEquals
@@ -529,6 +530,24 @@ class ChatScreenTest {
         val words = rule.onAllNodesWithTag("turn_end_text", useUnmergedTree = true).fetchSemanticsNodes().map { it.config[SemanticsProperties.Text].single().text }
         assertEquals(setOf("Done \u00b7 1m 4s", "Stopped", "Failed \u00b7 4s"), words.toSet())
         rule.onAllNodesWithTag("row_working").assertCountEquals(0)
+    }
+
+    @Test
+    fun aFinishedTurnShowsTokenUsageAndCostWhenReported() {
+        show(
+            transcript(
+                listOf(
+                    TranscriptItem.TurnEnd(
+                        key = "e1",
+                        outcome = TurnOutcome.DONE,
+                        durationMs = 41_000,
+                        usage = TurnUsage(inputTokens = 10_000L, outputTokens = 2_400L, costAmount = 0.04),
+                    ),
+                ),
+            ),
+        )
+
+        rule.onNodeWithTag("turn_end_text", useUnmergedTree = true).assertTextEquals("Done \u00b7 41s \u00b7 12.4k tok \u00b7 $0.04")
     }
 
     @Test

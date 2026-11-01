@@ -63,6 +63,7 @@ import dev.ahpclient.ui.chat.LinkConfirmDialog
 import dev.ahpclient.state.CustomizationCategory
 import dev.ahpclient.state.HostFileTarget
 import dev.ahpclient.state.SlashCommands
+import dev.ahpclient.state.TurnUsage
 import com.microsoft.agenthostprotocol.generated.RootState
 import com.microsoft.agenthostprotocol.generated.SessionState
 import com.microsoft.agenthostprotocol.generated.SessionSummary
@@ -107,6 +108,7 @@ fun SessionScreen(
     onViewHostFile: ((HostFileTarget) -> Unit)? = null,
     openCustomizationsRequest: Pair<CustomizationCategory?, String>? = null,
     onCustomizationsRequestConsumed: () -> Unit = {},
+    chatUsage: TurnUsage? = null,
     chat: @Composable () -> Unit = {},
 ) {
     val detail = remember(state, now, summary) { state?.let { SessionDetail.from(it, now, summary) } }
@@ -209,6 +211,7 @@ fun SessionScreen(
             },
             onOpenLink = onOpenLink,
             onShareLink = onShareLink,
+            chatUsage = chatUsage,
         )
     }
     if (showCustomizations && detail != null) {
@@ -322,6 +325,7 @@ private fun DetailsSheet(
     customizationsCount: Int = 0,
     onDismiss: () -> Unit,
     onOpenCustomizations: (() -> Unit)? = null,
+    chatUsage: TurnUsage? = null,
     onOpenLink: (String) -> Unit = {},
     onShareLink: ((String) -> Unit)? = null,
 ) {
@@ -363,7 +367,7 @@ private fun DetailsSheet(
                 PullRequestsSection(detail.pullRequests, onSelectUrl = { pendingPrUrl = it })
             }
 
-            Facts(detail)
+            Facts(detail, chatUsage)
             if (onOpenCustomizations != null) {
                 OutlinedButton(
                     onClick = onOpenCustomizations,
@@ -425,7 +429,7 @@ private fun PullRequestsSection(pullRequests: List<PullRequest>, onSelectUrl: (S
 }
 
 @Composable
-private fun Facts(detail: SessionDetail) {
+private fun Facts(detail: SessionDetail, chatUsage: TurnUsage? = null) {
     val facts = buildList {
         add("Agent" to detail.provider)
         detail.model?.let { add("Model" to it) }
@@ -433,6 +437,7 @@ private fun Facts(detail: SessionDetail) {
         detail.workingDirectories.forEach { add("Folder" to it) }
         detail.extras.branchLabel?.let { add("Branch" to it) }
         detail.extras.countsText?.let { add("Git status" to it) }
+        chatUsage?.detailText?.let { add("Token usage" to it) }
     }
     Column {
         facts.forEachIndexed { index, (label, value) ->

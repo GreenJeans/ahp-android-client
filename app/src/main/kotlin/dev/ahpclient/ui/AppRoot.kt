@@ -42,6 +42,7 @@ import dev.ahpclient.state.ChatInteractor
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.CustomAgents
 import dev.ahpclient.state.CustomizationCategory
+import dev.ahpclient.state.HostExtras
 import dev.ahpclient.state.HostFileTarget
 import dev.ahpclient.state.SlashCommands
 import dev.ahpclient.ui.chat.RichModalRequest
@@ -496,6 +497,13 @@ private fun SessionPage(
         val context = LocalContext.current
         val summary = remember(listed, open.uri) { listed.firstOrNull { it.resource == open.uri } }
         val changes = remember(summary) { ChangeStats.of(summary?.changes) }
+        val openChatState = if (chat != null) {
+            val s by chat.store.state.collectAsStateWithLifecycle()
+            s
+        } else {
+            null
+        }
+        val chatUsage = remember(openChatState) { HostExtras.chatUsage(openChatState) }
         var requestedChat by remember { mutableStateOf<String?>(null) }
         var prefillText by rememberSaveable { mutableStateOf<String?>(null) }
         var agentToUse by rememberSaveable { mutableStateOf<String?>(null) }
@@ -526,6 +534,7 @@ private fun SessionPage(
             onViewHostFile = { target -> externalRichRequest = RichModalRequest.HostFile(target) },
             openCustomizationsRequest = openCustomizationsRequest,
             onCustomizationsRequestConsumed = { openCustomizationsRequest = null },
+            chatUsage = chatUsage,
         ) {
             if (chat != null) {
                 OpenChatView(

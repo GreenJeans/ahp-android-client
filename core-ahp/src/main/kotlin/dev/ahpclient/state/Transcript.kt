@@ -90,6 +90,7 @@ sealed interface TranscriptItem {
         val durationMs: Long?,
         val turnId: String = key.removeSuffix("/end"),
         val resumable: Boolean = false,
+        val usage: TurnUsage? = null,
     ) : TranscriptItem
 
     data class Question(override val key: String, val request: InputRequestView, val answered: Boolean, val form: InputForm? = null) : TranscriptItem
@@ -119,6 +120,8 @@ data class Transcript(
     val activeTurnId: String? = null,
     /** Identifier of the most recent completed turn, if any. */
     val lastTurnId: String? = null,
+    /** Aggregated token and cost telemetry across the turns in this chat, or null when the host reported none. */
+    val usage: TurnUsage? = null,
 ) {
     /** The turn that is running has stopped for the person: a call waiting to be approved or signed in, or a question to answer. Nothing is being worked on then. */
     val waitingOnYou: Boolean
@@ -153,6 +156,7 @@ data class Transcript(
                         durationMs = turn.duration?.takeIf { it >= 0 },
                         turnId = turn.id,
                         resumable = resumable,
+                        usage = turn.usage?.extras,
                     )
                 }
             }
@@ -174,6 +178,7 @@ data class Transcript(
                 pendingMessages = pending,
                 activeTurnId = chat.activeTurn?.id,
                 lastTurnId = chat.turns.lastOrNull()?.id,
+                usage = HostExtras.chatUsage(chat),
             )
         }
 

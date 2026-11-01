@@ -310,4 +310,38 @@ class HostExtrasTest {
         assertEquals(expected, conformanceShape)
         assertEquals(expected, nestedAhpdShape)
     }
+
+    @Test
+    fun `usage reads tokens and cost from both VS Code and ahpd _meta shapes and drops invalid values`() {
+        val vscodeUsage = Ahp.json.decodeFromString(
+            com.microsoft.agenthostprotocol.generated.UsageInfo.serializer(),
+            """{"inputTokens":68002,"outputTokens":3214,"cacheReadTokens":58793,"model":"claude-sonnet-4","_meta":{"cost":0.04}}""",
+        )
+        val parsedVscode = HostExtras.usage(vscodeUsage)!!
+        assertEquals(TurnUsage(inputTokens = 68_002L, outputTokens = 3_214L, cacheReadTokens = 58_793L, costAmount = 0.04, model = "claude-sonnet-4"), parsedVscode)
+        assertEquals("71.2k tok \u00b7 $0.04", parsedVscode.summaryText)
+        assertEquals("68k in, 3.2k out \u00b7 58.8k cached \u00b7 $0.04", parsedVscode.detailText)
+
+        val ahpdUsage = Ahp.json.decodeFromString(
+            com.microsoft.agenthostprotocol.generated.UsageInfo.serializer(),
+            """{"inputTokens":850,"outputTokens":150,"_meta":{"ahpd":{"cacheWriteTokens":1200,"cost":{"amount":0.0025,"currency":"USD"}}}}""",
+        )
+        val parsedAhpd = ahpdUsage.extras!!
+        assertEquals(TurnUsage(inputTokens = 850L, outputTokens = 150L, cacheWriteTokens = 1_200L, costAmount = 0.0025, costCurrency = "USD"), parsedAhpd)
+        assertEquals("1k tok \u00b7 $0.0025", parsedAhpd.summaryText)
+        assertEquals("850 in, 150 out \u00b7 1.2k cache write \u00b7 $0.0025", parsedAhpd.detailText)
+
+        val eurUsage = Ahp.json.decodeFromString(
+            com.microsoft.agenthostprotocol.generated.UsageInfo.serializer(),
+            """{"inputTokens":1000000,"_meta":{"ahpd.cost.amount":1.5,"ahpd.cost.currency":"EUR"}}""",
+        )
+        assertEquals("1M tok \u00b7 1.50 EUR", eurUsage.extras!!.summaryText)
+
+        val modelOnly = Ahp.json.decodeFromString(
+            com.microsoft.agenthostprotocol.generated.UsageInfo.serializer(),
+            """{"model":"claude-sonnet-4","_meta":{"cost":-1,"ahpd.cacheWriteTokens":"100"}}""",
+        )
+        assertNull(HostExtras.usage(modelOnly), "no positive tokens or cost returns null")
+        assertNull(HostExtras.usage(null))
+    }
 }

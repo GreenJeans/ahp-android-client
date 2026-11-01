@@ -40,6 +40,7 @@ import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.ManageResult
 import dev.ahpclient.state.RelativeTime
 import dev.ahpclient.state.SessionGoneException
+import dev.ahpclient.state.TurnUsage
 import dev.ahpclient.tunnel.TunnelInfo
 import dev.ahpclient.ui.theme.AhpTheme
 import com.microsoft.agenthostprotocol.Ahp
@@ -784,6 +785,28 @@ class SessionScreensTest {
 
         rule.onAllNodesWithText("Branch").assertCountEquals(0)
         rule.onAllNodesWithText("Git status").assertCountEquals(0)
+    }
+
+    @Test
+    fun detailsShowTokenUsageBreakdownWhenChatUsageIsPresent() {
+        val usage = TurnUsage(inputTokens = 68_002L, outputTokens = 3_214L, cacheReadTokens = 58_793L, costAmount = 0.04)
+        rule.setContent {
+            AhpTheme {
+                SessionScreen(
+                    detailState(),
+                    null,
+                    ConnState.Online,
+                    now,
+                    {},
+                    shownChat = mainChatUri,
+                    chatUsage = usage,
+                )
+            }
+        }
+        openDetails()
+
+        rule.onNodeWithText("Token usage").assertIsDisplayed()
+        rule.onNodeWithText("68k in, 3.2k out \u00b7 58.8k cached \u00b7 $0.04").assertIsDisplayed()
     }
 
     @Test
