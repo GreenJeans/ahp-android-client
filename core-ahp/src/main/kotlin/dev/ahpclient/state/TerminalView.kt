@@ -154,10 +154,13 @@ data class TerminalView(
                     }
                     c.code < 0x20 || c.code in 0x7F..0x9F -> Unit
                     else -> {
-                        val point = raw.codePointAt(i)
-                        val cell = String(Character.toChars(point))
+                        val cell = if (c.isHighSurrogate() && i + 1 < raw.length && raw[i + 1].isLowSurrogate()) {
+                            i++
+                            charArrayOf(c, raw[i]).concatToString()
+                        } else {
+                            c.toString()
+                        }
                         cursor = put(line, cursor, cell)
-                        i += Character.charCount(point) - 1
                     }
                 }
                 i++

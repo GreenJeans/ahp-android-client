@@ -1,10 +1,17 @@
 package dev.ahpclient.state
 
 import com.microsoft.agenthostprotocol.generated.SessionSummary
-import java.time.DateTimeException
-import java.time.Duration
-import java.time.Instant
-import java.util.concurrent.ConcurrentHashMap
+import dev.ahpclient.platform.DateTimeException
+import dev.ahpclient.platform.Duration
+import dev.ahpclient.platform.durationBetween
+import dev.ahpclient.platform.durationOfDays
+import dev.ahpclient.platform.durationOfMinutes
+import dev.ahpclient.platform.seconds
+import dev.ahpclient.platform.INSTANT_EPOCH
+import dev.ahpclient.platform.Instant
+import dev.ahpclient.platform.instantNow
+import dev.ahpclient.platform.parseInstant
+import dev.ahpclient.platform.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -58,7 +65,7 @@ data class Inbox(val waiting: List<InboxItem>, val finished: List<InboxItem>) {
         }
 
         private fun recent(modifiedAt: String, now: Instant): Boolean = try {
-            Duration.between(Instant.parse(modifiedAt), now) <= Duration.ofDays(RECENT_DAYS)
+            durationBetween(parseInstant(modifiedAt), now) <= durationOfDays(RECENT_DAYS)
         } catch (_: DateTimeException) {
             false
         }

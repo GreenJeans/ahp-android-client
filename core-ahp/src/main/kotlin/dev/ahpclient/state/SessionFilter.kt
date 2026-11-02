@@ -1,13 +1,15 @@
 package dev.ahpclient.state
 
 import dev.ahpclient.app.HostRef
+import dev.ahpclient.platform.DateTimeException
+import dev.ahpclient.platform.Instant
+import dev.ahpclient.platform.ZoneId
+import dev.ahpclient.platform.calendarDaysBetween
+import dev.ahpclient.platform.durationBetween
+import dev.ahpclient.platform.durationOfDays
+import dev.ahpclient.platform.parseInstant
+import dev.ahpclient.platform.systemDefaultZone
 import com.microsoft.agenthostprotocol.generated.SessionSummary
-import java.time.DateTimeException
-import java.time.Duration
-import java.time.Instant
-import java.time.LocalDate
-import java.time.ZoneId
-import java.time.temporal.ChronoUnit
 
 /** How the sessions list is ordered below the pinned "needs you" sessions. */
 enum class SessionOrdering(val label: String) {
@@ -149,29 +151,27 @@ data class SessionFilter(
 
         internal fun isWithinRecentWindow(iso: String, now: Instant): Boolean {
             val parsed = try {
-                Instant.parse(iso)
+                parseInstant(iso)
             } catch (_: DateTimeException) {
                 return true
             }
-            return Duration.between(parsed, now) <= Duration.ofDays(RECENT_DAYS)
+            return durationBetween(parsed, now) <= durationOfDays(RECENT_DAYS)
         }
 
         internal fun timeBucket(
             session: SessionSummary,
             ordering: SessionOrdering,
             now: Instant,
-            zone: ZoneId = ZoneId.systemDefault(),
+            zone: ZoneId = systemDefaultZone(),
         ): String {
             if (session.status.activityState == ActivityState.NEEDS_INPUT) return "Needs you"
             val iso = ordering.timestampOf(session)
             val instant = try {
-                Instant.parse(iso)
+                parseInstant(iso)
             } catch (_: DateTimeException) {
                 return "Older"
             }
-            val sessionDate: LocalDate = instant.atZone(zone).toLocalDate()
-            val today: LocalDate = now.atZone(zone).toLocalDate()
-            val days = ChronoUnit.DAYS.between(sessionDate, today)
+            val days = calendarDaysBetween(instant, now, zone)
             return when {
                 days <= 0L -> "Today"
                 days == 1L -> "Yesterday"

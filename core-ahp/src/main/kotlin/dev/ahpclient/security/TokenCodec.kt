@@ -2,8 +2,11 @@ package dev.ahpclient.security
 
 import dev.ahpclient.auth.GitHubToken
 import dev.ahpclient.auth.Secret
-import java.time.DateTimeException
-import java.time.Instant
+import dev.ahpclient.platform.DateTimeException
+import dev.ahpclient.platform.INSTANT_EPOCH
+import dev.ahpclient.platform.Instant
+import dev.ahpclient.platform.instantNow
+import dev.ahpclient.platform.parseInstant
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -27,19 +30,19 @@ object TokenCodec {
             token.refresh?.let { put("refresh", it.reveal()) }
             token.expiresAt?.let { put("expiresAt", it.toString()) }
         }
-        return json.toString().toByteArray(Charsets.UTF_8)
+        return json.toString().encodeToByteArray()
     }
 
     fun decode(bytes: ByteArray): GitHubToken {
         try {
-            val root = Json.parseToJsonElement(bytes.toString(Charsets.UTF_8)).jsonObject
+            val root = Json.parseToJsonElement(bytes.decodeToString()).jsonObject
             val version = (root["v"] as? JsonPrimitive)?.intOrNull
             if (version != VERSION) throw TokenCodecException("unsupported token format version ${version ?: "(none)"}")
             val access = root.string("access") ?: throw TokenCodecException("stored token has no access token")
             return GitHubToken(
                 access = Secret(access),
                 refresh = root.string("refresh")?.let(::Secret),
-                expiresAt = root.string("expiresAt")?.let(Instant::parse),
+                expiresAt = root.string("expiresAt")?.let(::parseInstant),
             )
         } catch (e: TokenCodecException) {
             throw e

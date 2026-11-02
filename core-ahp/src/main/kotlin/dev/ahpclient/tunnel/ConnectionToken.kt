@@ -1,7 +1,7 @@
 package dev.ahpclient.tunnel
 
-import java.security.MessageDigest
-import java.util.Base64
+import dev.ahpclient.platform.base64UrlEncodeNoPad
+import dev.ahpclient.platform.sha256
 
 object ConnectionToken {
     /**
@@ -12,8 +12,8 @@ object ConnectionToken {
      * `connect` token on the relay.
      */
     fun derive(tunnelId: String): String {
-        val digest = MessageDigest.getInstance("SHA-256").digest(tunnelId.toByteArray(Charsets.UTF_8))
-        val token = Base64.getUrlEncoder().withoutPadding().encodeToString(digest)
+        val digest = sha256(tunnelId.encodeToByteArray())
+        val token = base64UrlEncodeNoPad(digest)
         return if (token.startsWith("-")) "a$token" else token
     }
 }

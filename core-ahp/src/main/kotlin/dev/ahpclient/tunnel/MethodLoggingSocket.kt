@@ -2,7 +2,7 @@ package dev.ahpclient.tunnel
 
 import dev.ahpclient.ahp.CapabilityPolicy
 import dev.ahpclient.ahp.CapabilityDeniedException
-import java.net.SocketTimeoutException
+import dev.ahpclient.platform.SocketTimeoutException
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -55,7 +55,7 @@ internal class MethodLoggingSocket(private val inner: TextSocket, private val lo
  */
 fun describeFailure(failure: Throwable): String {
     val chain = generateSequence(failure) { it.cause?.takeIf { cause -> cause !== it } }.take(6).toList()
-    val names = chain.joinToString(" <- ") { it.javaClass.simpleName.ifEmpty { "(anonymous)" } }
+    val names = chain.joinToString(" <- ") { it::class.simpleName.orEmpty().ifEmpty { "(anonymous)" } }
     val code = chain.filterIsInstance<SocketClosedException>().firstOrNull()?.code?.let { " code=$it" }.orEmpty()
     val timeout = chain.filterIsInstance<SocketTimeoutException>().firstOrNull()?.message?.take(120)?.let { " \"$it\"" }.orEmpty()
     val overload = chain.filterIsInstance<ClientOverloadedException>().firstOrNull()?.message?.take(120)?.let { " \"$it\"" }.orEmpty()

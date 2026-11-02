@@ -2,8 +2,11 @@ package dev.ahpclient.security
 
 import com.microsoft.agenthostprotocol.Ahp
 import com.microsoft.agenthostprotocol.generated.SessionSummary
-import java.io.IOException
-import java.time.Instant
+import dev.ahpclient.platform.IOException
+import dev.ahpclient.platform.INSTANT_EPOCH
+import dev.ahpclient.platform.Instant
+import dev.ahpclient.platform.instantNow
+import dev.ahpclient.platform.parseInstant
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonArray
@@ -76,27 +79,27 @@ class SessionListCache(private val box: SecureBox, private val store: BlobStore)
     private fun encode(tunnelId: String, items: List<SessionSummary>): ByteArray {
         val newest = items.sortedByDescending { it.modifiedAt }.take(MAX_ITEMS)
         val encoded = ArrayList<JsonElement>()
-        var bytes = ENVELOPE_BYTES + tunnelId.toByteArray(Charsets.UTF_8).size
+        var bytes = ENVELOPE_BYTES + tunnelId.encodeToByteArray().size
         for (item in newest) {
             val element = Ahp.json.encodeToJsonElement(SessionSummary.serializer(), item)
             // Compact JSON, so its text is what ends up in the blob; one more byte for the comma.
-            bytes += element.toString().toByteArray(Charsets.UTF_8).size + 1
+            bytes += element.toString().encodeToByteArray().size + 1
             if (bytes > MAX_BYTES) break
             encoded += element
         }
         val json = buildJsonObject {
             put("v", VERSION)
             put("tunnelId", tunnelId)
-            put("savedAt", Instant.now().toString())
+            put("savedAt", instantNow().toString())
             put("items", JsonArray(encoded))
         }
-        return json.toString().toByteArray(Charsets.UTF_8)
+        return json.toString().encodeToByteArray()
     }
 
     /** Null when [bytes] is not a list of this version for [tunnelId]. */
     private fun decode(bytes: ByteArray, tunnelId: String): List<SessionSummary>? {
         try {
-            val root = Ahp.json.parseToJsonElement(bytes.toString(Charsets.UTF_8)).jsonObject
+            val root = Ahp.json.parseToJsonElement(bytes.decodeToString()).jsonObject
             val version = (root["v"] as? JsonPrimitive)?.intOrNull
             if (version != VERSION || root.string("tunnelId") != tunnelId) return null
             val items = root["items"]?.jsonArray ?: return null
@@ -111,7 +114,7 @@ class SessionListCache(private val box: SecureBox, private val store: BlobStore)
     private fun JsonObject.string(name: String): String? = (this[name] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
 
     companion object {
-        val AAD: ByteArray = "dev.ahpclient/session-list-v1".toByteArray(Charsets.UTF_8)
+        val AAD: ByteArray = "dev.ahpclient/session-list-v1".encodeToByteArray()
 
         /** More sessions than this are cut to the most recently changed. */
         const val MAX_ITEMS = 500

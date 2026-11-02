@@ -1,8 +1,12 @@
 package dev.ahpclient.state
 
 import com.microsoft.agenthostprotocol.generated.SessionSummary
-import java.time.Instant
-import java.time.ZoneId
+import dev.ahpclient.platform.INSTANT_EPOCH
+import dev.ahpclient.platform.Instant
+import dev.ahpclient.platform.instantNow
+import dev.ahpclient.platform.parseInstant
+import dev.ahpclient.platform.ZoneId
+import dev.ahpclient.platform.systemDefaultZone
 
 data class SessionRow(
     val resource: String,
@@ -93,7 +97,7 @@ data class SessionListModel(
             now: Instant,
             query: String = "",
             filter: SessionFilter = SessionFilter.DEFAULT.copy(showArchived = showArchived),
-            zone: ZoneId = ZoneId.systemDefault(),
+            zone: ZoneId = systemDefaultZone(),
         ): SessionListModel = fromEntries(
             entries = sessions.map { HostSessionEntry(null, it) },
             filter = filter.copy(showArchived = showArchived),
@@ -112,7 +116,7 @@ data class SessionListModel(
             filter: SessionFilter,
             now: Instant,
             query: String = "",
-            zone: ZoneId = ZoneId.systemDefault(),
+            zone: ZoneId = systemDefaultZone(),
         ): SessionListModel {
             val hosts = buildHostFacets(entries)
             val multiHost = hosts.size > 1

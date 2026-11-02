@@ -1,7 +1,7 @@
 package dev.ahpclient.security
 
 import dev.ahpclient.auth.Secret
-import java.io.IOException
+import dev.ahpclient.platform.IOException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
@@ -94,18 +94,18 @@ class DirectHostVault(private val box: SecureBox, private val store: BlobStore) 
             put("v", VERSION)
             put("tokens", buildJsonObject { tokens.forEach { (id, token) -> put(id, token) } })
         }
-        return json.toString().toByteArray(Charsets.UTF_8)
+        return json.toString().encodeToByteArray()
     }
 
     private fun decode(plain: ByteArray): Map<String, String> {
-        val root = Json.parseToJsonElement(plain.toString(Charsets.UTF_8)) as? JsonObject ?: throw IllegalArgumentException("not an object")
+        val root = Json.parseToJsonElement(plain.decodeToString()) as? JsonObject ?: throw IllegalArgumentException("not an object")
         require((root["v"] as? JsonPrimitive)?.contentOrNull == VERSION.toString()) { "unknown version" }
         val tokens = root["tokens"] as? JsonObject ?: throw IllegalArgumentException("no tokens")
         return tokens.mapNotNull { (id, value) -> (value as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull?.let { id to it } }.toMap()
     }
 
     companion object {
-        val AAD: ByteArray = "dev.ahpclient/direct-host-tokens/v1".toByteArray(Charsets.UTF_8)
+        val AAD: ByteArray = "dev.ahpclient/direct-host-tokens/v1".encodeToByteArray()
         private const val VERSION = 1
     }
 }

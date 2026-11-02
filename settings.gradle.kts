@@ -18,3 +18,4 @@ dependencyResolutionManagement {
 
 include(":core-ahp")
 include(":app")
+include(":ios-app")

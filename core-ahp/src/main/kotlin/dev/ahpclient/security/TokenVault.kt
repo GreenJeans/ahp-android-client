@@ -91,6 +91,6 @@ class TokenVault(private val box: SecureBox, private val store: BlobStore) {
     }
 
     companion object {
-        val AAD: ByteArray = "dev.ahpclient/github-token/v1".toByteArray(Charsets.UTF_8)
+        val AAD: ByteArray = "dev.ahpclient/github-token/v1".encodeToByteArray()
     }
 }

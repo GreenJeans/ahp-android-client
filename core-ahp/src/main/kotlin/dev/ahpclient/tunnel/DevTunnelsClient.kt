@@ -1,7 +1,10 @@
 package dev.ahpclient.tunnel
 
 import dev.ahpclient.auth.Secret
-import dev.ahpclient.http.await
+import dev.ahpclient.http.HttpTransport
+import dev.ahpclient.http.defaultHttpTransport
+import dev.ahpclient.platform.parseUri
+import dev.ahpclient.platform.urlEncodeUtf8
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -10,10 +13,6 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
-import okhttp3.HttpUrl
-import okhttp3.HttpUrl.Companion.toHttpUrl
-import okhttp3.OkHttpClient
-import okhttp3.Request
 
 private const val API_VERSION = "2023-09-27-preview"
 
@@ -24,21 +23,24 @@ private const val API_VERSION = "2023-09-27-preview"
  * Auth is the GitHub user token from [dev.ahpclient.auth.GitHubDeviceAuth], sent as `github <token>`.
  */
 class DevTunnelsClient(
-    private val http: OkHttpClient = OkHttpClient(),
+    private val transport: HttpTransport = defaultHttpTransport(),
     private val serviceUrl: String = "https://global.rel.tunnels.api.visualstudio.com",
     private val userAgent: String = "ahp-android-client/0.1",
 ) {
     /** Agent-host-capable tunnels (launcher protocol 5+) owned by the signed-in account. */
     suspend fun listAgentHostTunnels(token: Secret): List<TunnelInfo> {
-        val url = serviceUrl.toHttpUrl().newBuilder()
-            .encodedPath("/tunnels")
-            .addQueryParameter("includePorts", "true")
-            .addQueryParameter("tokenScopes", "connect")
-            .addQueryParameter("labels", TUNNEL_LAUNCHER_LABEL)
-            .addQueryParameter("allLabels", "true")
-            .addQueryParameter("global", "true")
-            .addQueryParameter("api-version", API_VERSION)
-            .build()
+        val url = buildUrl(
+            base = serviceUrl,
+            pathSegments = listOf("tunnels"),
+            query = listOf(
+                "includePorts" to "true",
+                "tokenScopes" to "connect",
+                "labels" to TUNNEL_LAUNCHER_LABEL,
+                "allLabels" to "true",
+                "global" to "true",
+                "api-version" to API_VERSION,
+            ),
+        )
         val body = get(url, token, tunnelId = null)
         return try {
             // Global listing groups tunnels per region: { value: [ { value: [tunnel, ...] }, ... ] }
@@ -55,13 +57,15 @@ class DevTunnelsClient(
      * short-lived and is never persisted.
      */
     suspend fun resolveConnectTarget(token: Secret, tunnel: TunnelInfo): ConnectTarget {
-        val url = clusterUrl(serviceUrl.toHttpUrl(), tunnel.clusterId).newBuilder()
-            .addPathSegment("tunnels")
-            .addPathSegment(tunnel.tunnelId)
-            .addQueryParameter("includePorts", "true")
-            .addQueryParameter("tokenScopes", "connect")
-            .addQueryParameter("api-version", API_VERSION)
-            .build()
+        val url = buildUrl(
+            base = clusterUrlString(serviceUrl, tunnel.clusterId),
+            pathSegments = listOf("tunnels", tunnel.tunnelId),
+            query = listOf(
+                "includePorts" to "true",
+                "tokenScopes" to "connect",
+                "api-version" to API_VERSION,
+            ),
+        )
         val body = get(url, token, tunnelId = tunnel.tunnelId)
         return try {
             val info = parseTunnel(body) ?: throw DevTunnelsException.Malformed("tunnel response has no tunnelId or clusterId")
@@ -75,28 +79,26 @@ class DevTunnelsClient(
         }
     }
 
-    private suspend fun get(url: HttpUrl, token: Secret, tunnelId: String?): JsonObject {
-        val request = Request.Builder()
-            .url(url)
-            .header("Authorization", "github ${token.reveal()}")
-            .header("Accept", "application/json")
-            .header("User-Agent", userAgent)
-            .get()
-            .build()
-        http.newCall(request).await().use { response ->
-            when (response.code) {
-                in 200..299 -> Unit
-                401 -> throw DevTunnelsException.AuthExpired()
-                403 -> throw DevTunnelsException.Forbidden()
-                404 -> throw if (tunnelId != null) DevTunnelsException.TunnelNotFound(tunnelId) else DevTunnelsException.Http(404)
-                else -> throw DevTunnelsException.Http(response.code)
-            }
-            val text = response.body.string()
-            return try {
-                Json.parseToJsonElement(text).jsonObject
-            } catch (e: IllegalArgumentException) {
-                throw DevTunnelsException.Malformed("body is not a JSON object", e)
-            }
+    private suspend fun get(url: String, token: Secret, tunnelId: String?): JsonObject {
+        val response = transport.get(
+            url = url,
+            headers = mapOf(
+                "Authorization" to "github ${token.reveal()}",
+                "Accept" to "application/json",
+                "User-Agent" to userAgent,
+            ),
+        )
+        when (response.code) {
+            in 200..299 -> Unit
+            401 -> throw DevTunnelsException.AuthExpired()
+            403 -> throw DevTunnelsException.Forbidden()
+            404 -> throw if (tunnelId != null) DevTunnelsException.TunnelNotFound(tunnelId) else DevTunnelsException.Http(404)
+            else -> throw DevTunnelsException.Http(response.code)
+        }
+        return try {
+            Json.parseToJsonElement(response.body).jsonObject
+        } catch (e: IllegalArgumentException) {
+            throw DevTunnelsException.Malformed("body is not a JSON object", e)
         }
     }
 
@@ -105,12 +107,20 @@ class DevTunnelsClient(
          * Cluster-specific service URL: the leading `global` label of the host becomes the cluster id
          * (`global.rel.tunnels...` to `usw2.rel.tunnels...`). Any other host, such as a local test server, is used as given.
          */
-        fun clusterUrl(base: HttpUrl, clusterId: String): HttpUrl =
-            if (base.host.startsWith("global.")) {
-                base.newBuilder().host(clusterId + base.host.substring(base.host.indexOf('.'))).build()
-            } else {
-                base
-            }
+        fun clusterUrlString(baseUrl: String, clusterId: String): String {
+            val parsed = parseUri(baseUrl) ?: return baseUrl
+            val host = parsed.host ?: return baseUrl
+            if (!host.startsWith("global.")) return baseUrl
+            val newHost = clusterId + host.substring(host.indexOf('.'))
+            return baseUrl.replaceFirst(host, newHost)
+        }
+
+        private fun buildUrl(base: String, pathSegments: List<String>, query: List<Pair<String, String>>): String {
+            val trimmedBase = base.trimEnd('/')
+            val path = pathSegments.joinToString("/") { urlEncodeUtf8(it).replace("+", "%20") }
+            val queryStr = query.joinToString("&") { (k, v) -> "${urlEncodeUtf8(k)}=${urlEncodeUtf8(v)}" }
+            return if (queryStr.isEmpty()) "$trimmedBase/$path" else "$trimmedBase/$path?$queryStr"
+        }
 
         fun parseTunnel(tunnel: JsonObject): TunnelInfo? {
             val tunnelId = tunnel.string("tunnelId") ?: return null

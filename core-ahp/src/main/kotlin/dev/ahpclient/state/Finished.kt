@@ -1,8 +1,11 @@
 package dev.ahpclient.state
 
+import dev.ahpclient.platform.Synchronized
+import dev.ahpclient.platform.currentTimeMillis
+
 import com.microsoft.agenthostprotocol.generated.SessionSummary
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicReference
+import dev.ahpclient.platform.ConcurrentHashMap
+import dev.ahpclient.platform.AtomicReference
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -28,7 +31,7 @@ data class FinishedSession(val resource: String, val title: String, val failed: 
  * A session that stops is reported once. If it starts working again it is followed from its original start, so the time reported
  * is the whole run; [settled] ends the run once the caller has decided what to do about it.
  */
-class FinishedDetector(private val clock: () -> Long = System::currentTimeMillis) {
+class FinishedDetector(private val clock: () -> Long = ::currentTimeMillis) {
     private val started = HashMap<String, Long>()
     private val stopped = HashSet<String>()
     private var seeded = false
@@ -82,7 +85,7 @@ class FinishedNotifier(
     private val cleared: (String) -> Unit = {},
     private val viewing: () -> String? = { null },
     private val debounceMs: Long = DEFAULT_DEBOUNCE_MS,
-    clock: () -> Long = System::currentTimeMillis,
+    clock: () -> Long = ::currentTimeMillis,
 ) {
     private val detector = FinishedDetector(clock)
     private val pending = ConcurrentHashMap<String, Job>()

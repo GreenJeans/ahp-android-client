@@ -8,7 +8,7 @@ import dev.ahpclient.direct.HostAddress
 import dev.ahpclient.direct.HostAddressCheck
 import dev.ahpclient.tunnel.SocketOpener
 import dev.ahpclient.tunnel.UpgradeRejectedException
-import java.io.IOException
+import dev.ahpclient.platform.IOException
 import kotlinx.coroutines.CoroutineScope
 
 /** A direct host cannot be connected to as saved: its address is no longer allowed, or it needs a token that is not there. Retrying cannot help. */

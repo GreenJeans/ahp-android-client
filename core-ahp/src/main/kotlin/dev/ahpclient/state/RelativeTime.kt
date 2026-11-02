@@ -1,12 +1,16 @@
 package dev.ahpclient.state
 
-import java.time.DateTimeException
-import java.time.Duration
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
-import java.time.format.FormatStyle
-import java.util.Locale
+import dev.ahpclient.platform.DateTimeException
+import dev.ahpclient.platform.Instant
+import dev.ahpclient.platform.Locale
+import dev.ahpclient.platform.ZoneId
+import dev.ahpclient.platform.defaultLocale
+import dev.ahpclient.platform.durationBetween
+import dev.ahpclient.platform.formatMediumDate
+import dev.ahpclient.platform.parseInstant
+import dev.ahpclient.platform.seconds
+import dev.ahpclient.platform.startOfDayDaysBetween
+import dev.ahpclient.platform.systemDefaultZone
 
 /** How long ago something happened, in the fewest characters a list row has room for: "now", "5m", "2h", "3d", then the date. */
 object RelativeTime {
@@ -16,22 +20,22 @@ object RelativeTime {
     private const val WEEK = 7 * DAY
 
     /** An unreadable timestamp gives an empty string, so a row never shows garbage. */
-    fun format(iso: String, now: Instant, zone: ZoneId = ZoneId.systemDefault(), locale: Locale = Locale.getDefault()): String {
+    fun format(iso: String, now: Instant, zone: ZoneId = systemDefaultZone(), locale: Locale = defaultLocale()): String {
         val then = try {
-            Instant.parse(iso)
+            parseInstant(iso)
         } catch (_: DateTimeException) {
             return ""
         }
-        val seconds = Duration.between(then, now).seconds
+        val seconds = durationBetween(then, now).seconds
         // A phone clock a little behind the host's would otherwise show "in the future".
         if (seconds < MINUTE) return "now"
         if (seconds < HOUR) return "${seconds / MINUTE}m"
         if (seconds < DAY) return "${seconds / HOUR}h"
-        val days = Duration.between(then.atZone(zone).toLocalDate().atStartOfDay(zone), now.atZone(zone).toLocalDate().atStartOfDay(zone)).toDays()
+        val days = startOfDayDaysBetween(then, now, zone)
         return when {
             days <= 1L -> "1d"
             seconds < WEEK -> "${days}d"
-            else -> DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM).withLocale(locale).withZone(zone).format(then)
+            else -> formatMediumDate(then, zone, locale)
         }
     }
 }

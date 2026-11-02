@@ -1,5 +1,7 @@
 package dev.ahpclient.state
 
+import dev.ahpclient.platform.platformSynchronized
+
 import com.microsoft.agenthostprotocol.Ahp
 import com.microsoft.agenthostprotocol.generated.RootState
 import com.microsoft.agenthostprotocol.generated.SessionAddedParams
@@ -49,7 +51,7 @@ class RootStore {
     private var live = false
 
     /** True once the host's own list has been taken, which nothing later undoes. A list that is only a seed does not count. */
-    val hasLiveCatalog: Boolean get() = synchronized(lock) { live }
+    val hasLiveCatalog: Boolean get() = platformSynchronized(lock) { live }
 
     fun seedRoot(state: RootState) {
         _root.value = state
@@ -61,7 +63,7 @@ class RootStore {
      *
      * @return true when the rows were taken.
      */
-    fun seedStale(items: List<SessionSummary>): Boolean = synchronized(lock) {
+    fun seedStale(items: List<SessionSummary>): Boolean = platformSynchronized(lock) {
         if (live) return false
         _stale.value = true
         byUri.clear()
@@ -114,7 +116,7 @@ class RootStore {
         true
     }
 
-    private inline fun mutate(change: () -> Unit) = synchronized(lock) {
+    private inline fun mutate(change: () -> Unit) = platformSynchronized(lock) {
         change()
         _sessions.value = SessionCatalog.sorted(byUri.values)
     }

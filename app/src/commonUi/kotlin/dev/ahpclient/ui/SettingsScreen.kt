@@ -1,0 +1,1015 @@
+package dev.ahpclient.ui
+
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SuggestionChip
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.unit.dp
+import dev.ahpclient.ai.NanoStatus
+import dev.ahpclient.app.BillingResult
+import dev.ahpclient.app.DirectEntry
+import dev.ahpclient.direct.DirectHost
+import dev.ahpclient.state.AiProviderKind
+import dev.ahpclient.state.GoogleAiConfig
+import dev.ahpclient.state.QuickReplies
+import dev.ahpclient.state.QuickReplyMode
+import dev.ahpclient.state.TextScale
+import dev.ahpclient.state.ThemeMode
+import dev.ahpclient.platform.Instant
+import dev.ahpclient.platform.formatShortDateTime
+import kotlin.math.roundToInt
+import kotlinx.coroutines.launch
+
+/**
+ * Settings, away from the chat: the hosts (the GitHub sign-in, and the hosts added by address), how the app looks (the size of the text
+ * in chats, the colours, the screen staying on, quick-reply suggestions), watching in the background, and what the app may do for you.
+ * Each switch keeps the words that say what it does, and the two that change what the app can do still ask first in a dialog. Choosing a
+ * host is not here: that is the hosts sheet of the side menu.
+ */
+@Composable
+fun SettingsScreen(
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+    /** False when no GitHub sign-in is held: the section then offers to sign in, and there is nothing to sign out of. */
+    signedIn: Boolean = false,
+    /** When the GitHub access token runs out; with [renews] the app trades it for a new one on its own, and no end is shown. */
+    tokenExpiresAt: Instant? = null,
+    renews: Boolean = false,
+    /** Null where a sign-in cannot be started from (with a host connected): the section then says so in place of the button. */
+    onSignIn: (() -> Unit)? = null,
+    onSignOut: () -> Unit = {},
+    /** The hosts added by address, with a way to remove each; all of them, whether or not one is connected. */
+    direct: List<DirectEntry> = emptyList(),
+    /** Adds a host: returns why it could not be added, or null when it was. Null here hides the add button. */
+    onAddHost: (suspend (name: String, address: String, token: String) -> String?)? = null,
+    onRemoveHost: (DirectHost) -> Unit = {},
+    /** The id of the host connected now, of either kind; null with none. Signing out or removing that host ends its connection, and the dialogs say so. */
+    connectedId: String? = null,
+    monitorEnabled: Boolean = false,
+    notificationsAllowed: Boolean = true,
+    onMonitorChange: (Boolean) -> Unit = {},
+    finishedAll: Boolean = false,
+    onFinishedAll: (Boolean) -> Unit = {},
+    interactionAllowed: Boolean = false,
+    interactionSupported: Boolean = true,
+    onInteractionChange: (Boolean) -> Unit = {},
+    managementAllowed: Boolean = false,
+    /** The connected direct host these permissions are for; null when they are for the signed-in account's tunnel hosts. */
+    appliesTo: String? = null,
+    onManagementChange: (Boolean) -> Unit = {},
+    textScale: Float = TextScale.DEFAULT,
+    onTextScale: (Float) -> Unit = {},
+    theme: ThemeMode = ThemeMode.SYSTEM,
+    onTheme: (ThemeMode) -> Unit = {},
+    keepAwake: Boolean = false,
+    onKeepAwake: (Boolean) -> Unit = {},
+    quickReplyMode: QuickReplyMode = QuickReplyMode.AUTO,
+    onQuickReplyMode: (QuickReplyMode) -> Unit = {},
+    nanoStatus: NanoStatus? = null,
+    onDownloadNano: (() -> Unit)? = null,
+    googleAiConfig: GoogleAiConfig = GoogleAiConfig(),
+    onSaveGoogleAiConfig: (suspend (enabled: Boolean, modelName: String, systemPrompt: String, newApiKey: String?, clearKey: Boolean) -> Boolean)? = null,
+    onSaveExternalAiConfig: (suspend (enabled: Boolean, providerKind: AiProviderKind, baseUrl: String, modelName: String, systemPrompt: String, newApiKey: String?, clearKey: Boolean) -> Boolean)? = null,
+    onFetchAvailableModels: (suspend (providerKind: AiProviderKind, baseUrl: String, overrideApiKey: String?) -> Result<List<String>>)? = null,
+    /** Whether Pro features (background monitoring, acting, managing, and concurrent multi-host) are unlocked. */
+    proUnlocked: Boolean = true,
+    /** Starts the Pro unlock flow when tapped; when null and [onPurchasePro] or [onRestorePro] is set, opens [ProUpgradeDialog]. */
+    onUnlockPro: (() -> Unit)? = null,
+    /** Launches the Pro purchase flow from [ProUpgradeDialog]. */
+    onPurchasePro: (suspend () -> BillingResult)? = null,
+    /** Restores an existing Pro purchase from [ProUpgradeDialog]. */
+    onRestorePro: (suspend () -> BillingResult)? = null,
+    /** Debug-only callback to toggle between Free and Pro tiers directly from Settings; null in release builds and standard tests. */
+    onDebugProChange: ((Boolean) -> Unit)? = null,
+) {
+    ScreenScaffold(title = "Settings", onBack = onBack, backLabel = "Back", titleTag = "settings_title", modifier = modifier) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = Design.ScreenPadding)
+                .padding(bottom = 16.dp)
+                .testTag("settings_screen"),
+        ) {
+            HostsSection(signedIn, tokenExpiresAt, renews, onSignIn, onSignOut, direct, onAddHost, onRemoveHost, connectedId)
+            SectionHeader("Display")
+            TileCard(shape = connectedShape(0, 3)) { TilePadding { ThemeRow(theme, onTheme) } }
+            Spacer(Modifier.height(Design.Gap))
+            TileCard(shape = connectedShape(1, 3)) { TilePadding { KeepAwakeToggle(keepAwake, onKeepAwake) } }
+            Spacer(Modifier.height(Design.Gap))
+            TileCard(shape = connectedShape(2, 3)) {
+                TilePadding {
+                    QuickReplyRow(
+                        mode = quickReplyMode,
+                        onChange = onQuickReplyMode,
+                        nanoStatus = nanoStatus,
+                        onDownloadNano = onDownloadNano,
+                        googleAiConfig = googleAiConfig,
+                        onSaveGoogleAiConfig = onSaveGoogleAiConfig,
+                        onSaveExternalAiConfig = onSaveExternalAiConfig,
+                        onFetchAvailableModels = onFetchAvailableModels,
+                    )
+                }
+            }
+            if (!proUnlocked || onDebugProChange != null) {
+                ProSection(proUnlocked, onUnlockPro, onPurchasePro, onRestorePro, onDebugProChange)
+            }
+            SectionHeader("Background")
+            TileCard(shape = connectedShape(0, 2)) {
+                TilePadding { MonitorToggle(monitorEnabled, notificationsAllowed, onMonitorChange, proUnlocked = proUnlocked) }
+            }
+            Spacer(Modifier.height(Design.Gap))
+            TileCard(shape = connectedShape(1, 2)) {
+                TilePadding { FinishedAllToggle(finishedAll, monitorEnabled, onFinishedAll, proUnlocked = proUnlocked) }
+            }
+            SectionHeader("Permissions")
+            Text(
+                if (appliesTo != null) "Applies to “$appliesTo” only." else "Applies to your VS Code tunnel hosts.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp).testTag("permissions_scope"),
+            )
+            TileCard(shape = connectedShape(0, 1)) {
+                TilePadding {
+                    InteractionToggle(
+                        allowed = interactionAllowed,
+                        onChange = { on ->
+                            onInteractionChange(on)
+                            onManagementChange(on)
+                        },
+                        supported = interactionSupported,
+                        proUnlocked = proUnlocked,
+                    )
+                }
+            }
+            AboutSection()
+        }
+    }
+}
+
+@Composable
+private fun AboutSection() {
+    var showingAbout by rememberSaveable { mutableStateOf(false) }
+    Spacer(Modifier.height(16.dp))
+    TileCard(
+        onClick = { showingAbout = true },
+        modifier = Modifier.testTag("about_button"),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(AppIcons.Info, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("About", style = MaterialTheme.typography.bodyLarge, maxLines = 1, modifier = Modifier.weight(1f))
+            Text(
+                "Privacy & licenses",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+        }
+    }
+    if (showingAbout) {
+        AboutSheet(onDismiss = { showingAbout = false })
+    }
+}
+
+@Composable
+private fun ProSection(
+    proUnlocked: Boolean,
+    onUnlockPro: (() -> Unit)?,
+    onPurchasePro: (suspend () -> BillingResult)?,
+    onRestorePro: (suspend () -> BillingResult)?,
+    onDebugProChange: ((Boolean) -> Unit)?,
+) {
+    var showingDialog by rememberSaveable { mutableStateOf(false) }
+    val hasDialogFlow = onPurchasePro != null || onRestorePro != null
+    val action: (() -> Unit)? = onUnlockPro ?: if (hasDialogFlow) ({ showingDialog = true }) else null
+    SectionHeader("Pro")
+    if (!proUnlocked) {
+        TileCard(
+            shape = if (onDebugProChange != null) connectedShape(0, 2) else connectedShape(0, 1),
+            modifier = Modifier.testTag("pro_section"),
+        ) {
+            TilePadding {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Unlock Pro", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "Free watches any session on one host. Pro unlocks acting on sessions, background alerts, and connecting to multiple hosts.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("pro_description"),
+                    )
+                    if (action != null) {
+                        Button(
+                            onClick = action,
+                            modifier = Modifier.heightIn(min = 48.dp).testTag("unlock_pro"),
+                        ) {
+                            Text("Unlock Pro")
+                        }
+                    }
+                }
+            }
+        }
+        if (onDebugProChange != null) {
+            Spacer(Modifier.height(Design.Gap))
+        }
+    }
+    if (onDebugProChange != null) {
+        TileCard(
+            shape = if (!proUnlocked) connectedShape(1, 2) else connectedShape(0, 1),
+        ) {
+            TilePadding {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .toggleable(
+                                value = proUnlocked,
+                                role = Role.Switch,
+                                onValueChange = onDebugProChange,
+                            )
+                            .testTag("debug_pro_toggle"),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("Pro tier (debug preview)", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                        Switch(checked = proUnlocked, onCheckedChange = null)
+                    }
+                    Text(
+                        "Toggle to test Free vs. Pro.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+    if (showingDialog && hasDialogFlow) {
+        ProUpgradeDialog(
+            onDismiss = { showingDialog = false },
+            onPurchase = onPurchasePro,
+            onRestore = onRestorePro,
+        )
+    }
+}
+
+@Composable
+private fun ProUpgradeDialog(
+    onDismiss: () -> Unit,
+    onPurchase: (suspend () -> BillingResult)?,
+    onRestore: (suspend () -> BillingResult)?,
+) {
+    val scope = rememberCoroutineScope()
+    var busy by remember { mutableStateOf(false) }
+    var message by rememberSaveable { mutableStateOf<String?>(null) }
+
+    fun handle(call: suspend () -> BillingResult) {
+        if (busy) return
+        busy = true
+        message = null
+        scope.launch {
+            try {
+                when (val res = call()) {
+                    BillingResult.Unlocked -> onDismiss()
+                    BillingResult.Cancelled -> {}
+                    BillingResult.NotFound -> message = "No previous Pro purchase was found."
+                    is BillingResult.Unavailable -> message = res.message
+                }
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        modifier = Modifier.testTag("pro_upgrade_dialog"),
+        title = { Text("AHP Client Pro") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "One-time unlock for acting on sessions, background alerts, and connecting to multiple hosts.",
+                )
+                val msg = message
+                if (msg != null) {
+                    Text(
+                        msg,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.testTag("pro_upgrade_message"),
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            if (onPurchase != null) {
+                Button(
+                    onClick = { handle(onPurchase) },
+                    enabled = !busy,
+                    modifier = Modifier.heightIn(min = 48.dp).testTag("pro_purchase"),
+                ) {
+                    Text("Purchase Pro")
+                }
+            }
+        },
+        dismissButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (onRestore != null) {
+                    TextButton(
+                        onClick = { handle(onRestore) },
+                        enabled = !busy,
+                        modifier = Modifier.heightIn(min = 48.dp).testTag("pro_restore"),
+                    ) {
+                        Text("Restore purchase")
+                    }
+                }
+                TextButton(
+                    onClick = onDismiss,
+                    enabled = !busy,
+                    modifier = Modifier.heightIn(min = 48.dp).testTag("pro_cancel"),
+                ) {
+                    Text("Close")
+                }
+            }
+        },
+    )
+}
+
+/**
+ * Where hosts are managed: the GitHub sign-in (which lists the VS Code hosts), and the hosts added by address with a remove button
+ * each. Both ask first before they forget anything. Which host to use is chosen in the side menu, not here.
+ */
+@Composable
+private fun HostsSection(
+    signedIn: Boolean,
+    tokenExpiresAt: Instant?,
+    renews: Boolean,
+    onSignIn: (() -> Unit)?,
+    onSignOut: () -> Unit,
+    direct: List<DirectEntry>,
+    onAddHost: (suspend (name: String, address: String, token: String) -> String?)?,
+    onRemoveHost: (DirectHost) -> Unit,
+    connectedId: String?,
+) {
+    var adding by rememberSaveable { mutableStateOf(false) }
+    var removing by remember { mutableStateOf<DirectHost?>(null) }
+    var confirmingSignOut by rememberSaveable { mutableStateOf(false) }
+    SectionHeader("Hosts")
+    TileCard(modifier = Modifier.testTag("github_section")) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("GitHub", style = MaterialTheme.typography.bodyLarge)
+                // A sign-in the app renews on its own has no end worth showing: the access token it holds lasts hours, but the sign-in does not.
+                val status = when {
+                    !signedIn && onSignIn != null -> "Not signed in."
+                    !signedIn -> "Not signed in. Disconnect to sign in."
+                    renews -> "Signed in. Renews itself."
+                    tokenExpiresAt != null -> "Signed in until ${formatShortDateTime(tokenExpiresAt)}."
+                    else -> "Signed in."
+                }
+                Text(status, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("token_expiry"))
+            }
+            if (signedIn) {
+                TextButton(onClick = { confirmingSignOut = true }, modifier = Modifier.heightIn(min = 48.dp).testTag("sign_out")) { Text("Sign out") }
+            } else if (onSignIn != null) {
+                TextButton(onClick = onSignIn, modifier = Modifier.heightIn(min = 48.dp).testTag("sign_in")) { Text("Sign in with GitHub") }
+            }
+        }
+    }
+    SectionHeader("Hosts you added")
+    if (direct.isEmpty()) {
+        Text(
+            "None added yet.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp).testTag("no_direct_hosts"),
+        )
+    } else {
+        Column(verticalArrangement = Arrangement.spacedBy(Design.Gap)) {
+            direct.forEachIndexed { index, entry ->
+                DirectRow(entry, connectedShape(index, direct.size), onConnect = null, onRemove = { removing = entry.host }, connected = entry.host.id == connectedId)
+            }
+        }
+    }
+    if (onAddHost != null) {
+        OutlinedButton(onClick = { adding = true }, modifier = Modifier.fillMaxWidth().padding(top = Design.Gap).heightIn(min = 48.dp).testTag("add_host")) {
+            Icon(AppIcons.Add, contentDescription = null, modifier = Modifier.padding(end = 8.dp))
+            Text("Add a host by address")
+        }
+    }
+    if (adding && onAddHost != null) {
+        AddHostDialog(onDismiss = { adding = false }, onAdd = onAddHost, onAdded = { adding = false })
+    }
+    removing?.let { host ->
+        AlertDialog(
+            onDismissRequest = { removing = null },
+            modifier = Modifier.testTag("remove_host_dialog"),
+            title = { Text("Remove “${host.name}”?") },
+            text = {
+                Text(
+                    "Forgets this host, its token, and its permissions." +
+                        if (host.id == connectedId) " It is connected now, so the connection ends too." else "",
+                )
+            },
+            confirmButton = { TextButton(onClick = { removing = null; onRemoveHost(host) }, modifier = Modifier.testTag("remove_host_confirm")) { Text("Remove") } },
+            dismissButton = { TextButton(onClick = { removing = null }, modifier = Modifier.testTag("remove_host_cancel")) { Text("Cancel") } },
+        )
+    }
+    if (confirmingSignOut) {
+        AlertDialog(
+            onDismissRequest = { confirmingSignOut = false },
+            modifier = Modifier.testTag("sign_out_dialog"),
+            title = { Text("Sign out?") },
+            text = {
+                Text(
+                    "Forgets your GitHub sign-in." +
+                        if (connectedId != null) " Leaves the host connected now and returns to the sign-in screen." else "",
+                )
+            },
+            confirmButton = { TextButton(onClick = { confirmingSignOut = false; onSignOut() }, modifier = Modifier.testTag("sign_out_confirm")) { Text("Sign out") } },
+            dismissButton = { TextButton(onClick = { confirmingSignOut = false }, modifier = Modifier.testTag("sign_out_cancel")) { Text("Cancel") } },
+        )
+    }
+}
+
+/** Light, dark or the system's, one of three. */
+@Composable
+private fun ThemeRow(theme: ThemeMode, onChange: (ThemeMode) -> Unit) {
+    Column(Modifier.fillMaxWidth().testTag("theme_section")) {
+        Text("Theme", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.heightIn(min = 40.dp).padding(top = 8.dp))
+        Row(Modifier.fillMaxWidth().padding(bottom = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ThemeMode.entries.forEach { mode ->
+                FilterChip(
+                    selected = theme == mode,
+                    onClick = { onChange(mode) },
+                    label = { Text(mode.label) },
+                    modifier = Modifier.heightIn(min = 48.dp).testTag("theme_${mode.name.lowercase()}"),
+                )
+            }
+        }
+    }
+}
+
+/** Keeps the screen on while an agent works, so a long turn can be watched without touching the phone. */
+@Composable
+private fun KeepAwakeToggle(on: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .toggleable(value = on, role = Role.Switch, onValueChange = onChange)
+            .testTag("keep_awake_toggle"),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("Keep screen on while an agent works", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+        Switch(checked = on, onCheckedChange = null)
+    }
+}
+
+/**
+ * When quick-reply chips are suggested in the message box after an agent turn finishes: automatically, on demand via a
+ * Suggest button, or off. Shows on-device Gemini Nano status and PowerToys-style Google AI provider configuration.
+ */
+@Composable
+private fun QuickReplyRow(
+    mode: QuickReplyMode,
+    onChange: (QuickReplyMode) -> Unit,
+    nanoStatus: NanoStatus?,
+    onDownloadNano: (() -> Unit)?,
+    googleAiConfig: GoogleAiConfig,
+    onSaveGoogleAiConfig: (suspend (enabled: Boolean, modelName: String, systemPrompt: String, newApiKey: String?, clearKey: Boolean) -> Boolean)?,
+    onSaveExternalAiConfig: (suspend (enabled: Boolean, providerKind: AiProviderKind, baseUrl: String, modelName: String, systemPrompt: String, newApiKey: String?, clearKey: Boolean) -> Boolean)? = null,
+    onFetchAvailableModels: (suspend (providerKind: AiProviderKind, baseUrl: String, overrideApiKey: String?) -> Result<List<String>>)? = null,
+) {
+    val scope = rememberCoroutineScope()
+    var showingGoogleDialog by rememberSaveable { mutableStateOf(false) }
+    val saveAction: (suspend (Boolean, AiProviderKind, String, String, String, String?, Boolean) -> Boolean)? =
+        onSaveExternalAiConfig ?: onSaveGoogleAiConfig?.let { legacy ->
+            { enabled, _, _, model, prompt, key, clear -> legacy(enabled, model, prompt, key, clear) }
+        }
+
+    Column(Modifier.fillMaxWidth().testTag("quick_reply_row"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("Quick replies", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.heightIn(min = 36.dp).padding(top = 6.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            QuickReplyMode.entries.forEach { entry ->
+                FilterChip(
+                    selected = mode == entry,
+                    onClick = { onChange(entry) },
+                    label = { Text(entry.label) },
+                    modifier = Modifier.heightIn(min = 48.dp).testTag("quick_reply_${entry.name.lowercase()}"),
+                )
+            }
+        }
+        val modeHint = when (mode) {
+            QuickReplyMode.AUTO -> "Suggests tappable replies automatically when a turn finishes."
+            QuickReplyMode.ON_DEMAND -> "Offers a Suggest button in the message box after a turn."
+            QuickReplyMode.OFF -> "Off: no quick-reply suggestions are shown."
+        }
+        val statusSuffix = when {
+            mode == QuickReplyMode.OFF -> ""
+            googleAiConfig.isActive -> " ${googleAiConfig.displayLabel} active."
+            nanoStatus != null -> " ${nanoStatus.label}."
+            else -> ""
+        }
+        Text(
+            text = modeHint + statusSuffix,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(bottom = 4.dp).testTag("quick_reply_hint"),
+        )
+        if (mode != QuickReplyMode.OFF && nanoStatus == NanoStatus.DOWNLOADABLE && onDownloadNano != null && !googleAiConfig.isActive) {
+            OutlinedButton(
+                onClick = onDownloadNano,
+                modifier = Modifier.heightIn(min = 48.dp).testTag("quick_reply_download_nano"),
+            ) {
+                Text("Download Gemini Nano")
+            }
+        }
+        if (mode != QuickReplyMode.OFF && saveAction != null) {
+            Text(
+                "AI source",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+            val isExternalReady = googleAiConfig.modelName.isNotBlank() && (!googleAiConfig.providerKind.requiresApiKey || googleAiConfig.hasApiKey)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = !googleAiConfig.isActive,
+                    onClick = {
+                        if (googleAiConfig.enabled) {
+                            scope.launch {
+                                saveAction(
+                                    false,
+                                    googleAiConfig.providerKind,
+                                    googleAiConfig.baseUrl,
+                                    googleAiConfig.modelName,
+                                    googleAiConfig.systemPrompt,
+                                    null,
+                                    false,
+                                )
+                            }
+                        }
+                    },
+                    label = { Text("On-device AI") },
+                    modifier = Modifier.heightIn(min = 48.dp).testTag("quick_reply_provider_onboard"),
+                )
+                FilterChip(
+                    selected = googleAiConfig.isActive,
+                    onClick = {
+                        if (isExternalReady) {
+                            if (!googleAiConfig.enabled) {
+                                scope.launch {
+                                    saveAction(
+                                        true,
+                                        googleAiConfig.providerKind,
+                                        googleAiConfig.baseUrl,
+                                        googleAiConfig.modelName,
+                                        googleAiConfig.systemPrompt,
+                                        null,
+                                        false,
+                                    )
+                                }
+                            }
+                        } else {
+                            showingGoogleDialog = true
+                        }
+                    },
+                    label = {
+                        Text(
+                            if (isExternalReady) {
+                                googleAiConfig.displayLabel
+                            } else {
+                                "External / Local AI"
+                            },
+                        )
+                    },
+                    modifier = Modifier.heightIn(min = 48.dp).testTag("quick_reply_provider_cloud"),
+                )
+            }
+            OutlinedButton(
+                onClick = { showingGoogleDialog = true },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("google_ai_configure_button"),
+            ) {
+                Icon(AppIcons.Sparkle, contentDescription = null, modifier = Modifier.padding(end = 8.dp))
+                Text(if (isExternalReady) "Configure AI provider (${googleAiConfig.displayLabel})" else "Configure AI provider")
+            }
+        }
+    }
+
+    if (showingGoogleDialog && saveAction != null) {
+        GoogleProviderConfigDialog(
+            config = googleAiConfig,
+            onDismiss = { showingGoogleDialog = false },
+            onSave = saveAction,
+            onFetchAvailableModels = onFetchAvailableModels,
+        )
+    }
+}
+
+/**
+ * External & local AI provider configuration dialog: supports Google Gemini, OpenAI-compatible endpoints (including local
+ * Ollama / LM Studio / llama.cpp for data privacy as well as OpenRouter / OpenAI / Groq), and Anthropic. Fetches live models
+ * directly from the configured endpoint instead of showing hardcoded model names.
+ */
+@Composable
+private fun GoogleProviderConfigDialog(
+    config: GoogleAiConfig,
+    onDismiss: () -> Unit,
+    onSave: suspend (enabled: Boolean, providerKind: AiProviderKind, baseUrl: String, modelName: String, systemPrompt: String, newApiKey: String?, clearKey: Boolean) -> Boolean,
+    onFetchAvailableModels: (suspend (providerKind: AiProviderKind, baseUrl: String, overrideApiKey: String?) -> Result<List<String>>)? = null,
+) {
+    val scope = rememberCoroutineScope()
+    var providerKind by rememberSaveable { mutableStateOf(config.providerKind) }
+    var baseUrl by rememberSaveable { mutableStateOf(config.baseUrl.ifBlank { config.providerKind.defaultBaseUrl }) }
+    var modelName by rememberSaveable { mutableStateOf(config.modelName) }
+    var apiKey by rememberSaveable { mutableStateOf("") }
+    var showApiKey by rememberSaveable { mutableStateOf(false) }
+    var clearSavedKey by rememberSaveable { mutableStateOf(false) }
+    var systemPrompt by rememberSaveable { mutableStateOf(config.systemPrompt.ifBlank { QuickReplies.DEFAULT_SYSTEM_PROMPT }) }
+    var saving by remember { mutableStateOf(false) }
+    var errorMessage by rememberSaveable { mutableStateOf<String?>(null) }
+
+    var availableModels by remember { mutableStateOf<List<String>>(emptyList()) }
+    var loadingModels by remember { mutableStateOf(false) }
+    var modelsMessage by remember { mutableStateOf<String?>(null) }
+
+    val hasKeyAvailable = (config.hasApiKey && !clearSavedKey) || apiKey.isNotBlank()
+
+    fun triggerFetchModels() {
+        val fetcher = onFetchAvailableModels ?: return
+        if (loadingModels) return
+        loadingModels = true
+        modelsMessage = null
+        scope.launch {
+            val result = fetcher(providerKind, baseUrl, apiKey.takeIf { it.isNotBlank() })
+            loadingModels = false
+            result.fold(
+                onSuccess = { models ->
+                    availableModels = models
+                    modelsMessage = null
+                    if (modelName.isBlank() && models.isNotEmpty()) {
+                        modelName = models.first()
+                    }
+                },
+                onFailure = { err ->
+                    modelsMessage = err.message ?: "Could not load models from endpoint."
+                },
+            )
+        }
+    }
+
+    LaunchedEffect(providerKind) {
+        if (onFetchAvailableModels != null && (hasKeyAvailable || !providerKind.requiresApiKey)) {
+            triggerFetchModels()
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = { if (!saving) onDismiss() },
+        modifier = Modifier.testTag("google_ai_dialog"),
+        title = { Text("AI provider configuration") },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    "Connect to Google Gemini, Anthropic, or any OpenAI-compatible server — including locally hosted models (Ollama, LM Studio, llama.cpp) on your LAN or Tailscale for complete data privacy.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
+                Text("Provider type", style = MaterialTheme.typography.labelLarge)
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    AiProviderKind.entries.forEach { entry ->
+                        FilterChip(
+                            selected = providerKind == entry,
+                            onClick = {
+                                val oldDefault = providerKind.defaultBaseUrl
+                                providerKind = entry
+                                if (baseUrl.isBlank() || baseUrl == oldDefault) {
+                                    baseUrl = entry.defaultBaseUrl
+                                }
+                                availableModels = emptyList()
+                                modelsMessage = null
+                                errorMessage = null
+                            },
+                            label = { Text(entry.label) },
+                            modifier = Modifier.heightIn(min = 48.dp).testTag("google_ai_kind_${entry.name}"),
+                        )
+                    }
+                }
+
+                OutlinedTextField(
+                    value = baseUrl,
+                    onValueChange = {
+                        baseUrl = it
+                        errorMessage = null
+                    },
+                    label = { Text("Endpoint URL") },
+                    placeholder = { Text(providerKind.endpointHint) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("google_ai_base_url_input"),
+                )
+
+                OutlinedTextField(
+                    value = apiKey,
+                    onValueChange = {
+                        apiKey = it
+                        if (it.isNotBlank()) clearSavedKey = false
+                        errorMessage = null
+                    },
+                    label = {
+                        Text(if (providerKind.requiresApiKey) "API key" else "API key (optional for local models)")
+                    },
+                    placeholder = {
+                        Text(
+                            when {
+                                config.hasApiKey && !clearSavedKey -> "Saved — leave blank to keep current key"
+                                !providerKind.requiresApiKey -> "Leave blank for local Ollama / LM Studio"
+                                else -> "Enter API key"
+                            },
+                        )
+                    },
+                    singleLine = true,
+                    visualTransformation = if (showApiKey) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        TextButton(
+                            onClick = { showApiKey = !showApiKey },
+                            modifier = Modifier.heightIn(min = 48.dp).testTag("google_ai_toggle_key_visibility"),
+                        ) {
+                            Text(if (showApiKey) "Hide" else "Show")
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().testTag("google_ai_api_key_input"),
+                )
+
+                if (config.hasApiKey && !clearSavedKey) {
+                    TextButton(
+                        onClick = {
+                            clearSavedKey = true
+                            apiKey = ""
+                        },
+                        modifier = Modifier.heightIn(min = 48.dp).testTag("google_ai_clear_key"),
+                    ) {
+                        Text("Remove saved API key")
+                    }
+                }
+
+                OutlinedTextField(
+                    value = modelName,
+                    onValueChange = {
+                        modelName = it
+                        errorMessage = null
+                    },
+                    label = { Text("Model name") },
+                    placeholder = { Text("e.g. type or load from endpoint below") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("google_ai_model_input"),
+                )
+
+                if (onFetchAvailableModels != null || availableModels.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (onFetchAvailableModels != null) {
+                            SuggestionChip(
+                                onClick = { triggerFetchModels() },
+                                enabled = !loadingModels,
+                                label = {
+                                    Text(
+                                        if (loadingModels) "Loading models…" else "Load models from endpoint",
+                                        style = MaterialTheme.typography.labelSmall,
+                                    )
+                                },
+                                modifier = Modifier.heightIn(min = 36.dp).testTag("google_ai_load_models"),
+                            )
+                        }
+                        availableModels.forEach { liveModel ->
+                            SuggestionChip(
+                                onClick = {
+                                    modelName = liveModel
+                                    errorMessage = null
+                                },
+                                label = { Text(liveModel, style = MaterialTheme.typography.labelSmall) },
+                                modifier = Modifier.heightIn(min = 36.dp).testTag("google_ai_preset_$liveModel"),
+                            )
+                        }
+                    }
+                }
+
+                modelsMessage?.let { msg ->
+                    Text(
+                        msg,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.testTag("google_ai_models_error"),
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("System prompt", style = MaterialTheme.typography.labelLarge)
+                    TextButton(
+                        onClick = { systemPrompt = QuickReplies.DEFAULT_SYSTEM_PROMPT },
+                        modifier = Modifier.heightIn(min = 48.dp).testTag("google_ai_reset_prompt"),
+                    ) {
+                        Text("Reset default")
+                    }
+                }
+
+                OutlinedTextField(
+                    value = systemPrompt,
+                    onValueChange = { systemPrompt = it },
+                    minLines = 3,
+                    maxLines = 6,
+                    modifier = Modifier.fillMaxWidth().testTag("google_ai_system_prompt_input"),
+                )
+
+                errorMessage?.let { msg ->
+                    Text(
+                        msg,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.testTag("google_ai_error"),
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val cleanModel = modelName.trim()
+                    if (cleanModel.isEmpty() && !clearSavedKey) {
+                        errorMessage = "Enter a model name (or tap Load models from endpoint)."
+                        return@Button
+                    }
+                    if (providerKind.requiresApiKey && !hasKeyAvailable && !clearSavedKey) {
+                        errorMessage = "Enter an API key for ${providerKind.label} (or switch to OpenAI / Local for keyless local models)."
+                        return@Button
+                    }
+                    saving = true
+                    errorMessage = null
+                    scope.launch {
+                        val canEnable = cleanModel.isNotEmpty() && (!providerKind.requiresApiKey || hasKeyAvailable)
+                        val saved = onSave(
+                            canEnable,
+                            providerKind,
+                            baseUrl.trim().ifEmpty { providerKind.defaultBaseUrl },
+                            cleanModel,
+                            systemPrompt,
+                            apiKey.takeIf { it.isNotBlank() },
+                            clearSavedKey && apiKey.isBlank(),
+                        )
+                        saving = false
+                        if (saved) {
+                            onDismiss()
+                        } else {
+                            errorMessage = "Could not save the provider settings on this device."
+                        }
+                    }
+                },
+                enabled = !saving,
+                modifier = Modifier.heightIn(min = 48.dp).testTag("google_ai_save"),
+            ) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                enabled = !saving,
+                modifier = Modifier.heightIn(min = 48.dp).testTag("google_ai_cancel"),
+            ) {
+                Text("Cancel")
+            }
+        },
+    )
+}
+
+@Composable
+private fun TilePadding(content: @Composable () -> Unit) {
+    Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) { content() }
+}
+
+/**
+ * The background-monitoring switch. The whole row is the control, so the label and its state are read together and the
+ * touch target is the full width. The words under it say what the current setting does, including when notifications
+ * are blocked and the user would not be told.
+ */
+@Composable
+internal fun MonitorToggle(enabled: Boolean, notificationsAllowed: Boolean, onChange: (Boolean) -> Unit, proUnlocked: Boolean = true) {
+    Column(modifier = Modifier.fillMaxWidth().testTag("monitor_section")) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp)
+                .toggleable(value = enabled, enabled = proUnlocked, role = Role.Switch, onValueChange = onChange)
+                .testTag("monitor_toggle"),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Monitor in background", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+            Switch(checked = enabled, onCheckedChange = null, enabled = proUnlocked)
+        }
+        Text(
+            when {
+                !proUnlocked -> "Requires Pro."
+                !enabled -> "Off: updates only while open."
+                notificationsAllowed -> "On: stays connected and notifies you when a session needs you."
+                else -> "On, but notifications are blocked in Android settings."
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (enabled && !notificationsAllowed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.testTag("monitor_hint"),
+        )
+    }
+}
+
+/**
+ * Whether to be told when any session finishes, not only the ones picked with the bell in a session's menu. The alerts come only
+ * while background monitoring is on, and the words under the switch say so when it is not.
+ */
+@Composable
+internal fun FinishedAllToggle(on: Boolean, monitoring: Boolean, onChange: (Boolean) -> Unit, proUnlocked: Boolean = true) {
+    Column(modifier = Modifier.fillMaxWidth().testTag("finished_all_section")) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp)
+                .toggleable(value = on, enabled = proUnlocked, role = Role.Switch, onValueChange = onChange)
+                .testTag("finished_all_toggle"),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Alert when any session finishes", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+            Switch(checked = on, onCheckedChange = null, enabled = proUnlocked)
+        }
+        Text(
+            when {
+                !proUnlocked -> "Requires Pro."
+                on && monitoring -> "On: you are told when a session stops."
+                on -> "On, but needs Monitor in background."
+                else -> "Off: per-session alerts only."
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (on && !monitoring) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.testTag("finished_all_hint"),
+        )
+    }
+}

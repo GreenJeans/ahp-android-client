@@ -1,5 +1,6 @@
 package dev.ahpclient.app
 
+import dev.ahpclient.platform.*
 import dev.ahpclient.auth.Secret
 import dev.ahpclient.direct.DirectHost
 import dev.ahpclient.state.ChannelStore
@@ -12,7 +13,10 @@ import dev.ahpclient.state.SessionStore
 import dev.ahpclient.tunnel.TunnelInfo
 import com.microsoft.agenthostprotocol.generated.ChangesetState
 import com.microsoft.agenthostprotocol.generated.TerminalState
-import java.time.Instant
+import dev.ahpclient.platform.INSTANT_EPOCH
+import dev.ahpclient.platform.Instant
+import dev.ahpclient.platform.instantNow
+import dev.ahpclient.platform.parseInstant
 import kotlinx.coroutines.flow.StateFlow
 
 /** The small, non-secret preference the app remembers between launches. */
@@ -161,11 +165,7 @@ object SafeLinks {
     private val ALLOWED_HOSTS = setOf("github.com")
 
     fun isSafeVerificationUri(uri: String): Boolean {
-        val parsed = try {
-            java.net.URI(uri)
-        } catch (_: java.net.URISyntaxException) {
-            return false
-        }
+        val parsed = parseUri(uri) ?: return false
         return parsed.scheme == "https" && parsed.host in ALLOWED_HOSTS && parsed.userInfo == null && parsed.port == -1
     }
 
@@ -176,11 +176,7 @@ object SafeLinks {
      */
     fun isSafeWebLink(uri: String): Boolean {
         if (uri.length > MAX_LINK_LENGTH) return false
-        val parsed = try {
-            java.net.URI(uri)
-        } catch (_: java.net.URISyntaxException) {
-            return false
-        }
+        val parsed = parseUri(uri) ?: return false
         val host = parsed.host ?: return false
         return parsed.scheme == "https" && host.isNotBlank() && parsed.userInfo == null && host.all { it.code in ASCII_PRINTABLE }
     }
