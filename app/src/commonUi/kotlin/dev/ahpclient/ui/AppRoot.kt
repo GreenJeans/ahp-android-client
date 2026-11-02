@@ -202,6 +202,7 @@ private fun Shell(
                         folders = hostManager.offeredFolders(),
                         newSession = hostManager::newSession,
                         sessionSettings = hostManager::sessionSettings,
+                        settingCompletions = hostManager::settingCompletions,
                     )
                 }
                 rawManageTargets += target
@@ -240,6 +241,7 @@ private fun Shell(
                 newChat = controller.manager::newChat,
                 newSession = controller.manager::newSession,
                 sessionSettings = controller.manager::sessionSettings,
+                settingCompletions = controller.manager::settingCompletions,
                 disposeSession = controller.manager::disposeSession,
                 disposeChat = controller.manager::disposeChat,
                 hosts = orderedManageTargets,

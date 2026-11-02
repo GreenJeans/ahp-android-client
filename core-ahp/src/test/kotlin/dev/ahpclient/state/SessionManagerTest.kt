@@ -9,6 +9,7 @@ import com.microsoft.agenthostprotocol.generated.ChatSourceFork
 import com.microsoft.agenthostprotocol.generated.ChatSourceSideChat
 import com.microsoft.agenthostprotocol.generated.Message
 import com.microsoft.agenthostprotocol.generated.ResolveSessionConfigResult
+import com.microsoft.agenthostprotocol.generated.SessionConfigCompletionsResult
 import com.microsoft.agenthostprotocol.generated.SessionState
 import com.microsoft.agenthostprotocol.generated.SessionSummary
 import com.microsoft.agenthostprotocol.generated.StateAction
@@ -73,6 +74,16 @@ class SessionManagerTest {
             resolves += Triple(provider, workingDirectory, config)
             resolveFailure?.let { throw it }
             return resolution(provider, workingDirectory, config)
+        }
+
+        val completionAsks = mutableListOf<Triple<String, String, String?>>()
+        var completionFailure: Throwable? = null
+        var completionItems = """{"items":[]}"""
+
+        override suspend fun sessionConfigCompletions(provider: String, workingDirectory: String?, config: Map<String, JsonElement>?, property: String, query: String?): SessionConfigCompletionsResult {
+            completionAsks += Triple(provider, property, query)
+            completionFailure?.let { throw it }
+            return Ahp.json.decodeFromString(SessionConfigCompletionsResult.serializer(), completionItems)
         }
 
         val chatSources = mutableListOf<ChatSource?>()
@@ -393,6 +404,70 @@ class SessionManagerTest {
         assertEquals(ConfigPick.Flag(false), offer.form.fields[1].value)
         assertTrue(rig.asked.isEmpty(), "only asking")
         assertTrue(rig.commands.calls.isEmpty())
+    }
+
+    @Test
+    fun `completing a setting asks the host with the trimmed query and the choices so far, and returns bounded one line options`() = runTest {
+        val rig = Rig()
+        rig.commands.completionItems = """{"items":[{"value":"main","label":"  the\nmain‮ branch ","description":"d"},{"value":"main","label":"dup"},{"value":" ","label":"blank"},{"value":"${"v".repeat(300)}","label":"long"}]}"""
+
+        val found = assertIs<ConfigCompletions.Items>(rig.manager.settingCompletions("claude", "file:///work/b", mapOf("mode" to ConfigPick.Text("fast")), "branch", "  ma  "))
+
+        assertEquals(listOf(Triple<String, String, String?>("claude", "branch", "ma")), rig.commands.completionAsks)
+        assertEquals(listOf(ConfigPick.Text("main")), found.options.map { it.pick })
+        assertEquals("the main� branch", found.options.single().label)
+        assertEquals("d", found.options.single().description)
+    }
+
+    @Test
+    fun `an empty query is sent as none, and a host without the query leaves the seeds, not an error`() = runTest {
+        val rig = Rig()
+
+        rig.manager.settingCompletions("claude", "file:///work/b", emptyMap(), "branch", "   ")
+        assertEquals(null, rig.commands.completionAsks.single().third)
+
+        rig.commands.completionFailure = AhpException.Rpc(-32601, "method not found", null)
+        assertEquals(ConfigCompletions.SeedsOnly, rig.manager.settingCompletions("claude", "file:///work/b", emptyMap(), "branch", "m"))
+    }
+
+    @Test
+    fun `any other refusal or a dropped connection is said in words`() = runTest {
+        val rig = Rig()
+        rig.commands.completionFailure = AhpException.Rpc(-32003, "no", null)
+        assertTrue(assertIs<ConfigCompletions.Unavailable>(rig.manager.settingCompletions("claude", "file:///work/b", emptyMap(), "branch", "m")).reason.startsWith("The host refused it"))
+
+        rig.commands.completionFailure = AhpException.ConnectionClosed(null)
+        assertIs<ConfigCompletions.Unavailable>(rig.manager.settingCompletions("claude", "file:///work/b", emptyMap(), "branch", "m"))
+    }
+
+    @Test
+    fun `nothing is asked to complete for an agent or folder the host did not offer, a bad setting id, or without manage`() = runTest {
+        val rig = Rig()
+
+        assertIs<ConfigCompletions.Unavailable>(rig.manager.settingCompletions("rogue", "file:///work/a", emptyMap(), "branch", "m"))
+        assertIs<ConfigCompletions.Unavailable>(rig.manager.settingCompletions("claude", "file:///etc", emptyMap(), "branch", "m"))
+        assertIs<ConfigCompletions.Unavailable>(rig.manager.settingCompletions("claude", "file:///work/a", emptyMap(), " ", "m"))
+        assertIs<ConfigCompletions.Unavailable>(rig.manager.settingCompletions("claude", "file:///work/a", emptyMap(), "x".repeat(SessionConfigForm.MAX_ID + 1), "m"))
+        rig.allowed = false
+        assertIs<ConfigCompletions.Unavailable>(rig.manager.settingCompletions("claude", "file:///work/a", emptyMap(), "branch", "m"))
+
+        assertTrue(rig.commands.completionAsks.isEmpty())
+    }
+
+    @Test
+    fun `a completed value starts a session only when the host's own answer holds it`() = runTest {
+        val branch = """"branch":{"type":"string","title":"Branch","enumDynamic":true,"enum":["main"]}"""
+        val rig = Rig().apply { hostOffers(branch) }
+
+        assertIs<ManageResult.Done>(rig.manager.newSession("claude", "file:///work/b", mapOf("branch" to ConfigPick.Text("feature-x"))))
+        assertEquals(JsonPrimitive("feature-x"), rig.commands.configs.single()!!["branch"])
+        // The device check names the chosen value, so what is confirmed is what is sent.
+        assertEquals(listOf(ApprovalRequest("Claude", "Branch: feature-x\nfile:///work/b", title = "Start a new session?")), rig.asked)
+
+        // The host answers with another value, so the pick did not take and nothing is sent.
+        rig.commands.resolution = { _, _, _ -> result(branch, """{"branch":"main"}""") }
+        assertEquals(ManageResult.InvalidChoice, rig.manager.newSession("claude", "file:///work/b", mapOf("branch" to ConfigPick.Text("feature-x"))))
+        assertEquals(1, rig.commands.configs.size)
     }
 
     @Test

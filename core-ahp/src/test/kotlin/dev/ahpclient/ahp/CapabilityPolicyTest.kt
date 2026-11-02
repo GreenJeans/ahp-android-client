@@ -104,18 +104,18 @@ class CapabilityPolicyTest {
 
     private val manageCommands = setOf("createSession", "createChat", "disposeSession", "disposeChat", "invokeChangesetOperation")
 
-    private val manageQueries = setOf("resolveSessionConfig")
+    private val manageQueries = setOf("resolveSessionConfig", "sessionConfigCompletions")
 
     @Test
-    fun `only MANAGE can ask what settings a new session would have, and nothing else of that kind`() {
+    fun `only MANAGE can ask what settings a new session would have and complete one as you type, and nothing else of that kind`() {
         assertEquals(manageQueries, CapabilityPolicy.MANAGE_QUERIES)
         manageQueries.forEach { query ->
             assertFailsWith<CapabilityDeniedException>(query) { CapabilityPolicy.READ.check(query) }
             assertFailsWith<CapabilityDeniedException>(query) { CapabilityPolicy.INTERACT.check(query) }
             CapabilityPolicy.MANAGE.check(query)
         }
-        // The neighbouring question, completing a setting as you type, is not allowed.
-        assertFailsWith<CapabilityDeniedException> { CapabilityPolicy.MANAGE.check("sessionConfigCompletions") }
+        // The composer's completions are a different question, asked on a chat, and are not allowed at any tier yet.
+        assertFailsWith<CapabilityDeniedException> { CapabilityPolicy.MANAGE.check("completions") }
     }
 
     private val manageActions = setOf(

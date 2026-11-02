@@ -64,8 +64,54 @@ class SessionConfigFormTest {
 
         val form = SessionConfigForm.from(result("$readOnly,$dynamic,$free,$number,$mixed,$nested,$thinking"))
 
-        assertEquals(listOf("thinking"), form.fields.map { it.id })
-        assertEquals(6, form.omitted)
+        // The one the host wants completed as you type is kept, as a dynamic setting.
+        assertEquals(listOf("branch", "thinking"), form.fields.map { it.id })
+        assertEquals(listOf(true, false), form.fields.map { it.dynamic })
+        assertEquals(5, form.omitted)
+    }
+
+    private val branch = prop("branch", """{"type":"string","title":"Branch","enum":["main"],"enumDynamic":true}""")
+
+    @Test
+    fun `a dynamic setting keeps its seeds, and a value the host holds that is not a seed is the current value`() {
+        val field = SessionConfigForm.from(result(branch, """{"branch":"feature-x"}""")).fields.single()
+
+        assertEquals(listOf(ConfigPick.Text("main")), field.options.map { it.pick })
+        assertEquals(ConfigPick.Text("feature-x"), field.value)
+    }
+
+    @Test
+    fun `a dynamic setting with no seeds is still offered, but a dynamic boolean or number is not`() {
+        val bare = prop("branch", """{"type":"string","title":"Branch","enumDynamic":true}""")
+        val flag = prop("f", """{"type":"boolean","title":"F","enumDynamic":true}""")
+        val number = prop("n", """{"type":"number","title":"N","enumDynamic":true}""")
+
+        val form = SessionConfigForm.from(result("$bare,$flag,$number"))
+
+        assertEquals(listOf("branch"), form.fields.map { it.id })
+        assertEquals(emptyList(), form.fields.single().options)
+        assertEquals(2, form.omitted)
+    }
+
+    @Test
+    fun `a dynamic value is accepted only when the host echoed it, and is described by itself`() {
+        val held = SessionConfigForm.from(result(branch, """{"branch":"feature-x"}"""))
+        val other = SessionConfigForm.from(result(branch, """{"branch":"main"}"""))
+        val pick = mapOf("branch" to ConfigPick.Text("feature-x"))
+
+        assertTrue(held.accepts(pick))
+        assertFalse(other.accepts(pick), "the host kept another value, so the pick did not take")
+        assertFalse(held.accepts(mapOf("branch" to ConfigPick.Flag(true))))
+        assertEquals(listOf("Branch: feature-x"), held.describe(pick))
+        // A fixed list still refuses a value that is not one of its options, however the host echoes it.
+        assertFalse(SessionConfigForm.from(result(thinking, """{"thinking":"extreme"}""")).accepts(mapOf("thinking" to ConfigPick.Text("extreme"))))
+    }
+
+    @Test
+    fun `an over long dynamic value the host holds is not taken as the current value`() {
+        val field = SessionConfigForm.from(result(branch, """{"branch":"${"v".repeat(500)}"}""")).fields.single()
+
+        assertNull(field.value)
     }
 
     @Test

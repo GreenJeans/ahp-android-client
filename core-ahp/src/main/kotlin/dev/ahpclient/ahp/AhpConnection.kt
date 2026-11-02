@@ -31,6 +31,8 @@ import com.microsoft.agenthostprotocol.generated.ReconnectParams
 import com.microsoft.agenthostprotocol.generated.ReconnectResult
 import com.microsoft.agenthostprotocol.generated.ResolveSessionConfigParams
 import com.microsoft.agenthostprotocol.generated.ResolveSessionConfigResult
+import com.microsoft.agenthostprotocol.generated.SessionConfigCompletionsParams
+import com.microsoft.agenthostprotocol.generated.SessionConfigCompletionsResult
 import com.microsoft.agenthostprotocol.generated.ResourceReadParams
 import com.microsoft.agenthostprotocol.generated.ResourceReadResult
 import com.microsoft.agenthostprotocol.generated.SUPPORTED_PROTOCOL_VERSIONS
@@ -240,6 +242,32 @@ class AhpConnection(
             ResolveSessionConfigParams.serializer(),
             ResolveSessionConfigParams(channel = ROOT_CHANNEL, provider = provider, workingDirectory = workingDirectory, config = config),
             ResolveSessionConfigResult.serializer(),
+        )
+
+    /**
+     * Asks the host for values matching [query] for the setting [property] of a new session, for a setting too long to list
+     * that the host wants completed as you type. [config] is the choices made so far, as for [resolveSessionConfig]. Changes
+     * nothing on the host. Refused with [CapabilityDeniedException] unless the tier lists the query.
+     */
+    suspend fun sessionConfigCompletions(
+        provider: String,
+        workingDirectory: String?,
+        config: Map<String, JsonElement>?,
+        property: String,
+        query: String?,
+    ): SessionConfigCompletionsResult =
+        request(
+            "sessionConfigCompletions",
+            SessionConfigCompletionsParams.serializer(),
+            SessionConfigCompletionsParams(
+                channel = ROOT_CHANNEL,
+                provider = provider,
+                workingDirectory = workingDirectory,
+                config = config,
+                property = property,
+                query = query,
+            ),
+            SessionConfigCompletionsResult.serializer(),
         )
 
     /** Creates the chat at [chatUri], which the client picks, in the session at [sessionUri]. */
