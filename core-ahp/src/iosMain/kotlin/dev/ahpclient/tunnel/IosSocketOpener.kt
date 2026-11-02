@@ -1,3 +1,5 @@
+@file:OptIn(kotlinx.cinterop.BetaInteropApi::class)
+
 package dev.ahpclient.tunnel
 
 import dev.ahpclient.platform.AtomicBoolean
@@ -151,7 +153,7 @@ internal class IosTextSocket(
         frames.close()
         while (frames.tryReceive().isSuccess) continue
         queued.set(0L)
-        val reasonData: NSData? = ("client overloaded" as NSString).dataUsingEncoding(NSUTF8StringEncoding)
+        val reasonData: NSData? = NSString.create(string = "client overloaded").dataUsingEncoding(NSUTF8StringEncoding)
         task.cancelWithCloseCode(TextSocket.POLICY_VIOLATION.toLong(), reason = reasonData)
     }
 
@@ -194,7 +196,7 @@ internal class IosTextSocket(
     override fun close(code: Int, reason: String) {
         if (closed.getAndSet(true)) return
         pingJob?.cancel()
-        val reasonData: NSData? = (reason as NSString).dataUsingEncoding(NSUTF8StringEncoding)
+        val reasonData: NSData? = NSString.create(string = reason).dataUsingEncoding(NSUTF8StringEncoding)
         task.cancelWithCloseCode(code.toLong(), reason = reasonData)
         frames.close()
     }

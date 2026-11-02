@@ -12,11 +12,14 @@ import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.value
 import platform.CoreFoundation.CFDictionaryAddValue
 import platform.CoreFoundation.CFDictionaryCreateMutable
+import platform.CoreFoundation.CFMutableDictionaryRef
 import platform.CoreFoundation.CFRelease
+import platform.CoreFoundation.CFTypeRef
 import platform.CoreFoundation.CFTypeRefVar
 import platform.CoreFoundation.kCFBooleanTrue
 import platform.CoreFoundation.kCFTypeDictionaryKeyCallBacks
 import platform.CoreFoundation.kCFTypeDictionaryValueCallBacks
+import platform.Foundation.CFBridgingRetain
 import platform.Foundation.NSApplicationSupportDirectory
 import platform.Foundation.NSData
 import platform.Foundation.NSFileManager
@@ -51,21 +54,21 @@ import platform.posix.memcpy
  *
  * Stores a 256-bit random master key in the iOS Keychain under [kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
  * (device-bound, never synced to iCloud Backup or iCloud Keychain) and seals/opens blobs with authenticated
- * encryption (16-byte random IV + SHA-256 CTR keystream + 32-byte HMAC-SHA256 authentication tag).
+ * encryption (16-byte random IV + SHA-256 CTR keystream + 32-byte HMAC-SHA256 authentication tag bound to [aad]).
  */
 class KeychainSecureBox(
     private val keyAccount: String = DEFAULT_KEY_ACCOUNT,
     private val serviceName: String = DEFAULT_SERVICE_NAME,
 ) : SecureBox {
 
-    override fun seal(plaintext: ByteArray): ByteArray {
+    override fun seal(plain: ByteArray, aad: ByteArray): ByteArray {
         val masterKey = loadOrCreateKey()
         try {
             val iv = randomBytes(IV_SIZE)
             val encKey = hmacSha256(masterKey, "enc".encodeToByteArray() + iv)
             val macKey = hmacSha256(masterKey, "mac".encodeToByteArray() + iv)
-            val ciphertext = xorKeystream(plaintext, encKey, iv)
-            val tag = hmacSha256(macKey, byteArrayOf(VERSION) + iv + ciphertext)
+            val ciphertext = xorKeystream(plain, encKey, iv)
+            val tag = hmacSha256(macKey, authInput(iv, aad, ciphertext))
             val out = ByteArray(1 + IV_SIZE + ciphertext.size + TAG_SIZE)
             out[0] = VERSION
             iv.copyInto(out, destinationOffset = 1)
@@ -77,14 +80,14 @@ class KeychainSecureBox(
         }
     }
 
-    override fun open(blob: ByteArray): ByteArray {
+    override fun open(blob: ByteArray, aad: ByteArray): ByteArray {
         if (blob.size < 1 + IV_SIZE + TAG_SIZE) {
-            throw CorruptBlobException("Encrypted blob is too short (${blob.size} bytes)")
+            throw VaultCryptoException("Encrypted blob is too short (${blob.size} bytes)")
         }
         if (blob[0] != VERSION) {
-            throw CorruptBlobException("Unsupported encrypted blob version: ${blob[0]}")
+            throw VaultCryptoException("Unsupported encrypted blob version: ${blob[0]}")
         }
-        val masterKey = loadExistingKey() ?: throw KeyInvalidatedException("Keychain key not found for $keyAccount")
+        val masterKey = loadExistingKey() ?: throw VaultCryptoException("Keychain key not found for $keyAccount")
         try {
             val iv = blob.copyOfRange(1, 1 + IV_SIZE)
             val cipherLen = blob.size - 1 - IV_SIZE - TAG_SIZE
@@ -92,9 +95,9 @@ class KeychainSecureBox(
             val tag = blob.copyOfRange(1 + IV_SIZE + cipherLen, blob.size)
             val encKey = hmacSha256(masterKey, "enc".encodeToByteArray() + iv)
             val macKey = hmacSha256(masterKey, "mac".encodeToByteArray() + iv)
-            val expectedTag = hmacSha256(macKey, byteArrayOf(VERSION) + iv + ciphertext)
+            val expectedTag = hmacSha256(macKey, authInput(iv, aad, ciphertext))
             if (!constantTimeEquals(tag, expectedTag)) {
-                throw CorruptBlobException("Encrypted blob authentication tag mismatch")
+                throw VaultCryptoException("Encrypted blob authentication tag mismatch")
             }
             return xorKeystream(ciphertext, encKey, iv)
         } finally {
@@ -102,12 +105,23 @@ class KeychainSecureBox(
         }
     }
 
+    private fun authInput(iv: ByteArray, aad: ByteArray, ciphertext: ByteArray): ByteArray {
+        val aadLen = aad.size
+        val lenBytes = byteArrayOf(
+            ((aadLen ushr 24) and 0xFF).toByte(),
+            ((aadLen ushr 16) and 0xFF).toByte(),
+            ((aadLen ushr 8) and 0xFF).toByte(),
+            (aadLen and 0xFF).toByte(),
+        )
+        return byteArrayOf(VERSION) + iv + lenBytes + aad + ciphertext
+    }
+
     override fun destroyKey() {
         val query = CFDictionaryCreateMutable(null, 4, kCFTypeDictionaryKeyCallBacks.ptr, kCFTypeDictionaryValueCallBacks.ptr)
         try {
             CFDictionaryAddValue(query, kSecClass, kSecClassGenericPassword)
-            CFDictionaryAddValue(query, kSecAttrService, kotlinx.cinterop.objcPtr(serviceName))
-            CFDictionaryAddValue(query, kSecAttrAccount, kotlinx.cinterop.objcPtr(keyAccount))
+            cfPutObjC(query, kSecAttrService, serviceName)
+            cfPutObjC(query, kSecAttrAccount, keyAccount)
             SecItemDelete(query)
         } finally {
             CFRelease(query)
@@ -121,10 +135,10 @@ class KeychainSecureBox(
         val attrs = CFDictionaryCreateMutable(null, 6, kCFTypeDictionaryKeyCallBacks.ptr, kCFTypeDictionaryValueCallBacks.ptr)
         try {
             CFDictionaryAddValue(attrs, kSecClass, kSecClassGenericPassword)
-            CFDictionaryAddValue(attrs, kSecAttrService, kotlinx.cinterop.objcPtr(serviceName))
-            CFDictionaryAddValue(attrs, kSecAttrAccount, kotlinx.cinterop.objcPtr(keyAccount))
+            cfPutObjC(attrs, kSecAttrService, serviceName)
+            cfPutObjC(attrs, kSecAttrAccount, keyAccount)
             CFDictionaryAddValue(attrs, kSecAttrAccessible, kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly)
-            CFDictionaryAddValue(attrs, kSecValueData, kotlinx.cinterop.objcPtr(nsData))
+            cfPutObjC(attrs, kSecValueData, nsData)
             val status = SecItemAdd(attrs, null)
             if (status == errSecSuccess) {
                 return freshKey
@@ -135,7 +149,7 @@ class KeychainSecureBox(
                 return it
             }
             freshKey.fill(0)
-            throw KeyInvalidatedException("SecItemAdd failed with OSStatus $status")
+            throw VaultCryptoException("SecItemAdd failed with OSStatus $status")
         } finally {
             CFRelease(attrs)
         }
@@ -145,24 +159,38 @@ class KeychainSecureBox(
         val query = CFDictionaryCreateMutable(null, 6, kCFTypeDictionaryKeyCallBacks.ptr, kCFTypeDictionaryValueCallBacks.ptr)
         try {
             CFDictionaryAddValue(query, kSecClass, kSecClassGenericPassword)
-            CFDictionaryAddValue(query, kSecAttrService, kotlinx.cinterop.objcPtr(serviceName))
-            CFDictionaryAddValue(query, kSecAttrAccount, kotlinx.cinterop.objcPtr(keyAccount))
+            cfPutObjC(query, kSecAttrService, serviceName)
+            cfPutObjC(query, kSecAttrAccount, keyAccount)
             CFDictionaryAddValue(query, kSecReturnData, kCFBooleanTrue)
             CFDictionaryAddValue(query, kSecMatchLimit, kSecMatchLimitOne)
             val resultRef = alloc<CFTypeRefVar>()
             val status = SecItemCopyMatching(query, resultRef.ptr)
             if (status == errSecItemNotFound) return null
             if (status != errSecSuccess) {
-                throw KeyInvalidatedException("SecItemCopyMatching failed with OSStatus $status")
+                throw VaultCryptoException("SecItemCopyMatching failed with OSStatus $status")
             }
-            val data = kotlinx.cinterop.interpretObjCPointerOrNull<NSData>(resultRef.value?.rawValue ?: return null) ?: return null
-            val bytes = data.toByteArray()
-            if (bytes.size != KEY_SIZE) {
-                throw KeyInvalidatedException("Unexpected Keychain key length: ${bytes.size}")
+            val rawPtr = resultRef.value ?: return null
+            try {
+                val data = kotlinx.cinterop.interpretObjCPointerOrNull<NSData>(rawPtr.rawValue) ?: return null
+                val bytes = data.toByteArray()
+                if (bytes.size != KEY_SIZE) {
+                    throw VaultCryptoException("Unexpected Keychain key length: ${bytes.size}")
+                }
+                bytes
+            } finally {
+                CFRelease(rawPtr)
             }
-            bytes
         } finally {
             CFRelease(query)
+        }
+    }
+
+    private fun cfPutObjC(dict: CFMutableDictionaryRef?, key: CFTypeRef?, value: Any) {
+        val ref = CFBridgingRetain(value)
+        try {
+            CFDictionaryAddValue(dict, key, ref)
+        } finally {
+            if (ref != null) CFRelease(ref)
         }
     }
 
@@ -171,7 +199,7 @@ class KeychainSecureBox(
         out.usePinned { pinned ->
             val status = SecRandomCopyBytes(kSecRandomDefault, size.toULong(), pinned.addressOf(0))
             if (status != errSecSuccess) {
-                throw KeyInvalidatedException("SecRandomCopyBytes failed with status $status")
+                throw VaultCryptoException("SecRandomCopyBytes failed with status $status")
             }
         }
         return out

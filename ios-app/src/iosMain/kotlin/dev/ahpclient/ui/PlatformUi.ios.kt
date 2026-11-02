@@ -10,6 +10,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import dev.ahpclient.app.SafeLinks
 import dev.ahpclient.state.LinkTarget
+import kotlinx.cinterop.useContents
 import org.jetbrains.skia.Image
 import platform.CoreGraphics.CGRectMake
 import platform.Foundation.NSURL
@@ -54,7 +55,9 @@ object IosPlatformUiActions : PlatformUiActions {
         // Required on iPadOS so UIActivityViewController does not crash without a popover anchor.
         activityVc.popoverPresentationController?.apply {
             sourceView = vc.view
-            sourceRect = CGRectMake(vc.view.bounds.size.width / 2.0, vc.view.bounds.size.height / 2.0, 1.0, 1.0)
+            sourceRect = vc.view.bounds.useContents {
+                CGRectMake(size.width / 2.0, size.height / 2.0, 1.0, 1.0)
+            }
             permittedArrowDirections = 0u
         }
         vc.presentViewController(activityVc, animated = true, completion = null)

@@ -65,17 +65,16 @@ class IosMonitorService : MonitorService {
 }
 
 object IosNotificationCategories {
-    const val CATEGORY_APPROVAL = "AHP_INPUT_APPROVAL"
-    const val CATEGORY_QUESTION = "AHP_INPUT_QUESTION"
-    const val ACTION_APPROVE = "AHP_ACTION_APPROVE"
-    const val ACTION_DENY = "AHP_ACTION_DENY"
-    const val ACTION_ANSWER = "AHP_ACTION_ANSWER"
+    val CATEGORY_APPROVAL: String = "AHP_INPUT_APPROVAL"
+    val CATEGORY_QUESTION: String = "AHP_INPUT_QUESTION"
+    val ACTION_APPROVE: String = "AHP_ACTION_APPROVE"
+    val ACTION_DENY: String = "AHP_ACTION_DENY"
+    val ACTION_REPLY: String = "AHP_ACTION_ANSWER"
 
-    const val USER_INFO_SESSION_URI = "sessionUri"
-    const val USER_INFO_CHAT_URI = "chatUri"
-    const val USER_INFO_TOOL_CALL_ID = "toolCallId"
-    const val USER_INFO_OPTION_ID = "optionId"
-    const val USER_INFO_REQUEST_ID = "requestId"
+    val KEY_SESSION_URI: String = "sessionUri"
+    val KEY_CHAT_URI: String = "chatUri"
+    val KEY_ITEM_ID: String = "itemId"
+    val KEY_APPROVE_OPTION_ID: String = "optionId"
 
     fun registerCategories() {
         val center = UNUserNotificationCenter.currentNotificationCenter()
@@ -97,7 +96,7 @@ object IosNotificationCategories {
         )
 
         val answerAction = UNTextInputNotificationAction.actionWithIdentifier(
-            identifier = ACTION_ANSWER,
+            identifier = ACTION_REPLY,
             title = "Reply",
             options = UNNotificationActionOptionAuthenticationRequired,
             textInputButtonTitle = "Send",
@@ -127,43 +126,41 @@ class IosNotificationInputNeededSink(
 ) : InputNeededSink {
     private val center get() = UNUserNotificationCenter.currentNotificationCenter()
 
-    override fun post(item: InputNeeded) {
+    override fun post(request: InputNeeded) {
         val content = UNMutableNotificationContent().apply {
-            setTitle(item.title)
-            setBody(item.body)
+            setTitle(request.title)
+            setBody(request.detail ?: "Needs your input")
             setSound(UNNotificationSound.defaultSound())
         }
         val userInfo = LinkedHashMap<Any?, Any?>()
-        userInfo[IosNotificationCategories.USER_INFO_SESSION_URI] = item.resource
+        userInfo[IosNotificationCategories.KEY_SESSION_URI] = request.resource
         if (canDecide()) {
-            item.approval?.let { approval ->
+            request.approval?.let { approval ->
                 content.setCategoryIdentifier(IosNotificationCategories.CATEGORY_APPROVAL)
-                userInfo[IosNotificationCategories.USER_INFO_CHAT_URI] = approval.chatUri
-                userInfo[IosNotificationCategories.USER_INFO_TOOL_CALL_ID] = approval.toolCallId
-                approval.allowOptionId?.let { userInfo[IosNotificationCategories.USER_INFO_OPTION_ID] = it }
+                userInfo[IosNotificationCategories.KEY_CHAT_URI] = approval.chat
+                userInfo[IosNotificationCategories.KEY_ITEM_ID] = approval.toolCallId
+                approval.options.firstOrNull { it.approves }?.id?.let { optionId ->
+                    userInfo[IosNotificationCategories.KEY_APPROVE_OPTION_ID] = optionId
+                }
             }
-            item.question?.let { question ->
+            request.question?.let { question ->
                 content.setCategoryIdentifier(IosNotificationCategories.CATEGORY_QUESTION)
-                userInfo[IosNotificationCategories.USER_INFO_CHAT_URI] = question.chatUri
-                userInfo[IosNotificationCategories.USER_INFO_REQUEST_ID] = question.requestId
+                userInfo[IosNotificationCategories.KEY_CHAT_URI] = question.chat
+                userInfo[IosNotificationCategories.KEY_ITEM_ID] = question.requestId
             }
         }
         content.setUserInfo(userInfo)
         val req = UNNotificationRequest.requestWithIdentifier(
-            identifier = inputId(item.resource),
+            identifier = inputId(request.resource),
             content = content,
             trigger = null,
         )
         center.addNotificationRequest(req, withCompletionHandler = null)
     }
 
-    override fun cancel(resource: String) {
+    override fun clear(resource: String) {
         center.removeDeliveredNotificationsWithIdentifiers(listOf(inputId(resource)))
         center.removePendingNotificationRequestsWithIdentifiers(listOf(inputId(resource)))
-    }
-
-    override fun cancelAll() {
-        center.removeAllDeliveredNotifications()
     }
 
     private fun inputId(resource: String): String = "ahp.input.$resource"
@@ -172,23 +169,22 @@ class IosNotificationInputNeededSink(
 class IosNotificationFinishedSink : FinishedSink {
     private val center get() = UNUserNotificationCenter.currentNotificationCenter()
 
-    override fun post(session: FinishedSession) {
-        val text = FinishedText.of(session)
+    override fun post(finished: FinishedSession) {
         val content = UNMutableNotificationContent().apply {
-            setTitle(text.title)
-            setBody(text.body)
+            setTitle(finished.title)
+            setBody(FinishedText.detail(finished))
             setSound(UNNotificationSound.defaultSound())
-            setUserInfo(mapOf<Any?, Any?>(IosNotificationCategories.USER_INFO_SESSION_URI to session.resource))
+            setUserInfo(mapOf<Any?, Any?>(IosNotificationCategories.KEY_SESSION_URI to finished.resource))
         }
         val req = UNNotificationRequest.requestWithIdentifier(
-            identifier = finishedId(session.resource),
+            identifier = finishedId(finished.resource),
             content = content,
             trigger = null,
         )
         center.addNotificationRequest(req, withCompletionHandler = null)
     }
 
-    override fun cancel(resource: String) {
+    override fun clear(resource: String) {
         center.removeDeliveredNotificationsWithIdentifiers(listOf(finishedId(resource)))
         center.removePendingNotificationRequestsWithIdentifiers(listOf(finishedId(resource)))
     }

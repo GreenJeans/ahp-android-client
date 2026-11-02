@@ -65,7 +65,6 @@ import kotlinx.coroutines.withContext
 import platform.Foundation.NSApplicationSupportDirectory
 import platform.Foundation.NSBundle
 import platform.Foundation.NSFileManager
-import platform.Foundation.NSLog
 import platform.Foundation.NSSearchPathForDirectoriesInDomains
 import platform.Foundation.NSUserDefaults
 import platform.Foundation.NSUserDomainMask
@@ -231,13 +230,13 @@ class IosAppContainer(
                     network = network.state,
                     cache = sessionList,
                     cacheKey = tunnel.tunnelId,
-                    note = { if (debuggable) NSLog("[$CONN_TAG] %s", it) },
+                    note = { if (debuggable) iosLog(CONN_TAG, it) },
                 ).also { if (debuggable) logConnection(it) }
             },
             scope = appScope,
             interaction = interaction,
             approvalGate = approvalGate,
-            note = { if (debuggable) NSLog("[$AUTH_TAG] %s", it) },
+            note = { if (debuggable) iosLog(AUTH_TAG, it) },
             autoConnect = { pro.unlocked.value && monitorSettings.enabled.first() },
             afterSignOut = { monitorSettings.setEnabled(false) },
             sessionCache = sessionList,
@@ -251,7 +250,7 @@ class IosAppContainer(
                     network = network.state,
                     cache = sessionList,
                     cacheKey = host.id,
-                    note = { if (debuggable) NSLog("[$CONN_TAG] %s", it) },
+                    note = { if (debuggable) iosLog(CONN_TAG, it) },
                 ).also { if (debuggable) logConnection(it) }
             },
             directConsent = { host ->
@@ -344,7 +343,7 @@ class IosAppContainer(
     }
 
     private fun withWireLog(opener: SocketOpener): SocketOpener =
-        if (debuggable) MethodLoggingSocketOpener(opener) { NSLog("[$WIRE_TAG] %s", it) } else opener
+        if (debuggable) MethodLoggingSocketOpener(opener) { iosLog(WIRE_TAG, it) } else opener
 
     private fun logConnection(session: HostSession) {
         appScope.launch {
@@ -354,9 +353,13 @@ class IosAppContainer(
                     is ConnState.Failed -> "failed: ${describeFailure(state.cause)}"
                     else -> state::class.simpleName ?: "unknown"
                 }
-                NSLog("[$CONN_TAG] %s", msg)
+                iosLog(CONN_TAG, msg)
             }
         }
+    }
+
+    private fun iosLog(tag: String, message: String) {
+        println("[$tag] $message")
     }
 
     private fun appSupportFilePath(fileName: String): String {

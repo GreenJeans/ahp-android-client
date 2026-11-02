@@ -100,6 +100,12 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
                 completionHandler()
             }
 
+        case UNNotificationDefaultActionIdentifier:
+            if let sessionUri = userInfo[IosNotificationCategories.shared.KEY_SESSION_URI] as? String, !sessionUri.isEmpty {
+                container.controller.focusSession(uri: sessionUri)
+            }
+            completionHandler()
+
         default:
             completionHandler()
         }

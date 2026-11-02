@@ -72,7 +72,7 @@ fun describe(connection: ConnState): String = when (connection) {
     ConnState.Online -> "Connected"
     is ConnState.Reconnecting -> "Connection lost. Reconnecting (attempt ${connection.attempt})…"
     ConnState.WaitingForNetwork -> "Waiting for network…"
-    is ConnState.Failed -> connection.cause.message ?: "Could not connect (${connection.cause.javaClass.simpleName})."
+    is ConnState.Failed -> connection.cause.message ?: "Could not connect (${connection.cause::class.simpleName})."
 }
 
 /** Where the connection stands, as text. A failure is an error; anything short of connected is announced when it changes. */

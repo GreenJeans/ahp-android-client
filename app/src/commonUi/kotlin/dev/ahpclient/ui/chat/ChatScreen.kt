@@ -262,7 +262,7 @@ fun ChatPane(
                                 modifier = Modifier.weight(1f),
                             )
                         }
-                        error != null -> ErrorText("Could not load this chat (${error.javaClass.simpleName}).", Modifier.padding(horizontal = 16.dp).testTag("chat_error"))
+                        error != null -> ErrorText("Could not load this chat (${error::class.simpleName}).", Modifier.padding(horizontal = 16.dp).testTag("chat_error"))
                         else -> LoadingChat(Modifier.padding(horizontal = 16.dp))
                     }
                 }

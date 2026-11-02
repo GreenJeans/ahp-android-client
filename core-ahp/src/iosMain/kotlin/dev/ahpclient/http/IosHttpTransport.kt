@@ -1,3 +1,5 @@
+@file:OptIn(kotlinx.cinterop.BetaInteropApi::class)
+
 package dev.ahpclient.http
 
 import dev.ahpclient.platform.IOException
@@ -40,7 +42,7 @@ class IosHttpTransport(
         val formBody = fields.entries.joinToString("&") { (k, v) ->
             "${urlEncodeUtf8(k)}=${urlEncodeUtf8(v)}"
         }
-        val bodyData: NSData? = (formBody as NSString).dataUsingEncoding(NSUTF8StringEncoding)
+        val bodyData: NSData? = NSString.create(string = formBody).dataUsingEncoding(NSUTF8StringEncoding)
         val request = NSMutableURLRequest.requestWithURL(nsUrl).apply {
             setHTTPMethod("POST")
             setValue("application/x-www-form-urlencoded", forHTTPHeaderField = "Content-Type")
@@ -52,7 +54,7 @@ class IosHttpTransport(
 
     override suspend fun postJson(url: String, headers: Map<String, String>, jsonBody: String): HttpResponseData {
         val nsUrl = NSURL.URLWithString(url) ?: throw IOException("Invalid URL: $url")
-        val bodyData: NSData? = (jsonBody as NSString).dataUsingEncoding(NSUTF8StringEncoding)
+        val bodyData: NSData? = NSString.create(string = jsonBody).dataUsingEncoding(NSUTF8StringEncoding)
         val request = NSMutableURLRequest.requestWithURL(nsUrl).apply {
             setHTTPMethod("POST")
             setValue("application/json; charset=utf-8", forHTTPHeaderField = "Content-Type")

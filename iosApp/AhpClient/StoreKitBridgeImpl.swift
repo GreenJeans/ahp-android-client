@@ -44,12 +44,12 @@ final class StoreKitBridgeImpl: NSObject, StoreKitBridge {
         }
     }
 
-    func purchase(productId: String, callback: @escaping (Int32, [StorePurchaseRecord]?, String?) -> Void) {
+    func purchase(productId: String, callback: @escaping (KotlinInt, [StorePurchaseRecord]?, String?) -> Void) {
         Task {
             do {
                 let products = try await Product.products(for: [productId])
                 guard let product = products.first else {
-                    callback(3, nil, "Product \(productId) not found in App Store Connect")
+                    callback(KotlinInt(int: 3), nil, "Product \(productId) not found in App Store Connect")
                     return
                 }
                 let result = try await product.purchase()
@@ -64,12 +64,12 @@ final class StoreKitBridgeImpl: NSObject, StoreKitBridge {
                             acknowledged: true,
                             token: String(transaction.id)
                         )
-                        callback(0, [record], nil)
+                        callback(KotlinInt(int: 0), [record], nil)
                     case .unverified(_, let error):
-                        callback(2, nil, error.localizedDescription)
+                        callback(KotlinInt(int: 2), nil, error.localizedDescription)
                     }
                 case .userCancelled:
-                    callback(1, nil, nil)
+                    callback(KotlinInt(int: 1), nil, nil)
                 case .pending:
                     let record = StorePurchaseRecord(
                         products: [productId],
@@ -77,12 +77,12 @@ final class StoreKitBridgeImpl: NSObject, StoreKitBridge {
                         acknowledged: true,
                         token: ""
                     )
-                    callback(0, [record], nil)
+                    callback(KotlinInt(int: 0), [record], nil)
                 @unknown default:
-                    callback(2, nil, "Unknown StoreKit purchase result")
+                    callback(KotlinInt(int: 2), nil, "Unknown StoreKit purchase result")
                 }
             } catch {
-                callback(2, nil, error.localizedDescription)
+                callback(KotlinInt(int: 2), nil, error.localizedDescription)
             }
         }
     }

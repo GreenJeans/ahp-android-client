@@ -215,7 +215,7 @@ fun SessionScreen(
                         }
                     }
                 }
-                error != null -> ErrorText("Could not load this session (${error.javaClass.simpleName}).", Modifier.padding(24.dp).testTag("detail_error"))
+                error != null -> ErrorText("Could not load this session (${error::class.simpleName}).", Modifier.padding(24.dp).testTag("detail_error"))
                 else -> Busy("Loading session…", Modifier.padding(24.dp).testTag("detail_loading"))
             }
         }

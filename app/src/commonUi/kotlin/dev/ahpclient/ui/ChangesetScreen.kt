@@ -85,7 +85,7 @@ fun ChangesetScreen(
             when {
                 error is ChannelGoneException -> ErrorText("These changes are no longer on the host.", Modifier.padding(horizontal = 24.dp).testTag("changeset_gone"))
                 state != null -> ChangesetBody(remember(state) { ChangesetView.from(state) }, onSetReviewed, onOpenFile, onInvokeOperation, onInvokeFileOperation)
-                error != null -> ErrorText("Could not load these changes (${error.javaClass.simpleName}).", Modifier.padding(horizontal = 24.dp).testTag("changeset_error"))
+                error != null -> ErrorText("Could not load these changes (${error::class.simpleName}).", Modifier.padding(horizontal = 24.dp).testTag("changeset_error"))
                 else -> Busy("Loading changes…", Modifier.padding(horizontal = 24.dp).testTag("changeset_loading"))
             }
         }
