@@ -32,6 +32,7 @@ import dev.ahpclient.state.ToolDetail
 import dev.ahpclient.state.RiskLevelView
 import dev.ahpclient.state.ToolResultView
 import dev.ahpclient.platform.formatInteger
+import kotlin.math.roundToInt
 
 /**
  * What a tool call was asked and what it produced, as the body of its expanded block. [approveHere] is set when the buttons
@@ -82,7 +83,7 @@ internal fun ToolDetailBody(
                         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             Text(if (risk.level == RiskLevelView.LOADING) risk.statusLabel else "Risk: ${risk.statusLabel}", style = MaterialTheme.typography.labelLarge)
                             risk.reason?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-                            risk.safetyScore?.let { Text("Safety ${"%.0f".format(it * 100)}%", style = MaterialTheme.typography.labelSmall) }
+                            risk.safetyScore?.let { Text("Safety ${(it * 100).roundToInt()}%", style = MaterialTheme.typography.labelSmall) }
                         }
                     }
                 }

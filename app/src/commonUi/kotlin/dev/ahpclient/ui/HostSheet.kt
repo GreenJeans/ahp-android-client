@@ -16,6 +16,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -149,7 +150,8 @@ fun HostSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
-        dragHandle = null,
+        // The handle is itself a control (it expands and collapses the sheet), so it is drawn wide enough to be a 48 dp target.
+        dragHandle = { BottomSheetDefaults.DragHandle(width = 48.dp) },
         // The sheet reaches under the navigation bar; the content below keeps clear of it, so nothing sits behind the gesture bar.
         contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
         modifier = modifier.testTag("host_sheet"),

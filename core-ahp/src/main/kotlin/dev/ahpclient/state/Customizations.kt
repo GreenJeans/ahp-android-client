@@ -803,7 +803,59 @@ object SlashCommands {
             addAll(hooks.distinctBy { it.id })
             addAll(tools)
         }
-        return CustomizationsView(all)
+        val toggleable = toggleableIds(session?.customizations.orEmpty())
+        return CustomizationsView(all.map { if (it.canToggle && it.customizationId !in toggleable) it.copy(canToggle = false) else it })
+    }
+
+    /**
+     * The ids a session can switch on or off: its own containers, and the children of those that are enabled. Customizations that
+     * come from the agent are not on the session, and a child under a disabled container stays off whatever it is set to.
+     */
+    internal fun toggleableIds(customizations: List<Customization>): Set<String> = buildSet {
+        for (container in customizations) {
+            when (container) {
+                is CustomizationPlugin -> {
+                    add(container.value.id)
+                    if (enabled(container.value.enablement)) container.value.children.orEmpty().forEach { childId(it)?.let(::add) }
+                }
+                is CustomizationDirectory -> {
+                    add(container.value.id)
+                    if (container.value.enabled) container.value.children.orEmpty().forEach { childId(it)?.let(::add) }
+                }
+                is CustomizationMcpServer -> add(container.value.id)
+                else -> Unit
+            }
+        }
+        remove("")
+    }
+
+    /** The decisions the session already reports for [id], for the kinds of customization that carry a list of them. */
+    internal fun enablementOf(customizations: List<Customization>, id: String): List<CustomizationEnablement> {
+        for (container in customizations) {
+            when (container) {
+                is CustomizationPlugin -> {
+                    if (container.value.id == id) return container.value.enablement.orEmpty()
+                    childEnablement(container.value.children, id)?.let { return it }
+                }
+                is CustomizationDirectory -> childEnablement(container.value.children, id)?.let { return it }
+                is CustomizationMcpServer -> if (container.value.id == id) return container.value.enablement.orEmpty()
+                else -> Unit
+            }
+        }
+        return emptyList()
+    }
+
+    private fun childEnablement(children: List<ChildCustomization>?, id: String): List<CustomizationEnablement>? =
+        children.orEmpty().filterIsInstance<ChildCustomizationMcpServer>().firstOrNull { it.value.id == id }?.value?.enablement
+
+    private fun childId(child: ChildCustomization): String? = when (child) {
+        is ChildCustomizationAgent -> child.value.id
+        is ChildCustomizationHook -> child.value.id
+        is ChildCustomizationMcpServer -> child.value.id
+        is ChildCustomizationPrompt -> child.value.id
+        is ChildCustomizationRule -> child.value.id
+        is ChildCustomizationSkill -> child.value.id
+        else -> null
     }
 
     private fun collectChildren(

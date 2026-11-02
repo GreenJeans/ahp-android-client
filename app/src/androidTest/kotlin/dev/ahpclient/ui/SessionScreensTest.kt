@@ -51,6 +51,7 @@ import dev.ahpclient.ui.theme.AhpTheme
 import com.microsoft.agenthostprotocol.Ahp
 import com.microsoft.agenthostprotocol.generated.SessionState
 import com.microsoft.agenthostprotocol.generated.SessionSummary
+import com.microsoft.agenthostprotocol.generated.AnnotationsState
 import com.microsoft.agenthostprotocol.generated.CanvasState
 import java.time.Instant
 import org.junit.Assert.assertEquals
@@ -913,6 +914,109 @@ class SessionScreensTest {
         openDetails()
 
         rule.onNodeWithTag("details_annotations").performScrollTo().assertIsDisplayed().assertTextEquals("Annotations \u00b7 2 annotations \u00b7 5 entries")
+    }
+
+    @Test
+    fun aFailedCommentKeepsItsWordsAndSaysWhatWentWrong() {
+        val state = Ahp.json.decodeFromString(
+            AnnotationsState.serializer(),
+            """{"annotations":[{"id":"a1","origin":{"session":"ahp-session:/s1"},"resource":"file:///work/a.kt","resolved":false,"entries":[{"id":"e1","text":"first"}]}]}""",
+        )
+        var answer: ManageResult = ManageResult.NotAllowed
+        val sent = mutableListOf<String>()
+        rule.setContent {
+            AhpTheme {
+                AnnotationsSheet(state, null, canInteract = true, onDismiss = {}, onAddEntry = { _, text -> sent += text; answer }, onRemoveEntry = { _, _ -> ManageResult.Done() })
+            }
+        }
+
+        rule.onNodeWithTag("annotation_draft_a1").performTextInput("my comment")
+        rule.onNodeWithTag("annotation_add_a1").performClick()
+        rule.waitForIdle()
+
+        rule.onNodeWithTag("annotations_notice").assertIsDisplayed()
+        rule.onNodeWithTag("annotation_draft_a1").assertTextContains("my comment")
+
+        answer = ManageResult.Done()
+        rule.onNodeWithTag("annotation_add_a1").performClick()
+        rule.waitForIdle()
+
+        rule.onNodeWithText("my comment").assertDoesNotExist()
+        assertEquals(listOf("my comment", "my comment"), sent)
+    }
+
+    @Test
+    fun removingACommentAsksFirstAndTheLastCommentOffersNoRemoval() {
+        val state = Ahp.json.decodeFromString(
+            AnnotationsState.serializer(),
+            """{"annotations":[
+                {"id":"a1","origin":{"session":"ahp-session:/s1"},"resource":"file:///work/a.kt","resolved":false,"entries":[{"id":"e1","text":"first"},{"id":"e2","text":"second"}]},
+                {"id":"a2","origin":{"session":"ahp-session:/s1"},"resource":"file:///work/b.kt","resolved":true,"entries":[{"id":"e3","text":"only"}]}]}""",
+        )
+        val removed = mutableListOf<Pair<String, String>>()
+        rule.setContent {
+            AhpTheme {
+                AnnotationsSheet(state, null, canInteract = true, onDismiss = {}, onAddEntry = { _, _ -> ManageResult.Done() }, onRemoveEntry = { a, e -> removed += a to e; ManageResult.Done() })
+            }
+        }
+
+        rule.onNodeWithTag("annotation_remove_e3").assertDoesNotExist()
+        rule.onNodeWithTag("annotation_remove_e1").performClick()
+        assertEquals(emptyList<Pair<String, String>>(), removed)
+        rule.onNodeWithTag("annotation_remove_confirm").performClick()
+        rule.waitForIdle()
+
+        assertEquals(listOf("a1" to "e1"), removed)
+    }
+
+    @Test
+    fun aReadOnlyConnectionSeesCommentsButCannotChangeThem() {
+        val state = Ahp.json.decodeFromString(
+            AnnotationsState.serializer(),
+            """{"annotations":[{"id":"a1","origin":{"session":"ahp-session:/s1"},"resource":"file:///work/a.kt","resolved":false,"entries":[{"id":"e1","text":"first"},{"id":"e2","text":"second"}]}]}""",
+        )
+        rule.setContent {
+            AhpTheme {
+                AnnotationsSheet(state, null, canInteract = false, onDismiss = {}, onAddEntry = { _, _ -> ManageResult.NotAllowed }, onRemoveEntry = { _, _ -> ManageResult.NotAllowed })
+            }
+        }
+
+        rule.onNodeWithText("first").assertIsDisplayed()
+        rule.onNodeWithTag("annotation_draft_a1").assertDoesNotExist()
+        rule.onNodeWithTag("annotation_remove_e1").assertDoesNotExist()
+    }
+
+    @Test
+    fun aCustomizationThatFailedToLoadKeepsItsStatusBesideTheSwitchAndTheSheetSaysWhatWentWrong() {
+        val view = CustomizationsView(
+            listOf(
+                CustomizationEntry(
+                    id = "skill:1",
+                    category = CustomizationCategory.SKILLS,
+                    name = "reviewer",
+                    enabled = true,
+                    statusLabel = "Failed",
+                    isError = true,
+                    customizationId = "skill-id",
+                    canToggle = true,
+                ),
+            ),
+        )
+        rule.setContent {
+            AhpTheme {
+                CustomizationsSheetContent(
+                    customizations = view,
+                    initialCategory = CustomizationCategory.SKILLS,
+                    onDismiss = {},
+                    onToggleCustomization = { _, _ -> },
+                    notice = "The host did not confirm it",
+                )
+            }
+        }
+
+        rule.onNodeWithTag("customization_toggle_skill:1").assertIsDisplayed().assertContentDescriptionEquals("reviewer enabled")
+        rule.onNodeWithText("Failed").assertIsDisplayed()
+        rule.onNodeWithTag("customizations_notice").assertIsDisplayed()
     }
 
     @Test

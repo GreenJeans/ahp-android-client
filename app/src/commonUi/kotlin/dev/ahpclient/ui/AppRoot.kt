@@ -143,9 +143,11 @@ private fun Shell(
     val changesetOpen = open?.changeset != null
     val diffOpen = open?.changeset?.diff != null
     val terminalOpen = open?.terminal != null
-    val overlayOpen = subagentOpen || changesetOpen || diffOpen || terminalOpen
+    val canvasOpen = open?.canvas != null
+    val overlayOpen = subagentOpen || changesetOpen || diffOpen || terminalOpen || canvasOpen
     // The screens over a session. Back from the session itself, from Settings and the inbox, and from the menu is in HomeDrawer.
-    PlatformBackHandler(enabled = subagentOpen && !terminalOpen && !changesetOpen) { controller.closeChat() }
+    PlatformBackHandler(enabled = subagentOpen && !terminalOpen && !changesetOpen && !canvasOpen) { controller.closeChat() }
+    PlatformBackHandler(enabled = canvasOpen) { controller.closeCanvas() }
     PlatformBackHandler(enabled = terminalOpen) { controller.closeTerminal() }
     PlatformBackHandler(enabled = changesetOpen && !diffOpen) { controller.closeChangeset() }
     PlatformBackHandler(enabled = diffOpen) { controller.closeDiff() }

@@ -127,10 +127,17 @@ data class TerminalView(
             return pieces.asReversed().joinToString("") to cut
         }
 
-        /** Text used to find a command's position in the bounded flattened output. */
+        /**
+         * What a command shows: the line that was run, its output, and, once it has finished with a failure, how it ended. The exit
+         * line stays in the text because a long output can push the command line, and so its header, out of the lines that are kept.
+         */
         private fun commandText(part: TerminalContentPartCommand): String {
             val command = part.value
             val body = StringBuilder("$ ").append(commandLabel(command.commandLine)).append('\n').append(command.output)
+            if (command.isComplete && command.exitCode != null && command.exitCode != 0L) {
+                if (!body.endsWith("\n")) body.append('\n')
+                body.append("[exit code ").append(command.exitCode).append("]\n")
+            }
             return body.toString()
         }
 

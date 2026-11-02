@@ -852,7 +852,7 @@ class AppController(
         val current = _state.value as? AppState.Connected ?: return
         val open = current.open ?: return
         val chat = open.chat ?: return
-        if (open.canvas != null || open.terminal != null || open.changeset != null || chat.parent != null || uri.length > MAX_CHANNEL_URI) return
+        if (open.canvas != null || open.terminal != null || open.changeset != null || uri.length > MAX_CHANNEL_URI) return
         val state = chat.store.state.value ?: return
         if (Transcript.canvasesOf(state).none { it.resource == uri }) return
         val store = current.session.openCanvas(uri)
@@ -908,7 +908,8 @@ class AppController(
         val open = current.open ?: return ManageResult.NoSuchTarget
         val channel = open.annotations ?: return ManageResult.NoSuchTarget
         val annotation = channel.store.state.value?.annotations?.firstOrNull { it.id == annotationId } ?: return ManageResult.InvalidChoice
-        if (annotation.entries.none { it.id == entryId }) return ManageResult.InvalidChoice
+        // An annotation must keep at least one entry, so its last comment is not this action's to remove.
+        if (annotation.entries.size < 2 || annotation.entries.none { it.id == entryId }) return ManageResult.InvalidChoice
         return dispatchAnnotation(current.session, channel.uri, AnnotationActions.removeEntry(annotationId, entryId))
     }
 
@@ -938,7 +939,10 @@ class AppController(
         val current = _state.value as? AppState.Connected ?: return
         val open = current.open ?: return
         if (open.changeset != null || open.terminal != null || open.canvas != null || open.chat?.parent != null) return
-        val entry = open.store.state.value?.changesets.orEmpty().map(ChangesetEntry::from).firstOrNull { it.uri == uri }
+        val entry = ChangesetEntry.merge(
+            open.store.state.value?.changesets.orEmpty().map(ChangesetEntry::from),
+            open.chat?.store?.state?.value?.changesets.orEmpty().map(ChangesetEntry::from),
+        ).firstOrNull { it.uri == uri }
         if (entry == null || uri.length > MAX_CHANNEL_URI) return
         val store = current.session.openChangeset(uri)
         if (!_state.compareAndSet(current, current.copy(open = open.copy(changeset = OpenChangeset(uri, store, entry.reviewable))))) current.session.closeChannel(uri)

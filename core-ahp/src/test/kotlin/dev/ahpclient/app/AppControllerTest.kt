@@ -2707,6 +2707,132 @@ class AppControllerTest {
         }
     }
 
+    // ---- what a chat advertises, and the canvas and annotations channels --------------------------------------------
+
+    private val canvasA = "ahp-canvas:/one"
+    private val annotationsA = "ahp-annotations:/one"
+
+    private fun chatSnapshotWith(id: Long?, uri: String, turns: String = "", extra: String = "") = result(
+        id,
+        """{"snapshot":{"resource":"$uri","fromSeq":$SNAPSHOT_SEQ,"state":{"resource":"$uri","title":"Chat","status":1,"modifiedAt":"2026-10-22T10:00:00.000Z","turns":[$turns]$extra}}}""",
+    )
+
+    private fun channelOf(params: JsonObject) = params["channel"]!!.jsonPrimitive.content
+
+    @Test
+    fun `a changeset only the shown chat advertises opens, and is still refused once it is not advertised at all`() = runTest {
+        withRig(script = {
+            HostScript(
+                sessionChats = chatsJson(listOf(CHAT_A)),
+                changesetState = changesetStateJson("ready", changesetFileJson("work/a.kt")),
+                onChatSubscribe = { id, params -> chatSnapshotWith(id, channelOf(params), extra = ""","changesets":[$plainChangeset]""") },
+            )
+        }) {
+            connectToFirstHost()
+            openLoadedSession(this)
+
+            controller.openChangeset(CHANGESET_A)
+            assertNull(assertIs<AppState.Connected>(state).open!!.changeset, "no chat is shown yet, and the session does not list it")
+
+            controller.openChat(CHAT_A)
+            assertIs<AppState.Connected>(state).open!!.chat!!.store.state.first { it != null }
+            controller.openChangeset(CHANGESET_A)
+
+            assertEquals(CHANGESET_A, assertIs<AppState.Connected>(state).open!!.changeset!!.uri)
+        }
+    }
+
+    @Test
+    fun `a canvas a subagent's chat references opens over it, an unreferenced one does not, and back unsubscribes`() = runTest {
+        val subagentTurn = turnJson(
+            "t1",
+            parts = """{"kind":"toolCall","toolCall":{"status":"completed","toolCallId":"c1","toolName":"runSubagent","displayName":"Subagent",
+                "invocationMessage":"Go","toolInput":"{}","confirmed":"not-needed","success":true,"pastTenseMessage":"Done",
+                "content":[{"type":"subagent","resource":"$CHAT_B","title":"Explore","agentName":"explore","description":"Look"}]}}""",
+        )
+        withRig(script = {
+            HostScript(
+                sessionChats = chatsJson(listOf(CHAT_A)),
+                onChatSubscribe = { id, params ->
+                    if (channelOf(params) == CHAT_A) chatSnapshotWith(id, CHAT_A, turns = subagentTurn) else chatSnapshotWith(id, CHAT_B, extra = ""","canvases":[{"resource":"$canvasA"}]""")
+                },
+            )
+        }) {
+            connectToFirstHost()
+            openLoadedSession(this)
+            controller.openChat(CHAT_A)
+            assertIs<AppState.Connected>(state).open!!.chat!!.store.state.first { it != null }
+            controller.openSubagentChat(CHAT_B)
+            assertIs<AppState.Connected>(state).open!!.chat!!.store.state.first { it != null }
+
+            controller.openCanvas("ahp-canvas:/elsewhere")
+            assertNull(assertIs<AppState.Connected>(state).open!!.canvas)
+
+            controller.openCanvas(canvasA)
+            val canvas = assertIs<AppState.Connected>(state).open!!.canvas!!
+            assertEquals("Preview", canvas.store.state.first { it != null }!!.title)
+
+            controller.closeCanvas()
+            runCurrent()
+            assertNull(assertIs<AppState.Connected>(state).open!!.canvas)
+            assertEquals(CHAT_B, assertIs<AppState.Connected>(state).open!!.chat!!.uri)
+            assertEquals(listOf(canvasA), unsubscribed())
+        }
+    }
+
+    private fun annotationsScript(entries: String) = {
+        HostScript(
+            sessionAnnotations = """{"resource":"$annotationsA","annotationCount":1,"entryCount":1}""",
+            annotationsState = """{"annotations":[{"id":"a1","origin":{"session":"$SESSION_C"},"resource":"file:///work/a.kt","resolved":false,"entries":[$entries]}]}""",
+        )
+    }
+
+    private suspend fun TestScope.openAnnotationsOf(rig: Rig) {
+        openLoadedSession(rig)
+        rig.controller.openAnnotations()
+        assertIs<AppState.Connected>(rig.state).open!!.annotations!!.store.state.first { it != null }
+    }
+
+    @Test
+    fun `annotation comments are refused on the read tier, and for anything the channel does not hold`() = runTest {
+        val entry = """{"id":"e1","text":"one"}"""
+        withRig(script = annotationsScript(entry)) {
+            connectToFirstHost()
+            openAnnotationsOf(this)
+
+            assertEquals(ManageResult.NotAllowed, controller.addAnnotationEntry("a1", "a comment"))
+            assertEquals(ManageResult.InvalidChoice, controller.addAnnotationEntry("a1", "   "))
+            assertEquals(ManageResult.InvalidChoice, controller.addAnnotationEntry("a1", "x".repeat(4_001)))
+            assertEquals(ManageResult.InvalidChoice, controller.addAnnotationEntry("elsewhere", "a comment"))
+            assertEquals(ManageResult.InvalidChoice, controller.removeAnnotationEntry("elsewhere", "e1"))
+            assertTrue(connectors.single().sockets.flatMap { it.sent }.none { it["method"]?.jsonPrimitive?.content == "dispatchAction" })
+        }
+    }
+
+    @Test
+    fun `an annotation's last comment is never removed, because the protocol requires it to keep one`() = runTest {
+        withRig(script = annotationsScript("""{"id":"e1","text":"one"}"""), interaction = InteractionConsent(FakeInteractionSettings(saved = true))) {
+            connectToFirstHost().session.canInteract.first { it }
+            openAnnotationsOf(this)
+
+            assertEquals(ManageResult.InvalidChoice, controller.removeAnnotationEntry("a1", "e1"))
+            assertTrue(connectors.single().sockets.flatMap { it.sent }.none { it["method"]?.jsonPrimitive?.content == "dispatchAction" })
+        }
+    }
+
+    @Test
+    fun `leaving the session releases its annotations channel`() = runTest {
+        withRig(script = annotationsScript("""{"id":"e1","text":"one"}""")) {
+            connectToFirstHost()
+            openAnnotationsOf(this)
+
+            controller.closeSession()
+            runCurrent()
+
+            assertTrue(annotationsA in unsubscribed())
+        }
+    }
+
     // ---- watching a changeset ------------------------------------------------------------------------------------
 
     private val plainChangeset = """{"label":"Uncommitted","uriTemplate":"$CHANGESET_A","changeKind":"uncommitted"}"""

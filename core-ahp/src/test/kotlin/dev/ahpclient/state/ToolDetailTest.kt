@@ -217,6 +217,38 @@ class ToolDetailTest {
     }
 
     @Test
+    fun `a pending call shows the host's risk assessment, and a score it cannot read is never called safe`() {
+        fun pending(risk: String) = ToolDetail.from(call(""""status":"pending-confirmation",$common,"invocationMessage":"Run it","toolInput":"{}","options":[],"riskAssessment":$risk""")).riskAssessment
+        fun complete(safety: String) = pending("""{"kind":"judge","status":"complete","reason":"${"r".repeat(600)}","safety":$safety}""")
+
+        assertEquals(RiskLevelView.LOADING, pending("""{"kind":"judge","status":"loading"}""")?.level)
+        assertEquals(RiskLevelView.HIGH_RISK, complete("0.1")?.level)
+        assertEquals(RiskLevelView.WARNING, complete("0.5")?.level)
+        assertEquals(RiskLevelView.SAFE, complete("0.9")?.level)
+        assertEquals(400, complete("0.9")?.reason?.length)
+        assertEquals(1.0, complete("7")?.safetyScore)
+        assertEquals(RiskLevelView.WARNING, ToolDetail.riskAssessmentOf(com.microsoft.agenthostprotocol.generated.ToolCallRiskAssessmentComplete(com.microsoft.agenthostprotocol.generated.ToolCallRiskAssessmentCompleteState(
+            com.microsoft.agenthostprotocol.generated.ToolCallRiskAssessmentKind.JUDGE,
+            com.microsoft.agenthostprotocol.generated.ToolCallRiskAssessmentStatus.COMPLETE,
+            com.microsoft.agenthostprotocol.generated.StringOrMarkdown.Plain("no score"),
+            Double.NaN,
+        )))?.level)
+    }
+
+    @Test
+    fun `a pending call lists its proposed edits before approval and names the MCP contributor`() {
+        val d = ToolDetail.from(call(""""status":"pending-confirmation",$common,"invocationMessage":"Run it","toolInput":"{}","options":[],
+            "contributor":{"kind":"mcp","customizationId":"github"},
+            "edits":{"items":[{"before":{"uri":"file:///work/a.kt","content":{"uri":"ahp-content:/a0"}},"after":{"uri":"file:///work/a.kt","content":{"uri":"ahp-content:/a1"}},"diff":{"added":3,"removed":1}}]}"""))
+
+        val edit = assertIs<ToolResultView.FileEdit>(d.results.single())
+        assertEquals("/work/a.kt", edit.path)
+        assertEquals(3L, edit.added)
+        assertEquals(1L, edit.removed)
+        assertEquals("github", d.mcpServerName)
+    }
+
+    @Test
     fun `a call that waits on the user says so and says where to answer`() {
         val pending = call(""""status":"pending-confirmation",$common,"invocationMessage":"Run it","toolInput":"{}","confirmationTitle":"Run this command?","options":[]""")
         val untitled = call(""""status":"pending-confirmation",$common,"invocationMessage":"Run it","toolInput":"{}","options":[]""")

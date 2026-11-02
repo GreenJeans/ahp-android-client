@@ -44,8 +44,11 @@ object SessionActions {
     /** Requests moving a starting MCP server to the background. Dispatched on the session's own channel. */
     fun backgroundMcpServer(id: String): StateAction = action("session/mcpServerBackgroundRequested") { put("id", id) }
 
-    /** Enables or disables a customization for this session. */
-    fun customizationToggled(id: String, enabled: Boolean): StateAction =
+    /**
+     * Enables or disables a customization for this session. The protocol's list replaces the previous one entirely and is ordered
+     * most specific first, so [existing] decisions at other scopes are kept behind the session's own.
+     */
+    fun customizationToggled(id: String, enabled: Boolean, existing: List<CustomizationEnablement> = emptyList()): StateAction =
         Ahp.json.decodeFromJsonElement(
             StateAction.serializer(),
             buildJsonObject {
@@ -55,7 +58,7 @@ object SessionActions {
                     "enablement",
                     Ahp.json.encodeToJsonElement(
                         kotlinx.serialization.builtins.ListSerializer(CustomizationEnablement.serializer()),
-                        listOf(CustomizationEnablement.Session(CustomizationEnablementSession(enabled))),
+                        listOf(CustomizationEnablement.Session(CustomizationEnablementSession(enabled))) + existing.filterNot { it is CustomizationEnablement.Session },
                     ),
                 )
             },

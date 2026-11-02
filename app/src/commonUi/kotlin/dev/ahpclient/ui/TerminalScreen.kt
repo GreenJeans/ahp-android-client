@@ -123,7 +123,8 @@ private fun TerminalBody(view: TerminalView) {
                         itemsIndexed(view.lines, key = { index, _ -> index }) { index, line ->
                             val command = view.commands.firstOrNull { it.lineIndex == index }
                             if (command != null) {
-                                Column(modifier = Modifier.fillMaxWidth().testTag("terminal_command_$index")) {
+                                // One thing to a screen reader: the command and how it ended.
+                                Column(modifier = Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}.testTag("terminal_command_$index")) {
                                     HorizontalDivider(modifier = Modifier.padding(horizontal = 24.dp, vertical = 3.dp))
                                     androidx.compose.foundation.layout.Row(
                                         modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 4.dp),

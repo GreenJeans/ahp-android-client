@@ -3,15 +3,6 @@ package dev.ahpclient.state
 import dev.ahpclient.ahp.AhpException
 import dev.ahpclient.ahp.CapabilityDeniedException
 import com.microsoft.agenthostprotocol.generated.AgentInfo
-import com.microsoft.agenthostprotocol.generated.CustomizationDirectory
-import com.microsoft.agenthostprotocol.generated.CustomizationPlugin
-import com.microsoft.agenthostprotocol.generated.CustomizationMcpServer
-import com.microsoft.agenthostprotocol.generated.ChildCustomizationAgent
-import com.microsoft.agenthostprotocol.generated.ChildCustomizationHook
-import com.microsoft.agenthostprotocol.generated.ChildCustomizationMcpServer
-import com.microsoft.agenthostprotocol.generated.ChildCustomizationPrompt
-import com.microsoft.agenthostprotocol.generated.ChildCustomizationRule
-import com.microsoft.agenthostprotocol.generated.ChildCustomizationSkill
 import com.microsoft.agenthostprotocol.generated.ChatSource
 import com.microsoft.agenthostprotocol.generated.ChatSourceFork
 import com.microsoft.agenthostprotocol.generated.ChatSourceSideChat
@@ -136,10 +127,11 @@ class SessionManager(
         if (!allowed()) return ManageResult.NotAllowed
         val state = sessionState(sessionUri) ?: return ManageResult.NoSuchTarget
         val id = customizationId.trim()
-        if (id.isEmpty() || state.customizations.orEmpty().none { customizationContainsId(it, id) }) {
+        val customizations = state.customizations.orEmpty()
+        if (id.isEmpty() || id !in SlashCommands.toggleableIds(customizations)) {
             return ManageResult.InvalidChoice
         }
-        return action(sessionUri, SessionActions.customizationToggled(id, enabled))
+        return action(sessionUri, SessionActions.customizationToggled(id, enabled, SlashCommands.enablementOf(customizations, id)))
     }
 
     /** Renames [sessionUri] to [title] (trimmed). Refuses a blank title or one longer than [MAX_TITLE_LENGTH]. */
@@ -354,32 +346,6 @@ class SessionManager(
             ManageResult.NotAllowed
         } catch (e: IOException) {
             ManageResult.NotSent(e)
-        }
-    }
-
-    private fun customizationContainsId(customization: com.microsoft.agenthostprotocol.generated.Customization, id: String): Boolean {
-        val rootId = when (customization) {
-            is CustomizationPlugin -> customization.value.id
-            is CustomizationDirectory -> customization.value.id
-            is CustomizationMcpServer -> customization.value.id
-            else -> return false
-        }
-        if (rootId == id) return true
-        val children = when (customization) {
-            is CustomizationPlugin -> customization.value.children.orEmpty()
-            is CustomizationDirectory -> customization.value.children.orEmpty()
-            else -> emptyList()
-        }
-        return children.any { child ->
-            when (child) {
-                is ChildCustomizationAgent -> child.value.id == id
-                is ChildCustomizationHook -> child.value.id == id
-                is ChildCustomizationMcpServer -> child.value.id == id
-                is ChildCustomizationPrompt -> child.value.id == id
-                is ChildCustomizationRule -> child.value.id == id
-                is ChildCustomizationSkill -> child.value.id == id
-                else -> false
-            }
         }
     }
 

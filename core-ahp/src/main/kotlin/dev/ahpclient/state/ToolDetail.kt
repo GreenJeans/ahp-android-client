@@ -270,7 +270,7 @@ data class ToolDetail(
                 }
                 val level = when {
                     score != null && score < 0.35 -> RiskLevelView.HIGH_RISK
-                    score != null && score < 0.7 -> RiskLevelView.WARNING
+                    score == null || score < 0.7 -> RiskLevelView.WARNING
                     else -> RiskLevelView.SAFE
                 }
                 RiskAssessmentView(level, status, plain(it.reason)?.let { reason -> Clipped.of(reason, 400).text }, score)

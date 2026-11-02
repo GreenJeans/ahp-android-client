@@ -785,6 +785,36 @@ class SessionManagerTest {
     }
 
     @Test
+    fun `toggleCustomization keeps decisions at other scopes behind the session's own, because the list replaces the old one`() = runTest {
+        val rig = Rig()
+        val plugin = Ahp.json.decodeFromString(
+            com.microsoft.agenthostprotocol.generated.Customization.serializer(),
+            """{"type":"plugin","id":"plugin-1","uri":"file:///plugin","name":"Plugin","enablement":[{"kind":"session","enabled":true},{"kind":"workspace","uri":"file:///w","enabled":true},{"kind":"global","enabled":true}]}""",
+        )
+        rig.states[s1] = state("ready", c1 to "Main").copy(customizations = listOf(plugin))
+
+        assertEquals(ManageResult.Done(), rig.manager.toggleCustomization(s1, "plugin-1", false))
+
+        assertEquals(
+            """{"type":"session/customizationToggled","id":"plugin-1","enablement":[{"enabled":false,"kind":"session"},{"uri":"file:///w","enabled":true,"kind":"workspace"},{"enabled":true,"kind":"global"}]}""",
+            wire(rig.sent.single().second).toString(),
+        )
+    }
+
+    @Test
+    fun `a child under a disabled container cannot be toggled, but the container can`() = runTest {
+        val rig = Rig()
+        val plugin = Ahp.json.decodeFromString(
+            com.microsoft.agenthostprotocol.generated.Customization.serializer(),
+            """{"type":"plugin","id":"plugin-1","uri":"file:///plugin","name":"Plugin","enablement":[{"kind":"session","enabled":false}],"children":[{"type":"skill","id":"skill-1","uri":"file:///skill","name":"Skill"}]}""",
+        )
+        rig.states[s1] = state("ready", c1 to "Main").copy(customizations = listOf(plugin))
+
+        assertEquals(ManageResult.InvalidChoice, rig.manager.toggleCustomization(s1, "skill-1", true))
+        assertEquals(ManageResult.Done(), rig.manager.toggleCustomization(s1, "plugin-1", true))
+    }
+
+    @Test
     fun `setTitle trims the title, rejects blank or overly long titles, and dispatches on the session channel`() = runTest {
         val rig = Rig()
 

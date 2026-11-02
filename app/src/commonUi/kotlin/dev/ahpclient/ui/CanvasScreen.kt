@@ -19,6 +19,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.microsoft.agenthostprotocol.generated.CanvasState
+import dev.ahpclient.state.CanvasDetail
 import dev.ahpclient.state.ChannelGoneException
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.LinkTarget
@@ -34,24 +35,23 @@ fun CanvasScreen(
     onOpenLink: (String) -> Unit,
     onShareLink: ((String) -> Unit)? = null,
 ) {
-    val title = state?.title?.takeIf { it.isNotBlank() } ?: state?.extensionName?.takeIf { it.isNotBlank() } ?: "Canvas"
-    val safeUrl = remember(state?.url) { state?.url?.takeIf { it.startsWith("https://", ignoreCase = true) && LinkTarget.of(it) is LinkTarget.Web } }
-    var pendingUrl by remember(state?.instanceId, state?.url) { mutableStateOf<String?>(null) }
+    val detail = remember(state) { state?.let(CanvasDetail::from) }
+    var pendingUrl by remember(detail?.url) { mutableStateOf<String?>(null) }
     val target = pendingUrl?.let(LinkTarget::of)
-    ScreenScaffold(title = title.take(120), titleTag = "canvas_title", onBack = onBack, backLabel = "Back to chat", large = false) {
+    ScreenScaffold(title = detail?.title ?: "Canvas", titleTag = "canvas_title", onBack = onBack, backLabel = "Back to chat", large = false) {
         Column(
             modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             if (connection != ConnState.Online) ConnectionLine(connection)
             when {
-                state != null -> {
-                    state.extensionName?.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() }) }
-                    Text("Canvas ${state.canvasId.take(120)}", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("canvas_id"))
-                    state.status?.takeIf { it.isNotBlank() }?.let { Text(it.take(300), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("canvas_status")) }
-                    if (safeUrl != null) {
+                detail != null -> {
+                    detail.extension?.let { Text(it, style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() }) }
+                    detail.canvasId?.let { Text("Canvas $it", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("canvas_id")) }
+                    detail.status?.let { Text(it, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("canvas_status")) }
+                    detail.url?.let { url ->
                         OutlinedButton(
-                            onClick = { pendingUrl = safeUrl },
+                            onClick = { pendingUrl = url },
                             modifier = Modifier.fillMaxWidth().testTag("canvas_open_link"),
                         ) { Text("Open canvas link") }
                     }

@@ -1,6 +1,6 @@
 # AHP Protocol Completion & Parity Specification
 
-> **Status:** Drafted 2026-11-01 after PR #30 (`f56aef3`). Ready for execution in upcoming sessions.
+> **Status:** Drafted 2026-11-01 after PR #30 (`f56aef3`). P1 to P5 are built on `codex/p2-customization-toggles-p3`; see [Execution status](#execution-status).
 > **Parent:** [`docs/spec.md`](spec.md). Complements [`docs/extensions-spec.md`](extensions-spec.md), [`docs/hardening-spec.md`](hardening-spec.md), [`docs/navigation-spec.md`](navigation-spec.md), and [`docs/prerelease-monetization-spec.md`](prerelease-monetization-spec.md).
 
 ## Overview
@@ -23,6 +23,48 @@ This specification audits the remaining surface of `com.microsoft.agenthostproto
 | **P6** | **Slice 6: Protocol Completions (`completions` & `sessionConfigCompletions`)** | Composer & Config Ergonomics | `INTERACT` / `MANAGE` | M | Wires the AHP `completions` RPC into the chat composer (for host-backed `/` and `@` argument completions) and `sessionConfigCompletions` into `NewSessionDialog` for autocomplete config options. |
 | **P7** | **Slice 7: Host Automations & Scheduled Runs (`AutomationState` & `AutomationRunLifecycle`)** | Automations | `READ` / `MANAGE` | L | Full UI and state store for AHP automations: viewing scheduled/event-triggered automations and run lifecycles, cancelling a run (`automation/runCancelRequested`), and creating/updating automations (`automation/createRequested`, `automation/updateRequested`). |
 | **P8** | **Slice 8: Host Terminals & Interactive Terminal Lifecycle (Opt-In Gate)** | Host Terminals | `MANAGE` (+ separate gate) | L | Lists root-level `RootState.terminals`, supports `createTerminal` / `disposeTerminal` / `terminal/resized` / `terminal/cleared`, and evaluates whether `terminal/input` should remain permanently disallowed or gated behind a dedicated per-command biometric/credential check. |
+
+---
+
+## Execution status
+
+Checked 2026-11-02 on an API 36 emulator and the JVM suite. The boxes in each slice below are ticked only for what was run. Nothing here has been checked against a live host or a physical phone yet.
+
+| Slice | State | Not yet verified |
+|---|---|---|
+| P1 Risk assessment and edit preview | Built, JVM and UI tests | Live host payload; a real `customizationId` is shown as the server name, which may be an opaque id |
+| P2 Customization toggles and server tools | Built, JVM and UI tests | That a live host honours `session/customizationToggled` and echoes it |
+| P3 Per-chat changesets and terminal commands | Built, JVM and UI tests | Live terminal content with command parts |
+| P4 Canvas and annotations channels | Built, JVM and UI tests | Live channel subscribe; system back on the canvas screen has no automated test (no `AppRoot` harness with a host) |
+| P5 Working directories | Built, JVM and UI tests | That a live host applies set and remove |
+| iOS | Not compiled for P1 to P5 | Kotlin/Native needs a Mac; `commonUi` changes were only reviewed for JVM-only calls |
+
+### Decisions taken in review
+
+- A toggle sends the session's decision first and keeps the existing workspace and global decisions behind it, because `enablement` replaces the previous list and is ordered most specific first.
+- A switch appears only on customizations the session itself lists, and not on children of a disabled container: the host's agent-level customizations cannot be toggled on a session, and a child under a disabled container stays off.
+- A completed risk assessment whose score cannot be read shows as a warning, never as safe.
+- The last comment on an annotation cannot be removed, because the protocol requires each annotation to keep one entry. Removing any other comment asks first. Removing a whole annotation (`annotations/removed`) stays out of the policy.
+- A failing command keeps its `[exit code N]` line as well as the header's exit badge, since long output can push the header out of the kept lines.
+
+### Next slice
+
+**N1: Land and prove P1 to P5.** Merge the branch, then run the unverified column above with `:core-ahp:probe` against a live host and on the Pixel 10, recording results in `docs/verification/protocol-completion.md`. Also: resolve the MCP contributor's `customizationId` to the server's display name through `SessionState.customizations`, and add an `AppRoot` back-navigation test for the canvas screen.
+
+**N2: P6a, session config completions.** Self-contained and MANAGE only:
+
+1. Add `sessionConfigCompletions` to `MANAGE_QUERIES`, with `AhpConnection` and `HostSession` calls beside `resolveSessionConfig`.
+2. Stop leaving `enumDynamic` properties out of `SessionConfigForm`; offer their `enum` values as seeds with a debounced search.
+3. Accept only a value the host returned, keeping the rule that the phone never invents one.
+4. Treat a host that does not implement the query as "seeds only", not as an error.
+
+**N3: P6b, composer completions.** Larger than the table above suggests, so it comes after N2. Every `CompletionItem` carries a required `MessageAttachment`, and `ChatInteractor` and `ChatActions` send no attachments today, so sending them has to be built first. The range offsets are UTF-16 and the only kind defined is `USER_MESSAGE`.
+
+P7 (automations) and P8 (host terminals) keep their order after these.
+
+### Corrections to the slices below
+
+- P6: dynamic config options are marked `enumDynamic: true` on `SessionConfigPropertySchema`, not by a `complete-as-you-type` kind.
 
 ---
 
@@ -68,9 +110,9 @@ Today, `ToolDetail.from` in [`ToolDetail.kt`](../core-ahp/src/main/kotlin/dev/ah
 
 ### Acceptance Criteria
 
-- [ ] **AC-P1.1** A `ToolCallStatePendingConfirmation` with `ToolCallRiskAssessmentLoading` or `ToolCallRiskAssessmentComplete` populates `ToolDetail.riskAssessment` with bounded plain text and renders `tool_risk_assessment` in the expanded tool block.
-- [ ] **AC-P1.2** A `ToolCallStatePendingConfirmation` with `edits: FileEditCollection` surfaces each proposed file edit as a `ToolResultView.FileEdit` with `before`/`after` diff preview before approval.
-- [ ] **AC-P1.3** `ToolCallContributorMcp` populates `mcpServerName` on `ToolDetail` and `TranscriptItem.Tool` when `_meta` does not already set one.
+- [x] **AC-P1.1** A `ToolCallStatePendingConfirmation` with `ToolCallRiskAssessmentLoading` or `ToolCallRiskAssessmentComplete` populates `ToolDetail.riskAssessment` with bounded plain text and renders `tool_risk_assessment` in the expanded tool block.
+- [x] **AC-P1.2** A `ToolCallStatePendingConfirmation` with `edits: FileEditCollection` surfaces each proposed file edit as a `ToolResultView.FileEdit` with `before`/`after` diff preview before approval.
+- [x] **AC-P1.3** `ToolCallContributorMcp` populates `mcpServerName` on `ToolDetail` and `TranscriptItem.Tool` when `_meta` does not already set one.
 - [ ] **AC-P1.4** Unit tests in `ToolDetailTest` and Compose UI tests in `CollapsibleBlocksTest` / `ChatScreenTest` pass on JVM and Pixel 10.
 
 ---
@@ -98,10 +140,10 @@ Today, `ToolDetail.from` in [`ToolDetail.kt`](../core-ahp/src/main/kotlin/dev/ah
 
 ### Acceptance Criteria
 
-- [ ] **AC-P2.1** `CapabilityPolicy.MANAGE` allows `"session/customizationToggled"`, while `READ` and `INTERACT` reject it with `CapabilityDeniedException`.
-- [ ] **AC-P2.2** `SessionManager.toggleCustomization` validates the customization ID against live `SessionState.customizations` and dispatches `session/customizationToggled`.
-- [ ] **AC-P2.3** `CustomizationsSheet` renders toggle switches for toggleable customizations on the `MANAGE` tier and lists `SessionState.serverTools` under `Tools`.
-- [ ] **AC-P2.4** Unit tests (`CapabilityPolicyTest`, `SessionManagerTest`, `SlashCommandsTest`) and UI tests (`SessionScreensTest`) pass.
+- [x] **AC-P2.1** `CapabilityPolicy.MANAGE` allows `"session/customizationToggled"`, while `READ` and `INTERACT` reject it with `CapabilityDeniedException`.
+- [x] **AC-P2.2** `SessionManager.toggleCustomization` validates the customization ID against live `SessionState.customizations` and dispatches `session/customizationToggled`.
+- [x] **AC-P2.3** `CustomizationsSheet` renders toggle switches for toggleable customizations on the `MANAGE` tier and lists `SessionState.serverTools` under `Tools`.
+- [x] **AC-P2.4** Unit tests (`CapabilityPolicyTest`, `SessionManagerTest`, `SlashCommandsTest`) and UI tests (`SessionScreensTest`) pass.
 
 ---
 
@@ -123,9 +165,9 @@ Today, `ToolDetail.from` in [`ToolDetail.kt`](../core-ahp/src/main/kotlin/dev/ah
 
 ### Acceptance Criteria
 
-- [ ] **AC-P3.1** When the active `ChatState` advertises `changesets` not already in `SessionState.changesets`, `ChangesChip` includes them and opens their diff view on tap.
-- [ ] **AC-P3.2** `TerminalView` exposes decoded `cwd` and structured command boundaries; `TerminalScreen` displays `cwd` in its subtitle and renders command headers when present.
-- [ ] **AC-P3.3** Unit tests in `TerminalViewTest` / `ChangesetViewTest` and UI tests in `SessionScreensTest` pass.
+- [x] **AC-P3.1** When the active `ChatState` advertises `changesets` not already in `SessionState.changesets`, `ChangesChip` includes them and opens their diff view on tap.
+- [x] **AC-P3.2** `TerminalView` exposes decoded `cwd` and structured command boundaries; `TerminalScreen` displays `cwd` in its subtitle and renders command headers when present.
+- [x] **AC-P3.3** Unit tests in `TerminalViewTest` / `ChangesetViewTest` and UI tests in `SessionScreensTest` pass.
 
 ---
 
@@ -149,9 +191,9 @@ PR #30 (`f56aef3`) surfaced `chat.canvases[]` (`CanvasReference`) in `Background
 
 ### Acceptance Criteria
 
-- [ ] **AC-P4.1** `CanvasStore` and `AnnotationsStore` decode initial snapshots and apply `canvas/*` and `annotations/*` actions via the protocol reducers.
-- [ ] **AC-P4.2** Tapping a canvas in `BackgroundWorkChip` or `DetailsSheet` displays its `CanvasState` details and offers to open/share a valid `https://` URL via `LinkConfirmDialog`.
-- [ ] **AC-P4.3** Tapping the `Annotations` tile in `DetailsSheet` opens `AnnotationsSheet` displaying the session's annotations and their comment entries.
+- [x] **AC-P4.1** `CanvasStore` and `AnnotationsStore` decode initial snapshots and apply `canvas/*` and `annotations/*` actions via the protocol reducers.
+- [x] **AC-P4.2** Tapping a canvas in `BackgroundWorkChip` or `DetailsSheet` displays its `CanvasState` details and offers to open/share a valid `https://` URL via `LinkConfirmDialog`.
+- [x] **AC-P4.3** Tapping the `Annotations` tile in `DetailsSheet` opens `AnnotationsSheet` displaying the session's annotations and their comment entries.
 
 ---
 
@@ -170,8 +212,8 @@ PR #30 (`f56aef3`) surfaced `chat.canvases[]` (`CanvasReference`) in `Background
 
 ### Acceptance Criteria
 
-- [ ] **AC-P5.1** `ChatPane` and `DetailsSheet` include `chat.workingDirectories` alongside `session.workingDirectories`.
-- [ ] **AC-P5.2** On the `MANAGE` tier, `SessionManager` can add a folder from `RecentFolders` (`session/workingDirectorySet`) or remove an existing secondary folder (`session/workingDirectoryRemoved`), refusing any path not offered by the host's session history.
+- [x] **AC-P5.1** `ChatPane` and `DetailsSheet` include `chat.workingDirectories` alongside `session.workingDirectories`.
+- [x] **AC-P5.2** On the `MANAGE` tier, `SessionManager` can add a folder from `RecentFolders` (`session/workingDirectorySet`) or remove an existing secondary folder (`session/workingDirectoryRemoved`), refusing any path not offered by the host's session history.
 
 ---
 

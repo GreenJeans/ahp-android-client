@@ -62,7 +62,7 @@ class TerminalUiTest {
     fun aFinishedTerminalSaysHowItEnded() {
         show(state("done\n", lifecycle = """{"status":"exited","exitCode":3}"""))
 
-        rule.onNodeWithTag("terminal_status").assertTextEquals("Exited with code 3")
+        rule.onNodeWithTag("terminal_status").assertTextEquals("Exited with code 3 · c:/work/repo")
     }
 
     @Test

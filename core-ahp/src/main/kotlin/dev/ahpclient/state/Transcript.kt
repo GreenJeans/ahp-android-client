@@ -358,7 +358,7 @@ data class Transcript(
             val resource = ref.resource.trim()
             if (resource.isEmpty()) return null
             val tail = resource.substringAfterLast('/').substringAfterLast(':').trim()
-            val label = (if (tail.isNotEmpty()) tail else resource).take(MAX_CANVAS_LABEL_CHARS)
+            val label = LineDiff.clean((if (tail.isNotEmpty()) tail else resource).take(MAX_CANVAS_LABEL_CHARS))
             return CanvasView(resource = resource, label = label)
         }
     }

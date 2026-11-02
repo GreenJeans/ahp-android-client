@@ -281,6 +281,7 @@ fun SessionScreen(
             } else {
                 null
             },
+            notice = notice,
             onToggleCustomization = if (manage != null && sessionUri.isNotEmpty()) {
                 { id, enabled ->
                     scope.launch {
@@ -298,12 +299,8 @@ fun SessionScreen(
             error = annotationsError,
             canInteract = canInteract,
             onDismiss = { onCloseAnnotations?.invoke() },
-            onAddEntry = { annotationId, text ->
-                scope.launch { notice = ManageMessages.describe(onAddAnnotationEntry(annotationId, text)) }
-            },
-            onRemoveEntry = { annotationId, entryId ->
-                scope.launch { notice = ManageMessages.describe(onRemoveAnnotationEntry(annotationId, entryId)) }
-            },
+            onAddEntry = onAddAnnotationEntry,
+            onRemoveEntry = onRemoveAnnotationEntry,
         )
     }
 }
@@ -574,7 +571,7 @@ private fun Facts(
                 Text(folder.take(500), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("chat_working_directory_$index"))
             }
         }
-        Text("Session folders", style = MaterialTheme.typography.labelLarge)
+        if (detail.workingDirectories.isNotEmpty()) Text("Session folders", style = MaterialTheme.typography.labelLarge)
         detail.workingDirectories.forEachIndexed { index, folder ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text(folder.take(500), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f).testTag("session_working_directory_$index"))

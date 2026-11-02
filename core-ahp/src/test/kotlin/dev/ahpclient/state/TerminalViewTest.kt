@@ -125,8 +125,19 @@ class TerminalViewTest {
 
         val view = TerminalView.from(state(content = content))
 
-        assertEquals(listOf("$ npm test", "ok", "$ "), view.lines)
+        assertEquals(listOf("$ npm test", "ok", "[exit code 1]", "$ "), view.lines)
         assertEquals(listOf(TerminalCommandView("npm test", 0, true, 1L)), view.commands)
+    }
+
+    @Test
+    fun `a failing command whose output pushed its header out of the kept lines still says how it ended`() {
+        val output = (1..TerminalView.MAX_LINES + 50).joinToString("") { "line $it\\r\\n" }
+        val content = """{"type":"command","commandId":"c1","commandLine":"npm test","output":"$output","timestamp":1,"isComplete":true,"exitCode":3}"""
+
+        val view = TerminalView.from(state(content = content))
+
+        assertEquals(emptyList(), view.commands)
+        assertEquals("[exit code 3]", view.lines.last())
     }
 
     @Test
