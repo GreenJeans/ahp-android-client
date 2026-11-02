@@ -4,6 +4,8 @@ import dev.ahpclient.platform.*
 import dev.ahpclient.auth.Secret
 import dev.ahpclient.direct.DirectHost
 import dev.ahpclient.state.ChannelStore
+import dev.ahpclient.state.CanvasStore
+import dev.ahpclient.state.AnnotationsStore
 import dev.ahpclient.state.ChatInteractor
 import dev.ahpclient.state.ChatStore
 import dev.ahpclient.state.DiffResult
@@ -128,10 +130,25 @@ sealed interface AppState {
  * [chat] is the chat on screen. [warm] holds the session's other chats that were looked at, which stay subscribed so that going back
  * to one is instant instead of a reload; they are released with the session.
  */
-data class OpenSession(val uri: String, val store: SessionStore, val chat: OpenChat? = null, val changeset: OpenChangeset? = null, val terminal: OpenTerminal? = null, val warm: List<OpenChat> = emptyList())
+data class OpenSession(
+    val uri: String,
+    val store: SessionStore,
+    val chat: OpenChat? = null,
+    val changeset: OpenChangeset? = null,
+    val terminal: OpenTerminal? = null,
+    val canvas: OpenCanvas? = null,
+    val annotations: OpenAnnotations? = null,
+    val warm: List<OpenChat> = emptyList(),
+)
 
 /** The live output of one terminal on screen, over the chat it was opened from. Its [store] stays subscribed until the user goes back. */
 data class OpenTerminal(val uri: String, val store: ChannelStore<TerminalState>)
+
+/** Live canvas channel opened from a canvas reference in the active chat. */
+data class OpenCanvas(val uri: String, val store: CanvasStore)
+
+/** Live session annotations channel opened from its summary. */
+data class OpenAnnotations(val uri: String, val store: AnnotationsStore)
 
 /**
  * A changeset on screen: the files that changed. Its [store] stays subscribed until the user goes back. [reviewable] is the

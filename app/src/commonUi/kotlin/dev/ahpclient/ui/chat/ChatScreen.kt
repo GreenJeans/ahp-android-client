@@ -116,6 +116,7 @@ fun ChatScreen(
     actions: ChatActionsUi? = null,
     onOpenSubagent: ((String) -> Unit)? = null,
     onOpenTerminal: ((String) -> Unit)? = null,
+    onOpenCanvas: ((String) -> Unit)? = null,
     backLabel: String = "Back to session",
     externalRichRequest: RichModalRequest? = null,
     onExternalRichConsumed: () -> Unit = {},
@@ -137,6 +138,7 @@ fun ChatScreen(
                 canvases = transcript?.canvases.orEmpty(),
                 onOpenSubagent = onOpenSubagent,
                 onOpenTerminal = onOpenTerminal,
+                onOpenCanvas = onOpenCanvas,
             )
         },
         large = false,
@@ -475,6 +477,7 @@ fun BackgroundWorkChip(
     canvases: List<CanvasView> = emptyList(),
     onOpenSubagent: ((String) -> Unit)? = null,
     onOpenTerminal: ((String) -> Unit)? = null,
+    onOpenCanvas: ((String) -> Unit)? = null,
 ) {
     if (items.isEmpty() && canvases.isEmpty()) return
     var showSheet by rememberSaveable { mutableStateOf(false) }
@@ -527,7 +530,10 @@ fun BackgroundWorkChip(
                     )
                 }
                 if (canvases.isNotEmpty()) {
-                    CanvasesBar(canvases = canvases)
+                    CanvasesBar(
+                        canvases = canvases,
+                        onOpenCanvas = onOpenCanvas?.let { open -> { uri -> showSheet = false; open(uri) } },
+                    )
                 }
             }
         }
@@ -587,7 +593,7 @@ fun BackgroundWorkBar(
 }
 
 @Composable
-fun CanvasesBar(canvases: List<CanvasView>, modifier: Modifier = Modifier) {
+fun CanvasesBar(canvases: List<CanvasView>, modifier: Modifier = Modifier, onOpenCanvas: ((String) -> Unit)? = null) {
     Surface(
         shape = MaterialTheme.shapes.small,
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -599,11 +605,16 @@ fun CanvasesBar(canvases: List<CanvasView>, modifier: Modifier = Modifier) {
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Text(
-                canvases.joinToString(" · ") { it.label },
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.testTag("canvases_text"),
-            )
+            if (onOpenCanvas == null) {
+                Text(canvases.joinToString(" · ") { it.label }, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("canvases_text"))
+            } else {
+                canvases.forEach { canvas ->
+                    TextButton(
+                        onClick = { onOpenCanvas(canvas.resource) },
+                        modifier = Modifier.heightIn(min = 48.dp).testTag("canvas_open_${canvas.label}"),
+                    ) { Text(canvas.label, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                }
+            }
         }
     }
 }

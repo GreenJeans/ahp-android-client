@@ -411,6 +411,12 @@ class HostSession(
         ChannelStore(uri, { (it as? SnapshotState.Changeset)?.value }, ::changesetReducer)
     }
 
+    /** Subscribes to the live canvas state at [uri]. Pair every call with [closeChannel]. */
+    fun openCanvas(uri: String): CanvasStore = openAux(uri) { canvasStore(uri) }
+
+    /** Subscribes to the live annotations state at [uri]. Pair every call with [closeChannel]. */
+    fun openAnnotations(uri: String): AnnotationsStore = openAux(uri) { annotationsStore(uri) }
+
     /**
      * The store for the terminal at [uri], read only. A terminal is subscribed by hand (see [AhpConnection.subscribeTerminal])
      * and left out of `initialize` and `reconnect`, so it is subscribed afresh on every connection. Pair every call with [closeChannel].

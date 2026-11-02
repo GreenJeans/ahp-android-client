@@ -51,6 +51,7 @@ import dev.ahpclient.ui.theme.AhpTheme
 import com.microsoft.agenthostprotocol.Ahp
 import com.microsoft.agenthostprotocol.generated.SessionState
 import com.microsoft.agenthostprotocol.generated.SessionSummary
+import com.microsoft.agenthostprotocol.generated.CanvasState
 import java.time.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -911,8 +912,28 @@ class SessionScreensTest {
         showDetail(withAnnotations)
         openDetails()
 
-        rule.onNodeWithText("Annotations").assertIsDisplayed()
-        rule.onNodeWithText("2 annotations \u00b7 5 entries").assertIsDisplayed()
+        rule.onNodeWithTag("details_annotations").performScrollTo().assertIsDisplayed().assertTextEquals("Annotations \u00b7 2 annotations \u00b7 5 entries")
+    }
+
+    @Test
+    fun canvasLinkRequiresConfirmationBeforeOpening() {
+        val canvas = Ahp.json.decodeFromString(
+            CanvasState.serializer(),
+            """{"instanceId":"i1","extensionId":"ext","extensionName":"Preview","canvasId":"web","title":"Build preview","status":"Ready","url":"https://example.com/preview"}""",
+        )
+        var opened: String? = null
+        rule.setContent {
+            AhpTheme {
+                CanvasScreen(canvas, null, ConnState.Online, {}, onOpenLink = { opened = it })
+            }
+        }
+
+        rule.onNodeWithTag("canvas_title").assertTextEquals("Build preview")
+        rule.onNodeWithTag("canvas_open_link").performClick()
+        rule.onNodeWithText("Open link?").assertIsDisplayed()
+        assertEquals(null, opened)
+        rule.onNodeWithTag("link_open").performClick()
+        assertEquals("https://example.com/preview", opened)
     }
 
     @Test

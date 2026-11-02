@@ -12,6 +12,7 @@ class CapabilityPolicyTest {
         "chat/turnStarted", "chat/pendingMessageSet", "chat/pendingMessageRemoved", "chat/queuedMessagesReordered",
         "chat/inputAnswerChanged", "chat/inputCompleted", "chat/toolCallConfirmed", "chat/toolCallResultConfirmed",
         "chat/turnCancelled", "chat/turnResume", "chat/truncated", "chat/configChanged",
+        "annotations/entrySet", "annotations/entryRemoved",
     )
 
     // Everything the spec's Design Notes name as denied, plus the rest of the protocol surface.
@@ -55,7 +56,7 @@ class CapabilityPolicyTest {
     }
 
     @Test
-    fun `INTERACT allows exactly the nine interaction action types`() {
+    fun `INTERACT allows exactly the chat and annotation interaction action types`() {
         interactActions.forEach { CapabilityPolicy.INTERACT.check("dispatchAction", it) }
     }
 

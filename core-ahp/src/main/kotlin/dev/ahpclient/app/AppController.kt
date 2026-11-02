@@ -2,6 +2,7 @@ package dev.ahpclient.app
 import dev.ahpclient.platform.randomUuid
 
 import dev.ahpclient.platform.platformSynchronized
+import dev.ahpclient.ahp.CapabilityDeniedException
 
 import dev.ahpclient.platform.Synchronized
 
@@ -35,9 +36,11 @@ import dev.ahpclient.state.RequestRead
 import dev.ahpclient.state.ApprovalTarget
 import dev.ahpclient.state.QuestionTarget
 import dev.ahpclient.state.ChannelStore
+import dev.ahpclient.state.AnnotationActions
 import dev.ahpclient.state.ChangesetDiffs
 import dev.ahpclient.state.ChangesetEntry
 import dev.ahpclient.state.ChangesetReviewer
+import dev.ahpclient.state.DispatchOutcome
 import dev.ahpclient.state.ChatInteractor
 import dev.ahpclient.state.ChatStore
 import dev.ahpclient.state.ExpansionState
@@ -50,6 +53,7 @@ import dev.ahpclient.state.ModelOptions
 import dev.ahpclient.state.SessionManager
 import dev.ahpclient.state.SubagentLinks
 import dev.ahpclient.state.TerminalLinks
+import dev.ahpclient.state.Transcript
 import dev.ahpclient.state.displayPath
 import dev.ahpclient.state.extras
 import dev.ahpclient.tunnel.DevTunnelsClient
@@ -836,7 +840,91 @@ class AppController(
             cancelDiffJob()
             open.changeset?.let { current.session.closeChannel(it.uri) }
             open.terminal?.let { current.session.closeChannel(it.uri) }
+            open.canvas?.let { current.session.closeChannel(it.uri) }
+            open.annotations?.let { current.session.closeChannel(it.uri) }
             current.session.closeSession(open.uri)
+        }
+    }
+
+    /** Opens only a canvas referenced by the currently shown chat. */
+    @Synchronized
+    fun openCanvas(uri: String) {
+        val current = _state.value as? AppState.Connected ?: return
+        val open = current.open ?: return
+        val chat = open.chat ?: return
+        if (open.canvas != null || open.terminal != null || open.changeset != null || chat.parent != null || uri.length > MAX_CHANNEL_URI) return
+        val state = chat.store.state.value ?: return
+        if (Transcript.canvasesOf(state).none { it.resource == uri }) return
+        val store = current.session.openCanvas(uri)
+        if (!_state.compareAndSet(current, current.copy(open = open.copy(canvas = OpenCanvas(uri, store))))) current.session.closeChannel(uri)
+    }
+
+    /** Leaves the canvas viewer. */
+    @Synchronized
+    fun closeCanvas() {
+        val current = _state.value as? AppState.Connected ?: return
+        val open = current.open ?: return
+        val canvas = open.canvas ?: return
+        if (_state.compareAndSet(current, current.copy(open = open.copy(canvas = null)))) current.session.closeChannel(canvas.uri)
+    }
+
+    /** Opens the annotations channel named by the current session snapshot. */
+    @Synchronized
+    fun openAnnotations() {
+        val current = _state.value as? AppState.Connected ?: return
+        val open = current.open ?: return
+        if (open.annotations != null) return
+        val uri = open.store.state.value?.annotations?.resource ?: return
+        if (uri.isBlank() || uri.length > MAX_CHANNEL_URI) return
+        val store = current.session.openAnnotations(uri)
+        if (!_state.compareAndSet(current, current.copy(open = open.copy(annotations = OpenAnnotations(uri, store))))) current.session.closeChannel(uri)
+    }
+
+    /** Closes the annotations sheet and its channel subscription. */
+    @Synchronized
+    fun closeAnnotations() {
+        val current = _state.value as? AppState.Connected ?: return
+        val open = current.open ?: return
+        val annotations = open.annotations ?: return
+        if (_state.compareAndSet(current, current.copy(open = open.copy(annotations = null)))) current.session.closeChannel(annotations.uri)
+    }
+
+    /** Adds a plain-text comment to a live annotation after checking the current INTERACT capability and channel state. */
+    suspend fun addAnnotationEntry(annotationId: String, text: String): ManageResult {
+        val current = _state.value as? AppState.Connected ?: return ManageResult.NoSuchTarget
+        val open = current.open ?: return ManageResult.NoSuchTarget
+        val channel = open.annotations ?: return ManageResult.NoSuchTarget
+        val trimmed = text.trim()
+        val annotations = channel.store.state.value?.annotations ?: return ManageResult.NoSuchTarget
+        if (trimmed.isEmpty() || trimmed.length > MAX_ANNOTATION_TEXT || annotations.none { it.id == annotationId }) {
+            return ManageResult.InvalidChoice
+        }
+        return dispatchAnnotation(current.session, channel.uri, AnnotationActions.setEntry(annotationId, randomUuid(), trimmed))
+    }
+
+    /** Removes an entry only when the current annotations snapshot still contains it. */
+    suspend fun removeAnnotationEntry(annotationId: String, entryId: String): ManageResult {
+        val current = _state.value as? AppState.Connected ?: return ManageResult.NoSuchTarget
+        val open = current.open ?: return ManageResult.NoSuchTarget
+        val channel = open.annotations ?: return ManageResult.NoSuchTarget
+        val annotation = channel.store.state.value?.annotations?.firstOrNull { it.id == annotationId } ?: return ManageResult.InvalidChoice
+        if (annotation.entries.none { it.id == entryId }) return ManageResult.InvalidChoice
+        return dispatchAnnotation(current.session, channel.uri, AnnotationActions.removeEntry(annotationId, entryId))
+    }
+
+    private suspend fun dispatchAnnotation(session: HostSession, uri: String, action: com.microsoft.agenthostprotocol.generated.StateAction): ManageResult {
+        if (!session.canInteract.value) return ManageResult.NotAllowed
+        return try {
+            when (val result = session.dispatch(uri, action)) {
+                DispatchOutcome.Accepted -> ManageResult.Done()
+                else -> ManageResult.Unconfirmed(result)
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: CapabilityDeniedException) {
+            ManageResult.NotAllowed
+        } catch (e: IOException) {
+            ManageResult.NotSent(e)
         }
     }
 
@@ -849,7 +937,7 @@ class AppController(
     fun openChangeset(uri: String) {
         val current = _state.value as? AppState.Connected ?: return
         val open = current.open ?: return
-        if (open.changeset != null || open.terminal != null || open.chat?.parent != null) return
+        if (open.changeset != null || open.terminal != null || open.canvas != null || open.chat?.parent != null) return
         val entry = open.store.state.value?.changesets.orEmpty().map(ChangesetEntry::from).firstOrNull { it.uri == uri }
         if (entry == null || uri.length > MAX_CHANNEL_URI) return
         val store = current.session.openChangeset(uri)
@@ -921,7 +1009,7 @@ class AppController(
         val open = current.open ?: return
         val shown = open.chat
         if (shown == null) return openChat(uri)
-        if (shown.parent != null || shown.uri == uri || open.terminal != null || open.changeset != null) return
+        if (shown.parent != null || shown.uri == uri || open.terminal != null || open.canvas != null || open.changeset != null) return
         val listed = open.store.state.value?.chats?.map { it.resource }?.toSet().orEmpty()
         if (uri !in listed) return
         val back = open.warm.firstOrNull { it.uri == uri }
@@ -1149,7 +1237,7 @@ class AppController(
         val current = _state.value as? AppState.Connected ?: return
         val open = current.open ?: return
         val chat = open.chat ?: return
-        if (open.terminal != null) return
+        if (open.terminal != null || open.canvas != null || open.changeset != null) return
         val shown = chat.store.state.value ?: return
         if (uri !in TerminalLinks.referencedBy(shown)) return
         val store = current.session.openTerminal(uri)
@@ -1172,8 +1260,9 @@ class AppController(
         val open = current.open ?: return
         val chat = open.chat ?: return
         // A terminal opened from the chat goes with it.
-        if (_state.compareAndSet(current, current.copy(open = open.copy(chat = chat.parent, terminal = null)))) {
+        if (_state.compareAndSet(current, current.copy(open = open.copy(chat = chat.parent, terminal = null, canvas = null)))) {
             open.terminal?.let { current.session.closeChannel(it.uri) }
+            open.canvas?.let { current.session.closeChannel(it.uri) }
             current.session.closeChat(chat.uri)
         }
     }
@@ -1602,5 +1691,6 @@ class AppController(
 
         /** No channel address this app opens is longer than this. */
         const val MAX_CHANNEL_URI = 512
+        const val MAX_ANNOTATION_TEXT = 4_000
     }
 }

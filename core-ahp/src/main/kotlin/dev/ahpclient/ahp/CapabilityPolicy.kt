@@ -83,6 +83,8 @@ class CapabilityPolicy private constructor(
             "chat/turnResume",
             "chat/truncated",
             CHAT_CONFIG_CHANGED,
+            "annotations/entrySet",
+            "annotations/entryRemoved",
         )
 
         /**

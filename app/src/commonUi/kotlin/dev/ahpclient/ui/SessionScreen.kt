@@ -70,10 +70,12 @@ import dev.ahpclient.state.CanvasView
 import dev.ahpclient.ui.chat.BackgroundWorkBar
 import dev.ahpclient.ui.chat.BackgroundWorkChip
 import dev.ahpclient.state.ManageMessages
+import dev.ahpclient.state.ManageResult
 import kotlinx.coroutines.launch
 import com.microsoft.agenthostprotocol.generated.RootState
 import com.microsoft.agenthostprotocol.generated.SessionState
 import com.microsoft.agenthostprotocol.generated.SessionSummary
+import com.microsoft.agenthostprotocol.generated.AnnotationsState
 import dev.ahpclient.platform.Instant
 
 /**
@@ -119,6 +121,15 @@ fun SessionScreen(
     chatUsage: TurnUsage? = null,
     backgroundWork: List<BackgroundWorkView> = emptyList(),
     canvases: List<CanvasView> = emptyList(),
+    onOpenCanvas: ((String) -> Unit)? = null,
+    annotationsOpen: Boolean = false,
+    annotations: AnnotationsState? = null,
+    annotationsError: Throwable? = null,
+    canInteract: Boolean = false,
+    onOpenAnnotations: (() -> Unit)? = null,
+    onCloseAnnotations: (() -> Unit)? = null,
+    onAddAnnotationEntry: suspend (annotationId: String, text: String) -> ManageResult = { _, _ -> ManageResult.NotAllowed },
+    onRemoveAnnotationEntry: suspend (annotationId: String, entryId: String) -> ManageResult = { _, _ -> ManageResult.NotAllowed },
     onOpenSubagent: ((String) -> Unit)? = null,
     onOpenTerminal: ((String) -> Unit)? = null,
     chat: @Composable () -> Unit = {},
@@ -177,6 +188,7 @@ fun SessionScreen(
                     canvases = canvases,
                     onOpenSubagent = onOpenSubagent,
                     onOpenTerminal = onOpenTerminal,
+                    onOpenCanvas = onOpenCanvas,
                 )
                 ChangesChip(changes, changesets, onOpenChangeset)
                 SessionMenu(
@@ -238,6 +250,8 @@ fun SessionScreen(
             chatUsage = chatUsage,
             backgroundWork = backgroundWork,
             canvases = canvases,
+            onOpenCanvas = onOpenCanvas?.let { open -> { uri -> showDetails = false; open(uri) } },
+            onOpenAnnotations = onOpenAnnotations?.let { open -> { showDetails = false; open() } },
             onOpenSubagent = onOpenSubagent,
             onOpenTerminal = onOpenTerminal,
         )
@@ -268,6 +282,20 @@ fun SessionScreen(
                 }
             } else {
                 null
+            },
+        )
+    }
+    if (annotationsOpen) {
+        AnnotationsSheet(
+            state = annotations,
+            error = annotationsError,
+            canInteract = canInteract,
+            onDismiss = { onCloseAnnotations?.invoke() },
+            onAddEntry = { annotationId, text ->
+                scope.launch { notice = ManageMessages.describe(onAddAnnotationEntry(annotationId, text)) }
+            },
+            onRemoveEntry = { annotationId, entryId ->
+                scope.launch { notice = ManageMessages.describe(onRemoveAnnotationEntry(annotationId, entryId)) }
             },
         )
     }
@@ -380,6 +408,8 @@ private fun DetailsSheet(
     chatUsage: TurnUsage? = null,
     backgroundWork: List<BackgroundWorkView> = emptyList(),
     canvases: List<CanvasView> = emptyList(),
+    onOpenCanvas: ((String) -> Unit)? = null,
+    onOpenAnnotations: (() -> Unit)? = null,
     onOpenSubagent: ((String) -> Unit)? = null,
     onOpenTerminal: ((String) -> Unit)? = null,
     onOpenLink: (String) -> Unit = {},
@@ -434,7 +464,7 @@ private fun DetailsSheet(
                 }
             }
 
-            Facts(detail, chatUsage, canvases)
+            Facts(detail, chatUsage, canvases, onOpenCanvas, onOpenAnnotations)
             if (onOpenCustomizations != null) {
                 OutlinedButton(
                     onClick = onOpenCustomizations,
@@ -496,7 +526,13 @@ private fun PullRequestsSection(pullRequests: List<PullRequest>, onSelectUrl: (S
 }
 
 @Composable
-private fun Facts(detail: SessionDetail, chatUsage: TurnUsage? = null, canvases: List<CanvasView> = emptyList()) {
+private fun Facts(
+    detail: SessionDetail,
+    chatUsage: TurnUsage? = null,
+    canvases: List<CanvasView> = emptyList(),
+    onOpenCanvas: ((String) -> Unit)? = null,
+    onOpenAnnotations: (() -> Unit)? = null,
+) {
     val facts = buildList {
         add("Agent" to detail.provider)
         detail.model?.let { add("Model" to it) }
@@ -505,10 +541,6 @@ private fun Facts(detail: SessionDetail, chatUsage: TurnUsage? = null, canvases:
         detail.extras.branchLabel?.let { add("Branch" to it) }
         detail.extras.countsText?.let { add("Git status" to it) }
         chatUsage?.detailText?.let { add("Token usage" to it) }
-        detail.annotations?.summaryText?.let { add("Annotations" to it) }
-        if (canvases.isNotEmpty()) {
-            add("Canvases" to canvases.joinToString(" · ") { it.label })
-        }
     }
     Column {
         facts.forEachIndexed { index, (label, value) ->
@@ -518,6 +550,31 @@ private fun Facts(detail: SessionDetail, chatUsage: TurnUsage? = null, canvases:
                     Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(value, style = MaterialTheme.typography.bodyLarge)
                 }
+            }
+        }
+        detail.annotations?.let { annotations ->
+            if (onOpenAnnotations == null) {
+                Text("Annotations · ${annotations.summaryText}", modifier = Modifier.testTag("details_annotations"))
+            } else {
+                OutlinedButton(
+                    onClick = onOpenAnnotations,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("details_open_annotations"),
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text("Annotations")
+                        Text(annotations.summaryText, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        }
+        canvases.forEach { canvas ->
+            if (onOpenCanvas == null) {
+                Text("Canvas · ${canvas.label}")
+            } else {
+                OutlinedButton(
+                    onClick = { onOpenCanvas(canvas.resource) },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("canvas_open_${canvas.label}"),
+                ) { Text("Canvas · ${canvas.label}") }
             }
         }
     }
