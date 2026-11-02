@@ -1,6 +1,7 @@
 package dev.ahpclient.state
 
 import com.microsoft.agenthostprotocol.generated.ResolveSessionConfigResult
+import com.microsoft.agenthostprotocol.generated.SessionConfigCompletionsResult
 import com.microsoft.agenthostprotocol.generated.SessionConfigPropertySchema
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
@@ -20,9 +21,13 @@ sealed interface ConfigPick {
     }
 }
 
-data class ConfigOption(val pick: ConfigPick, val label: String)
+data class ConfigOption(val pick: ConfigPick, val label: String, val description: String? = null)
 
-/** One setting of a new session, as a short list of values to pick from. [value] is what the host holds for it now, if it is one of the options. */
+/**
+ * One setting of a new session, as a short list of values to pick from. [value] is what the host holds for it now, if it is one of
+ * the options. A [dynamic] setting is one the host wants completed as you type: [options] are only the values it seeded, more come
+ * from [SessionConfigForm.completionOptions], and [value] may be one of those.
+ */
 data class ConfigField(
     val id: String,
     val title: String,
@@ -30,14 +35,16 @@ data class ConfigField(
     val options: List<ConfigOption>,
     val required: Boolean,
     val value: ConfigPick?,
+    val dynamic: Boolean = false,
 )
 
 /**
  * The settings a host offers for a new session, reduced to what a phone can show and send back: a setting that is a list of
- * text values, or on/off. Anything else (free text, a number, a read-only value, a list too long to list that the host wants
- * completed as you type) is left out and counted in [omitted], and the host keeps its own value for it. Everything the host says
- * is untrusted display text, so it is bounded; and a choice is accepted only when it is exactly one of the offered options and
- * the host's own answer shows it took.
+ * text values, or on/off. Anything else (free text, a number, a read-only value) is left out and counted in [omitted], and the
+ * host keeps its own value for it. A text setting too long to list, that the host wants completed as you type, is kept as a
+ * [ConfigField.dynamic] one. Everything the host says is untrusted display text, so it is bounded; and a choice is accepted only
+ * when it is one of the offered options, or for a dynamic setting any text value, and in both cases only when the host's own
+ * answer shows it took.
  */
 data class SessionConfigForm(val fields: List<ConfigField>, val omitted: Int, private val resolved: Map<String, JsonElement>) {
     /** The required settings that have no value yet, where the person has not chosen one either. */
@@ -48,13 +55,18 @@ data class SessionConfigForm(val fields: List<ConfigField>, val omitted: Int, pr
      * choice the host did not take, or that is out of date, is never sent.
      */
     fun accepts(picks: Map<String, ConfigPick>): Boolean =
-        picks.all { (id, pick) -> fields.firstOrNull { it.id == id }?.let { field -> field.options.any { it.pick == pick } && field.value == pick } == true }
+        picks.all { (id, pick) ->
+            fields.firstOrNull { it.id == id }?.let { field ->
+                // A dynamic setting's value need not be one of its seeds, but the host must have echoed it back.
+                (field.options.any { it.pick == pick } || (field.dynamic && pick is ConfigPick.Text)) && field.value == pick
+            } == true
+        }
 
     /** The picks as "Setting: Value" lines, in the order of the settings, for the device check to show. */
     fun describe(picks: Map<String, ConfigPick>): List<String> =
         fields.mapNotNull { field ->
             val pick = picks[field.id] ?: return@mapNotNull null
-            "${field.title}: ${field.options.firstOrNull { it.pick == pick }?.label.orEmpty()}"
+            "${field.title}: ${field.options.firstOrNull { it.pick == pick }?.label ?: (pick as? ConfigPick.Text)?.value.orEmpty().take(MAX_TEXT)}"
         }
 
     /** What is sent to the host: the values it resolved itself for this agent and folder, with the person's choices already in them. */
@@ -64,8 +76,9 @@ data class SessionConfigForm(val fields: List<ConfigField>, val omitted: Int, pr
         const val MAX_FIELDS = 20
         const val MAX_OPTIONS = 30
         const val MAX_VALUES = 50
-        private const val MAX_ID = 100
+        const val MAX_ID = 100
         private const val MAX_TEXT = 80
+        private const val MAX_DYNAMIC_VALUE = 200
         private const val MAX_DESCRIPTION = 200
         private const val MAX_VALUE_CHARS = 4_000
 
@@ -86,16 +99,19 @@ data class SessionConfigForm(val fields: List<ConfigField>, val omitted: Int, pr
 
         private fun field(id: String, property: SessionConfigPropertySchema, required: Boolean, held: JsonElement?): ConfigField? {
             if (id.isBlank() || id.length > MAX_ID) return null
-            if (property.readOnly == true || property.enumDynamic == true) return null
+            if (property.readOnly == true) return null
+            // Only a text setting can be completed as you type.
+            val dynamic = property.enumDynamic == true && property.type == "string"
+            if (property.enumDynamic == true && !dynamic) return null
             val options = when (property.type) {
                 "string" -> choices(property)
                 "boolean" -> listOf(ConfigOption(ConfigPick.Flag(true), "On"), ConfigOption(ConfigPick.Flag(false), "Off"))
                 else -> return null
             }
-            if (options.isEmpty()) return null
+            if (options.isEmpty() && !dynamic) return null
             val value = (held as? JsonPrimitive)?.let { primitive ->
                 if (property.type == "boolean") primitive.booleanOrNull?.let { ConfigPick.Flag(it) } else primitive.takeIf { it.isString }?.contentOrNull?.let { ConfigPick.Text(it) }
-            }?.takeIf { v -> options.any { it.pick == v } }
+            }?.takeIf { v -> options.any { it.pick == v } || (dynamic && v is ConfigPick.Text && v.value.isNotBlank() && v.value.length <= MAX_DYNAMIC_VALUE) }
             return ConfigField(
                 id = id,
                 title = property.title.ifBlank { id }.take(MAX_TEXT),
@@ -103,8 +119,23 @@ data class SessionConfigForm(val fields: List<ConfigField>, val omitted: Int, pr
                 options = options,
                 required = required,
                 value = value,
+                dynamic = dynamic,
             )
         }
+
+        /** What the host returned for a completion query, as options a person can pick: bounded, one line each, and without repeats. */
+        fun completionOptions(answer: SessionConfigCompletionsResult): List<ConfigOption> =
+            answer.items.mapNotNull { item ->
+                val value = item.value.takeIf { it.isNotBlank() && it.length <= MAX_DYNAMIC_VALUE } ?: return@mapNotNull null
+                ConfigOption(
+                    ConfigPick.Text(value),
+                    oneLine(item.label)?.take(MAX_TEXT) ?: oneLine(value).orEmpty().take(MAX_TEXT),
+                    item.description?.let(::oneLine)?.take(MAX_DESCRIPTION),
+                )
+            }.distinctBy { it.pick }.take(MAX_OPTIONS)
+
+        private fun oneLine(text: String): String? =
+            text.replace(Regex("\\s+"), " ").trim().takeIf { it.isNotEmpty() }?.let(LineDiff::clean)
 
         private fun choices(property: SessionConfigPropertySchema): List<ConfigOption> =
             property.enum.orEmpty().mapIndexedNotNull { i, raw ->
@@ -112,6 +143,18 @@ data class SessionConfigForm(val fields: List<ConfigField>, val omitted: Int, pr
                 ConfigOption(ConfigPick.Text(text), property.enumLabels?.getOrNull(i)?.takeIf { it.isNotBlank() }?.take(MAX_TEXT) ?: text.take(MAX_TEXT))
             }.distinctBy { it.pick }.take(MAX_OPTIONS)
     }
+}
+
+/** What asking the host to complete a setting as you type came to. */
+sealed interface ConfigCompletions {
+    /** The values the host returned, already bounded and cleaned. May be empty. */
+    data class Items(val options: List<ConfigOption>) : ConfigCompletions
+
+    /** The host does not implement the query, so only the values it seeded can be picked. Not a failure. */
+    data object SeedsOnly : ConfigCompletions
+
+    /** The host could not be asked, or refused. [reason] is plain words, bounded. */
+    data class Unavailable(val reason: String) : ConfigCompletions
 }
 
 /** What asking the host for a new session's settings came to. */

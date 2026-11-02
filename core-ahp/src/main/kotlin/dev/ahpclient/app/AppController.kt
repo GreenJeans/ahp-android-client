@@ -240,6 +240,9 @@ class AppController(
             override suspend fun resolveSessionConfig(provider: String, workingDirectory: String?, config: Map<String, JsonElement>?) =
                 liveSession().resolveSessionConfig(provider, workingDirectory, config)
 
+            override suspend fun sessionConfigCompletions(provider: String, workingDirectory: String?, config: Map<String, JsonElement>?, property: String, query: String?) =
+                liveSession().sessionConfigCompletions(provider, workingDirectory, config, property, query)
+
             override suspend fun createChat(sessionUri: String, chatUri: String, source: ChatSource?, initialMessage: Message?) =
                 liveSession().createChat(sessionUri, chatUri, source, initialMessage)
 
@@ -263,6 +266,9 @@ class AppController(
 
             override suspend fun resolveSessionConfig(provider: String, workingDirectory: String?, config: Map<String, JsonElement>?) =
                 session.resolveSessionConfig(provider, workingDirectory, config)
+
+            override suspend fun sessionConfigCompletions(provider: String, workingDirectory: String?, config: Map<String, JsonElement>?, property: String, query: String?) =
+                session.sessionConfigCompletions(provider, workingDirectory, config, property, query)
 
             override suspend fun createChat(sessionUri: String, chatUri: String, source: ChatSource?, initialMessage: Message?) =
                 session.createChat(sessionUri, chatUri, source, initialMessage)

@@ -29,10 +29,12 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.compose.ui.unit.dp
 import dev.ahpclient.state.ChatRow
+import dev.ahpclient.state.ConfigCompletions
 import dev.ahpclient.state.ConfigField
 import dev.ahpclient.state.ConfigOffer
 import dev.ahpclient.state.ConfigOption
@@ -73,6 +75,8 @@ class ManageUiTest {
         val sessionPicks = mutableListOf<Map<String, ConfigPick>>()
         val asked = mutableListOf<Triple<String, String?, Map<String, ConfigPick>>>()
         var offer: suspend (provider: String, folder: String?, picks: Map<String, ConfigPick>) -> ConfigOffer = { _, _, _ -> ConfigOffer.NoSettings }
+        val completionAsks = mutableListOf<Pair<String, String>>()
+        var complete: (property: String, query: String) -> ConfigCompletions = { _, _ -> ConfigCompletions.SeedsOnly }
         val disposedSessions = mutableListOf<String>()
         val disposedChats = mutableListOf<Pair<String, String>>()
         val renamed = mutableListOf<Pair<String, String>>()
@@ -100,6 +104,7 @@ class ManageUiTest {
         disposeSession = { calls.disposedSessions += it; calls.result },
         disposeChat = { s, c -> calls.disposedChats += s to c; calls.result },
         sessionSettings = { p, f, picks -> calls.asked += Triple(p, f, picks); calls.offer(p, f, picks) },
+        settingCompletions = { _, _, _, property, query -> calls.completionAsks += property to query; calls.complete(property, query) },
         setTitle = { s, t -> calls.renamed += s to t; calls.result },
         setChatRead = { s, c, r -> calls.chatRead += Triple(s, c, r); calls.result },
         setChatArchived = { s, c, a -> calls.chatArchived += Triple(s, c, a); calls.result },
@@ -514,6 +519,75 @@ class ManageUiTest {
         rule.onNodeWithTag("new_session_start").performClick()
         rule.waitUntil(5_000) { calls.sessions.isNotEmpty() }
         assertEquals(emptyMap<String, ConfigPick>(), calls.sessionPicks.single())
+    }
+
+    /** A host with one setting too long to list: it seeds "main", and holds whatever the person chose. */
+    private fun Calls.hostOffersBranch() {
+        offer = { _, _, picks ->
+            ConfigOffer.Form(
+                SessionConfigForm(
+                    listOf(ConfigField("branch", "Branch", null, listOf(ConfigOption(ConfigPick.Text("main"), "main")), false, picks["branch"] ?: ConfigPick.Text("main"), dynamic = true)),
+                    0,
+                    emptyMap(),
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun aSettingTheHostCompletesAsYouTypeSearchesAndOnlyAHostReturnedValueCanBeChosen() {
+        val calls = Calls().apply {
+            hostOffersBranch()
+            complete = { _, query -> ConfigCompletions.Items(if (query == "fea") listOf(ConfigOption(ConfigPick.Text("feature-x"), "Feature X")) else emptyList()) }
+        }
+        showNewSession(calls)
+        chooseClaudeInB()
+        rule.waitUntil(5_000) { rule.onAllNodesCount("setting_search_branch") == 1 }
+
+        rule.onNodeWithTag("setting_branch_0").assertIsSelected()
+        rule.onNodeWithTag("setting_search_branch").performTextInput("fea")
+        rule.waitUntil(5_000) { rule.onAllNodesCount("setting_branch_found_0") == 1 }
+        rule.onNodeWithTag("setting_branch_found_0").assertTextContains("Feature X", substring = true).performClick()
+        rule.waitUntil(5_000) { calls.asked.any { it.third["branch"] == ConfigPick.Text("feature-x") } }
+        rule.waitForIdle()
+
+        rule.onNodeWithTag("setting_branch_found_0").assertIsSelected()
+        rule.onNodeWithTag("setting_branch_0").assertIsNotSelected()
+        rule.onNodeWithTag("new_session_start").performClick()
+        rule.waitUntil(5_000) { calls.sessions.isNotEmpty() }
+        assertEquals(mapOf<String, ConfigPick>("branch" to ConfigPick.Text("feature-x")), calls.sessionPicks.single())
+        assertEquals("branch" to "fea", calls.completionAsks.last())
+    }
+
+    @Test
+    fun aHostThatDoesNotCompleteLeavesTheSeedsAndSaysNothingIsWrong() {
+        val calls = Calls().apply { hostOffersBranch(); complete = { _, _ -> ConfigCompletions.SeedsOnly } }
+        showNewSession(calls)
+        chooseClaudeInB()
+        rule.waitUntil(5_000) { rule.onAllNodesCount("setting_search_branch") == 1 }
+
+        rule.onNodeWithTag("setting_search_branch").performTextInput("m")
+        rule.waitUntil(5_000) { rule.onAllNodesCount("setting_search_branch") == 0 }
+
+        rule.onNodeWithTag("setting_branch_0").assertIsDisplayed()
+        rule.onNodeWithTag("setting_search_problem_branch").assertDoesNotExist()
+        rule.onNodeWithTag("settings_omitted").assertDoesNotExist()
+    }
+
+    @Test
+    fun aSearchThatFailsIsSaidInWordsAndNothingMatchingIsSaidToo() {
+        val calls = Calls().apply { hostOffersBranch(); complete = { _, _ -> ConfigCompletions.Unavailable("The host did not answer.") } }
+        showNewSession(calls)
+        chooseClaudeInB()
+        rule.waitUntil(5_000) { rule.onAllNodesCount("setting_search_branch") == 1 }
+
+        rule.onNodeWithTag("setting_search_branch").performTextInput("zzz")
+        rule.waitUntil(5_000) { rule.onAllNodesCount("setting_search_problem_branch") == 1 }
+        rule.onNodeWithTag("setting_search_problem_branch").assertTextContains("The host did not answer.", substring = true)
+
+        calls.complete = { _, _ -> ConfigCompletions.Items(emptyList()) }
+        rule.onNodeWithTag("setting_search_branch").performTextInput("y")
+        rule.waitUntil(5_000) { rule.onAllNodesCount("setting_search_empty_branch") == 1 }
     }
 
     @Test

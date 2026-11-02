@@ -25,6 +25,7 @@ import com.microsoft.agenthostprotocol.generated.ReconnectResult
 import com.microsoft.agenthostprotocol.generated.ReconnectResultReplay
 import com.microsoft.agenthostprotocol.generated.ReconnectResultSnapshot
 import com.microsoft.agenthostprotocol.generated.ResolveSessionConfigResult
+import com.microsoft.agenthostprotocol.generated.SessionConfigCompletionsResult
 import com.microsoft.agenthostprotocol.generated.ResourceReadResult
 import com.microsoft.agenthostprotocol.generated.SessionSummary
 import com.microsoft.agenthostprotocol.generated.Snapshot
@@ -495,6 +496,14 @@ class HostSession(
 
     override suspend fun resolveSessionConfig(provider: String, workingDirectory: String?, config: Map<String, JsonElement>?): ResolveSessionConfigResult =
         live().resolveSessionConfig(provider, workingDirectory, config)
+
+    override suspend fun sessionConfigCompletions(
+        provider: String,
+        workingDirectory: String?,
+        config: Map<String, JsonElement>?,
+        property: String,
+        query: String?,
+    ): SessionConfigCompletionsResult = live().sessionConfigCompletions(provider, workingDirectory, config, property, query)
 
     override suspend fun createChat(sessionUri: String, chatUri: String, source: ChatSource?, initialMessage: Message?) =
         live().createChat(sessionUri, chatUri, source, initialMessage)

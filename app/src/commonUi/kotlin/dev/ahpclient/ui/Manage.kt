@@ -49,8 +49,10 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
+import dev.ahpclient.state.ConfigCompletions
 import dev.ahpclient.state.ConfigField
 import dev.ahpclient.state.ConfigOffer
+import dev.ahpclient.state.ConfigOption
 import dev.ahpclient.state.ConfigPick
 import dev.ahpclient.state.ChatRow
 import dev.ahpclient.state.ManageMessages
@@ -62,6 +64,7 @@ import dev.ahpclient.state.SessionDetail
 import dev.ahpclient.state.SessionManager
 import dev.ahpclient.state.SessionPhase
 import dev.ahpclient.state.displayPath
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /** An agent the host offers for a new session: its id and the name to show. Both come from the host and are shown as plain text. */
@@ -77,7 +80,11 @@ class HostManageTarget(
     val folders: List<String>,
     val newSession: suspend (provider: String, folder: String?, picks: Map<String, ConfigPick>) -> ManageResult,
     val sessionSettings: suspend (provider: String, folder: String?, picks: Map<String, ConfigPick>) -> ConfigOffer = { _, _, _ -> ConfigOffer.NoSettings },
+    val settingCompletions: SettingCompletions = { _, _, _, _, _ -> ConfigCompletions.SeedsOnly },
 )
+
+/** Asks the host for values matching a query for one setting of a new session: agent, folder, choices so far, setting id, query. */
+typealias SettingCompletions = suspend (provider: String, folder: String?, picks: Map<String, ConfigPick>, property: String, query: String) -> ConfigCompletions
 
 /**
  * What a screen can ask for to look after sessions, once the person has allowed it and the connection is on the manage
@@ -97,6 +104,8 @@ class ManageActionsUi(
     val disposeChat: suspend (sessionUri: String, chatUri: String) -> ManageResult,
     /** Asks the host which settings it offers for a new session of this agent in this folder, given the choices so far. */
     val sessionSettings: suspend (provider: String, folder: String?, picks: Map<String, ConfigPick>) -> ConfigOffer = { _, _, _ -> ConfigOffer.NoSettings },
+    /** Asks the host for values for a setting it wants completed as you type. */
+    val settingCompletions: SettingCompletions = { _, _, _, _, _ -> ConfigCompletions.SeedsOnly },
     /** Connected hosts that can start a new session; when more than one is present, the dialog offers a host picker. */
     val hosts: List<HostManageTarget> = emptyList(),
     val setTitle: suspend (sessionUri: String, title: String) -> ManageResult = { _, _ -> ManageResult.NotAllowed },
@@ -229,6 +238,7 @@ private fun NewSessionDialog(manage: ManageActionsUi, onDismiss: () -> Unit, onC
     val activeFolders = activeTarget?.folders ?: manage.folders
     val activeNewSession = activeTarget?.newSession ?: manage.newSession
     val activeSessionSettings = activeTarget?.sessionSettings ?: manage.sessionSettings
+    val activeSettingCompletions = activeTarget?.settingCompletions ?: manage.settingCompletions
 
     var provider by rememberSaveable { mutableStateOf(activeAgents.singleOrNull()?.provider) }
     var folder by rememberSaveable { mutableStateOf(activeFolders.singleOrNull()) }
@@ -339,7 +349,16 @@ private fun NewSessionDialog(manage: ManageActionsUi, onDismiss: () -> Unit, onC
                         Text("Show ${activeFolders.size - shownFolders.size} more folders")
                     }
                 }
-                form?.let { current -> SettingsSection(current, picks, missing) { id, pick -> picks = picks + (id to pick) } }
+                form?.let { current ->
+                    val askAgent = provider
+                    val askFolder = if (noFolder) null else folder
+                    SettingsSection(
+                        form = current,
+                        picks = picks,
+                        missing = missing,
+                        complete = { property, query -> if (askAgent == null) ConfigCompletions.SeedsOnly else activeSettingCompletions(askAgent, askFolder, picks, property, query) },
+                    ) { id, pick -> picks = picks + (id to pick) }
+                }
                 if (loading) Text("Asking the host for its settings…", style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("settings_loading"))
                 settingsNote?.let { note ->
                     Text(
@@ -380,7 +399,13 @@ private fun NewSessionDialog(manage: ManageActionsUi, onDismiss: () -> Unit, onC
  * holds now (its own default until a choice is made). A setting this app cannot show is counted, and the host keeps its own value.
  */
 @Composable
-private fun SettingsSection(form: SessionConfigForm, picks: Map<String, ConfigPick>, missing: List<ConfigField>, onPick: (String, ConfigPick) -> Unit) {
+private fun SettingsSection(
+    form: SessionConfigForm,
+    picks: Map<String, ConfigPick>,
+    missing: List<ConfigField>,
+    complete: suspend (property: String, query: String) -> ConfigCompletions,
+    onPick: (String, ConfigPick) -> Unit,
+) {
     if (form.fields.isEmpty() && form.omitted == 0) return
     Text("Settings", style = MaterialTheme.typography.titleSmall, modifier = Modifier.semantics { heading() })
     form.fields.forEach { field ->
@@ -396,6 +421,7 @@ private fun SettingsSection(form: SessionConfigForm, picks: Map<String, ConfigPi
         field.options.forEachIndexed { index, option ->
             ChoiceRow(option.label, selected == option.pick, "setting_${field.id}_$index") { onPick(field.id, option.pick) }
         }
+        if (field.dynamic) DynamicSetting(field, selected, complete) { onPick(field.id, it) }
     }
     if (missing.isNotEmpty()) {
         Text("Choose a value for: " + missing.joinToString { it.title }, style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("settings_missing"))
@@ -409,6 +435,69 @@ private fun SettingsSection(form: SessionConfigForm, picks: Map<String, ConfigPi
         )
     }
 }
+
+/**
+ * The search for a setting the host wants completed as you type. Only a value the host returned for the typed text can be chosen,
+ * and a host that does not implement the query leaves just the seeded values above, with no error shown.
+ */
+@Composable
+private fun DynamicSetting(
+    field: ConfigField,
+    selected: ConfigPick?,
+    complete: suspend (property: String, query: String) -> ConfigCompletions,
+    onPick: (ConfigPick) -> Unit,
+) {
+    var query by rememberSaveable(field.id) { mutableStateOf("") }
+    var found by remember(field.id) { mutableStateOf<List<ConfigOption>>(emptyList()) }
+    var supported by remember(field.id) { mutableStateOf(true) }
+    var problem by remember(field.id) { mutableStateOf<String?>(null) }
+    var searching by remember(field.id) { mutableStateOf(false) }
+    val shown = found.filter { option -> field.options.none { it.pick == option.pick } }
+
+    // Waits for a pause in typing, so one request is not sent per letter. A new query cancels the one before it.
+    LaunchedEffect(field.id, query) {
+        if (query.isBlank()) {
+            found = emptyList()
+            problem = null
+            searching = false
+            return@LaunchedEffect
+        }
+        searching = true
+        delay(COMPLETION_DEBOUNCE_MS)
+        when (val answer = complete(field.id, query)) {
+            is ConfigCompletions.Items -> { found = answer.options; supported = true; problem = null }
+            ConfigCompletions.SeedsOnly -> { found = emptyList(); supported = false; problem = null }
+            is ConfigCompletions.Unavailable -> { found = emptyList(); problem = answer.reason }
+        }
+        searching = false
+    }
+
+    // The chosen value is shown even when it is neither a seed nor in the latest results, so it never looks as if nothing is chosen.
+    val chosen = (selected as? ConfigPick.Text)?.takeIf { pick -> field.options.none { it.pick == pick } && shown.none { it.pick == pick } }
+    chosen?.let { ChoiceRow(it.value.take(MAX_SHOWN), true, "setting_${field.id}_chosen") { } }
+    if (supported) {
+        OutlinedTextField(
+            value = query,
+            onValueChange = { query = it.take(COMPLETION_QUERY_CHARS) },
+            label = { Text("Search ${field.title}") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().testTag("setting_search_${field.id}"),
+        )
+        if (searching) Text("Searching…", style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("setting_searching_${field.id}"))
+        problem?.let {
+            Text("Could not search. $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("setting_search_problem_${field.id}").semantics { liveRegion = LiveRegionMode.Polite })
+        }
+        if (!searching && problem == null && query.isNotBlank() && shown.isEmpty()) {
+            Text("Nothing matches.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("setting_search_empty_${field.id}"))
+        }
+        shown.forEachIndexed { index, option ->
+            ChoiceRow(option.label, selected == option.pick, "setting_${field.id}_found_$index") { onPick(option.pick) }
+        }
+    }
+}
+
+private const val COMPLETION_DEBOUNCE_MS = 350L
+private const val COMPLETION_QUERY_CHARS = 100
 
 @Composable
 private fun ChoiceRow(label: String, selected: Boolean, tag: String, onSelect: () -> Unit) {

@@ -51,12 +51,14 @@ Checked 2026-11-02 on an API 36 emulator and the JVM suite. The boxes in each sl
 
 **N1: Land and prove P1 to P5.** Merge the branch, then run the unverified column above with `:core-ahp:probe` against a live host and on the Pixel 10, recording results in `docs/verification/protocol-completion.md`. Also: resolve the MCP contributor's `customizationId` to the server's display name through `SessionState.customizations`, and add an `AppRoot` back-navigation test for the canvas screen.
 
-**N2: P6a, session config completions.** Self-contained and MANAGE only:
+**N2: P6a, session config completions. Built, JVM and emulator tests pass; not yet checked against a live host.** Self-contained and MANAGE only:
 
 1. Add `sessionConfigCompletions` to `MANAGE_QUERIES`, with `AhpConnection` and `HostSession` calls beside `resolveSessionConfig`.
 2. Stop leaving `enumDynamic` properties out of `SessionConfigForm`; offer their `enum` values as seeds with a debounced search.
 3. Accept only a value the host returned, keeping the rule that the phone never invents one.
-4. Treat a host that does not implement the query as "seeds only", not as an error.
+4. Treat a host that does not implement the query (`-32601`) as "seeds only", not as an error.
+
+As built: a picked value is sent only if the host's next `resolveSessionConfig` answer echoes it, the same rule as for fixed lists. The device check names the chosen value. A dynamic setting with no seeds is still offered. Any other refusal is shown as "Could not search" beside the field.
 
 **N3: P6b, composer completions.** Larger than the table above suggests, so it comes after N2. Every `CompletionItem` carries a required `MessageAttachment`, and `ChatInteractor` and `ChatActions` send no attachments today, so sending them has to be built first. The range offsets are UTF-16 and the only kind defined is `USER_MESSAGE`.
 
@@ -236,8 +238,8 @@ AHP defines two read-like completion RPC queries:
 
 ### Acceptance Criteria
 
-- [ ] **AC-P6.1** `CapabilityPolicy` allows `sessionConfigCompletions` in `MANAGE` and `completions` in `INTERACT`/`MANAGE`, rejecting both in `READ`.
-- [ ] **AC-P6.2** `NewSessionDialog` renders `complete-as-you-type` config fields and queries `sessionConfigCompletions`.
+- [ ] **AC-P6.1** (half done: `sessionConfigCompletions` is in `MANAGE` and refused in `READ` and `INTERACT`; `completions` is still denied everywhere) `CapabilityPolicy` allows `sessionConfigCompletions` in `MANAGE` and `completions` in `INTERACT`/`MANAGE`, rejecting both in `READ`.
+- [x] **AC-P6.2** `NewSessionDialog` renders `complete-as-you-type` config fields and queries `sessionConfigCompletions`.
 - [ ] **AC-P6.3** Composer surfaces host `completions` suggestions alongside slash commands without blocking typing when the host does not implement `completions`.
 
 ---

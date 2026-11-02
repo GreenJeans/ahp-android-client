@@ -278,6 +278,38 @@ class AhpConnectionTest {
     }
 
     @Test
+    fun `sessionConfigCompletions asks the root channel for one setting with the query and choices so far, and decodes the items`() = runTest {
+        val answer = """{"items":[{"value":"main","label":"main","description":"default"},{"value":"dev","label":"dev"}]}"""
+        val socket = FakeSocket { method, id, _ -> if (method == "sessionConfigCompletions") result(id, answer) else null }
+        val connection = connection(socket, policy = CapabilityPolicy.MANAGE)
+
+        val found = connection.sessionConfigCompletions("claude", "file:///work/repo", mapOf("mode" to kotlinx.serialization.json.JsonPrimitive("fast")), "branch", "ma")
+
+        assertEquals(listOf("main", "dev"), found.items.map { it.value })
+        val frame = socket.sent.single()
+        assertEquals("sessionConfigCompletions", frame["method"]!!.jsonPrimitive.content)
+        assertTrue(frame["id"] != null, "a question is a request, so the answer and any refusal can be read")
+        val params = frame["params"]!!.jsonObject
+        assertEquals(setOf("channel", "provider", "workingDirectory", "config", "property", "query"), params.keys)
+        assertEquals("ahp-root://", params["channel"]!!.jsonPrimitive.content)
+        assertEquals("branch", params["property"]!!.jsonPrimitive.content)
+        assertEquals("ma", params["query"]!!.jsonPrimitive.content)
+        assertEquals("fast", params["config"]!!.jsonObject["mode"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `READ and INTERACT refuse to complete a setting and send nothing`() = runTest {
+        for (policy in listOf(CapabilityPolicy.READ, CapabilityPolicy.INTERACT)) {
+            val socket = FakeSocket()
+            val connection = connection(socket, policy = policy)
+
+            assertFailsWith<CapabilityDeniedException> { connection.sessionConfigCompletions("claude", null, null, "branch", "m") }
+
+            assertTrue(socket.sent.isEmpty())
+        }
+    }
+
+    @Test
     fun `resolveSessionConfig with no choices sends no config, and createSession carries the config it is given`() = runTest {
         val socket = FakeSocket { method, id, _ ->
             when (method) {

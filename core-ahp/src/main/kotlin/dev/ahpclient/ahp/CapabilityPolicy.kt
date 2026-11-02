@@ -104,7 +104,7 @@ class CapabilityPolicy private constructor(
          * A question the host answers about a session that does not exist yet: which settings would it offer for this agent in
          * this folder. It changes nothing, and it is only asked while starting a session, so it sits with [MANAGE].
          */
-        val MANAGE_QUERIES = setOf("resolveSessionConfig")
+        val MANAGE_QUERIES = setOf("resolveSessionConfig", "sessionConfigCompletions")
 
         /**
          * What marking a session read or archived, or a changed file reviewed, dispatches. Each is reversible with the same

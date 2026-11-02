@@ -9,7 +9,9 @@ import com.microsoft.agenthostprotocol.generated.ChatSourceSideChat
 import com.microsoft.agenthostprotocol.generated.ForkChatSource
 import com.microsoft.agenthostprotocol.generated.Message
 import com.microsoft.agenthostprotocol.generated.MultipleChatsCapability
+import com.microsoft.agenthostprotocol.generated.JsonRpcErrorCodes
 import com.microsoft.agenthostprotocol.generated.ResolveSessionConfigResult
+import com.microsoft.agenthostprotocol.generated.SessionConfigCompletionsResult
 import com.microsoft.agenthostprotocol.generated.SessionState
 import com.microsoft.agenthostprotocol.generated.SessionSummary
 import com.microsoft.agenthostprotocol.generated.SideChatSource
@@ -26,6 +28,9 @@ interface ManagementCommands {
 
     /** Asks which settings the host would offer for a new session of [provider] in [workingDirectory] (null: no folder named, the host's own choice), given the values already chosen. */
     suspend fun resolveSessionConfig(provider: String, workingDirectory: String?, config: Map<String, JsonElement>?): ResolveSessionConfigResult
+
+    /** Asks for values matching [query] for the setting [property] of a new session, for a setting the host completes as you type. */
+    suspend fun sessionConfigCompletions(provider: String, workingDirectory: String?, config: Map<String, JsonElement>?, property: String, query: String?): SessionConfigCompletionsResult
 
     suspend fun createChat(sessionUri: String, chatUri: String, source: ChatSource? = null, initialMessage: Message? = null)
 
@@ -239,6 +244,34 @@ class SessionManager(
     }
 
     /**
+     * Asks the host for values matching [query] for the setting [property], for a setting it wants completed as you type. The same
+     * agent and folder rules as [sessionSettings] apply. Nothing a host returns is trusted: items are bounded and cleaned, and the
+     * person's choice of one is still checked against the host's own answer before a session is started. A host that does not
+     * implement the query is [ConfigCompletions.SeedsOnly], not a failure.
+     */
+    suspend fun settingCompletions(provider: String, folder: String?, picks: Map<String, ConfigPick>, property: String, query: String): ConfigCompletions {
+        if (!allowed()) return ConfigCompletions.Unavailable(ManageMessages.describe(ManageResult.NotAllowed).orEmpty())
+        if (agents().none { it.provider == provider } || !folderOffered(folder) || property.isBlank() || property.length > SessionConfigForm.MAX_ID) {
+            return ConfigCompletions.Unavailable(ManageMessages.describe(ManageResult.InvalidChoice).orEmpty())
+        }
+        return try {
+            val values = picks.takeIf { it.isNotEmpty() }?.mapValues { it.value.toJson() }
+            val answer = commands.sessionConfigCompletions(provider, folder, values, property, query.trim().take(MAX_COMPLETION_QUERY).ifEmpty { null })
+            ConfigCompletions.Items(SessionConfigForm.completionOptions(answer))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: CapabilityDeniedException) {
+            ConfigCompletions.Unavailable(ManageMessages.describe(ManageResult.NotAllowed).orEmpty())
+        } catch (e: AhpException.Rpc) {
+            if (e.code == JsonRpcErrorCodes.METHOD_NOT_FOUND) ConfigCompletions.SeedsOnly else ConfigCompletions.Unavailable(ManageMessages.describe(ManageResult.Refused(e.code, e.message.orEmpty())).orEmpty())
+        } catch (e: AhpException) {
+            ConfigCompletions.Unavailable(ManageMessages.describe(ManageResult.NotSent(e)).orEmpty())
+        } catch (e: IOException) {
+            ConfigCompletions.Unavailable(ManageMessages.describe(ManageResult.NotSent(e)).orEmpty())
+        }
+    }
+
+    /**
      * Starts a session with [provider] in [folder], after the device check. Both must be ones the host offered. With [picks] (the
      * person's choices of settings), the host is asked again first, so every pick is checked against what it offers now and took;
      * the device check then names the settings, so what is confirmed is what is sent. With none, the host keeps all its own settings.
@@ -382,6 +415,7 @@ class SessionManager(
         const val CHAT_SCHEME = "ahp-chat:/"
         const val MAX_TITLE_LENGTH = 200
         private const val READY = "ready"
+        private const val MAX_COMPLETION_QUERY = 100
     }
 }
 
