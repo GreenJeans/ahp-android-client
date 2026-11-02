@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.RemoteInput
 import android.os.Bundle
+import android.os.SystemClock
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import org.junit.After
@@ -225,9 +226,15 @@ class NotificationDecisionInstrumentedTest {
 
         val sink = NotificationInputNeededSink(context, canDecide = { true })
         sink.postReplyStatus(tag("q-allowed"), "Sent")
-        val updated = checkNotNull(manager.activeNotifications.firstOrNull { it.tag == tag("q-allowed") }).notification
-        assertEquals("Sent", updated.extras.getString(Notification.EXTRA_TEXT))
-        assertEquals(emptyList<String>(), titles(updated))
+        val deadline = SystemClock.uptimeMillis() + 5_000
+        var updated: Notification? = null
+        while (SystemClock.uptimeMillis() < deadline) {
+            updated = manager.activeNotifications.firstOrNull { it.tag == tag("q-allowed") }?.notification
+            if (updated?.extras?.getString(Notification.EXTRA_TEXT) == "Sent") break
+            SystemClock.sleep(50)
+        }
+        assertEquals("Sent", updated?.extras?.getString(Notification.EXTRA_TEXT))
+        assertEquals(emptyList<String>(), titles(checkNotNull(updated)))
     }
 
     @Test

@@ -18,6 +18,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.BottomSheetDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -70,10 +71,14 @@ import dev.ahpclient.state.CanvasView
 import dev.ahpclient.ui.chat.BackgroundWorkBar
 import dev.ahpclient.ui.chat.BackgroundWorkChip
 import dev.ahpclient.state.ManageMessages
+import dev.ahpclient.state.ManageResult
+import dev.ahpclient.state.RecentFolders
+import dev.ahpclient.state.displayPath
 import kotlinx.coroutines.launch
 import com.microsoft.agenthostprotocol.generated.RootState
 import com.microsoft.agenthostprotocol.generated.SessionState
 import com.microsoft.agenthostprotocol.generated.SessionSummary
+import com.microsoft.agenthostprotocol.generated.AnnotationsState
 import dev.ahpclient.platform.Instant
 
 /**
@@ -97,6 +102,7 @@ fun SessionScreen(
     onMenu: (() -> Unit)? = null,
     /** The totals of what the session has changed, for the bar. */
     changes: ChangeStats? = null,
+    chatChangesets: List<ChangesetEntry> = emptyList(),
     shownChat: String? = null,
     onSelectChat: (String) -> Unit = {},
     manage: ManageActionsUi? = null,
@@ -118,11 +124,22 @@ fun SessionScreen(
     chatUsage: TurnUsage? = null,
     backgroundWork: List<BackgroundWorkView> = emptyList(),
     canvases: List<CanvasView> = emptyList(),
+    chatWorkingDirectories: List<String> = emptyList(),
+    onOpenCanvas: ((String) -> Unit)? = null,
+    annotationsOpen: Boolean = false,
+    annotations: AnnotationsState? = null,
+    annotationsError: Throwable? = null,
+    canInteract: Boolean = false,
+    onOpenAnnotations: (() -> Unit)? = null,
+    onCloseAnnotations: (() -> Unit)? = null,
+    onAddAnnotationEntry: suspend (annotationId: String, text: String) -> ManageResult = { _, _ -> ManageResult.NotAllowed },
+    onRemoveAnnotationEntry: suspend (annotationId: String, entryId: String) -> ManageResult = { _, _ -> ManageResult.NotAllowed },
     onOpenSubagent: ((String) -> Unit)? = null,
     onOpenTerminal: ((String) -> Unit)? = null,
     chat: @Composable () -> Unit = {},
 ) {
     val detail = remember(state, now, summary) { state?.let { SessionDetail.from(it, now, summary) } }
+    val changesets = remember(detail, chatChangesets) { ChangesetEntry.merge(detail?.changesets.orEmpty(), chatChangesets) }
     var showDetails by rememberSaveable { mutableStateOf(false) }
     val customizations = remember(state, rootState) { SlashCommands.customizationsOf(state, rootState) }
     var showCustomizations by rememberSaveable { mutableStateOf(false) }
@@ -175,8 +192,9 @@ fun SessionScreen(
                     canvases = canvases,
                     onOpenSubagent = onOpenSubagent,
                     onOpenTerminal = onOpenTerminal,
+                    onOpenCanvas = onOpenCanvas,
                 )
-                ChangesChip(changes, detail.changesets, onOpenChangeset)
+                ChangesChip(changes, changesets, onOpenChangeset)
                 SessionMenu(
                     detail = detail,
                     sessionUri = sessionUri,
@@ -236,6 +254,11 @@ fun SessionScreen(
             chatUsage = chatUsage,
             backgroundWork = backgroundWork,
             canvases = canvases,
+            chatWorkingDirectories = chatWorkingDirectories,
+            manage = manage,
+            sessionUri = sessionUri,
+            onOpenCanvas = onOpenCanvas?.let { open -> { uri -> showDetails = false; open(uri) } },
+            onOpenAnnotations = onOpenAnnotations?.let { open -> { showDetails = false; open() } },
             onOpenSubagent = onOpenSubagent,
             onOpenTerminal = onOpenTerminal,
         )
@@ -258,6 +281,26 @@ fun SessionScreen(
             } else {
                 null
             },
+            notice = notice,
+            onToggleCustomization = if (manage != null && sessionUri.isNotEmpty()) {
+                { id, enabled ->
+                    scope.launch {
+                        notice = ManageMessages.describe(manage.toggleCustomization(sessionUri, id, enabled))
+                    }
+                }
+            } else {
+                null
+            },
+        )
+    }
+    if (annotationsOpen) {
+        AnnotationsSheet(
+            state = annotations,
+            error = annotationsError,
+            canInteract = canInteract,
+            onDismiss = { onCloseAnnotations?.invoke() },
+            onAddEntry = onAddAnnotationEntry,
+            onRemoveEntry = onRemoveAnnotationEntry,
         )
     }
 }
@@ -369,6 +412,11 @@ private fun DetailsSheet(
     chatUsage: TurnUsage? = null,
     backgroundWork: List<BackgroundWorkView> = emptyList(),
     canvases: List<CanvasView> = emptyList(),
+    chatWorkingDirectories: List<String> = emptyList(),
+    manage: ManageActionsUi? = null,
+    sessionUri: String? = null,
+    onOpenCanvas: ((String) -> Unit)? = null,
+    onOpenAnnotations: (() -> Unit)? = null,
     onOpenSubagent: ((String) -> Unit)? = null,
     onOpenTerminal: ((String) -> Unit)? = null,
     onOpenLink: (String) -> Unit = {},
@@ -423,7 +471,7 @@ private fun DetailsSheet(
                 }
             }
 
-            Facts(detail, chatUsage, canvases)
+            Facts(detail, chatUsage, canvases, onOpenCanvas, onOpenAnnotations, chatWorkingDirectories, manage, sessionUri)
             if (onOpenCustomizations != null) {
                 OutlinedButton(
                     onClick = onOpenCustomizations,
@@ -485,19 +533,27 @@ private fun PullRequestsSection(pullRequests: List<PullRequest>, onSelectUrl: (S
 }
 
 @Composable
-private fun Facts(detail: SessionDetail, chatUsage: TurnUsage? = null, canvases: List<CanvasView> = emptyList()) {
+private fun Facts(
+    detail: SessionDetail,
+    chatUsage: TurnUsage? = null,
+    canvases: List<CanvasView> = emptyList(),
+    onOpenCanvas: ((String) -> Unit)? = null,
+    onOpenAnnotations: (() -> Unit)? = null,
+    chatWorkingDirectories: List<String> = emptyList(),
+    manage: ManageActionsUi? = null,
+    sessionUri: String? = null,
+) {
+    var chooseFolder by remember { mutableStateOf(false) }
+    var folderNotice by remember { mutableStateOf<String?>(null) }
+    val folderScope = rememberCoroutineScope()
+    val addableFolders = manage?.folders.orEmpty().filterNot { offered -> detail.workingDirectories.any { it == displayPath(offered) } }
     val facts = buildList {
         add("Agent" to detail.provider)
         detail.model?.let { add("Model" to it) }
         detail.project?.let { add("Project" to it) }
-        detail.workingDirectories.forEach { add("Folder" to it) }
         detail.extras.branchLabel?.let { add("Branch" to it) }
         detail.extras.countsText?.let { add("Git status" to it) }
         chatUsage?.detailText?.let { add("Token usage" to it) }
-        detail.annotations?.summaryText?.let { add("Annotations" to it) }
-        if (canvases.isNotEmpty()) {
-            add("Canvases" to canvases.joinToString(" · ") { it.label })
-        }
     }
     Column {
         facts.forEachIndexed { index, (label, value) ->
@@ -507,6 +563,69 @@ private fun Facts(detail: SessionDetail, chatUsage: TurnUsage? = null, canvases:
                     Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(value, style = MaterialTheme.typography.bodyLarge)
                 }
+            }
+        }
+        if (chatWorkingDirectories.isNotEmpty() && chatWorkingDirectories != detail.workingDirectories) {
+            Text("Chat folders", style = MaterialTheme.typography.labelLarge)
+            chatWorkingDirectories.distinct().forEachIndexed { index, folder ->
+                Text(folder.take(500), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("chat_working_directory_$index"))
+            }
+        }
+        if (detail.workingDirectories.isNotEmpty()) Text("Session folders", style = MaterialTheme.typography.labelLarge)
+        detail.workingDirectories.forEachIndexed { index, folder ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text(folder.take(500), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f).testTag("session_working_directory_$index"))
+                if (manage != null && sessionUri != null && index > 0) TextButton(
+                    onClick = { folderScope.launch { folderNotice = ManageMessages.describe(manage.removeWorkingDirectory(sessionUri, folder)) } },
+                    modifier = Modifier.testTag("folder_remove_$index"),
+                ) { Text("Remove") }
+            }
+        }
+        if (manage != null && sessionUri != null) {
+            if (addableFolders.isNotEmpty()) OutlinedButton(
+                onClick = { chooseFolder = true },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("folder_add"),
+            ) { Text("Add folder") }
+            folderNotice?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("folder_notice")) }
+            if (chooseFolder) AlertDialog(
+                onDismissRequest = { chooseFolder = false },
+                title = { Text("Add a recent folder") },
+                text = {
+                    Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        addableFolders.take(RecentFolders.SHOWN).forEachIndexed { index, folder ->
+                            TextButton(
+                                onClick = { chooseFolder = false; folderScope.launch { folderNotice = ManageMessages.describe(manage.addWorkingDirectory(sessionUri, folder)) } },
+                                modifier = Modifier.fillMaxWidth().testTag("folder_choice_$index"),
+                            ) { Text(displayPath(folder).take(500), maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                        }
+                    }
+                },
+                confirmButton = { TextButton(onClick = { chooseFolder = false }) { Text("Close") } },
+            )
+        }
+        detail.annotations?.let { annotations ->
+            if (onOpenAnnotations == null) {
+                Text("Annotations · ${annotations.summaryText}", modifier = Modifier.testTag("details_annotations"))
+            } else {
+                OutlinedButton(
+                    onClick = onOpenAnnotations,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("details_open_annotations"),
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text("Annotations")
+                        Text(annotations.summaryText, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        }
+        canvases.forEach { canvas ->
+            if (onOpenCanvas == null) {
+                Text("Canvas · ${canvas.label}")
+            } else {
+                OutlinedButton(
+                    onClick = { onOpenCanvas(canvas.resource) },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("canvas_open_${canvas.label}"),
+                ) { Text("Canvas · ${canvas.label}") }
             }
         }
     }

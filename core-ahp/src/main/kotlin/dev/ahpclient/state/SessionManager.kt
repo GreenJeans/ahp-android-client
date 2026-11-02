@@ -122,12 +122,43 @@ class SessionManager(
         return action(sessionUri, stateAction)
     }
 
+    /** Toggles a customization that is currently listed in the session. */
+    suspend fun toggleCustomization(sessionUri: String, customizationId: String, enabled: Boolean): ManageResult {
+        if (!allowed()) return ManageResult.NotAllowed
+        val state = sessionState(sessionUri) ?: return ManageResult.NoSuchTarget
+        val id = customizationId.trim()
+        val customizations = state.customizations.orEmpty()
+        if (id.isEmpty() || id !in SlashCommands.toggleableIds(customizations)) {
+            return ManageResult.InvalidChoice
+        }
+        return action(sessionUri, SessionActions.customizationToggled(id, enabled, SlashCommands.enablementOf(customizations, id)))
+    }
+
     /** Renames [sessionUri] to [title] (trimmed). Refuses a blank title or one longer than [MAX_TITLE_LENGTH]. */
     suspend fun setTitle(sessionUri: String, title: String): ManageResult {
         if (!allowed()) return ManageResult.NotAllowed
         val trimmed = title.trim()
         if (trimmed.isEmpty() || trimmed.length > MAX_TITLE_LENGTH) return ManageResult.InvalidChoice
         return action(sessionUri, SessionActions.setTitle(trimmed))
+    }
+
+    /** Adds a working directory the host has offered from its recent session history. */
+    suspend fun addWorkingDirectory(sessionUri: String, directory: String): ManageResult {
+        if (!allowed()) return ManageResult.NotAllowed
+        val state = sessionState(sessionUri) ?: return ManageResult.NoSuchTarget
+        val offered = directory.trim()
+        if (offered.isEmpty() || offered !in offeredFolders() || state.workingDirectories.orEmpty().any { displayPath(it) == displayPath(offered) }) return ManageResult.InvalidChoice
+        return action(sessionUri, SessionActions.setWorkingDirectory(offered))
+    }
+
+    /** Removes an existing secondary folder while preserving the first working directory as the session's primary folder. */
+    suspend fun removeWorkingDirectory(sessionUri: String, directory: String): ManageResult {
+        if (!allowed()) return ManageResult.NotAllowed
+        val state = sessionState(sessionUri) ?: return ManageResult.NoSuchTarget
+        val directories = state.workingDirectories.orEmpty()
+        val actual = directories.firstOrNull { it == directory || displayPath(it) == directory } ?: return ManageResult.InvalidChoice
+        if (directories.size < 2 || directories.first() == actual) return ManageResult.InvalidChoice
+        return action(sessionUri, SessionActions.removeWorkingDirectory(actual))
     }
 
     /** Starts a new, empty chat in a session that is ready. */

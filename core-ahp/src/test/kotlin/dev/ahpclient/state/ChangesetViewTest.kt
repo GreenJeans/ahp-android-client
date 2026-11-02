@@ -154,4 +154,15 @@ class ChangesetViewTest {
     private fun entry(template: String, label: String = "Uncommitted") = ChangesetEntry.from(
         Ahp.json.decodeFromString(Changeset.serializer(), """{"label":"$label","uriTemplate":"$template","changeKind":"uncommitted"}"""),
     )
+
+    @Test
+    fun `active chat changesets take precedence and session entries fill in the rest`() {
+        val session = listOf(entry("ahp-changeset:/shared", "Session version"), entry("ahp-changeset:/session", "Session only"))
+        val chat = listOf(entry("ahp-changeset:/shared", "Chat version"), entry("ahp-changeset:/chat", "Chat only"))
+
+        assertEquals(
+            listOf("Chat version", "Chat only", "Session only"),
+            ChangesetEntry.merge(session, chat).map { it.label },
+        )
+    }
 }

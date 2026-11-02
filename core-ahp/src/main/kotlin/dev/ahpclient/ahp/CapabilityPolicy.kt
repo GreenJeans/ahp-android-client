@@ -83,6 +83,8 @@ class CapabilityPolicy private constructor(
             "chat/turnResume",
             "chat/truncated",
             CHAT_CONFIG_CHANGED,
+            "annotations/entrySet",
+            "annotations/entryRemoved",
         )
 
         /**
@@ -117,6 +119,9 @@ class CapabilityPolicy private constructor(
             "session/mcpServerStartRequested",
             "session/mcpServerStopRequested",
             "session/mcpServerBackgroundRequested",
+            "session/customizationToggled",
+            "session/workingDirectorySet",
+            "session/workingDirectoryRemoved",
             "changeset/filesReviewChanged",
         )
 

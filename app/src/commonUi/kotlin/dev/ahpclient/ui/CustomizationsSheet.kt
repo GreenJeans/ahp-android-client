@@ -28,6 +28,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -41,6 +42,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
@@ -79,6 +81,9 @@ fun CustomizationsSheet(
     onUseAgent: ((String) -> Unit)? = null,
     onControlMcpServer: ((String, McpServerControlAction) -> Unit)? = null,
     onViewFile: ((HostFileTarget) -> Unit)? = null,
+    onToggleCustomization: ((String, Boolean) -> Unit)? = null,
+    /** What went wrong with the last switch or server control, said here because the sheet covers the session's own banner. */
+    notice: String? = null,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
@@ -94,6 +99,8 @@ fun CustomizationsSheet(
             onUseAgent = onUseAgent,
             onControlMcpServer = onControlMcpServer,
             onViewFile = onViewFile,
+            onToggleCustomization = onToggleCustomization,
+            notice = notice,
         )
     }
 }
@@ -109,6 +116,9 @@ fun CustomizationsSheetContent(
     onUseAgent: ((String) -> Unit)? = null,
     onControlMcpServer: ((String, McpServerControlAction) -> Unit)? = null,
     onViewFile: ((HostFileTarget) -> Unit)? = null,
+    onToggleCustomization: ((String, Boolean) -> Unit)? = null,
+    /** What went wrong with the last switch or server control, said here because the sheet covers the session's own banner. */
+    notice: String? = null,
 ) {
     var selectedCategoryName by rememberSaveable(initialCategory) { mutableStateOf(initialCategory?.name) }
     var query by rememberSaveable(initialQuery) { mutableStateOf(initialQuery) }
@@ -124,6 +134,8 @@ fun CustomizationsSheetContent(
             .padding(bottom = 24.dp)
             .testTag("customizations_sheet"),
     ) {
+        // Above the list, so it is seen wherever the list has been scrolled to.
+        ManageNotice(notice, "customizations_notice")
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -321,6 +333,7 @@ fun CustomizationsSheetContent(
                 items(matchingEntries, key = { it.id }) { entry ->
                     CustomizationEntryCard(
                         onControlMcpServer = onControlMcpServer,
+                        onToggleCustomization = onToggleCustomization,
                         entry = entry,
                         onUseSlashCommand = onUseSlashCommand?.let { use ->
                             { cmdName ->
@@ -355,6 +368,7 @@ private fun CustomizationEntryCard(
     onUseAgent: ((String) -> Unit)?,
     onControlMcpServer: ((String, McpServerControlAction) -> Unit)? = null,
     onViewFile: ((HostFileTarget) -> Unit)?,
+    onToggleCustomization: ((String, Boolean) -> Unit)?,
 ) {
     val isSlashInvokable = (entry.category == CustomizationCategory.SKILLS ||
         (entry.category == CustomizationCategory.INSTRUCTIONS && entry.statusLabel == "Prompt")) &&
@@ -420,7 +434,22 @@ private fun CustomizationEntryCard(
                     }
                 }
 
-                entry.statusLabel?.let { status ->
+                val switchTo: ((Boolean) -> Unit)? = if (entry.canToggle) {
+                    entry.customizationId?.let { id -> onToggleCustomization?.let { toggle -> { on: Boolean -> toggle(id, on) } } }
+                } else {
+                    null
+                }
+                if (switchTo != null) {
+                    Switch(
+                        checked = entry.enabled,
+                        onCheckedChange = switchTo,
+                        modifier = Modifier
+                            .semantics { contentDescription = "${entry.name} enabled" }
+                            .testTag("customization_toggle_${entry.id}"),
+                    )
+                }
+                // A switch says on or off by itself, but not that the customization failed to load.
+                if (switchTo == null || entry.isError) entry.statusLabel?.let { status ->
                     val containerColor = when {
                         entry.isError -> MaterialTheme.colorScheme.errorContainer
                         !entry.enabled -> MaterialTheme.colorScheme.surfaceVariant

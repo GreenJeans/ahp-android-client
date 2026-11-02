@@ -39,6 +39,7 @@ import dev.ahpclient.state.ActivityState
 import dev.ahpclient.state.CustomizationCategory
 import dev.ahpclient.state.CustomizationEntry
 import dev.ahpclient.state.CustomizationsView
+import dev.ahpclient.state.ChangesetEntry
 import dev.ahpclient.state.McpServerControlAction
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.ManageResult
@@ -50,6 +51,8 @@ import dev.ahpclient.ui.theme.AhpTheme
 import com.microsoft.agenthostprotocol.Ahp
 import com.microsoft.agenthostprotocol.generated.SessionState
 import com.microsoft.agenthostprotocol.generated.SessionSummary
+import com.microsoft.agenthostprotocol.generated.AnnotationsState
+import com.microsoft.agenthostprotocol.generated.CanvasState
 import java.time.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -792,6 +795,29 @@ class SessionScreensTest {
     }
 
     @Test
+    fun changesChipOpensAnActiveChatChangeset() {
+        val opened = mutableListOf<Pair<String, String>>()
+        rule.setContent {
+            AhpTheme {
+                SessionScreen(
+                    detailState(),
+                    null,
+                    ConnState.Online,
+                    now,
+                    {},
+                    shownChat = mainChatUri,
+                    chatChangesets = listOf(ChangesetEntry("Chat changes", null, "uncommitted", "ahp-changeset:/chat")),
+                    onOpenChangeset = { uri, label -> opened += uri to label },
+                )
+            }
+        }
+
+        rule.onNodeWithTag("changes_chip").assertIsDisplayed().performClick()
+
+        assertEquals(listOf("ahp-changeset:/chat" to "Chat changes"), opened)
+    }
+
+    @Test
     fun customizationsSheetRendersAndDispatchesMcpServerLifecycleControls() {
         val controls = mutableListOf<Pair<String, McpServerControlAction>>()
         val view = CustomizationsView(
@@ -846,6 +872,37 @@ class SessionScreensTest {
     }
 
     @Test
+    fun customizationSwitchDispatchesTheSelectedSessionEnablement() {
+        val toggles = mutableListOf<Pair<String, Boolean>>()
+        val view = CustomizationsView(
+            entries = listOf(
+                CustomizationEntry(
+                    id = "skill:1",
+                    category = CustomizationCategory.SKILLS,
+                    name = "reviewer",
+                    enabled = true,
+                    customizationId = "skill-id",
+                    canToggle = true,
+                ),
+            ),
+        )
+        rule.setContent {
+            AhpTheme {
+                CustomizationsSheetContent(
+                    customizations = view,
+                    initialCategory = CustomizationCategory.SKILLS,
+                    onDismiss = {},
+                    onToggleCustomization = { id, enabled -> toggles += id to enabled },
+                )
+            }
+        }
+
+        rule.onNodeWithTag("customization_toggle_skill:1").assertIsDisplayed().performClick()
+
+        assertEquals(listOf("skill-id" to false), toggles)
+    }
+
+    @Test
     fun detailsShowAnnotationsSummaryWhenPresent() {
         val withAnnotations = Ahp.json.decodeFromString(
             SessionState.serializer(),
@@ -856,8 +913,163 @@ class SessionScreensTest {
         showDetail(withAnnotations)
         openDetails()
 
-        rule.onNodeWithText("Annotations").assertIsDisplayed()
-        rule.onNodeWithText("2 annotations \u00b7 5 entries").assertIsDisplayed()
+        rule.onNodeWithTag("details_annotations").performScrollTo().assertIsDisplayed().assertTextEquals("Annotations \u00b7 2 annotations \u00b7 5 entries")
+    }
+
+    @Test
+    fun aFailedCommentKeepsItsWordsAndSaysWhatWentWrong() {
+        val state = Ahp.json.decodeFromString(
+            AnnotationsState.serializer(),
+            """{"annotations":[{"id":"a1","origin":{"session":"ahp-session:/s1"},"resource":"file:///work/a.kt","resolved":false,"entries":[{"id":"e1","text":"first"}]}]}""",
+        )
+        var answer: ManageResult = ManageResult.NotAllowed
+        val sent = mutableListOf<String>()
+        rule.setContent {
+            AhpTheme {
+                AnnotationsSheet(state, null, canInteract = true, onDismiss = {}, onAddEntry = { _, text -> sent += text; answer }, onRemoveEntry = { _, _ -> ManageResult.Done() })
+            }
+        }
+
+        rule.onNodeWithTag("annotation_draft_a1").performTextInput("my comment")
+        rule.onNodeWithTag("annotation_add_a1").performClick()
+        rule.waitForIdle()
+
+        rule.onNodeWithTag("annotations_notice").assertIsDisplayed()
+        rule.onNodeWithTag("annotation_draft_a1").assertTextContains("my comment")
+
+        answer = ManageResult.Done()
+        rule.onNodeWithTag("annotation_add_a1").performClick()
+        rule.waitForIdle()
+
+        rule.onNodeWithText("my comment").assertDoesNotExist()
+        assertEquals(listOf("my comment", "my comment"), sent)
+    }
+
+    @Test
+    fun removingACommentAsksFirstAndTheLastCommentOffersNoRemoval() {
+        val state = Ahp.json.decodeFromString(
+            AnnotationsState.serializer(),
+            """{"annotations":[
+                {"id":"a1","origin":{"session":"ahp-session:/s1"},"resource":"file:///work/a.kt","resolved":false,"entries":[{"id":"e1","text":"first"},{"id":"e2","text":"second"}]},
+                {"id":"a2","origin":{"session":"ahp-session:/s1"},"resource":"file:///work/b.kt","resolved":true,"entries":[{"id":"e3","text":"only"}]}]}""",
+        )
+        val removed = mutableListOf<Pair<String, String>>()
+        rule.setContent {
+            AhpTheme {
+                AnnotationsSheet(state, null, canInteract = true, onDismiss = {}, onAddEntry = { _, _ -> ManageResult.Done() }, onRemoveEntry = { a, e -> removed += a to e; ManageResult.Done() })
+            }
+        }
+
+        rule.onNodeWithTag("annotation_remove_e3").assertDoesNotExist()
+        rule.onNodeWithTag("annotation_remove_e1").performClick()
+        assertEquals(emptyList<Pair<String, String>>(), removed)
+        rule.onNodeWithTag("annotation_remove_confirm").performClick()
+        rule.waitForIdle()
+
+        assertEquals(listOf("a1" to "e1"), removed)
+    }
+
+    @Test
+    fun aReadOnlyConnectionSeesCommentsButCannotChangeThem() {
+        val state = Ahp.json.decodeFromString(
+            AnnotationsState.serializer(),
+            """{"annotations":[{"id":"a1","origin":{"session":"ahp-session:/s1"},"resource":"file:///work/a.kt","resolved":false,"entries":[{"id":"e1","text":"first"},{"id":"e2","text":"second"}]}]}""",
+        )
+        rule.setContent {
+            AhpTheme {
+                AnnotationsSheet(state, null, canInteract = false, onDismiss = {}, onAddEntry = { _, _ -> ManageResult.NotAllowed }, onRemoveEntry = { _, _ -> ManageResult.NotAllowed })
+            }
+        }
+
+        rule.onNodeWithText("first").assertIsDisplayed()
+        rule.onNodeWithTag("annotation_draft_a1").assertDoesNotExist()
+        rule.onNodeWithTag("annotation_remove_e1").assertDoesNotExist()
+    }
+
+    @Test
+    fun aCustomizationThatFailedToLoadKeepsItsStatusBesideTheSwitchAndTheSheetSaysWhatWentWrong() {
+        val view = CustomizationsView(
+            listOf(
+                CustomizationEntry(
+                    id = "skill:1",
+                    category = CustomizationCategory.SKILLS,
+                    name = "reviewer",
+                    enabled = true,
+                    statusLabel = "Failed",
+                    isError = true,
+                    customizationId = "skill-id",
+                    canToggle = true,
+                ),
+            ),
+        )
+        rule.setContent {
+            AhpTheme {
+                CustomizationsSheetContent(
+                    customizations = view,
+                    initialCategory = CustomizationCategory.SKILLS,
+                    onDismiss = {},
+                    onToggleCustomization = { _, _ -> },
+                    notice = "The host did not confirm it",
+                )
+            }
+        }
+
+        rule.onNodeWithTag("customization_toggle_skill:1").assertIsDisplayed().assertContentDescriptionEquals("reviewer enabled")
+        rule.onNodeWithText("Failed").assertIsDisplayed()
+        rule.onNodeWithTag("customizations_notice").assertIsDisplayed()
+    }
+
+    @Test
+    fun canvasLinkRequiresConfirmationBeforeOpening() {
+        val canvas = Ahp.json.decodeFromString(
+            CanvasState.serializer(),
+            """{"instanceId":"i1","extensionId":"ext","extensionName":"Preview","canvasId":"web","title":"Build preview","status":"Ready","url":"https://example.com/preview"}""",
+        )
+        var opened: String? = null
+        rule.setContent {
+            AhpTheme {
+                CanvasScreen(canvas, null, ConnState.Online, {}, onOpenLink = { opened = it })
+            }
+        }
+
+        rule.onNodeWithTag("canvas_title").assertTextEquals("Build preview")
+        rule.onNodeWithTag("canvas_open_link").performClick()
+        rule.onNodeWithText("Open link?").assertIsDisplayed()
+        assertEquals(null, opened)
+        rule.onNodeWithTag("link_open").performClick()
+        assertEquals("https://example.com/preview", opened)
+    }
+
+    @Test
+    fun detailsShowsChatFoldersAndManagesOnlyHostOfferedSessionFolders() {
+        val removed = mutableListOf<String>()
+        val added = mutableListOf<String>()
+        val manage = ManageActionsUi(
+            agents = emptyList(), folders = listOf("file:///work/new"),
+            setRead = { _, _ -> ManageResult.Done() }, setArchived = { _, _ -> ManageResult.Done() },
+            newChat = { ManageResult.Done() }, newSession = { _, _, _ -> ManageResult.Done() },
+            disposeSession = { ManageResult.Done() }, disposeChat = { _, _ -> ManageResult.Done() },
+            addWorkingDirectory = { _, path -> added += path; ManageResult.Done() },
+            removeWorkingDirectory = { _, path -> removed += path; ManageResult.Done() },
+        )
+        rule.setContent {
+            AhpTheme {
+                SessionScreen(
+                    detailState().copy(workingDirectories = listOf("file:///work/repo", "file:///work/secondary")),
+                    null, ConnState.Online, now, {}, manage = manage, sessionUri = "ahp-session:/s1",
+                    chatWorkingDirectories = listOf("/work/chat"),
+                ) { androidx.compose.material3.Text("chat body") }
+            }
+        }
+        openDetails()
+
+        rule.onNodeWithTag("chat_working_directory_0").assertIsDisplayed().assertTextEquals("/work/chat")
+        rule.onNodeWithTag("folder_remove_1").performClick()
+        rule.onNodeWithTag("folder_add").performClick()
+        rule.onNodeWithTag("folder_choice_0").performClick()
+
+        assertEquals(listOf("/work/secondary"), removed)
+        assertEquals(listOf("file:///work/new"), added)
     }
 
     @Test

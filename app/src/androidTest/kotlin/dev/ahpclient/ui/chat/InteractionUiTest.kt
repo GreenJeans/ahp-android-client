@@ -1269,8 +1269,8 @@ class InteractionUiTest {
         }
 
         rule.onNodeWithTag("customizations_overview_card").assertIsDisplayed()
-        rule.onNodeWithTag("customizations_count_SKILLS").assertTextContains("1")
-        rule.onNodeWithTag("customizations_count_MCP_SERVERS").assertTextContains("1")
+        rule.onNodeWithTag("customizations_count_SKILLS", useUnmergedTree = true).assertTextContains("1")
+        rule.onNodeWithTag("customizations_count_MCP_SERVERS", useUnmergedTree = true).assertTextContains("1")
 
         rule.onNodeWithTag("customization_use_skill_skill-eval").performClick()
         assertEquals(listOf("skill-eval"), pickedSkill)
@@ -1291,7 +1291,8 @@ class InteractionUiTest {
 
         rule.onNodeWithTag("quick_reply_bar").assertIsDisplayed()
         rule.onNodeWithTag("quick_reply_chip_0").assertIsDisplayed().performClick()
-        rule.waitUntil(5_000) { textInBox("Yes, please proceed.") }
+        rule.onNodeWithTag("composer_input").assertTextContains("Yes, please go ahead and do that.", substring = true)
+        rule.waitUntil(5_000) { textInBox("Yes, please go ahead and do that.") }
         assertTrue(calls.sent.isEmpty())
     }
 

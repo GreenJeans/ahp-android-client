@@ -151,6 +151,22 @@ class SessionManagerTest {
     }
 
     @Test
+    fun `working directory changes accept only recent folders and preserve the primary directory`() = runTest {
+        val rig = Rig()
+        rig.states[s1] = state("ready", c1 to "Main", c2 to "Side").copy(workingDirectories = listOf("file:///work/a", "file:///work/b"))
+        rig.sessions = rig.sessions + summary("ahp-session:/s3", "Recent", listOf("file:///work/c"))
+
+        assertEquals(ManageResult.InvalidChoice, rig.manager.addWorkingDirectory(s1, "C:/invented"))
+        assertEquals(ManageResult.InvalidChoice, rig.manager.removeWorkingDirectory(s1, "/work/a"))
+        assertEquals(ManageResult.Done(), rig.manager.addWorkingDirectory(s1, "file:///work/c"))
+        assertEquals(ManageResult.Done(), rig.manager.removeWorkingDirectory(s1, "/work/b"))
+
+        assertEquals(listOf("session/workingDirectorySet", "session/workingDirectoryRemoved"), rig.sent.map { wire(it.second)["type"]!!.jsonPrimitive.content })
+        assertEquals("file:///work/c", wire(rig.sent[0].second)["directory"]!!.jsonPrimitive.content)
+        assertEquals("file:///work/b", wire(rig.sent[1].second)["directory"]!!.jsonPrimitive.content)
+    }
+
+    @Test
     fun `an action is refused before anything is sent when the connection cannot manage`() = runTest {
         val rig = Rig().apply { allowed = false }
 
@@ -712,6 +728,7 @@ class SessionManagerTest {
         assertEquals("""{"type":"session/mcpServerStartRequested","id":"srv-1"}""", wire(SessionActions.startMcpServer("srv-1")).toString())
         assertEquals("""{"type":"session/mcpServerStopRequested","id":"srv-1"}""", wire(SessionActions.stopMcpServer("srv-1")).toString())
         assertEquals("""{"type":"session/mcpServerBackgroundRequested","id":"srv-1"}""", wire(SessionActions.backgroundMcpServer("srv-1")).toString())
+        assertEquals("""{"type":"session/customizationToggled","id":"skill-1","enablement":[{"enabled":true,"kind":"session"}]}""", wire(SessionActions.customizationToggled("skill-1", true)).toString())
     }
 
     @Test
@@ -747,6 +764,54 @@ class SessionManagerTest {
         assertEquals(ManageResult.InvalidChoice, rig.manager.controlMcpServer(s1, "   ", McpServerControlAction.START))
         rig.allowed = false
         assertEquals(ManageResult.NotAllowed, rig.manager.controlMcpServer(s1, "github", McpServerControlAction.START))
+    }
+
+    @Test
+    fun `toggleCustomization validates live customization ids and dispatches session enablement`() = runTest {
+        val rig = Rig()
+        val plugin = Ahp.json.decodeFromString(
+            com.microsoft.agenthostprotocol.generated.Customization.serializer(),
+            """{"type":"plugin","id":"plugin-1","uri":"file:///plugin","name":"Plugin","children":[{"type":"skill","id":"skill-1","uri":"file:///skill","name":"Skill"}]}""",
+        )
+        rig.states[s1] = state("ready", c1 to "Main").copy(customizations = listOf(plugin))
+
+        assertEquals(ManageResult.Done(), rig.manager.toggleCustomization(s1, "skill-1", false))
+        assertEquals(s1, rig.sent.single().first)
+        assertEquals(
+            """{"type":"session/customizationToggled","id":"skill-1","enablement":[{"enabled":false,"kind":"session"}]}""",
+            wire(rig.sent.single().second).toString(),
+        )
+        assertEquals(ManageResult.InvalidChoice, rig.manager.toggleCustomization(s1, "stale", true))
+    }
+
+    @Test
+    fun `toggleCustomization keeps decisions at other scopes behind the session's own, because the list replaces the old one`() = runTest {
+        val rig = Rig()
+        val plugin = Ahp.json.decodeFromString(
+            com.microsoft.agenthostprotocol.generated.Customization.serializer(),
+            """{"type":"plugin","id":"plugin-1","uri":"file:///plugin","name":"Plugin","enablement":[{"kind":"session","enabled":true},{"kind":"workspace","uri":"file:///w","enabled":true},{"kind":"global","enabled":true}]}""",
+        )
+        rig.states[s1] = state("ready", c1 to "Main").copy(customizations = listOf(plugin))
+
+        assertEquals(ManageResult.Done(), rig.manager.toggleCustomization(s1, "plugin-1", false))
+
+        assertEquals(
+            """{"type":"session/customizationToggled","id":"plugin-1","enablement":[{"enabled":false,"kind":"session"},{"uri":"file:///w","enabled":true,"kind":"workspace"},{"enabled":true,"kind":"global"}]}""",
+            wire(rig.sent.single().second).toString(),
+        )
+    }
+
+    @Test
+    fun `a child under a disabled container cannot be toggled, but the container can`() = runTest {
+        val rig = Rig()
+        val plugin = Ahp.json.decodeFromString(
+            com.microsoft.agenthostprotocol.generated.Customization.serializer(),
+            """{"type":"plugin","id":"plugin-1","uri":"file:///plugin","name":"Plugin","enablement":[{"kind":"session","enabled":false}],"children":[{"type":"skill","id":"skill-1","uri":"file:///skill","name":"Skill"}]}""",
+        )
+        rig.states[s1] = state("ready", c1 to "Main").copy(customizations = listOf(plugin))
+
+        assertEquals(ManageResult.InvalidChoice, rig.manager.toggleCustomization(s1, "skill-1", true))
+        assertEquals(ManageResult.Done(), rig.manager.toggleCustomization(s1, "plugin-1", true))
     }
 
     @Test

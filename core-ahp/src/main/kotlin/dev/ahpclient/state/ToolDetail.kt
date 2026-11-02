@@ -11,6 +11,10 @@ import com.microsoft.agenthostprotocol.generated.ToolCallStatePendingConfirmatio
 import com.microsoft.agenthostprotocol.generated.ToolCallStatePendingResultConfirmation
 import com.microsoft.agenthostprotocol.generated.ToolCallStateRunning
 import com.microsoft.agenthostprotocol.generated.ToolCallStateStreaming
+import com.microsoft.agenthostprotocol.generated.ToolCallRiskAssessment
+import com.microsoft.agenthostprotocol.generated.ToolCallRiskAssessmentLoading
+import com.microsoft.agenthostprotocol.generated.ToolCallRiskAssessmentComplete
+import com.microsoft.agenthostprotocol.generated.ToolCallContributorMcp
 import com.microsoft.agenthostprotocol.generated.ToolInput
 import com.microsoft.agenthostprotocol.generated.ToolResultContent
 import kotlinx.serialization.json.Json
@@ -39,6 +43,15 @@ data class Clipped(val text: String, val fullLength: Int) {
 }
 
 data class InputLine(val name: String, val value: Clipped)
+
+enum class RiskLevelView { LOADING, SAFE, WARNING, HIGH_RISK }
+
+data class RiskAssessmentView(
+    val level: RiskLevelView,
+    val statusLabel: String,
+    val reason: String? = null,
+    val safetyScore: Double? = null,
+)
 
 /** One thing a tool produced, as the expanded block shows it. Nothing here holds more than a bounded amount of text. */
 sealed interface ToolResultView {
@@ -84,8 +97,9 @@ data class ToolDetail(
     val durationText: String? = null,
     /** The MCP server name the host reported for this tool call (E5), or null when unreported. */
     val mcpServerName: String? = null,
+    val riskAssessment: RiskAssessmentView? = null,
 ) {
-    val isEmpty: Boolean get() = waitingFor == null && input.isEmpty() && results.isEmpty() && error == null && mcpServerName == null && durationText == null
+    val isEmpty: Boolean get() = waitingFor == null && input.isEmpty() && results.isEmpty() && error == null && mcpServerName == null && durationText == null && riskAssessment == null
 
     /** True when something was left out for length, so the block can offer to show more. */
     val hasMore: Boolean
@@ -120,7 +134,17 @@ data class ToolDetail(
             is ToolCallStateStreaming -> call.value.partialInput?.takeIf { it.isNotBlank() }
                 ?.let { build(limits, input = rawInput(it, limits), extras = call.extras) } ?: build(limits, extras = call.extras)
             is ToolCallStatePendingConfirmation -> call.value.let {
-                build(limits, waitingFor = plain(it.confirmationTitle) ?: "Waiting for approval.", toolInput = it.toolInput, extras = call.extras)
+                build(limits, waitingFor = plain(it.confirmationTitle) ?: "Waiting for approval.", toolInput = it.toolInput, extras = call.extras).copy(
+                    results = it.edits?.items.orEmpty().map { edit ->
+                        ToolResultView.FileEdit(
+                            path = displayPath((edit.after ?: edit.before)?.uri ?: "(unknown file)"),
+                            added = edit.diff?.added,
+                            removed = edit.diff?.removed,
+                        ).apply { before = edit.before; after = edit.after }
+                    },
+                    mcpServerName = call.extras.mcpServerName ?: (it.contributor as? ToolCallContributorMcp)?.value?.customizationId,
+                    riskAssessment = riskAssessmentOf(it.riskAssessment),
+                )
             }
             is ToolCallStatePendingResultConfirmation -> call.value.let {
                 build(limits, waitingFor = "Waiting for approval of the result.", toolInput = it.toolInput, content = it.content, error = it.error, extras = call.extras)
@@ -235,6 +259,24 @@ data class ToolDetail(
         }
 
         private fun plain(text: StringOrMarkdown?): String? = SessionDetail.plain(text)?.takeIf { it.isNotBlank() }
+
+        fun riskAssessmentOf(value: ToolCallRiskAssessment?): RiskAssessmentView? = when (value) {
+            is ToolCallRiskAssessmentLoading -> RiskAssessmentView(RiskLevelView.LOADING, "Assessing risk…")
+            is ToolCallRiskAssessmentComplete -> value.value.let {
+                val score = it.safety.takeIf { score -> score.isFinite() }?.coerceIn(0.0, 1.0)
+                val status = when (it.status.rawValue) {
+                    "complete" -> "Assessment complete"
+                    else -> it.status.rawValue.take(40).ifBlank { "Assessment complete" }
+                }
+                val level = when {
+                    score != null && score < 0.35 -> RiskLevelView.HIGH_RISK
+                    score == null || score < 0.7 -> RiskLevelView.WARNING
+                    else -> RiskLevelView.SAFE
+                }
+                RiskAssessmentView(level, status, plain(it.reason)?.let { reason -> Clipped.of(reason, 400).text }, score)
+            }
+            else -> null
+        }
     }
 }
 

@@ -15,6 +15,7 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeDown
@@ -53,8 +54,7 @@ class TerminalUiTest {
         show(state("hello\n"))
 
         rule.onNodeWithTag("terminal_title").assertTextEquals("build")
-        rule.onNodeWithTag("terminal_status").assertTextEquals("Running")
-        rule.onNodeWithTag("terminal_cwd").assertTextEquals("c:/work/repo")
+        rule.onNodeWithTag("terminal_status").assertTextEquals("Running · c:/work/repo")
         rule.onNodeWithTag("terminal_note").assertTextContains("Read only", substring = true)
     }
 
@@ -62,7 +62,21 @@ class TerminalUiTest {
     fun aFinishedTerminalSaysHowItEnded() {
         show(state("done\n", lifecycle = """{"status":"exited","exitCode":3}"""))
 
-        rule.onNodeWithTag("terminal_status").assertTextEquals("Exited with code 3")
+        rule.onNodeWithTag("terminal_status").assertTextEquals("Exited with code 3 · c:/work/repo")
+    }
+
+    @Test
+    fun structuredCommandsRenderHeadersAndExitCodes() {
+        val structured = Ahp.json.decodeFromString(
+            TerminalState.serializer(),
+            """{"title":"build","cwd":"file:///work/app","content":[{"type":"command","commandId":"c1","commandLine":"npm test","output":"all passed\n","timestamp":1,"isComplete":true,"exitCode":0}],"lifecycle":{"status":"running"},"claim":{"kind":"client","clientId":"x"}}""",
+        )
+        show(structured)
+
+        rule.onNodeWithTag("terminal_status").assertTextEquals("Running · /work/app")
+        rule.onNodeWithTag("terminal_command_0").assertIsDisplayed().assertTextContains("$ npm test", substring = true)
+        rule.onNodeWithTag("terminal_command_0").assertTextContains("Exit 0", substring = true)
+        rule.onNodeWithText("all passed").assertIsDisplayed()
     }
 
     @Test

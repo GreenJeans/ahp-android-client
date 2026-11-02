@@ -61,6 +61,7 @@ import dev.ahpclient.state.ManageResult
 import dev.ahpclient.state.PendingApproval
 import dev.ahpclient.state.SessionDetail
 import dev.ahpclient.state.ToolDetail
+import dev.ahpclient.state.RiskLevelView
 import dev.ahpclient.state.TurnDuration
 import dev.ahpclient.state.TurnOutcome
 import dev.ahpclient.state.ToolState
@@ -838,6 +839,15 @@ private fun RowScope.ToolHeader(item: TranscriptItem.Tool, modifier: Modifier, a
             overflow = TextOverflow.Ellipsis,
         )
         if (waiting) ToolBadge(item.state, approveHere, Modifier.padding(top = 2.dp), item.durationText)
+        item.riskAssessment?.let { risk ->
+            val label = when (risk.level) {
+                RiskLevelView.LOADING -> "Assessing risk"
+                RiskLevelView.SAFE -> "Safety assessed"
+                RiskLevelView.WARNING -> "Risk warning"
+                RiskLevelView.HIGH_RISK -> "High risk"
+            }
+            Text(label, style = MaterialTheme.typography.labelSmall, color = if (risk.level == RiskLevelView.HIGH_RISK) colors.error else colors.tertiary, modifier = Modifier.testTag("tool_risk_badge"))
+        }
     }
     if (!waiting) ToolBadge(item.state, approveHere, Modifier.padding(start = 4.dp), item.durationText)
 }

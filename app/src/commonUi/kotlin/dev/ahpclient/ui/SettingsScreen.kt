@@ -705,7 +705,7 @@ private fun GoogleProviderConfigDialog(
         }
     }
 
-    LaunchedEffect(providerKind) {
+    LaunchedEffect(providerKind, hasKeyAvailable) {
         if (onFetchAvailableModels != null && (hasKeyAvailable || !providerKind.requiresApiKey)) {
             triggerFetchModels()
         }

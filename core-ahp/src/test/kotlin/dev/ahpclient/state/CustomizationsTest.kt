@@ -151,6 +151,20 @@ class CustomizationsTest {
     }
 
     @Test
+    fun `only the session's own customizations can be switched, and not the children of a disabled container`() {
+        val entries = SlashCommands.customizationsOf(
+            session(plugin(skill("on", "file:///s/on/SKILL.md"), name = "Live") + "," + plugin(skill("off", "file:///s/off/SKILL.md"), name = "Off", enablement = """[{"kind":"session","enabled":false}]""")),
+            root("copilotcli", plugin(skill("agent-level", "file:///s/agent/SKILL.md"), name = "FromAgent")),
+        ).entries.associateBy { it.name }
+
+        assertTrue(entries.getValue("Live").canToggle)
+        assertTrue(entries.getValue("Off").canToggle, "a disabled container can be turned back on")
+        assertFalse(entries.getValue("off").canToggle)
+        assertFalse(entries.getValue("FromAgent").canToggle)
+        assertFalse(entries.getValue("agent-level").canToggle)
+    }
+
+    @Test
     fun `provider customizations in RootState supplement session customizations without duplicating`() {
         val s = session(plugin(skill("session-skill", "file:///s/1/SKILL.md"), name = "P1"))
         val r = root(
@@ -304,6 +318,8 @@ class CustomizationsTest {
 
         val skillEntry = view.entriesIn(CustomizationCategory.SKILLS).single()
         assertEquals("skill-eval", skillEntry.name)
+        assertEquals("s-skill-eval", skillEntry.customizationId)
+        assertTrue(skillEntry.canToggle)
         assertEquals("[signals]", skillEntry.argumentHint)
         assertTrue(skillEntry.canViewFile)
 
@@ -322,7 +338,9 @@ class CustomizationsTest {
         assertEquals("Connection refused", errorMcp.description)
 
         val toolEntry = view.entriesIn(CustomizationCategory.TOOLS).single()
-        assertEquals("bash", toolEntry.name)
+        assertEquals("Run Bash", toolEntry.name)
+        assertEquals("bash", toolEntry.source)
+        assertFalse(toolEntry.canToggle)
         assertTrue("Destructive" in toolEntry.badges)
     }
 }

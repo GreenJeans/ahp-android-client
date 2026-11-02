@@ -34,12 +34,14 @@ import dev.ahpclient.app.OpenChat
 import dev.ahpclient.app.SignInStep
 import dev.ahpclient.data.UiSettings
 import dev.ahpclient.state.ChangeStats
+import dev.ahpclient.state.ChangesetEntry
 import dev.ahpclient.state.ChatConfig
 import dev.ahpclient.state.ChatInteractor
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.CustomAgents
 import dev.ahpclient.state.CustomizationCategory
 import dev.ahpclient.state.HostExtras
+import dev.ahpclient.state.displayPath
 import dev.ahpclient.state.HostFileTarget
 import dev.ahpclient.state.HostSession
 import dev.ahpclient.state.HostSessionEntry
@@ -141,9 +143,11 @@ private fun Shell(
     val changesetOpen = open?.changeset != null
     val diffOpen = open?.changeset?.diff != null
     val terminalOpen = open?.terminal != null
-    val overlayOpen = subagentOpen || changesetOpen || diffOpen || terminalOpen
+    val canvasOpen = open?.canvas != null
+    val overlayOpen = subagentOpen || changesetOpen || diffOpen || terminalOpen || canvasOpen
     // The screens over a session. Back from the session itself, from Settings and the inbox, and from the menu is in HomeDrawer.
-    PlatformBackHandler(enabled = subagentOpen && !terminalOpen && !changesetOpen) { controller.closeChat() }
+    PlatformBackHandler(enabled = subagentOpen && !terminalOpen && !changesetOpen && !canvasOpen) { controller.closeChat() }
+    PlatformBackHandler(enabled = canvasOpen) { controller.closeCanvas() }
     PlatformBackHandler(enabled = terminalOpen) { controller.closeTerminal() }
     PlatformBackHandler(enabled = changesetOpen && !diffOpen) { controller.closeChangeset() }
     PlatformBackHandler(enabled = diffOpen) { controller.closeDiff() }
@@ -217,6 +221,7 @@ private fun Shell(
 
     val connection = connected?.let { it.session.connection.collectAsStateWithLifecycle().value }
     val canManage = connected?.let { it.session.canManage.collectAsStateWithLifecycle().value } == true
+    val canInteract = connected?.let { it.session.canInteract.collectAsStateWithLifecycle().value } == true
     val rootState = connected?.let { it.session.root.root.collectAsStateWithLifecycle().value }
     val listed: List<SessionSummary> = connected?.let { it.session.root.sessions.collectAsStateWithLifecycle().value }.orEmpty()
     // The list is only what was saved last time until the host sends its own: to look at, with nothing in it to act on.
@@ -242,6 +247,9 @@ private fun Shell(
                 setChatRead = controller.manager::setChatRead,
                 setChatArchived = controller.manager::setChatArchived,
                 controlMcpServer = controller.manager::controlMcpServer,
+                toggleCustomization = controller.manager::toggleCustomization,
+                addWorkingDirectory = controller.manager::addWorkingDirectory,
+                removeWorkingDirectory = controller.manager::removeWorkingDirectory,
             )
         }
     } else {
@@ -394,7 +402,7 @@ private fun Shell(
             }
             Page.MAIN -> if (connected != null && connection != null && open != null) {
                 SessionPage(
-                    controller, ui, connected, open, connection, rootState, canManage, manageActions, listed, changesetTitle,
+                    controller, ui, connected, open, connection, rootState, canManage, canInteract, manageActions, listed, changesetTitle,
                     onChangesetTitle = { changesetTitle = it }, onMenu = menu::open, alerts = alerts,
                     quickReplyProvider = quickReplyProvider,
                 )
@@ -443,6 +451,7 @@ private fun SessionPage(
     connection: ConnState,
     rootState: Any?,
     canManage: Boolean,
+    canInteract: Boolean,
     manageActions: ManageActionsUi?,
     listed: List<SessionSummary>,
     changesetTitle: String?,
@@ -454,9 +463,25 @@ private fun SessionPage(
     val chat = open.chat
     val sessionState by open.store.state.collectAsStateWithLifecycle()
     val chatMutable by open.store.chatMutableKeys.collectAsStateWithLifecycle()
+    val canvas = open.canvas
+    val annotationsOpen = open.annotations
+    val annotationsState = annotationsOpen?.store?.state?.collectAsStateWithLifecycle()?.value
+    val annotationsError = annotationsOpen?.store?.error?.collectAsStateWithLifecycle()?.value
     val changeset = open.changeset
     val terminal = open.terminal
-    if (terminal != null) {
+    if (canvas != null) {
+        val canvasState by canvas.store.state.collectAsStateWithLifecycle()
+        val canvasError by canvas.store.error.collectAsStateWithLifecycle()
+        val platformUi = rememberPlatformUiActions()
+        CanvasScreen(
+            state = canvasState,
+            error = canvasError,
+            connection = connection,
+            onBack = controller::closeCanvas,
+            onOpenLink = { link -> if (!platformUi.openLink(link)) platformUi.showToast("Nothing can open this link") },
+            onShareLink = { link -> if (!platformUi.shareLink(link)) platformUi.showToast("Nothing can share this link") },
+        )
+    } else if (terminal != null) {
         val terminalState by terminal.store.state.collectAsStateWithLifecycle()
         val terminalError by terminal.store.error.collectAsStateWithLifecycle()
         TerminalScreen(terminalState, terminalError, connection, controller::closeTerminal)
@@ -504,6 +529,12 @@ private fun SessionPage(
             null
         }
         val chatUsage = remember(openChatState) { HostExtras.chatUsage(openChatState) }
+        val chatChangeStats = remember(openChatState, changes) {
+            if (openChatState?.changes != null) ChangeStats.of(openChatState.changes) else changes
+        }
+        val chatChangesets: List<ChangesetEntry> = remember(openChatState) {
+            openChatState?.changesets.orEmpty().take(ChangesetEntry.MAX_ENTRIES).map { ChangesetEntry.from(it) }
+        }
         val backgroundWork = remember(openChatState) { Transcript.backgroundWorkOf(openChatState) }
         val canvases = remember(openChatState) { Transcript.canvasesOf(openChatState) }
         var requestedChat by remember { mutableStateOf<String?>(null) }
@@ -518,7 +549,8 @@ private fun SessionPage(
             now = now,
             onBack = controller::closeSession,
             onMenu = onMenu,
-            changes = changes,
+            changes = chatChangeStats,
+            chatChangesets = chatChangesets,
             shownChat = chat?.uri,
             onSelectChat = controller::selectChat,
             manage = manageActions,
@@ -539,6 +571,20 @@ private fun SessionPage(
             chatUsage = chatUsage,
             backgroundWork = backgroundWork,
             canvases = canvases,
+            chatWorkingDirectories = openChatState?.workingDirectories.orEmpty().map(::displayPath),
+            onOpenCanvas = controller::openCanvas,
+            annotationsOpen = annotationsOpen != null,
+            annotations = annotationsState,
+            annotationsError = annotationsError,
+            canInteract = canInteract,
+            onOpenAnnotations = controller::openAnnotations,
+            onCloseAnnotations = controller::closeAnnotations,
+            onAddAnnotationEntry = { annotationId, text ->
+                controller.addAnnotationEntry(annotationId, text)
+            },
+            onRemoveAnnotationEntry = { annotationId, entryId ->
+                controller.removeAnnotationEntry(annotationId, entryId)
+            },
             onOpenSubagent = controller::openSubagentChat,
             onOpenTerminal = controller::openTerminal,
         ) {
@@ -711,6 +757,7 @@ private fun OpenChatView(
             onLoadOlder = chat.store::loadOlder,
             onOpenLink = onOpenLink,
             onShareLink = onShareLink,
+            onOpenCanvas = controller::openCanvas,
             expanded = expanded,
             onToggle = chat.expansion::toggle,
             actions = actions,
@@ -721,7 +768,7 @@ private fun OpenChatView(
             textScale = textScale,
             onTextScale = ui::setTextScale,
             onReadResource = session::readResource,
-            workingDirectories = sessionState?.workingDirectories.orEmpty(),
+            workingDirectories = (sessionState?.workingDirectories.orEmpty() + chatState?.workingDirectories.orEmpty()).distinct(),
             externalRichRequest = externalRichRequest ?: localRichRequest,
             onExternalRichConsumed = {
                 onExternalRichConsumed()
@@ -748,7 +795,7 @@ private fun OpenChatView(
             textScale = textScale,
             onTextScale = ui::setTextScale,
             onReadResource = session::readResource,
-            workingDirectories = sessionState?.workingDirectories.orEmpty(),
+            workingDirectories = (sessionState?.workingDirectories.orEmpty() + chatState?.workingDirectories.orEmpty()).distinct(),
             externalRichRequest = externalRichRequest ?: localRichRequest,
             onExternalRichConsumed = {
                 onExternalRichConsumed()

@@ -110,6 +110,7 @@ sealed interface TranscriptItem {
         val progress: String? = null,
         val durationText: String? = source?.extras?.durationText,
         val mcpServerName: String? = source?.extras?.mcpServerName,
+        val riskAssessment: RiskAssessmentView? = (source as? ToolCallStatePendingConfirmation)?.value?.riskAssessment?.let(ToolDetail::riskAssessmentOf),
     ) : TranscriptItem
 
     data class Notice(override val key: String, val text: String, val isError: Boolean = false) : TranscriptItem
@@ -261,7 +262,10 @@ data class Transcript(
                         source = part.value.toolCall,
                         progress = facts.progress,
                         durationText = extras.durationText,
-                        mcpServerName = extras.mcpServerName,
+                        mcpServerName = extras.mcpServerName ?: (part.value.toolCall as? ToolCallStatePendingConfirmation)?.value?.contributor.let { contributor ->
+                            (contributor as? com.microsoft.agenthostprotocol.generated.ToolCallContributorMcp)?.value?.customizationId
+                        },
+                        riskAssessment = (part.value.toolCall as? ToolCallStatePendingConfirmation)?.value?.riskAssessment?.let(ToolDetail::riskAssessmentOf),
                     )
                 }
                 is ResponsePartSystemNotification -> TranscriptItem.Notice(key(null), plain(part.value.content).orEmpty())
@@ -354,7 +358,7 @@ data class Transcript(
             val resource = ref.resource.trim()
             if (resource.isEmpty()) return null
             val tail = resource.substringAfterLast('/').substringAfterLast(':').trim()
-            val label = (if (tail.isNotEmpty()) tail else resource).take(MAX_CANVAS_LABEL_CHARS)
+            val label = LineDiff.clean((if (tail.isNotEmpty()) tail else resource).take(MAX_CANVAS_LABEL_CHARS))
             return CanvasView(resource = resource, label = label)
         }
     }
