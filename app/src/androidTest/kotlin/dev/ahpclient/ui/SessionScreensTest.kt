@@ -937,6 +937,38 @@ class SessionScreensTest {
     }
 
     @Test
+    fun detailsShowsChatFoldersAndManagesOnlyHostOfferedSessionFolders() {
+        val removed = mutableListOf<String>()
+        val added = mutableListOf<String>()
+        val manage = ManageActionsUi(
+            agents = emptyList(), folders = listOf("file:///work/new"),
+            setRead = { _, _ -> ManageResult.Done() }, setArchived = { _, _ -> ManageResult.Done() },
+            newChat = { ManageResult.Done() }, newSession = { _, _, _ -> ManageResult.Done() },
+            disposeSession = { ManageResult.Done() }, disposeChat = { _, _ -> ManageResult.Done() },
+            addWorkingDirectory = { _, path -> added += path; ManageResult.Done() },
+            removeWorkingDirectory = { _, path -> removed += path; ManageResult.Done() },
+        )
+        rule.setContent {
+            AhpTheme {
+                SessionScreen(
+                    detailState().copy(workingDirectories = listOf("file:///work/repo", "file:///work/secondary")),
+                    null, ConnState.Online, now, {}, manage = manage, sessionUri = "ahp-session:/s1",
+                    chatWorkingDirectories = listOf("/work/chat"),
+                ) { androidx.compose.material3.Text("chat body") }
+            }
+        }
+        openDetails()
+
+        rule.onNodeWithTag("chat_working_directory_0").assertIsDisplayed().assertTextEquals("/work/chat")
+        rule.onNodeWithTag("folder_remove_1").performClick()
+        rule.onNodeWithTag("folder_add").performClick()
+        rule.onNodeWithTag("folder_choice_0").performClick()
+
+        assertEquals(listOf("/work/secondary"), removed)
+        assertEquals(listOf("file:///work/new"), added)
+    }
+
+    @Test
     fun detailsShowTokenUsageBreakdownWhenChatUsageIsPresent() {
         val usage = TurnUsage(inputTokens = 68_002L, outputTokens = 3_214L, cacheReadTokens = 58_793L, costAmount = 0.04)
         rule.setContent {

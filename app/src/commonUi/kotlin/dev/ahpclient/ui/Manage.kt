@@ -104,6 +104,8 @@ class ManageActionsUi(
     val setChatArchived: suspend (sessionUri: String, chatUri: String, archived: Boolean) -> ManageResult = { _, _, _ -> ManageResult.NotAllowed },
     val controlMcpServer: suspend (sessionUri: String, serverId: String, control: McpServerControlAction) -> ManageResult = { _, _, _ -> ManageResult.NotAllowed },
     val toggleCustomization: suspend (sessionUri: String, customizationId: String, enabled: Boolean) -> ManageResult = { _, _, _ -> ManageResult.NotAllowed },
+    val addWorkingDirectory: suspend (sessionUri: String, directory: String) -> ManageResult = { _, _ -> ManageResult.NotAllowed },
+    val removeWorkingDirectory: suspend (sessionUri: String, directory: String) -> ManageResult = { _, _ -> ManageResult.NotAllowed },
 )
 
 @Composable

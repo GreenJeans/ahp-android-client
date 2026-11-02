@@ -23,6 +23,12 @@ object SessionActions {
     /** Sets the session's title. Dispatched on the session's own channel. */
     fun setTitle(title: String): StateAction = action("session/titleChanged") { put("title", title) }
 
+    /** Grants the session's agent access to a previously used working directory. */
+    fun setWorkingDirectory(directory: String): StateAction = action("session/workingDirectorySet") { put("directory", directory) }
+
+    /** Revokes the session's agent access to a secondary working directory. */
+    fun removeWorkingDirectory(directory: String): StateAction = action("session/workingDirectoryRemoved") { put("directory", directory) }
+
     /** Marks a chat read or unread. Dispatched on the chat's own channel. */
     fun setChatRead(isRead: Boolean): StateAction = action("chat/isReadChanged") { put("isRead", isRead) }
 

@@ -41,6 +41,7 @@ import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.CustomAgents
 import dev.ahpclient.state.CustomizationCategory
 import dev.ahpclient.state.HostExtras
+import dev.ahpclient.state.displayPath
 import dev.ahpclient.state.HostFileTarget
 import dev.ahpclient.state.HostSession
 import dev.ahpclient.state.HostSessionEntry
@@ -245,6 +246,8 @@ private fun Shell(
                 setChatArchived = controller.manager::setChatArchived,
                 controlMcpServer = controller.manager::controlMcpServer,
                 toggleCustomization = controller.manager::toggleCustomization,
+                addWorkingDirectory = controller.manager::addWorkingDirectory,
+                removeWorkingDirectory = controller.manager::removeWorkingDirectory,
             )
         }
     } else {
@@ -566,6 +569,7 @@ private fun SessionPage(
             chatUsage = chatUsage,
             backgroundWork = backgroundWork,
             canvases = canvases,
+            chatWorkingDirectories = openChatState?.workingDirectories.orEmpty().map(::displayPath),
             onOpenCanvas = controller::openCanvas,
             annotationsOpen = annotationsOpen != null,
             annotations = annotationsState,
@@ -762,7 +766,7 @@ private fun OpenChatView(
             textScale = textScale,
             onTextScale = ui::setTextScale,
             onReadResource = session::readResource,
-            workingDirectories = sessionState?.workingDirectories.orEmpty(),
+            workingDirectories = (sessionState?.workingDirectories.orEmpty() + chatState?.workingDirectories.orEmpty()).distinct(),
             externalRichRequest = externalRichRequest ?: localRichRequest,
             onExternalRichConsumed = {
                 onExternalRichConsumed()
@@ -789,7 +793,7 @@ private fun OpenChatView(
             textScale = textScale,
             onTextScale = ui::setTextScale,
             onReadResource = session::readResource,
-            workingDirectories = sessionState?.workingDirectories.orEmpty(),
+            workingDirectories = (sessionState?.workingDirectories.orEmpty() + chatState?.workingDirectories.orEmpty()).distinct(),
             externalRichRequest = externalRichRequest ?: localRichRequest,
             onExternalRichConsumed = {
                 onExternalRichConsumed()

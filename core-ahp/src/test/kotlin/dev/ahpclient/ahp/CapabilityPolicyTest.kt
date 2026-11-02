@@ -128,6 +128,8 @@ class CapabilityPolicyTest {
         "session/mcpServerStopRequested",
         "session/mcpServerBackgroundRequested",
         "session/customizationToggled",
+        "session/workingDirectorySet",
+        "session/workingDirectoryRemoved",
         "changeset/filesReviewChanged",
     )
 
@@ -169,7 +171,7 @@ class CapabilityPolicyTest {
         val notAllowed = listOf(
             null, "", "session/isReadChanged ", "Session/isReadChanged",
             "terminal/input", "terminal/resized", "terminal/claimed",
-            "session/activeClientSet", "session/chatAdded", "session/chatRemoved", "session/workingDirectorySet",
+            "session/activeClientSet", "session/chatAdded", "session/chatRemoved", "session/workingDirectoryReplaced",
             "session/mcpServerStarted", "session/mcpServerStopped",
             "chat/titleChanged", "chat/responsePart", "chat/toolCallStart", "chat/turnComplete",
             "root/activeSessionsChanged",

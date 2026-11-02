@@ -18,6 +18,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.BottomSheetDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -71,6 +72,8 @@ import dev.ahpclient.ui.chat.BackgroundWorkBar
 import dev.ahpclient.ui.chat.BackgroundWorkChip
 import dev.ahpclient.state.ManageMessages
 import dev.ahpclient.state.ManageResult
+import dev.ahpclient.state.RecentFolders
+import dev.ahpclient.state.displayPath
 import kotlinx.coroutines.launch
 import com.microsoft.agenthostprotocol.generated.RootState
 import com.microsoft.agenthostprotocol.generated.SessionState
@@ -121,6 +124,7 @@ fun SessionScreen(
     chatUsage: TurnUsage? = null,
     backgroundWork: List<BackgroundWorkView> = emptyList(),
     canvases: List<CanvasView> = emptyList(),
+    chatWorkingDirectories: List<String> = emptyList(),
     onOpenCanvas: ((String) -> Unit)? = null,
     annotationsOpen: Boolean = false,
     annotations: AnnotationsState? = null,
@@ -250,6 +254,9 @@ fun SessionScreen(
             chatUsage = chatUsage,
             backgroundWork = backgroundWork,
             canvases = canvases,
+            chatWorkingDirectories = chatWorkingDirectories,
+            manage = manage,
+            sessionUri = sessionUri,
             onOpenCanvas = onOpenCanvas?.let { open -> { uri -> showDetails = false; open(uri) } },
             onOpenAnnotations = onOpenAnnotations?.let { open -> { showDetails = false; open() } },
             onOpenSubagent = onOpenSubagent,
@@ -408,6 +415,9 @@ private fun DetailsSheet(
     chatUsage: TurnUsage? = null,
     backgroundWork: List<BackgroundWorkView> = emptyList(),
     canvases: List<CanvasView> = emptyList(),
+    chatWorkingDirectories: List<String> = emptyList(),
+    manage: ManageActionsUi? = null,
+    sessionUri: String? = null,
     onOpenCanvas: ((String) -> Unit)? = null,
     onOpenAnnotations: (() -> Unit)? = null,
     onOpenSubagent: ((String) -> Unit)? = null,
@@ -464,7 +474,7 @@ private fun DetailsSheet(
                 }
             }
 
-            Facts(detail, chatUsage, canvases, onOpenCanvas, onOpenAnnotations)
+            Facts(detail, chatUsage, canvases, onOpenCanvas, onOpenAnnotations, chatWorkingDirectories, manage, sessionUri)
             if (onOpenCustomizations != null) {
                 OutlinedButton(
                     onClick = onOpenCustomizations,
@@ -532,12 +542,18 @@ private fun Facts(
     canvases: List<CanvasView> = emptyList(),
     onOpenCanvas: ((String) -> Unit)? = null,
     onOpenAnnotations: (() -> Unit)? = null,
+    chatWorkingDirectories: List<String> = emptyList(),
+    manage: ManageActionsUi? = null,
+    sessionUri: String? = null,
 ) {
+    var chooseFolder by remember { mutableStateOf(false) }
+    var folderNotice by remember { mutableStateOf<String?>(null) }
+    val folderScope = rememberCoroutineScope()
+    val addableFolders = manage?.folders.orEmpty().filterNot { offered -> detail.workingDirectories.any { it == displayPath(offered) } }
     val facts = buildList {
         add("Agent" to detail.provider)
         detail.model?.let { add("Model" to it) }
         detail.project?.let { add("Project" to it) }
-        detail.workingDirectories.forEach { add("Folder" to it) }
         detail.extras.branchLabel?.let { add("Branch" to it) }
         detail.extras.countsText?.let { add("Git status" to it) }
         chatUsage?.detailText?.let { add("Token usage" to it) }
@@ -551,6 +567,44 @@ private fun Facts(
                     Text(value, style = MaterialTheme.typography.bodyLarge)
                 }
             }
+        }
+        if (chatWorkingDirectories.isNotEmpty() && chatWorkingDirectories != detail.workingDirectories) {
+            Text("Chat folders", style = MaterialTheme.typography.labelLarge)
+            chatWorkingDirectories.distinct().forEachIndexed { index, folder ->
+                Text(folder.take(500), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("chat_working_directory_$index"))
+            }
+        }
+        Text("Session folders", style = MaterialTheme.typography.labelLarge)
+        detail.workingDirectories.forEachIndexed { index, folder ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text(folder.take(500), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f).testTag("session_working_directory_$index"))
+                if (manage != null && sessionUri != null && index > 0) TextButton(
+                    onClick = { folderScope.launch { folderNotice = ManageMessages.describe(manage.removeWorkingDirectory(sessionUri, folder)) } },
+                    modifier = Modifier.testTag("folder_remove_$index"),
+                ) { Text("Remove") }
+            }
+        }
+        if (manage != null && sessionUri != null) {
+            if (addableFolders.isNotEmpty()) OutlinedButton(
+                onClick = { chooseFolder = true },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("folder_add"),
+            ) { Text("Add folder") }
+            folderNotice?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("folder_notice")) }
+            if (chooseFolder) AlertDialog(
+                onDismissRequest = { chooseFolder = false },
+                title = { Text("Add a recent folder") },
+                text = {
+                    Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        addableFolders.take(RecentFolders.SHOWN).forEachIndexed { index, folder ->
+                            TextButton(
+                                onClick = { chooseFolder = false; folderScope.launch { folderNotice = ManageMessages.describe(manage.addWorkingDirectory(sessionUri, folder)) } },
+                                modifier = Modifier.fillMaxWidth().testTag("folder_choice_$index"),
+                            ) { Text(displayPath(folder).take(500), maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                        }
+                    }
+                },
+                confirmButton = { TextButton(onClick = { chooseFolder = false }) { Text("Close") } },
+            )
         }
         detail.annotations?.let { annotations ->
             if (onOpenAnnotations == null) {

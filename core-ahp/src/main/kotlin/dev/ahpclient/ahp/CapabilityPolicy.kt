@@ -120,6 +120,8 @@ class CapabilityPolicy private constructor(
             "session/mcpServerStopRequested",
             "session/mcpServerBackgroundRequested",
             "session/customizationToggled",
+        "session/workingDirectorySet",
+        "session/workingDirectoryRemoved",
             "changeset/filesReviewChanged",
         )
 

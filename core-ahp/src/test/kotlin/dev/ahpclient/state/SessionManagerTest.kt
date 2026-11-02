@@ -151,6 +151,22 @@ class SessionManagerTest {
     }
 
     @Test
+    fun `working directory changes accept only recent folders and preserve the primary directory`() = runTest {
+        val rig = Rig()
+        rig.states[s1] = state("ready", c1 to "Main", c2 to "Side").copy(workingDirectories = listOf("file:///work/a", "file:///work/b"))
+        rig.sessions = rig.sessions + summary("ahp-session:/s3", "Recent", listOf("file:///work/c"))
+
+        assertEquals(ManageResult.InvalidChoice, rig.manager.addWorkingDirectory(s1, "C:/invented"))
+        assertEquals(ManageResult.InvalidChoice, rig.manager.removeWorkingDirectory(s1, "/work/a"))
+        assertEquals(ManageResult.Done(), rig.manager.addWorkingDirectory(s1, "file:///work/c"))
+        assertEquals(ManageResult.Done(), rig.manager.removeWorkingDirectory(s1, "/work/b"))
+
+        assertEquals(listOf("session/workingDirectorySet", "session/workingDirectoryRemoved"), rig.sent.map { wire(it.second)["type"]!!.jsonPrimitive.content })
+        assertEquals("file:///work/c", wire(rig.sent[0].second)["directory"]!!.jsonPrimitive.content)
+        assertEquals("file:///work/b", wire(rig.sent[1].second)["directory"]!!.jsonPrimitive.content)
+    }
+
+    @Test
     fun `an action is refused before anything is sent when the connection cannot manage`() = runTest {
         val rig = Rig().apply { allowed = false }
 
