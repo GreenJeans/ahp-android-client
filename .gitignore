@@ -12,3 +12,7 @@ captures/
 *.aab
 *.keystore
 *.jks
+xcuserdata/
+*.xcworkspace/
+DerivedData/
+.DS_Store

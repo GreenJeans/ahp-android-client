@@ -1,5 +1,7 @@
 package dev.ahpclient.ahp
 
+import kotlin.concurrent.Volatile
+
 import dev.ahpclient.tunnel.ClientOverloadedException
 import dev.ahpclient.tunnel.SocketClosedException
 import dev.ahpclient.tunnel.TextSocket
@@ -40,10 +42,10 @@ import com.microsoft.agenthostprotocol.generated.SubscribeResult
 import com.microsoft.agenthostprotocol.generated.SubscribeView
 import com.microsoft.agenthostprotocol.generated.TerminalState
 import com.microsoft.agenthostprotocol.generated.UnsupportedProtocolVersionErrorData
-import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicLong
-import java.util.concurrent.atomic.AtomicReference
+import dev.ahpclient.platform.randomUuid
+import dev.ahpclient.platform.ConcurrentHashMap
+import dev.ahpclient.platform.AtomicLong
+import dev.ahpclient.platform.AtomicReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -115,7 +117,7 @@ class AhpConnection(
     private val socket: TextSocket,
     scope: CoroutineScope,
     private val policy: CapabilityPolicy,
-    val clientId: String = UUID.randomUUID().toString(),
+    val clientId: String = randomUuid(),
     initialServerSeq: Long = 0,
     private val requestTimeoutMs: Long = 30_000,
     private val json: Json = Ahp.json,

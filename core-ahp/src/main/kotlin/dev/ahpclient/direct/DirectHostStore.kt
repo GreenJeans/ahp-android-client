@@ -1,6 +1,6 @@
 package dev.ahpclient.direct
 
-import java.io.IOException
+import dev.ahpclient.platform.IOException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject

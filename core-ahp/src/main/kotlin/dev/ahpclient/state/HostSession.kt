@@ -1,5 +1,11 @@
 package dev.ahpclient.state
 
+import dev.ahpclient.platform.platformSynchronized
+
+import dev.ahpclient.platform.Synchronized
+
+import kotlin.concurrent.Volatile
+
 import dev.ahpclient.ahp.AhpConnection
 import dev.ahpclient.ahp.AhpException
 import dev.ahpclient.ahp.ROOT_CHANNEL
@@ -28,10 +34,10 @@ import com.microsoft.agenthostprotocol.generated.TerminalState
 import com.microsoft.agenthostprotocol.generated.StateAction
 import com.microsoft.agenthostprotocol.changesetReducer
 import com.microsoft.agenthostprotocol.terminalReducer
-import java.io.IOException
-import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicLong
+import dev.ahpclient.platform.IOException
+import dev.ahpclient.platform.randomUuid
+import dev.ahpclient.platform.ConcurrentHashMap
+import dev.ahpclient.platform.AtomicLong
 import kotlin.math.roundToLong
 import kotlin.random.Random
 import kotlinx.coroutines.CancellationException
@@ -125,7 +131,7 @@ class HostSession(
     private val scope: CoroutineScope,
     private val clientInfo: Implementation,
     private val backoff: Backoff = Backoff(),
-    private val clientId: String = UUID.randomUUID().toString(),
+    private val clientId: String = randomUuid(),
     private val network: StateFlow<NetworkState> = NetworkState.ALWAYS_AVAILABLE,
     cache: SessionListCache? = null,
     cacheKey: String? = null,
@@ -250,8 +256,8 @@ class HostSession(
         scope.launch {
             subscribeLock.withLock {
                 if (!parked) return@withLock
-                synchronized(chats) { chats.values.toList() }.forEach(::parkChat)
-                synchronized(aux) { aux.values.toList() }.forEach(::parkChannel)
+                platformSynchronized(chats) { chats.values.toList() }.forEach(::parkChat)
+                platformSynchronized(aux) { aux.values.toList() }.forEach(::parkChannel)
             }
         }
     }
@@ -281,7 +287,7 @@ class HostSession(
     /** Lets go of [store] if it is subscribed and nothing holds it in the background. Called under [subscribeLock], and only does anything while parked. */
     private fun parkChat(store: ChatStore) {
         if (!parked || store.needsSubscribe) return
-        if (synchronized(chats) { chats[store.uri] !== store || store.backgroundOpeners > 0 }) return
+        if (platformSynchronized(chats) { chats[store.uri] !== store || store.backgroundOpeners > 0 }) return
         store.invalidate()
         current?.unsubscribe(store.uri)
     }
@@ -308,7 +314,7 @@ class HostSession(
                 subscribeLock.withLock {
                     val ahp = current ?: return@withLock
                     if (parked) {
-                        synchronized(aux) { aux.values.toList() }.forEach(::parkChannel)
+                        platformSynchronized(aux) { aux.values.toList() }.forEach(::parkChannel)
                     } else {
                         auxNeedingSubscribe().forEach { subscribeIfNeeded(ahp, it) }
                     }
@@ -323,7 +329,7 @@ class HostSession(
 
     /** The store for [uri], subscribing now if online or on the next connection. Pair every call with [closeSession]. */
     fun openSession(uri: String): SessionStore {
-        val store = synchronized(sessions) { sessions.getOrPut(uri) { SessionStore(uri) }.also { it.openers++ } }
+        val store = platformSynchronized(sessions) { sessions.getOrPut(uri) { SessionStore(uri) }.also { it.openers++ } }
         scope.launch {
             try {
                 subscribeLock.withLock { subscribeIfNeeded(current ?: return@launch, store) }
@@ -337,7 +343,7 @@ class HostSession(
     }
 
     fun closeSession(uri: String) {
-        val dropped = synchronized(sessions) {
+        val dropped = platformSynchronized(sessions) {
             val store = sessions[uri] ?: return
             store.openers--
             if (store.openers > 0) false else sessions.remove(uri) != null
@@ -351,7 +357,7 @@ class HostSession(
      * of sight (a decision from a notification), stays subscribed through [park]; a screen's does not.
      */
     fun openChat(uri: String, background: Boolean = false): ChatStore {
-        val store = synchronized(chats) {
+        val store = platformSynchronized(chats) {
             chats.getOrPut(uri) {
                 ChatStore(uri, scope, fetchOlder = { cursor -> fetchTurns(uri, cursor) }, subscribeAgain = { chatFor(uri)?.let(::subscribeNow) })
             }.also {
@@ -386,7 +392,7 @@ class HostSession(
     fun closeChat(uri: String, background: Boolean = false) {
         var dropped = false
         var letGo: ChatStore? = null
-        synchronized(chats) {
+        platformSynchronized(chats) {
             val store = chats[uri] ?: return
             store.openers--
             if (background) store.backgroundOpeners--
@@ -416,7 +422,7 @@ class HostSession(
     }
 
     fun closeChannel(uri: String) {
-        val dropped = synchronized(aux) {
+        val dropped = platformSynchronized(aux) {
             val store = aux[uri] ?: return
             store.openers--
             if (store.openers > 0) false else aux.remove(uri) != null
@@ -426,7 +432,7 @@ class HostSession(
 
     @Suppress("UNCHECKED_CAST")
     private fun <S : Any> openAux(uri: String, create: () -> ChannelStore<S>): ChannelStore<S> {
-        val store = synchronized(aux) { aux.getOrPut(uri) { create() }.also { it.openers++ } } as ChannelStore<S>
+        val store = platformSynchronized(aux) { aux.getOrPut(uri) { create() }.also { it.openers++ } } as ChannelStore<S>
         scope.launch {
             try {
                 subscribeLock.withLock { subscribeIfNeeded(current ?: return@launch, store) }
@@ -651,10 +657,10 @@ class HostSession(
         val open = openChannels()
         // A terminal is not named to the host here (its snapshot cannot be decoded in these replies) and a subscription belongs to
         // one connection, so each is subscribed afresh below. So is any other channel left out because the session is parked.
-        synchronized(aux) { aux.values.filter { it.uri !in open } }.forEach { it.invalidate() }
+        platformSynchronized(aux) { aux.values.filter { it.uri !in open } }.forEach { it.invalidate() }
         // A chat is not named here either, so the host cannot answer with all of its history in `initialize` or `reconnect`: it is
         // subscribed afresh below, asking for only its latest turns (see [CHAT_SNAPSHOT_TURNS]). What is shown stays until it arrives.
-        synchronized(chats) { chats.values.toList() }.forEach { it.invalidate() }
+        platformSynchronized(chats) { chats.values.toList() }.forEach { it.invalidate() }
         if (resume) {
             try {
                 applyReconnect(ahp.reconnect(listOf(ROOT_CHANNEL) + open), open, ahp)
@@ -724,10 +730,10 @@ class HostSession(
     }
 
     private fun sessionsNeedingSubscribe(): List<SessionStore> =
-        synchronized(sessions) { sessions.values.filter { it.needsSubscribe } }
+        platformSynchronized(sessions) { sessions.values.filter { it.needsSubscribe } }
 
     private fun chatsNeedingSubscribe(): List<ChatStore> =
-        synchronized(chats) { chats.values.filter { it.needsSubscribe && !stayingParked(it) } }
+        platformSynchronized(chats) { chats.values.filter { it.needsSubscribe && !stayingParked(it) } }
 
     /** Subscribes the chats that need it, as a new connection does once online and [unpark] does. While parked, that is only the ones held in the background. */
     private fun restoreChats() {
@@ -735,10 +741,10 @@ class HostSession(
     }
 
     /** True for a chat that parking has let go of and nothing holds in the background: no connection subscribes it until [unpark]. */
-    private fun stayingParked(store: ChatStore): Boolean = parked && synchronized(chats) { store.backgroundOpeners == 0 }
+    private fun stayingParked(store: ChatStore): Boolean = parked && platformSynchronized(chats) { store.backgroundOpeners == 0 }
 
     private fun auxNeedingSubscribe(): List<AuxStore> =
-        synchronized(aux) { aux.values.filter { it.needsSubscribe } }
+        platformSynchronized(aux) { aux.values.filter { it.needsSubscribe } }
 
     private suspend fun subscribeIfNeeded(ahp: AhpConnection, store: AuxStore) {
         if (!store.needsSubscribe) return
@@ -824,16 +830,16 @@ class HostSession(
         }
     }
 
-    private fun storeFor(uri: String): SessionStore? = synchronized(sessions) { sessions[uri] }
+    private fun storeFor(uri: String): SessionStore? = platformSynchronized(sessions) { sessions[uri] }
 
-    private fun chatFor(uri: String): ChatStore? = synchronized(chats) { chats[uri] }
+    private fun chatFor(uri: String): ChatStore? = platformSynchronized(chats) { chats[uri] }
 
-    private fun auxFor(uri: String): AuxStore? = synchronized(aux) { aux[uri] }
+    private fun auxFor(uri: String): AuxStore? = platformSynchronized(aux) { aux[uri] }
 
     /** The channels named to the host in `initialize` and `reconnect`: every session, and unless parked, every changeset. */
     private fun openChannels(): List<String> {
-        val channels = synchronized(aux) { if (parked) emptyList() else aux.values.filter { !it.byHand }.map { it.uri } }
-        return synchronized(sessions) { sessions.keys.toList() } + channels
+        val channels = platformSynchronized(aux) { if (parked) emptyList() else aux.values.filter { !it.byHand }.map { it.uri } }
+        return platformSynchronized(sessions) { sessions.keys.toList() } + channels
     }
 
     private companion object {

@@ -8,7 +8,7 @@ import com.microsoft.agenthostprotocol.generated.SessionInputRequestToolConfirma
 import com.microsoft.agenthostprotocol.generated.SessionState
 import com.microsoft.agenthostprotocol.generated.SessionSummary
 import com.microsoft.agenthostprotocol.generated.ToolCallConfirmationStatePendingConfirmation
-import java.util.concurrent.ConcurrentHashMap
+import dev.ahpclient.platform.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope

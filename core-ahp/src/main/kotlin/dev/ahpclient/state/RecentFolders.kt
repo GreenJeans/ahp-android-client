@@ -1,8 +1,11 @@
 package dev.ahpclient.state
 
 import com.microsoft.agenthostprotocol.generated.SessionSummary
-import java.time.DateTimeException
-import java.time.Instant
+import dev.ahpclient.platform.DateTimeException
+import dev.ahpclient.platform.INSTANT_EPOCH
+import dev.ahpclient.platform.Instant
+import dev.ahpclient.platform.instantNow
+import dev.ahpclient.platform.parseInstant
 
 /**
  * The folders a new session may start in. They come only from the host's own session list, never from anything typed, and
@@ -37,9 +40,9 @@ object RecentFolders {
     /** An unreadable time sorts last, so a session with a broken stamp never leads the list. */
     private fun modified(session: SessionSummary): Instant =
         try {
-            Instant.parse(session.modifiedAt)
+            parseInstant(session.modifiedAt)
         } catch (_: DateTimeException) {
-            Instant.EPOCH
+            INSTANT_EPOCH
         }
 
     private fun isHostInternal(uri: String): Boolean = HOST_INTERNAL.containsMatchIn(path(uri))

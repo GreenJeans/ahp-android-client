@@ -1,6 +1,6 @@
 package dev.ahpclient.tunnel
 
-import java.io.IOException
+import dev.ahpclient.platform.IOException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 

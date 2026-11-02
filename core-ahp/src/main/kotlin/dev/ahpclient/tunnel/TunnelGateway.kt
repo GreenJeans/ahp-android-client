@@ -56,7 +56,7 @@ sealed class GatewayException(message: String, cause: Throwable? = null) : Excep
  * VS Code `src/vs/platform/agentHost/common/tunnelAgentHostConnector.ts`.
  */
 class TunnelGateway(
-    private val opener: SocketOpener = OkHttpSocketOpener(),
+    private val opener: SocketOpener = defaultSocketOpener(),
     private val stepTimeoutMs: Long = 30_000,
     private val agentHostPort: Int = AGENT_HOST_PORT,
 ) {
@@ -162,3 +162,5 @@ class TunnelGateway(
         private fun JsonObject.nonEmptyString(name: String): String? = string(name)?.takeIf { it.isNotEmpty() }
     }
 }
+
+expect fun defaultSocketOpener(): SocketOpener

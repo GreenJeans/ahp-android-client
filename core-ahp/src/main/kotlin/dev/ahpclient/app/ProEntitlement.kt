@@ -1,6 +1,6 @@
 package dev.ahpclient.app
 
-import java.io.IOException
+import dev.ahpclient.platform.IOException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow

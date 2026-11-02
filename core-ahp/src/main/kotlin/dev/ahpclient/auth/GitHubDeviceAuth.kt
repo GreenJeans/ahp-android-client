@@ -1,8 +1,10 @@
 package dev.ahpclient.auth
 
-import dev.ahpclient.http.await
-import java.io.IOException
-import java.time.Instant
+import dev.ahpclient.http.HttpTransport
+import dev.ahpclient.http.defaultHttpTransport
+import dev.ahpclient.platform.IOException
+import dev.ahpclient.platform.Instant
+import dev.ahpclient.platform.instantNow
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -10,9 +12,6 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import okhttp3.FormBody
-import okhttp3.OkHttpClient
-import okhttp3.Request
 
 /**
  * GitHub App "Visual Studio Tunnel Service": the Dev Tunnels service only accepts user tokens issued
@@ -58,10 +57,10 @@ class GitHubAuthException(message: String, cause: Throwable? = null) : Exception
 
 /** GitHub OAuth device flow: no client secret, so it is safe to run inside a mobile app. */
 class GitHubDeviceAuth(
-    private val http: OkHttpClient = OkHttpClient(),
+    private val transport: HttpTransport = defaultHttpTransport(),
     private val baseUrl: String = "https://github.com",
     private val clientId: String = DEV_TUNNELS_GITHUB_APP_CLIENT_ID,
-    private val now: () -> Instant = Instant::now,
+    private val now: () -> Instant = ::instantNow,
 ) {
     suspend fun start(): DeviceCode {
         val body = postForm("/login/device/code", mapOf("client_id" to clientId))
@@ -130,19 +129,15 @@ class GitHubDeviceAuth(
     )
 
     private suspend fun postForm(path: String, fields: Map<String, String>): JsonObject {
-        val form = FormBody.Builder().apply { fields.forEach { (name, value) -> add(name, value) } }.build()
-        val request = Request.Builder()
-            .url(baseUrl.trimEnd('/') + path)
-            .header("Accept", "application/json")
-            .post(form)
-            .build()
-        http.newCall(request).await().use { response ->
-            val text = response.body.string()
-            return try {
-                Json.parseToJsonElement(text).jsonObject
-            } catch (e: IllegalArgumentException) {
-                throw GitHubAuthException("GitHub returned a non-JSON response (HTTP ${response.code})", e)
-            }
+        val response = transport.postForm(
+            url = baseUrl.trimEnd('/') + path,
+            headers = mapOf("Accept" to "application/json"),
+            fields = fields,
+        )
+        return try {
+            Json.parseToJsonElement(response.body).jsonObject
+        } catch (e: IllegalArgumentException) {
+            throw GitHubAuthException("GitHub returned a non-JSON response (HTTP ${response.code})", e)
         }
     }
 

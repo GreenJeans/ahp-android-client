@@ -25,6 +25,7 @@ import dev.ahpclient.data.PrefsEntitlementSettings
 import dev.ahpclient.data.PrefsFinishedWatch
 import dev.ahpclient.data.PrefsInteractionSettings
 import dev.ahpclient.data.PrefsLastHostStore
+import dev.ahpclient.data.dataStoreFor
 import dev.ahpclient.data.UiSettings
 import dev.ahpclient.data.PrefsMonitorSettings
 import dev.ahpclient.monitor.AndroidMonitorService
@@ -36,6 +37,7 @@ import dev.ahpclient.monitor.NotificationMonitorProblemSink
 import dev.ahpclient.security.AndroidSessionListCache
 import dev.ahpclient.security.AndroidTokenVault
 import dev.ahpclient.security.DataStoreBlobStore
+import dev.ahpclient.security.dataStoreFor
 import dev.ahpclient.security.DirectHostVault
 import dev.ahpclient.security.FileBlobStore
 import dev.ahpclient.security.KeystoreSecureBox

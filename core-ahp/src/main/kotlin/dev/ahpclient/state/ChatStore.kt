@@ -1,5 +1,7 @@
 package dev.ahpclient.state
 
+import dev.ahpclient.platform.platformSynchronized
+
 import dev.ahpclient.ahp.ChatConfigKeys
 import dev.ahpclient.ahp.ConfigFacts
 import com.microsoft.agenthostprotocol.chatReducer
@@ -117,7 +119,7 @@ class ChatStore internal constructor(
     /** @return false when [snapshot] holds no chat state, so nothing was seeded. */
     internal fun seed(snapshot: Snapshot, facts: ConfigFacts? = null): Boolean {
         val chat = (snapshot.state as? SnapshotState.Chat)?.value ?: return false
-        synchronized(lock) {
+        platformSynchronized(lock) {
             latest = chat
             _error.value = null
             interrupted = 0
@@ -136,7 +138,7 @@ class ChatStore internal constructor(
     }
 
     internal fun apply(envelope: ActionEnvelope) {
-        synchronized(lock) {
+        platformSynchronized(lock) {
             if (latest == null || needsSubscribe) {
                 if (early.size < MAX_EARLY_ACTIONS) early += envelope
                 return
@@ -151,14 +153,14 @@ class ChatStore internal constructor(
      * on (see [markNotLoaded]) stays given up until [retry], whatever connection comes next: that is what stops a reconnect loop.
      */
     internal fun invalidate() {
-        synchronized(lock) {
+        platformSynchronized(lock) {
             if (_error.value is ChatNotLoadedException) return
             needsSubscribe = true
         }
     }
 
     internal fun markGone() {
-        synchronized(lock) {
+        platformSynchronized(lock) {
             needsSubscribe = false
             _error.value = ChatGoneException(uri)
             olderArrived?.complete(Unit)
@@ -170,7 +172,7 @@ class ChatStore internal constructor(
      * shown stays, but it is no longer being kept up to date.
      */
     internal fun markNotLoaded(interrupted: Boolean) {
-        synchronized(lock) {
+        platformSynchronized(lock) {
             needsSubscribe = false
             _error.value = ChatNotLoadedException(uri, interrupted)
             olderArrived?.complete(Unit)
@@ -178,11 +180,11 @@ class ChatStore internal constructor(
     }
 
     /** Notes a connection lost while waiting for the snapshot. @return true once that has happened [MAX_INTERRUPTED] times in a row. */
-    internal fun noteInterrupted(): Boolean = synchronized(lock) { ++interrupted >= MAX_INTERRUPTED }
+    internal fun noteInterrupted(): Boolean = platformSynchronized(lock) { ++interrupted >= MAX_INTERRUPTED }
 
     /** Clears the error and asks the connection to subscribe again. For the button that follows [ChatNotLoadedException]. */
     fun retry() {
-        synchronized(lock) {
+        platformSynchronized(lock) {
             if (_error.value is ChatGoneException) return
             _error.value = null
             interrupted = 0
@@ -197,7 +199,7 @@ class ChatStore internal constructor(
      */
     fun loadOlder() {
         val arrived = CompletableDeferred<Unit>()
-        val cursor = synchronized(lock) {
+        val cursor = platformSynchronized(lock) {
             if (_loadingOlder.value) return
             val next = latest?.turnsNextCursor ?: return
             _loadingOlder.value = true
@@ -216,7 +218,7 @@ class ChatStore internal constructor(
             } catch (e: Exception) {
                 _olderError.value = e
             } finally {
-                synchronized(lock) { if (olderArrived === arrived) olderArrived = null }
+                platformSynchronized(lock) { if (olderArrived === arrived) olderArrived = null }
                 _loadingOlder.value = false
             }
         }
@@ -251,7 +253,7 @@ class ChatStore internal constructor(
         cooldown?.cancel()
         cooldown = scope.launch {
             delay(publishIntervalMs)
-            synchronized(lock) {
+            platformSynchronized(lock) {
                 if (generation != cooldownGeneration) return@launch
                 cooling = false
                 if (dirty) publishNow()

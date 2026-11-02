@@ -1,5 +1,7 @@
 package dev.ahpclient.app
 
+import dev.ahpclient.platform.Synchronized
+
 /**
  * The "Monitor in background" switch. Turning it on starts a foreground service that posts a persistent notification at
  * once. Android drops a foreground-service notification posted while the notification permission is missing, and it does

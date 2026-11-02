@@ -1,0 +1,7 @@
+// Update DEVELOPMENT_TEAM with your Apple Developer Team ID (or select your Personal Team in Xcode -> Signing & Capabilities).
+// If using a free Personal Team on iPad, you may also suffix PRODUCT_BUNDLE_IDENTIFIER (e.g. com.greenjeans.ahpclient.dev).
+DEVELOPMENT_TEAM = 79DY9XSB26
+PRODUCT_BUNDLE_IDENTIFIER = com.greenjeans.ahpclient
+PRODUCT_NAME = AHP Client
+MARKETING_VERSION = 0.1.0
+CURRENT_PROJECT_VERSION = 1

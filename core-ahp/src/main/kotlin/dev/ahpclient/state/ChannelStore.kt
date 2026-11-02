@@ -1,5 +1,9 @@
 package dev.ahpclient.state
 
+import dev.ahpclient.platform.Synchronized
+
+import kotlin.concurrent.Volatile
+
 import com.microsoft.agenthostprotocol.generated.ActionEnvelope
 import com.microsoft.agenthostprotocol.generated.Snapshot
 import com.microsoft.agenthostprotocol.generated.SnapshotState

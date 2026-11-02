@@ -52,6 +52,12 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
+    sourceSets {
+        getByName("main") {
+            kotlin.directories.add("src/commonUi/kotlin")
+        }
+    }
 }
 
 dependencies {
@@ -63,6 +69,7 @@ dependencies {
     implementation(libs.compose.ui.tooling.preview)
     implementation(libs.activity.compose)
     implementation(libs.datastore.preferences)
+    implementation(libs.okio)
     implementation(libs.browser)
     implementation(libs.biometric)
     implementation(libs.fragment)

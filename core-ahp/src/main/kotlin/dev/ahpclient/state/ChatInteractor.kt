@@ -14,8 +14,11 @@ import com.microsoft.agenthostprotocol.generated.ToolCallState
 import com.microsoft.agenthostprotocol.generated.ToolCallStatePendingConfirmation
 import com.microsoft.agenthostprotocol.generated.ToolCallStatePendingResultConfirmation
 import com.microsoft.agenthostprotocol.generated.TurnState
-import java.time.Instant
-import java.util.UUID
+import dev.ahpclient.platform.INSTANT_EPOCH
+import dev.ahpclient.platform.Instant
+import dev.ahpclient.platform.instantNow
+import dev.ahpclient.platform.parseInstant
+import dev.ahpclient.platform.randomUuid
 import kotlinx.coroutines.CancellationException
 
 /**
@@ -170,8 +173,8 @@ class ChatInteractor(
     private val canInteract: () -> Boolean,
     private val dispatch: suspend (channel: String, action: StateAction) -> DispatchOutcome,
     private val gate: ApprovalGate,
-    private val newId: () -> String = { UUID.randomUUID().toString() },
-    private val now: () -> Instant = Instant::now,
+    private val newId: () -> String = { randomUuid() },
+    private val now: () -> Instant = ::instantNow,
     /** The models the host offers for this chat's agent. A message names a model only if it is one of these. */
     private val models: () -> List<ModelOption> = { emptyList() },
     /** The custom agents the host offers for this chat's session. A message names an agent only if it is one of these, or the one the chat is already on. */

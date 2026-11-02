@@ -3,7 +3,10 @@ package dev.ahpclient.state
 import com.microsoft.agenthostprotocol.Ahp
 import com.microsoft.agenthostprotocol.generated.Message
 import com.microsoft.agenthostprotocol.generated.StateAction
-import java.time.Instant
+import dev.ahpclient.platform.INSTANT_EPOCH
+import dev.ahpclient.platform.Instant
+import dev.ahpclient.platform.instantNow
+import dev.ahpclient.platform.parseInstant
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject

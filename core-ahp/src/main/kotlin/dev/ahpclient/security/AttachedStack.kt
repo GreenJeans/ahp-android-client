@@ -1,6 +1,7 @@
 package dev.ahpclient.security
 
-import java.lang.ref.WeakReference
+import dev.ahpclient.platform.WeakReference
+import dev.ahpclient.platform.platformSynchronized
 
 /**
  * The screens that are on show right now, newest last, so something that needs a screen (the device check) can ask the one
@@ -12,7 +13,7 @@ class AttachedStack<T : Any> {
 
     /** Puts [item] on top. One that is already there moves to the top rather than appearing twice. */
     fun attach(item: T) {
-        synchronized(items) {
+        platformSynchronized(items) {
             items.removeAll { it.get() == null || it.get() === item }
             items += WeakReference(item)
         }
@@ -20,9 +21,9 @@ class AttachedStack<T : Any> {
 
     /** Takes [item] out wherever it is, so whatever was below it is on top again. Leaving one that is not there changes nothing. */
     fun detach(item: T) {
-        synchronized(items) { items.removeAll { it.get() == null || it.get() === item } }
+        platformSynchronized(items) { items.removeAll { it.get() == null || it.get() === item } }
     }
 
     /** The newest item that is still alive, or null when there is none. */
-    fun top(): T? = synchronized(items) { items.asReversed().firstNotNullOfOrNull { it.get() } }
+    fun top(): T? = platformSynchronized(items) { items.asReversed().firstNotNullOfOrNull { it.get() } }
 }

@@ -1,4 +1,5 @@
 package dev.ahpclient.state
+import dev.ahpclient.platform.*
 
 import dev.ahpclient.app.SafeLinks
 import com.microsoft.agenthostprotocol.generated.ChatOrigin
@@ -17,7 +18,7 @@ import com.microsoft.agenthostprotocol.generated.ToolCallStatePendingResultConfi
 import com.microsoft.agenthostprotocol.generated.ToolCallStateRunning
 import com.microsoft.agenthostprotocol.generated.ToolCallStateStreaming
 import com.microsoft.agenthostprotocol.generated.UsageInfo
-import java.util.Locale
+import kotlin.math.roundToLong
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -44,7 +45,7 @@ data class PullRequest(
 
     /** The address to open on tap, or null when [url] is not a safe `https://github.com/...` link with a path. */
     val openableUrl: String?
-        get() = url.takeIf { SafeLinks.isSafeVerificationUri(it) && java.net.URI(it).path.orEmpty().length > 1 }
+        get() = url.takeIf { SafeLinks.isSafeVerificationUri(it) && parseUri(it)?.path.orEmpty().length > 1 }
 
     private companion object {
         val PR_NUMBER = Regex("""/pulls?/(\d+)(?:[/?#]|$)""")
@@ -152,9 +153,15 @@ data class TurnUsage(
         get() {
             val amount = costAmount?.takeIf { it > 0.0 && it.isFinite() } ?: return null
             val digits = if (amount < 0.01) {
-                String.format(Locale.US, "%.4f", amount).trimEnd('0').trimEnd('.')
+                val scaled = (amount * 10_000.0).roundToLong()
+                val intPart = scaled / 10_000L
+                val fracPart = (scaled % 10_000L).toString().padStart(4, '0')
+                "$intPart.$fracPart".trimEnd('0').trimEnd('.')
             } else {
-                String.format(Locale.US, "%.2f", amount)
+                val scaled = (amount * 100.0).roundToLong()
+                val intPart = scaled / 100L
+                val fracPart = (scaled % 100L).toString().padStart(2, '0')
+                "$intPart.$fracPart"
             }
             val cur = costCurrency?.trim()?.takeIf { it.isNotEmpty() }
             return if (cur == null || cur.equals("USD", ignoreCase = true)) "$$digits" else "$digits $cur"
@@ -186,9 +193,16 @@ data class TurnUsage(
         fun formatTokens(tokens: Long): String {
             if (tokens < 1_000L) return tokens.toString()
             if (tokens < 999_950L) {
-                return String.format(Locale.US, "%.1f", tokens / 1_000.0).removeSuffix(".0") + "k"
+                return formatOneDecimal(tokens / 1_000.0) + "k"
             }
-            return String.format(Locale.US, "%.1f", tokens / 1_000_000.0).removeSuffix(".0") + "M"
+            return formatOneDecimal(tokens / 1_000_000.0) + "M"
+        }
+
+        private fun formatOneDecimal(value: Double): String {
+            val tenths = (value * 10.0).roundToLong()
+            val intPart = tenths / 10L
+            val fracPart = tenths % 10L
+            return if (fracPart == 0L) intPart.toString() else "$intPart.$fracPart"
         }
     }
 }
@@ -339,7 +353,7 @@ object HostExtras {
             return values.sumOf { it }.coerceAtMost(MAX_TOKENS).takeIf { it > 0L }
         }
         val costTurns = turns.filter { it.costAmount != null }
-        val currencies = costTurns.mapNotNull { it.costCurrency?.uppercase(Locale.US) }.distinct()
+        val currencies = costTurns.mapNotNull { it.costCurrency?.uppercase() }.distinct()
         val compatibleCost = currencies.size <= 1 && (currencies.isEmpty() || costTurns.all { it.costCurrency == null || it.costCurrency.equals(currencies.single(), ignoreCase = true) })
         val totalCost = if (costTurns.isNotEmpty() && compatibleCost) {
             costTurns.sumOf { it.costAmount!! }.coerceAtMost(MAX_COST).takeIf { it > 0.0 }

@@ -6,11 +6,9 @@ import com.microsoft.agenthostprotocol.generated.ContentEncoding
 import com.microsoft.agenthostprotocol.generated.ContentRef
 import com.microsoft.agenthostprotocol.generated.FileEditSide
 import com.microsoft.agenthostprotocol.generated.ResourceReadResult
-import java.io.IOException
-import java.nio.ByteBuffer
-import java.nio.charset.CharacterCodingException
-import java.nio.charset.CodingErrorAction
-import java.util.Base64
+import dev.ahpclient.platform.IOException
+import dev.ahpclient.platform.base64MimeDecode
+import dev.ahpclient.platform.decodeUtf8Strict
 import kotlinx.coroutines.CancellationException
 
 /** How loading one file's changes ended. Everything but [Ready] has a reason a screen says in words. */
@@ -70,7 +68,7 @@ class ChangesetDiffs(
         } catch (e: AhpException.Rpc) {
             DiffResult.Failed("The host said: ${e.message.orEmpty().take(MAX_REASON)}")
         } catch (e: AhpException) {
-            DiffResult.Failed("The connection failed (${e.javaClass.simpleName}).")
+            DiffResult.Failed("The connection failed (${(e::class.simpleName ?: "Exception")}).")
         } catch (e: IOException) {
             DiffResult.Failed("The connection failed.")
         }
@@ -102,19 +100,10 @@ class ChangesetDiffs(
         return if (lines.size > LineDiff.MAX_LINES) Side.TooLarge else Side.Text(lines)
     }
 
-    private fun decode(data: String): String? =
-        try {
-            val bytes = Base64.getMimeDecoder().decode(data)
-            Charsets.UTF_8.newDecoder()
-                .onMalformedInput(CodingErrorAction.REPORT)
-                .onUnmappableCharacter(CodingErrorAction.REPORT)
-                .decode(ByteBuffer.wrap(bytes))
-                .toString()
-        } catch (_: IllegalArgumentException) {
-            null
-        } catch (_: CharacterCodingException) {
-            null
-        }
+    private fun decode(data: String): String? {
+        val bytes = base64MimeDecode(data) ?: return null
+        return decodeUtf8Strict(bytes)
+    }
 
     companion object {
         const val MAX_BYTES = 256 * 1024L
@@ -186,7 +175,7 @@ class HostFileReader(
         } catch (e: AhpException.Rpc) {
             RichReadResult.Failed("The host said: ${e.message.orEmpty().take(MAX_REASON)}")
         } catch (e: AhpException) {
-            RichReadResult.Failed("The connection failed (${e.javaClass.simpleName}).")
+            RichReadResult.Failed("The connection failed (${(e::class.simpleName ?: "Exception")}).")
         } catch (e: IOException) {
             RichReadResult.Failed("The connection failed.")
         }

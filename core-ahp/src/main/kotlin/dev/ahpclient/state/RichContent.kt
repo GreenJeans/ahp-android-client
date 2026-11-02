@@ -5,10 +5,8 @@ import com.microsoft.agenthostprotocol.generated.ResourceReadResult
 import com.microsoft.agenthostprotocol.generated.ResourceResponsePart
 import com.microsoft.agenthostprotocol.generated.ToolResultEmbeddedResourceContent
 import com.microsoft.agenthostprotocol.generated.ToolResultResourceContent
-import java.nio.ByteBuffer
-import java.nio.charset.CharacterCodingException
-import java.nio.charset.CodingErrorAction
-import java.util.Base64
+import dev.ahpclient.platform.base64MimeDecode
+import dev.ahpclient.platform.decodeUtf8Strict
 
 /** Horizontal alignment of a Markdown table column. */
 enum class TableAlignment { START, CENTER, END }
@@ -618,7 +616,7 @@ object RichDecoder {
             return RichPayload.TextContent(mime, Clipped.of(text, MAX_TEXT_PREVIEW), isMarkdown = isMd)
         }
 
-        val bytes = decodeBase64Bytes(clean) ?: clean.toByteArray(Charsets.UTF_8)
+        val bytes = decodeBase64Bytes(clean) ?: clean.encodeToByteArray()
         return RichPayload.BinaryContent(mime, bytes)
     }
 
@@ -637,7 +635,7 @@ object RichDecoder {
         if (mime.startsWith("image/")) {
             val bytes = when (result.encoding) {
                 ContentEncoding.BASE64 -> decodeBase64Bytes(result.data) ?: return null
-                ContentEncoding.UTF8 -> decodeBase64Bytes(result.data) ?: result.data.toByteArray(Charsets.ISO_8859_1)
+                ContentEncoding.UTF8 -> decodeBase64Bytes(result.data) ?: result.data.let { s -> ByteArray(s.length) { i -> s[i].code.toByte() } }
             }
             if (!hasImageMagicBytes(bytes)) return RichPayload.BinaryContent(mime, bytes)
             return RichPayload.ImageBytes(mime, bytes)
@@ -652,7 +650,7 @@ object RichDecoder {
             return RichPayload.TextContent(mime, Clipped.of(text, MAX_TEXT_PREVIEW), isMarkdown = isMd)
         }
 
-        val bytes = decodeBase64Bytes(result.data) ?: result.data.toByteArray(Charsets.ISO_8859_1)
+        val bytes = decodeBase64Bytes(result.data) ?: result.data.let { s -> ByteArray(s.length) { i -> s[i].code.toByte() } }
         return RichPayload.BinaryContent(mime, bytes)
     }
 
@@ -705,23 +703,11 @@ object RichDecoder {
         return if (comma >= 0) trimmed.substring(comma + 1).trim() else trimmed
     }
 
-    internal fun decodeBase64Bytes(data: String): ByteArray? = try {
-        Base64.getMimeDecoder().decode(data.trim())
-    } catch (_: IllegalArgumentException) {
-        null
-    }
+    internal fun decodeBase64Bytes(data: String): ByteArray? = base64MimeDecode(data.trim())
 
     internal fun decodeBase64Utf8(data: String): String? {
         val bytes = decodeBase64Bytes(data) ?: return null
-        val decoded = try {
-            Charsets.UTF_8.newDecoder()
-                .onMalformedInput(CodingErrorAction.REPORT)
-                .onUnmappableCharacter(CodingErrorAction.REPORT)
-                .decode(ByteBuffer.wrap(bytes))
-                .toString()
-        } catch (_: CharacterCodingException) {
-            return null
-        }
+        val decoded = decodeUtf8Strict(bytes) ?: return null
         return decoded.takeIf { '\u0000' !in it }
     }
 }

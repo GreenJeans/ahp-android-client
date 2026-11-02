@@ -1,8 +1,7 @@
 package dev.ahpclient.direct
 
-import java.net.InetAddress
-import java.net.URI
-import java.net.URISyntaxException
+import dev.ahpclient.platform.parseIpv6Literal
+import dev.ahpclient.platform.parseUri
 
 /**
  * A host the person added by its address, as `ahpd` and VS Code's `code agent host` are reached: a plain WebSocket and a connection
@@ -50,17 +49,13 @@ object HostAddress {
 
         val hasScheme = "://" in text
         val withScheme = if (hasScheme) text else "ws://$text"
-        val uri = try {
-            URI(withScheme)
-        } catch (_: URISyntaxException) {
-            return refused("That is not a valid address.")
-        }
+        val uri = parseUri(withScheme) ?: return refused("That is not a valid address.")
         val scheme = when (uri.scheme?.lowercase()) {
             "ws", "http" -> "ws"
             "wss", "https" -> "wss"
             else -> return refused("The address must start with ws:// or wss://.")
         }
-        // A host that java.net.URI cannot read as a server name (look-alike letters, an underscore) has no host at all here.
+        // A host that URI cannot read as a server name (look-alike letters, an underscore) has no host at all here.
         val host = uri.host?.takeIf { it.isNotEmpty() } ?: return refused("That address has no usable host name.")
         if (uri.userInfo != null) return refused("Leave the credentials out of the address. The token has its own field.")
         if (uri.rawQuery != null || uri.rawFragment != null) return refused("Leave the ?token= part out of the address. The token has its own field.")
@@ -90,18 +85,14 @@ object HostAddress {
         return HostAddressCheck.Ok(url, host, cleartext)
     }
 
-    /** Whether [host] (an address, as `java.net.URI` hands it over) is this phone itself or on a private network. A name is private only if it is `localhost`. */
+    /** Whether [host] (an address, as `URI` hands it over) is this phone itself or on a private network. A name is private only if it is `localhost`. */
     fun isPrivate(host: String): Boolean {
         val bare = host.removePrefix("[").removeSuffix("]").lowercase()
         if (bare == "localhost") return true
         ipv4(bare)?.let { (a, b) -> return a == 127 || a == 10 || (a == 172 && b in 16..31) || (a == 192 && b == 168) || (a == 100 && b in 64..127) }
         if (':' in bare && bare.all { it in "0123456789abcdef:." }) {
             // Only ever a literal here, so this never asks the network anything.
-            val bytes = try {
-                InetAddress.getByName(bare).address
-            } catch (_: java.net.UnknownHostException) {
-                return false
-            }
+            val bytes = parseIpv6Literal(bare) ?: return false
             if (bytes.size != 16) return false
             val loopback = bytes.take(15).all { it == 0.toByte() } && bytes[15] == 1.toByte()
             val uniqueLocal = (bytes[0].toInt() and 0xFE) == 0xFC

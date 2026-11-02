@@ -9,7 +9,7 @@ import com.microsoft.agenthostprotocol.generated.InvokeChangesetOperationResult
 import com.microsoft.agenthostprotocol.generated.StateAction
 import dev.ahpclient.ahp.AhpException
 import dev.ahpclient.ahp.CapabilityDeniedException
-import java.io.IOException
+import dev.ahpclient.platform.IOException
 import kotlinx.coroutines.CancellationException
 
 /**

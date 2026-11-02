@@ -1,0 +1,7548 @@
+// Generated from types/*.ts — do not edit
+
+package com.microsoft.agenthostprotocol.generated
+
+import kotlin.jvm.JvmInline
+
+import kotlinx.serialization.KSerializer
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.descriptors.PrimitiveKind
+import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.descriptors.buildClassSerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
+import kotlinx.serialization.json.JsonDecoder
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonEncoder
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.contentOrNull
+
+// ─── Type Aliases ───────────────────────────────────────────────────────────
+
+typealias URI = String
+
+// ─── StringOrMarkdown ───────────────────────────────────────────────────────
+
+/**
+ * A value that is either a plain string or a markdown-formatted string.
+ */
+@Serializable(with = StringOrMarkdownSerializer::class)
+sealed interface StringOrMarkdown {
+    @JvmInline value class Plain(val value: String) : StringOrMarkdown
+    @JvmInline value class Markdown(val value: String) : StringOrMarkdown
+}
+
+internal object StringOrMarkdownSerializer : KSerializer<StringOrMarkdown> {
+    override val descriptor: SerialDescriptor =
+        buildClassSerialDescriptor("StringOrMarkdown")
+
+    override fun deserialize(decoder: Decoder): StringOrMarkdown {
+        val input = decoder as? JsonDecoder
+            ?: error("StringOrMarkdown can only be deserialized from JSON")
+        return when (val element = input.decodeJsonElement()) {
+            is JsonPrimitive -> {
+                val str = element.contentOrNull
+                    ?: error("Expected string primitive for StringOrMarkdown")
+                StringOrMarkdown.Plain(str)
+            }
+            is JsonObject -> {
+                val markdown = (element["markdown"] as? JsonPrimitive)?.contentOrNull
+                    ?: error("StringOrMarkdown object form requires \"markdown\" string")
+                StringOrMarkdown.Markdown(markdown)
+            }
+            else -> error("StringOrMarkdown must be a string or { markdown: string } object")
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: StringOrMarkdown) {
+        val output = encoder as? JsonEncoder
+            ?: error("StringOrMarkdown can only be serialized to JSON")
+        val element: JsonElement = when (value) {
+            is StringOrMarkdown.Plain -> JsonPrimitive(value.value)
+            is StringOrMarkdown.Markdown -> buildJsonObject {
+                put("markdown", JsonPrimitive(value.value))
+            }
+        }
+        output.encodeJsonElement(element)
+    }
+}
+
+// ─── Enums ──────────────────────────────────────────────────────────────────
+
+/**
+ * Policy configuration state for a model.
+ */
+@Serializable
+enum class PolicyState {
+    @SerialName("enabled")
+    ENABLED,
+    @SerialName("disabled")
+    DISABLED,
+    @SerialName("unconfigured")
+    UNCONFIGURED
+}
+
+/**
+ * Discriminant for pending message kinds.
+ */
+@Serializable
+enum class PendingMessageKind {
+    /**
+     * Injected into the current turn at a convenient point
+     */
+    @SerialName("steering")
+    STEERING,
+    /**
+     * Sent automatically as a new turn after the current turn finishes
+     */
+    @SerialName("queued")
+    QUEUED
+}
+
+/**
+ * Session initialization state.
+ */
+@Serializable(with = SessionLifecycleSerializer::class)
+@JvmInline
+value class SessionLifecycle(val rawValue: String) {
+    companion object {
+        val CREATING: SessionLifecycle = SessionLifecycle("creating")
+        val READY: SessionLifecycle = SessionLifecycle("ready")
+        val FAILED: SessionLifecycle = SessionLifecycle("failed")
+    }
+}
+
+internal object SessionLifecycleSerializer : KSerializer<SessionLifecycle> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("SessionLifecycle", PrimitiveKind.STRING)
+    override fun serialize(encoder: Encoder, value: SessionLifecycle) {
+        encoder.encodeString(value.rawValue)
+    }
+    override fun deserialize(decoder: Decoder): SessionLifecycle =
+        SessionLifecycle(decoder.decodeString())
+}
+
+/**
+ * Bitset of summary-level session status flags.
+ *
+ * Use bitwise checks instead of equality for non-terminal activity. For example,
+ * `status & SessionStatus.InProgress` matches both ordinary in-progress turns
+ * and turns that are paused waiting for input.
+ */
+@Serializable(with = SessionStatusSerializer::class)
+@JvmInline
+value class SessionStatus(val rawValue: UInt) {
+    operator fun contains(other: SessionStatus): Boolean =
+        (rawValue and other.rawValue) == other.rawValue
+
+    infix fun or(other: SessionStatus): SessionStatus = SessionStatus(rawValue or other.rawValue)
+    infix fun and(other: SessionStatus): SessionStatus = SessionStatus(rawValue and other.rawValue)
+
+    companion object {
+        /**
+         * Session is idle — no turn is active.
+         */
+        val IDLE: SessionStatus = SessionStatus(1u)
+        /**
+         * Session ended with an error.
+         */
+        val ERROR: SessionStatus = SessionStatus(2u)
+        /**
+         * A turn is actively streaming.
+         */
+        val IN_PROGRESS: SessionStatus = SessionStatus(8u)
+        /**
+         * A turn is in progress but blocked waiting for user input or tool confirmation.
+         */
+        val INPUT_NEEDED: SessionStatus = SessionStatus(24u)
+        /**
+         * The client has viewed this session since its last modification.
+         */
+        val IS_READ: SessionStatus = SessionStatus(32u)
+        /**
+         * The session has been archived by the client.
+         */
+        val IS_ARCHIVED: SessionStatus = SessionStatus(64u)
+    }
+}
+
+internal object SessionStatusSerializer : KSerializer<SessionStatus> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("SessionStatus", PrimitiveKind.LONG)
+    override fun serialize(encoder: Encoder, value: SessionStatus) {
+        encoder.encodeLong(value.rawValue.toLong())
+    }
+    override fun deserialize(decoder: Decoder): SessionStatus =
+        SessionStatus(decoder.decodeLong().toUInt())
+}
+
+/**
+ * Discriminant for {@link ChatOrigin} — how a chat came into existence.
+ */
+@Serializable(with = ChatOriginKindSerializer::class)
+@JvmInline
+value class ChatOriginKind(val rawValue: String) {
+    companion object {
+        /**
+         * User created the chat explicitly (e.g. via the host UI).
+         */
+        val USER: ChatOriginKind = ChatOriginKind("user")
+        /**
+         * Forked from an existing chat at a specific turn.
+         */
+        val FORK: ChatOriginKind = ChatOriginKind("fork")
+        /**
+         * Created as an independent side conversation from a specific turn.
+         */
+        val SIDE_CHAT: ChatOriginKind = ChatOriginKind("sideChat")
+        /**
+         * Spawned by a tool call running in another chat (e.g. a sub-agent delegation).
+         */
+        val TOOL: ChatOriginKind = ChatOriginKind("tool")
+    }
+}
+
+internal object ChatOriginKindSerializer : KSerializer<ChatOriginKind> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("ChatOriginKind", PrimitiveKind.STRING)
+    override fun serialize(encoder: Encoder, value: ChatOriginKind) {
+        encoder.encodeString(value.rawValue)
+    }
+    override fun deserialize(decoder: Decoder): ChatOriginKind =
+        ChatOriginKind(decoder.decodeString())
+}
+
+/**
+ * How a user can interact with a chat.
+ *
+ * - `Full` — user can send messages and watch (default when absent)
+ * - `ReadOnly` — user can watch but not send messages (e.g. agent team workers)
+ * - `Hidden` — internal worker not shown in UI at all
+ *
+ * Supports the agent-team pattern where a lead chat is fully interactive and
+ * worker chats are read-only (visible for observability) or hidden (internal
+ * implementation detail). The harness sets this based on the chat's role;
+ * the UI uses it to show appropriate controls.
+ */
+@Serializable
+enum class ChatInteractivity {
+    /**
+     * User can send messages and watch (default when absent)
+     */
+    @SerialName("full")
+    FULL,
+    /**
+     * User can watch but not send messages
+     */
+    @SerialName("read-only")
+    READ_ONLY,
+    /**
+     * Internal worker not shown in UI at all
+     */
+    @SerialName("hidden")
+    HIDDEN
+}
+
+/**
+ * Answer lifecycle state.
+ */
+@Serializable
+enum class ChatInputAnswerState {
+    @SerialName("draft")
+    DRAFT,
+    @SerialName("submitted")
+    SUBMITTED,
+    @SerialName("skipped")
+    SKIPPED
+}
+
+/**
+ * Answer value kind.
+ */
+@Serializable(with = ChatInputAnswerValueKindSerializer::class)
+@JvmInline
+value class ChatInputAnswerValueKind(val rawValue: String) {
+    companion object {
+        val TEXT: ChatInputAnswerValueKind = ChatInputAnswerValueKind("text")
+        val NUMBER: ChatInputAnswerValueKind = ChatInputAnswerValueKind("number")
+        val BOOLEAN: ChatInputAnswerValueKind = ChatInputAnswerValueKind("boolean")
+        val SELECTED: ChatInputAnswerValueKind = ChatInputAnswerValueKind("selected")
+        val SELECTED_MANY: ChatInputAnswerValueKind = ChatInputAnswerValueKind("selected-many")
+    }
+}
+
+internal object ChatInputAnswerValueKindSerializer : KSerializer<ChatInputAnswerValueKind> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("ChatInputAnswerValueKind", PrimitiveKind.STRING)
+    override fun serialize(encoder: Encoder, value: ChatInputAnswerValueKind) {
+        encoder.encodeString(value.rawValue)
+    }
+    override fun deserialize(decoder: Decoder): ChatInputAnswerValueKind =
+        ChatInputAnswerValueKind(decoder.decodeString())
+}
+
+/**
+ * Question/input control kind.
+ */
+@Serializable(with = ChatInputQuestionKindSerializer::class)
+@JvmInline
+value class ChatInputQuestionKind(val rawValue: String) {
+    companion object {
+        val TEXT: ChatInputQuestionKind = ChatInputQuestionKind("text")
+        val NUMBER: ChatInputQuestionKind = ChatInputQuestionKind("number")
+        val INTEGER: ChatInputQuestionKind = ChatInputQuestionKind("integer")
+        val BOOLEAN: ChatInputQuestionKind = ChatInputQuestionKind("boolean")
+        val SINGLE_SELECT: ChatInputQuestionKind = ChatInputQuestionKind("single-select")
+        val MULTI_SELECT: ChatInputQuestionKind = ChatInputQuestionKind("multi-select")
+    }
+}
+
+internal object ChatInputQuestionKindSerializer : KSerializer<ChatInputQuestionKind> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("ChatInputQuestionKind", PrimitiveKind.STRING)
+    override fun serialize(encoder: Encoder, value: ChatInputQuestionKind) {
+        encoder.encodeString(value.rawValue)
+    }
+    override fun deserialize(decoder: Decoder): ChatInputQuestionKind =
+        ChatInputQuestionKind(decoder.decodeString())
+}
+
+/**
+ * How a client completed an input request.
+ */
+@Serializable
+enum class ChatInputResponseKind {
+    @SerialName("accept")
+    ACCEPT,
+    @SerialName("decline")
+    DECLINE,
+    @SerialName("cancel")
+    CANCEL
+}
+
+/**
+ * Discriminant for the kinds of outstanding input a session can surface in
+ * {@link SessionState.inputNeeded}.
+ *
+ * This is a general/typological union (not a lifecycle), so the discriminant is
+ * a `*Kind`.
+ */
+@Serializable(with = SessionInputRequestKindSerializer::class)
+@JvmInline
+value class SessionInputRequestKind(val rawValue: String) {
+    companion object {
+        /**
+         * A user-facing elicitation mirrored from an unresolved chat response part.
+         */
+        val CHAT_INPUT: SessionInputRequestKind = SessionInputRequestKind("chatInput")
+        /**
+         * A tool call awaiting parameter- or result-confirmation.
+         */
+        val TOOL_CONFIRMATION: SessionInputRequestKind = SessionInputRequestKind("toolConfirmation")
+        /**
+         * A running tool the session wants an active client to execute.
+         */
+        val TOOL_CLIENT_EXECUTION: SessionInputRequestKind = SessionInputRequestKind("toolClientExecution")
+        /**
+         * A tool call blocked on MCP authentication mid-execution.
+         */
+        val TOOL_AUTHENTICATION: SessionInputRequestKind = SessionInputRequestKind("toolAuthentication")
+    }
+}
+
+internal object SessionInputRequestKindSerializer : KSerializer<SessionInputRequestKind> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("SessionInputRequestKind", PrimitiveKind.STRING)
+    override fun serialize(encoder: Encoder, value: SessionInputRequestKind) {
+        encoder.encodeString(value.rawValue)
+    }
+    override fun deserialize(decoder: Decoder): SessionInputRequestKind =
+        SessionInputRequestKind(decoder.decodeString())
+}
+
+/**
+ * How a turn ended.
+ */
+@Serializable
+enum class TurnState {
+    @SerialName("complete")
+    COMPLETE,
+    @SerialName("cancelled")
+    CANCELLED,
+    @SerialName("error")
+    ERROR
+}
+
+/**
+ * Discriminant for {@link MessageOrigin} — identifies who produced a message.
+ */
+@Serializable(with = MessageKindSerializer::class)
+@JvmInline
+value class MessageKind(val rawValue: String) {
+    companion object {
+        /**
+         * Sent directly by the user.
+         */
+        val USER: MessageKind = MessageKind("user")
+        /**
+         * Produced by the agent itself rather than the user — for example, an agent
+         * that seeds the first message of a chat it spawned.
+         */
+        val AGENT: MessageKind = MessageKind("agent")
+        /**
+         * Produced by a tool rather than the user — for example, a tool that spawns a
+         * worker chat whose first message carries a seed prompt.
+         */
+        val TOOL: MessageKind = MessageKind("tool")
+        /**
+         * Emitted automatically when an automation run starts a session.
+         */
+        val AUTOMATION: MessageKind = MessageKind("automation")
+        /**
+         * A system-generated notification rather than a direct user message.
+         */
+        val SYSTEM_NOTIFICATION: MessageKind = MessageKind("systemNotification")
+    }
+}
+
+internal object MessageKindSerializer : KSerializer<MessageKind> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("MessageKind", PrimitiveKind.STRING)
+    override fun serialize(encoder: Encoder, value: MessageKind) {
+        encoder.encodeString(value.rawValue)
+    }
+    override fun deserialize(decoder: Decoder): MessageKind =
+        MessageKind(decoder.decodeString())
+}
+
+/**
+ * Discriminant for {@link MessageAttachment} variants.
+ */
+@Serializable(with = MessageAttachmentKindSerializer::class)
+@JvmInline
+value class MessageAttachmentKind(val rawValue: String) {
+    companion object {
+        /**
+         * A simple, opaque attachment whose representation is described by the producer.
+         */
+        val SIMPLE: MessageAttachmentKind = MessageAttachmentKind("simple")
+        /**
+         * An attachment whose data is embedded inline as a base64 string.
+         */
+        val EMBEDDED_RESOURCE: MessageAttachmentKind = MessageAttachmentKind("embeddedResource")
+        /**
+         * An attachment that references a resource by URI.
+         */
+        val RESOURCE: MessageAttachmentKind = MessageAttachmentKind("resource")
+        /**
+         * An attachment that references annotations on an annotations channel.
+         */
+        val ANNOTATIONS: MessageAttachmentKind = MessageAttachmentKind("annotations")
+        /**
+         * An attachment that references a bounded transcript from another chat.
+         */
+        val CHAT: MessageAttachmentKind = MessageAttachmentKind("chat")
+    }
+}
+
+internal object MessageAttachmentKindSerializer : KSerializer<MessageAttachmentKind> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("MessageAttachmentKind", PrimitiveKind.STRING)
+    override fun serialize(encoder: Encoder, value: MessageAttachmentKind) {
+        encoder.encodeString(value.rawValue)
+    }
+    override fun deserialize(decoder: Decoder): MessageAttachmentKind =
+        MessageAttachmentKind(decoder.decodeString())
+}
+
+/**
+ * Discriminant for response part types.
+ */
+@Serializable(with = ResponsePartKindSerializer::class)
+@JvmInline
+value class ResponsePartKind(val rawValue: String) {
+    companion object {
+        val MARKDOWN: ResponsePartKind = ResponsePartKind("markdown")
+        val CONTENT_REF: ResponsePartKind = ResponsePartKind("contentRef")
+        val TOOL_CALL: ResponsePartKind = ResponsePartKind("toolCall")
+        val REASONING: ResponsePartKind = ResponsePartKind("reasoning")
+        val SYSTEM_NOTIFICATION: ResponsePartKind = ResponsePartKind("systemNotification")
+        val INPUT_REQUEST: ResponsePartKind = ResponsePartKind("inputRequest")
+        val ERROR: ResponsePartKind = ResponsePartKind("error")
+    }
+}
+
+internal object ResponsePartKindSerializer : KSerializer<ResponsePartKind> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("ResponsePartKind", PrimitiveKind.STRING)
+    override fun serialize(encoder: Encoder, value: ResponsePartKind) {
+        encoder.encodeString(value.rawValue)
+    }
+    override fun deserialize(decoder: Decoder): ResponsePartKind =
+        ResponsePartKind(decoder.decodeString())
+}
+
+/**
+ * Status of a tool call in the lifecycle state machine.
+ */
+@Serializable(with = ToolCallStatusSerializer::class)
+@JvmInline
+value class ToolCallStatus(val rawValue: String) {
+    companion object {
+        val STREAMING: ToolCallStatus = ToolCallStatus("streaming")
+        val PENDING_CONFIRMATION: ToolCallStatus = ToolCallStatus("pending-confirmation")
+        val RUNNING: ToolCallStatus = ToolCallStatus("running")
+        /**
+         * Running paused because the MCP server backing this call needs
+         * authentication (typically step-up auth for insufficient scope,
+         * surfacing mid-execution). See {@link ToolCallAuthRequiredState}.
+         */
+        val AUTH_REQUIRED: ToolCallStatus = ToolCallStatus("auth-required")
+        val PENDING_RESULT_CONFIRMATION: ToolCallStatus = ToolCallStatus("pending-result-confirmation")
+        val COMPLETED: ToolCallStatus = ToolCallStatus("completed")
+        val CANCELLED: ToolCallStatus = ToolCallStatus("cancelled")
+    }
+}
+
+internal object ToolCallStatusSerializer : KSerializer<ToolCallStatus> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("ToolCallStatus", PrimitiveKind.STRING)
+    override fun serialize(encoder: Encoder, value: ToolCallStatus) {
+        encoder.encodeString(value.rawValue)
+    }
+    override fun deserialize(decoder: Decoder): ToolCallStatus =
+        ToolCallStatus(decoder.decodeString())
+}
+
+/**
+ * How a tool call was confirmed for execution.
+ *
+ * - `NotNeeded` — No confirmation required (auto-approved)
+ * - `UserAction` — User explicitly approved
+ * - `Setting` — Approved by a persistent user setting
+ */
+@Serializable(with = ToolCallConfirmationReasonSerializer::class)
+@JvmInline
+value class ToolCallConfirmationReason(val rawValue: String) {
+    companion object {
+        val NOT_NEEDED: ToolCallConfirmationReason = ToolCallConfirmationReason("not-needed")
+        val USER_ACTION: ToolCallConfirmationReason = ToolCallConfirmationReason("user-action")
+        val SETTING: ToolCallConfirmationReason = ToolCallConfirmationReason("setting")
+    }
+}
+
+internal object ToolCallConfirmationReasonSerializer : KSerializer<ToolCallConfirmationReason> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("ToolCallConfirmationReason", PrimitiveKind.STRING)
+    override fun serialize(encoder: Encoder, value: ToolCallConfirmationReason) {
+        encoder.encodeString(value.rawValue)
+    }
+    override fun deserialize(decoder: Decoder): ToolCallConfirmationReason =
+        ToolCallConfirmationReason(decoder.decodeString())
+}
+
+/**
+ * Identifies a model judge as the source of a confirmation requirement.
+ */
+@Serializable(with = ToolCallRiskAssessmentKindSerializer::class)
+@JvmInline
+value class ToolCallRiskAssessmentKind(val rawValue: String) {
+    companion object {
+        val JUDGE: ToolCallRiskAssessmentKind = ToolCallRiskAssessmentKind("judge")
+    }
+}
+
+internal object ToolCallRiskAssessmentKindSerializer : KSerializer<ToolCallRiskAssessmentKind> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("ToolCallRiskAssessmentKind", PrimitiveKind.STRING)
+    override fun serialize(encoder: Encoder, value: ToolCallRiskAssessmentKind) {
+        encoder.encodeString(value.rawValue)
+    }
+    override fun deserialize(decoder: Decoder): ToolCallRiskAssessmentKind =
+        ToolCallRiskAssessmentKind(decoder.decodeString())
+}
+
+/**
+ * Lifecycle status of an asynchronous model-judge confirmation decision.
+ */
+@Serializable(with = ToolCallRiskAssessmentStatusSerializer::class)
+@JvmInline
+value class ToolCallRiskAssessmentStatus(val rawValue: String) {
+    companion object {
+        val LOADING: ToolCallRiskAssessmentStatus = ToolCallRiskAssessmentStatus("loading")
+        val COMPLETE: ToolCallRiskAssessmentStatus = ToolCallRiskAssessmentStatus("complete")
+    }
+}
+
+internal object ToolCallRiskAssessmentStatusSerializer : KSerializer<ToolCallRiskAssessmentStatus> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("ToolCallRiskAssessmentStatus", PrimitiveKind.STRING)
+    override fun serialize(encoder: Encoder, value: ToolCallRiskAssessmentStatus) {
+        encoder.encodeString(value.rawValue)
+    }
+    override fun deserialize(decoder: Decoder): ToolCallRiskAssessmentStatus =
+        ToolCallRiskAssessmentStatus(decoder.decodeString())
+}
+
+/**
+ * Why a tool call was cancelled.
+ */
+@Serializable
+enum class ToolCallCancellationReason {
+    @SerialName("denied")
+    DENIED,
+    @SerialName("skipped")
+    SKIPPED,
+    @SerialName("result-denied")
+    RESULT_DENIED
+}
+
+/**
+ * Whether a confirmation option represents an approval or denial action.
+ */
+@Serializable(with = ConfirmationOptionKindSerializer::class)
+@JvmInline
+value class ConfirmationOptionKind(val rawValue: String) {
+    companion object {
+        val APPROVE: ConfirmationOptionKind = ConfirmationOptionKind("approve")
+        val DENY: ConfirmationOptionKind = ConfirmationOptionKind("deny")
+    }
+}
+
+internal object ConfirmationOptionKindSerializer : KSerializer<ConfirmationOptionKind> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("ConfirmationOptionKind", PrimitiveKind.STRING)
+    override fun serialize(encoder: Encoder, value: ConfirmationOptionKind) {
+        encoder.encodeString(value.rawValue)
+    }
+    override fun deserialize(decoder: Decoder): ConfirmationOptionKind =
+        ConfirmationOptionKind(decoder.decodeString())
+}
+
+/**
+ * Identifies the source of a tool call's implementation.
+ */
+@Serializable(with = ToolCallContributorKindSerializer::class)
+@JvmInline
+value class ToolCallContributorKind(val rawValue: String) {
+    companion object {
+        val CLIENT: ToolCallContributorKind = ToolCallContributorKind("client")
+        val MCP: ToolCallContributorKind = ToolCallContributorKind("mcp")
+    }
+}
+
+internal object ToolCallContributorKindSerializer : KSerializer<ToolCallContributorKind> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("ToolCallContributorKind", PrimitiveKind.STRING)
+    override fun serialize(encoder: Encoder, value: ToolCallContributorKind) {
+        encoder.encodeString(value.rawValue)
+    }
+    override fun deserialize(decoder: Decoder): ToolCallContributorKind =
+        ToolCallContributorKind(decoder.decodeString())
+}
+
+/**
+ * Discriminant for tool result content types.
+ */
+@Serializable(with = ToolResultContentTypeSerializer::class)
+@JvmInline
+value class ToolResultContentType(val rawValue: String) {
+    companion object {
+        val TEXT: ToolResultContentType = ToolResultContentType("text")
+        val EMBEDDED_RESOURCE: ToolResultContentType = ToolResultContentType("embeddedResource")
+        val RESOURCE: ToolResultContentType = ToolResultContentType("resource")
+        val FILE_EDIT: ToolResultContentType = ToolResultContentType("fileEdit")
+        val TERMINAL: ToolResultContentType = ToolResultContentType("terminal")
+        val SUBAGENT: ToolResultContentType = ToolResultContentType("subagent")
+    }
+}
+
+internal object ToolResultContentTypeSerializer : KSerializer<ToolResultContentType> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("ToolResultContentType", PrimitiveKind.STRING)
+    override fun serialize(encoder: Encoder, value: ToolResultContentType) {
+        encoder.encodeString(value.rawValue)
+    }
+    override fun deserialize(decoder: Decoder): ToolResultContentType =
+        ToolResultContentType(decoder.decodeString())
+}
+
+/**
+ * Discriminant for the kind of customization.
+ *
+ * Top-level entries in {@link SessionState.customizations} and
+ * {@link AgentInfo.customizations} are either container customizations
+ * ({@link CustomizationType.Plugin | `Plugin`} or
+ * {@link CustomizationType.Directory | `Directory`}) or
+ * {@link CustomizationType.McpServer | `McpServer`} entries surfaced
+ * directly by the host. The remaining types appear only as children of
+ * a container.
+ */
+@Serializable(with = CustomizationTypeSerializer::class)
+@JvmInline
+value class CustomizationType(val rawValue: String) {
+    companion object {
+        val PLUGIN: CustomizationType = CustomizationType("plugin")
+        val DIRECTORY: CustomizationType = CustomizationType("directory")
+        val AGENT: CustomizationType = CustomizationType("agent")
+        val SKILL: CustomizationType = CustomizationType("skill")
+        val PROMPT: CustomizationType = CustomizationType("prompt")
+        val RULE: CustomizationType = CustomizationType("rule")
+        val HOOK: CustomizationType = CustomizationType("hook")
+        val MCP_SERVER: CustomizationType = CustomizationType("mcpServer")
+    }
+}
+
+internal object CustomizationTypeSerializer : KSerializer<CustomizationType> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("CustomizationType", PrimitiveKind.STRING)
+    override fun serialize(encoder: Encoder, value: CustomizationType) {
+        encoder.encodeString(value.rawValue)
+    }
+    override fun deserialize(decoder: Decoder): CustomizationType =
+        CustomizationType(decoder.decodeString())
+}
+
+/**
+ * Scope at which customization enablement is decided.
+ */
+@Serializable(with = CustomizationEnablementKindSerializer::class)
+@JvmInline
+value class CustomizationEnablementKind(val rawValue: String) {
+    companion object {
+        val GLOBAL: CustomizationEnablementKind = CustomizationEnablementKind("global")
+        val WORKSPACE: CustomizationEnablementKind = CustomizationEnablementKind("workspace")
+        val SESSION: CustomizationEnablementKind = CustomizationEnablementKind("session")
+    }
+}
+
+internal object CustomizationEnablementKindSerializer : KSerializer<CustomizationEnablementKind> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("CustomizationEnablementKind", PrimitiveKind.STRING)
+    override fun serialize(encoder: Encoder, value: CustomizationEnablementKind) {
+        encoder.encodeString(value.rawValue)
+    }
+    override fun deserialize(decoder: Decoder): CustomizationEnablementKind =
+        CustomizationEnablementKind(decoder.decodeString())
+}
+
+/**
+ * Discriminant values for {@link CustomizationLoadState}.
+ */
+@Serializable
+enum class CustomizationLoadStatus {
+    @SerialName("loading")
+    LOADING,
+    @SerialName("loaded")
+    LOADED,
+    @SerialName("degraded")
+    DEGRADED,
+    @SerialName("error")
+    ERROR
+}
+
+/**
+ * Discriminant for terminal claim kinds.
+ */
+@Serializable
+enum class TerminalClaimKind {
+    @SerialName("client")
+    CLIENT,
+    @SerialName("session")
+    SESSION
+}
+
+/**
+ * Lifecycle status of a terminal process.
+ */
+@Serializable
+enum class TerminalLifecycleStatus {
+    @SerialName("running")
+    RUNNING,
+    @SerialName("exited")
+    EXITED
+}
+
+/**
+ * Kind of {@link BackgroundWork}.
+ *
+ * This is a general/typological union (not a lifecycle), so the discriminant is
+ * a `*Kind`.
+ */
+@Serializable(with = BackgroundWorkKindSerializer::class)
+@JvmInline
+value class BackgroundWorkKind(val rawValue: String) {
+    companion object {
+        /**
+         * A shell command that continues after its initiating tool call returns.
+         */
+        val SHELL: BackgroundWorkKind = BackgroundWorkKind("shell")
+        /**
+         * A subagent running in the background.
+         */
+        val SUBAGENT: BackgroundWorkKind = BackgroundWorkKind("subagent")
+    }
+}
+
+internal object BackgroundWorkKindSerializer : KSerializer<BackgroundWorkKind> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("BackgroundWorkKind", PrimitiveKind.STRING)
+    override fun serialize(encoder: Encoder, value: BackgroundWorkKind) {
+        encoder.encodeString(value.rawValue)
+    }
+    override fun deserialize(decoder: Decoder): BackgroundWorkKind =
+        BackgroundWorkKind(decoder.decodeString())
+}
+
+/**
+ * Discriminant for the {@link McpServerState} union.
+ */
+@Serializable(with = McpServerStatusSerializer::class)
+@JvmInline
+value class McpServerStatus(val rawValue: String) {
+    companion object {
+        /**
+         * Server has been registered but is not yet running.
+         */
+        val STARTING: McpServerStatus = McpServerStatus("starting")
+        /**
+         * Server is running and serving requests.
+         */
+        val READY: McpServerStatus = McpServerStatus("ready")
+        /**
+         * Server is reachable but requires additional authentication before it
+         * can start, or before it can serve a particular request. Carries the
+         * RFC 9728 Protected Resource Metadata the client needs to obtain a
+         * token; the client then pushes the token via the existing
+         * `authenticate` command.
+         */
+        val AUTH_REQUIRED: McpServerStatus = McpServerStatus("authRequired")
+        /**
+         * Server failed to start, crashed, or otherwise transitioned to a fatal error.
+         */
+        val ERROR: McpServerStatus = McpServerStatus("error")
+        /**
+         * Server has been shut down.
+         */
+        val STOPPED: McpServerStatus = McpServerStatus("stopped")
+    }
+}
+
+internal object McpServerStatusSerializer : KSerializer<McpServerStatus> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("McpServerStatus", PrimitiveKind.STRING)
+    override fun serialize(encoder: Encoder, value: McpServerStatus) {
+        encoder.encodeString(value.rawValue)
+    }
+    override fun deserialize(decoder: Decoder): McpServerStatus =
+        McpServerStatus(decoder.decodeString())
+}
+
+/**
+ * Why an MCP server is currently in the {@link McpServerStatus.AuthRequired}
+ * state. Mirrors the three failure modes defined by the
+ * [MCP authorization spec](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization.md).
+ */
+@Serializable(with = McpAuthRequiredReasonSerializer::class)
+@JvmInline
+value class McpAuthRequiredReason(val rawValue: String) {
+    companion object {
+        /**
+         * No token has been provided yet (HTTP 401, no prior token).
+         */
+        val REQUIRED: McpAuthRequiredReason = McpAuthRequiredReason("required")
+        /**
+         * A previously valid token expired or was revoked (HTTP 401).
+         */
+        val EXPIRED: McpAuthRequiredReason = McpAuthRequiredReason("expired")
+        /**
+         * Step-up auth: a token is present but its scopes are insufficient for
+         * the requested operation (HTTP 403 with
+         * `WWW-Authenticate: Bearer error="insufficient_scope"`).
+         *
+         * Unlike {@link Required} and {@link Expired} — which typically surface
+         * before any tool work is in flight — `InsufficientScope` is almost
+         * always triggered by an MCP request issued mid-turn (a `tools/call`,
+         * `resources/read`, etc.). The host SHOULD pair the
+         * {@link McpServerAuthRequiredState} transition with
+         * {@link SessionStatus.InputNeeded} on
+         * {@link SessionSummary.status | the session} so the activity becomes
+         * visible at the session-summary level, and clients SHOULD watch for
+         * this kind on any
+         * {@link McpServerCustomization | MCP server} backing a running tool
+         * call so they can present an explicit "grant more access" affordance
+         * tied to the blocked tool call.
+         */
+        val INSUFFICIENT_SCOPE: McpAuthRequiredReason = McpAuthRequiredReason("insufficientScope")
+    }
+}
+
+internal object McpAuthRequiredReasonSerializer : KSerializer<McpAuthRequiredReason> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("McpAuthRequiredReason", PrimitiveKind.STRING)
+    override fun serialize(encoder: Encoder, value: McpAuthRequiredReason) {
+        encoder.encodeString(value.rawValue)
+    }
+    override fun deserialize(decoder: Decoder): McpAuthRequiredReason =
+        McpAuthRequiredReason(decoder.decodeString())
+}
+
+/**
+ * Computation lifecycle of a {@link ChangesetState}.
+ */
+@Serializable(with = ChangesetStatusSerializer::class)
+@JvmInline
+value class ChangesetStatus(val rawValue: String) {
+    companion object {
+        /**
+         * The server is computing this changeset for the first time.
+         */
+        val COMPUTING: ChangesetStatus = ChangesetStatus("computing")
+        /**
+         * The server is recomputing this changeset. {@link ChangesetState.files}
+         * remains the previous completed result while recomputation is in progress,
+         * including when that result is an empty array.
+         */
+        val RECOMPUTING: ChangesetStatus = ChangesetStatus("recomputing")
+        /**
+         * The changeset has been fully computed and is up-to-date.
+         */
+        val READY: ChangesetStatus = ChangesetStatus("ready")
+        /**
+         * Computation failed. The cause is described by
+         * {@link ChangesetState.error}.
+         */
+        val ERROR: ChangesetStatus = ChangesetStatus("error")
+    }
+}
+
+internal object ChangesetStatusSerializer : KSerializer<ChangesetStatus> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("ChangesetStatus", PrimitiveKind.STRING)
+    override fun serialize(encoder: Encoder, value: ChangesetStatus) {
+        encoder.encodeString(value.rawValue)
+    }
+    override fun deserialize(decoder: Decoder): ChangesetStatus =
+        ChangesetStatus(decoder.decodeString())
+}
+
+/**
+ * Execution lifecycle of a {@link ChangesetOperation}.
+ *
+ * An operation is invoked imperatively via `invokeChangesetOperation`, but
+ * its progress and outcome are reflected back into changeset state so that
+ * every subscriber observes a consistent view (e.g. a spinner on a "Create
+ * Pull Request" button, or an inline error after a failed "revert").
+ */
+@Serializable(with = ChangesetOperationStatusSerializer::class)
+@JvmInline
+value class ChangesetOperationStatus(val rawValue: String) {
+    companion object {
+        /**
+         * The operation is ready to be invoked. This is the default when
+         * {@link ChangesetOperation.status} is omitted.
+         */
+        val IDLE: ChangesetOperationStatus = ChangesetOperationStatus("idle")
+        /**
+         * An invocation of this operation is currently in flight.
+         */
+        val RUNNING: ChangesetOperationStatus = ChangesetOperationStatus("running")
+        /**
+         * The most recent invocation failed. The cause is described by
+         * {@link ChangesetOperation.error}.
+         */
+        val ERROR: ChangesetOperationStatus = ChangesetOperationStatus("error")
+        /**
+         * The operation is currently disabled and cannot be invoked.
+         */
+        val DISABLED: ChangesetOperationStatus = ChangesetOperationStatus("disabled")
+    }
+}
+
+internal object ChangesetOperationStatusSerializer : KSerializer<ChangesetOperationStatus> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("ChangesetOperationStatus", PrimitiveKind.STRING)
+    override fun serialize(encoder: Encoder, value: ChangesetOperationStatus) {
+        encoder.encodeString(value.rawValue)
+    }
+    override fun deserialize(decoder: Decoder): ChangesetOperationStatus =
+        ChangesetOperationStatus(decoder.decodeString())
+}
+
+/**
+ * Where a {@link ChangesetOperation} can be invoked.
+ */
+@Serializable(with = ChangesetOperationScopeSerializer::class)
+@JvmInline
+value class ChangesetOperationScope(val rawValue: String) {
+    companion object {
+        /**
+         * Applies to the whole changeset.
+         */
+        val CHANGESET: ChangesetOperationScope = ChangesetOperationScope("changeset")
+        /**
+         * Applies to a single file within the changeset.
+         */
+        val RESOURCE: ChangesetOperationScope = ChangesetOperationScope("resource")
+        /**
+         * Applies to a line range within a single file.
+         */
+        val RANGE: ChangesetOperationScope = ChangesetOperationScope("range")
+    }
+}
+
+internal object ChangesetOperationScopeSerializer : KSerializer<ChangesetOperationScope> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("ChangesetOperationScope", PrimitiveKind.STRING)
+    override fun serialize(encoder: Encoder, value: ChangesetOperationScope) {
+        encoder.encodeString(value.rawValue)
+    }
+    override fun deserialize(decoder: Decoder): ChangesetOperationScope =
+        ChangesetOperationScope(decoder.decodeString())
+}
+
+/**
+ * Discriminant for {@link ResourceChange.type}.
+ */
+@Serializable
+enum class ResourceChangeType {
+    @SerialName("added")
+    ADDED,
+    @SerialName("updated")
+    UPDATED,
+    @SerialName("deleted")
+    DELETED
+}
+
+/**
+ * Discriminant describing the durable provenance of a session.
+ */
+@Serializable(with = SessionOriginKindSerializer::class)
+@JvmInline
+value class SessionOriginKind(val rawValue: String) {
+    companion object {
+        /**
+         * The session was created as part of an automation run.
+         */
+        val AUTOMATION: SessionOriginKind = SessionOriginKind("automation")
+    }
+}
+
+internal object SessionOriginKindSerializer : KSerializer<SessionOriginKind> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("SessionOriginKind", PrimitiveKind.STRING)
+    override fun serialize(encoder: Encoder, value: SessionOriginKind) {
+        encoder.encodeString(value.rawValue)
+    }
+    override fun deserialize(decoder: Decoder): SessionOriginKind =
+        SessionOriginKind(decoder.decodeString())
+}
+
+/**
+ * Operations the host currently permits for an automation.
+ *
+ * The list on {@link AutomationEntry.operations} is authoritative and may
+ * change over time. Clients MUST NOT infer permission from capabilities alone:
+ * capabilities describe what the host implementation can support, while
+ * operations describe what is allowed for this particular automation now.
+ */
+@Serializable(with = AutomationOperationSerializer::class)
+@JvmInline
+value class AutomationOperation(val rawValue: String) {
+    companion object {
+        /**
+         * Replace editable fields using {@link AutomationUpdateRequestedAction | `automation/updateRequested`}.
+         */
+        val UPDATE: AutomationOperation = AutomationOperation("update")
+        /**
+         * Permanently remove the automation using {@link AutomationRemovedAction | `automation/removed`}.
+         */
+        val REMOVE: AutomationOperation = AutomationOperation("remove")
+        /**
+         * Start a manual run using {@link RunAutomationParams | runAutomation}.
+         */
+        val RUN: AutomationOperation = AutomationOperation("run")
+    }
+}
+
+internal object AutomationOperationSerializer : KSerializer<AutomationOperation> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("AutomationOperation", PrimitiveKind.STRING)
+    override fun serialize(encoder: Encoder, value: AutomationOperation) {
+        encoder.encodeString(value.rawValue)
+    }
+    override fun deserialize(decoder: Decoder): AutomationOperation =
+        AutomationOperation(decoder.decodeString())
+}
+
+/**
+ * How a host handles schedule occurrences missed while automatic execution was
+ * unavailable.
+ */
+@Serializable(with = AutomationMisfirePolicySerializer::class)
+@JvmInline
+value class AutomationMisfirePolicy(val rawValue: String) {
+    companion object {
+        /**
+         * Discard missed occurrences and wait for the next future occurrence.
+         */
+        val SKIP: AutomationMisfirePolicy = AutomationMisfirePolicy("skip")
+        /**
+         * Start at most one catch-up run when execution becomes available, regardless
+         * of how many occurrences were missed.
+         */
+        val RUN_ONCE: AutomationMisfirePolicy = AutomationMisfirePolicy("runOnce")
+    }
+}
+
+internal object AutomationMisfirePolicySerializer : KSerializer<AutomationMisfirePolicy> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("AutomationMisfirePolicy", PrimitiveKind.STRING)
+    override fun serialize(encoder: Encoder, value: AutomationMisfirePolicy) {
+        encoder.encodeString(value.rawValue)
+    }
+    override fun deserialize(decoder: Decoder): AutomationMisfirePolicy =
+        AutomationMisfirePolicy(decoder.decodeString())
+}
+
+/**
+ * Discriminant for automatic trigger definitions.
+ */
+@Serializable
+enum class AutomationTriggerKind {
+    /**
+     * A portable recurring {@link AutomationSchedule}.
+     */
+    @SerialName("schedule")
+    SCHEDULE,
+    /**
+     * A host-defined external event discovered from trigger definitions.
+     */
+    @SerialName("event")
+    EVENT
+}
+
+/**
+ * Discriminant for an {@link AutomationDisableCondition}.
+ */
+@Serializable
+enum class AutomationDisableConditionKind {
+    /**
+     * Stop scheduling after a fixed number of scheduled runs.
+     */
+    @SerialName("afterRuns")
+    AFTER_RUNS,
+    /**
+     * Stop scheduling once a wall-clock date passes.
+     */
+    @SerialName("afterDate")
+    AFTER_DATE
+}
+
+/**
+ * Lifecycle status of one automation run.
+ *
+ * `completed`, `failed`, and `cancelled` are terminal. A run remains `running`
+ * while any linked session awaits input or client-side work; linked session
+ * state is authoritative for those interactions.
+ */
+@Serializable
+enum class AutomationRunStatus {
+    /**
+     * The durable run record exists but execution has not started.
+     */
+    @SerialName("pending")
+    PENDING,
+    /**
+     * One or more linked sessions are executing or awaiting interaction.
+     */
+    @SerialName("running")
+    RUNNING,
+    /**
+     * Execution finished successfully.
+     */
+    @SerialName("completed")
+    COMPLETED,
+    /**
+     * Execution ended with an error.
+     */
+    @SerialName("failed")
+    FAILED,
+    /**
+     * Execution ended because cancellation was accepted.
+     */
+    @SerialName("cancelled")
+    CANCELLED
+}
+
+/**
+ * Discriminant describing what created an automation run.
+ */
+@Serializable
+enum class AutomationRunOriginKind {
+    /**
+     * A client explicitly invoked {@link RunAutomationParams | runAutomation}.
+     */
+    @SerialName("manual")
+    MANUAL,
+    /**
+     * An automatic schedule or event trigger fired.
+     */
+    @SerialName("trigger")
+    TRIGGER
+}
+
+// ─── State Types ────────────────────────────────────────────────────────────
+
+@Serializable
+data class Icon(
+    /**
+     * A standard URI pointing to an icon resource. May be an HTTP/HTTPS URL or a
+     * `data:` URI with Base64-encoded image data.
+     *
+     * Consumers SHOULD take steps to ensure URLs serving icons are from the
+     * same domain as the client/server or a trusted domain.
+     *
+     * Consumers SHOULD take appropriate precautions when consuming SVGs as they can contain
+     * executable JavaScript.
+     */
+    val src: String,
+    /**
+     * Optional MIME type override if the source MIME type is missing or generic.
+     * For example: `"image/png"`, `"image/jpeg"`, or `"image/svg+xml"`.
+     */
+    val contentType: String? = null,
+    /**
+     * Optional array of strings that specify sizes at which the icon can be used.
+     * Each string should be in WxH format (e.g., `"48x48"`, `"96x96"`) or `"any"` for scalable formats like SVG.
+     *
+     * If not provided, the client should assume that the icon can be used at any size.
+     */
+    val sizes: List<String>? = null,
+    /**
+     * Optional specifier for the theme this icon is designed for. `"light"` indicates
+     * the icon is designed to be used with a light background, and `"dark"` indicates
+     * the icon is designed to be used with a dark background.
+     *
+     * If not provided, the client should assume the icon can be used with any theme.
+     */
+    val theme: String? = null
+)
+
+@Serializable
+data class ProtectedResourceMetadata(
+    /**
+     * REQUIRED. The protected resource's resource identifier, a URL using the
+     * `https` scheme with no fragment component (e.g. `"https://api.github.com"`).
+     */
+    val resource: String,
+    /**
+     * OPTIONAL. Human-readable name of the protected resource.
+     */
+    @SerialName("resource_name")
+    val resourceName: String? = null,
+    /**
+     * OPTIONAL. JSON array of OAuth authorization server identifier URLs.
+     */
+    @SerialName("authorization_servers")
+    val authorizationServers: List<String>? = null,
+    /**
+     * OPTIONAL. URL of the protected resource's JWK Set document.
+     */
+    @SerialName("jwks_uri")
+    val jwksUri: String? = null,
+    /**
+     * RECOMMENDED. JSON array of OAuth 2.0 scope values used in authorization requests.
+     */
+    @SerialName("scopes_supported")
+    val scopesSupported: List<String>? = null,
+    /**
+     * OPTIONAL. JSON array of Bearer Token presentation methods supported.
+     */
+    @SerialName("bearer_methods_supported")
+    val bearerMethodsSupported: List<String>? = null,
+    /**
+     * OPTIONAL. JSON array of JWS signing algorithms supported.
+     */
+    @SerialName("resource_signing_alg_values_supported")
+    val resourceSigningAlgValuesSupported: List<String>? = null,
+    /**
+     * OPTIONAL. URL of human-readable documentation for the resource.
+     */
+    @SerialName("resource_documentation")
+    val resourceDocumentation: String? = null,
+    /**
+     * OPTIONAL. URL of the resource's data-usage policy.
+     */
+    @SerialName("resource_policy_uri")
+    val resourcePolicyUri: String? = null,
+    /**
+     * OPTIONAL. URL of the resource's terms of service.
+     */
+    @SerialName("resource_tos_uri")
+    val resourceTosUri: String? = null,
+    /**
+     * AHP extension. Whether authentication is required for this resource.
+     *
+     * - `true` (default) — the agent cannot be used without a valid token.
+     * The server SHOULD return `AuthRequired` (`-32007`) if the client
+     * attempts to use the agent without authenticating.
+     * - `false` — the agent works without authentication but MAY offer
+     * enhanced capabilities when a token is provided.
+     *
+     * Clients SHOULD treat an absent field the same as `true`.
+     */
+    val required: Boolean? = null
+)
+
+@Serializable
+data class RootState(
+    /**
+     * Available agent backends and their models
+     */
+    val agents: List<AgentInfo>,
+    /**
+     * Number of active (non-disposed) sessions on the server
+     */
+    val activeSessions: Long? = null,
+    /**
+     * Known terminals on the server. Subscribe to individual terminal URIs for full state.
+     */
+    val terminals: List<TerminalInfo>? = null,
+    /**
+     * Agent host configuration schema and current values
+     */
+    val config: RootConfigState? = null,
+    /**
+     * Additional implementation-defined metadata about the agent host itself.
+     *
+     * Clients MAY look for well-known keys here to provide enhanced UI.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null
+)
+
+@Serializable
+data class RootConfigState(
+    /**
+     * JSON Schema describing available configuration properties
+     */
+    val schema: ConfigSchema,
+    /**
+     * Current configuration values
+     */
+    val values: Map<String, JsonElement>
+)
+
+@Serializable
+data class AgentInfo(
+    /**
+     * Agent provider ID (e.g. `'copilot'`)
+     */
+    val provider: String,
+    /**
+     * Human-readable name
+     */
+    val displayName: String,
+    /**
+     * Description string
+     */
+    val description: String,
+    /**
+     * Available models for this agent
+     */
+    val models: List<SessionModelInfo>,
+    /**
+     * Protected resources this agent requires authentication for.
+     *
+     * Each entry describes an OAuth 2.0 protected resource using
+     * [RFC 9728](https://datatracker.ietf.org/doc/html/rfc9728) semantics.
+     * Clients should obtain tokens from the declared `authorization_servers`
+     * and push them via the `authenticate` command before creating sessions
+     * with this agent.
+     */
+    val protectedResources: List<ProtectedResourceMetadata>? = null,
+    /**
+     * Customizations associated with this agent.
+     *
+     * Either container customizations —
+     * {@link PluginCustomization | `PluginCustomization`} entries the agent
+     * bundles, plus {@link DirectoryCustomization | `DirectoryCustomization`}
+     * entries it watches in any workspace it's used with — or top-level
+     * {@link McpServerCustomization | `McpServerCustomization`} entries
+     * the agent host declares directly. When a session is created with
+     * this agent, these entries are augmented (e.g. directory URIs are
+     * resolved against the workspace, children are parsed) and propagated
+     * into the session's `customizations` list.
+     */
+    val customizations: List<Customization>? = null,
+    /**
+     * Static capabilities the agent advertises about itself. Clients use these
+     * to gate features (multi-chat, fork) instead of switching on the provider
+     * id.
+     */
+    val capabilities: AgentCapabilities? = null
+)
+
+@Serializable
+data class AgentCapabilities(
+    /**
+     * The agent can host more than one concurrent chat per session. When absent,
+     * clients MUST NOT call `createChat` to open chats beyond the default one the
+     * session starts with. An empty object `{}` advertises multi-chat without
+     * source-based creation; set {@link MultipleChatsCapability.fork} or
+     * {@link MultipleChatsCapability.sideChat} to allow the corresponding
+     * creation mode.
+     */
+    val multipleChats: MultipleChatsCapability? = null,
+    /**
+     * The session's agent can be granted tool access to more than one working
+     * directory. The directories are treated as equal peers except where the
+     * agent advertises a protected primary-slot option (some backends pin or
+     * replace their first directory as a process root).
+     *
+     * When absent, clients MUST NOT mutate a session's or chat's working-directory
+     * set and MUST NOT set more than one entry in
+     * {@link CreateSessionParams.workingDirectories}.
+     */
+    val multipleWorkingDirectories: MultipleWorkingDirectoriesCapability? = null
+)
+
+@Serializable
+data class MultipleChatsCapability(
+    /**
+     * The agent can fork a chat from a specific turn. When absent or `false`,
+     * clients MUST NOT pass a {@link ChatSource} with `kind: "fork"` to
+     * `createChat`.
+     * Forking always implies multi-chat support.
+     */
+    val fork: Boolean? = null,
+    /**
+     * The agent can create a side chat from a specific turn. When absent or
+     * `false`, clients MUST NOT pass a {@link ChatSource} with
+     * `kind: "sideChat"` to `createChat`.
+     *
+     * A side chat receives the source turn as context without copying the source
+     * transcript into its own visible history. The source is identified by a
+     * stable `turnId`, which the host resolves against the source chat's current
+     * `activeTurn` or retained history. When it names the current active turn,
+     * the host snapshots the available partial assistant response at creation
+     * time. Side-chat support always implies multi-chat support.
+     */
+    val sideChat: Boolean? = null
+)
+
+@Serializable
+data class MultipleWorkingDirectoriesCapability(
+    /**
+     * The agent's **first** working directory (index `0` of
+     * {@link CreateSessionParams.workingDirectories}) is an immutable primary:
+     * its URI is fixed for the lifetime of the session — clients MUST NOT remove,
+     * reorder, or replace it. Additional directories after it remain equal peers
+     * that can be added and removed freely. When
+     * {@link primaryReplacement} is also `true`, clients that recognize that
+     * capability MUST instead treat the primary as protected and replaceable.
+     *
+     * Advertised by backends whose agent process is rooted at a single directory
+     * that cannot change once the session has started. A backend MAY also
+     * advertise this with {@link primaryReplacement} for compatibility with
+     * clients that do not recognize the newer capability: those clients retain
+     * the safe immutable-primary behavior, while newer clients allow only the
+     * targeted replacement action. When both are absent or `false`, all
+     * directories are equal peers.
+     */
+    val immutablePrimary: Boolean? = null,
+    /**
+     * The agent's first working-directory slot (index `0`) is a protected primary
+     * whose URI can be atomically replaced with
+     * `session/workingDirectoryReplaced`. Clients MUST NOT remove that slot with
+     * generic membership actions; additional directories remain equal peers.
+     *
+     * Backends use this when their cwd-bearing directory can move during a
+     * session. It MAY be `true` together with {@link immutablePrimary}; this
+     * preserves the immutable-primary guarantee for older clients that do not
+     * recognize this capability. Clients that recognize this capability MUST
+     * allow a targeted replacement even when `immutablePrimary` is also `true`.
+     */
+    val primaryReplacement: Boolean? = null
+)
+
+@Serializable
+data class SessionModelInfo(
+    /**
+     * Model identifier
+     */
+    val id: String,
+    /**
+     * Provider this model belongs to
+     */
+    val provider: String,
+    /**
+     * Human-readable model name
+     */
+    val name: String,
+    /**
+     * Maximum context window size
+     */
+    val maxContextWindow: Long? = null,
+    /**
+     * Maximum number of output tokens the model can generate
+     */
+    val maxOutputTokens: Long? = null,
+    /**
+     * Maximum number of prompt (input) tokens the model accepts
+     */
+    val maxPromptTokens: Long? = null,
+    /**
+     * Whether the model supports vision
+     */
+    val supportsVision: Boolean? = null,
+    /**
+     * Policy configuration state
+     */
+    val policyState: PolicyState? = null,
+    /**
+     * Configuration schema describing model-specific options (e.g. thinking
+     * level). Clients present this as a form and pass the resolved values in
+     * {@link ModelSelection.config} when creating or changing sessions.
+     */
+    val configSchema: ConfigSchema? = null,
+    /**
+     * Additional provider-specific metadata for this model.
+     *
+     * Clients MAY look for well-known keys here to provide enhanced UI.
+     * For example, a `pricing` key may carry model pricing metadata.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null
+)
+
+@Serializable
+data class ModelSelection(
+    /**
+     * Model identifier
+     */
+    val id: String,
+    /**
+     * Model-specific configuration values. Values are JSON primitives: most
+     * pickers produce strings, but some (e.g. a numeric context-size picker)
+     * produce numbers or booleans, which are carried through as-is.
+     */
+    val config: Map<String, JsonElement>? = null
+)
+
+@Serializable
+data class AgentSelection(
+    /**
+     * Stable agent URI (matches an {@link AgentCustomization.uri}).
+     */
+    val uri: String
+)
+
+@Serializable
+data class ConfigPropertySchema(
+    /**
+     * JSON Schema: property type
+     */
+    val type: String,
+    /**
+     * JSON Schema: human-readable label for the property
+     */
+    val title: String,
+    /**
+     * JSON Schema: description / tooltip
+     */
+    val description: String? = null,
+    /**
+     * JSON Schema: default value
+     */
+    val default: JsonElement? = null,
+    /**
+     * JSON Schema: allowed values. May be primitives of any JSON type.
+     */
+    val enum: List<JsonElement>? = null,
+    /**
+     * Display extension: human-readable label per enum value (parallel array)
+     */
+    val enumLabels: List<String>? = null,
+    /**
+     * Display extension: description per enum value (parallel array)
+     */
+    val enumDescriptions: List<String>? = null,
+    /**
+     * JSON Schema: when `true`, the property is displayed but cannot be modified by the user
+     */
+    val readOnly: Boolean? = null,
+    /**
+     * JSON Schema: schema for array items (used when `type` is `'array'`)
+     */
+    val items: ConfigPropertySchema? = null,
+    /**
+     * JSON Schema: minimum number of array items (used when `type` is `'array'`)
+     */
+    val minItems: Long? = null,
+    /**
+     * JSON Schema: maximum number of array items (used when `type` is `'array'`)
+     */
+    val maxItems: Long? = null,
+    /**
+     * JSON Schema: property descriptors for object properties (used when `type` is `'object'`)
+     */
+    val properties: Map<String, ConfigPropertySchema>? = null,
+    /**
+     * JSON Schema: list of required property ids (used when `type` is `'object'`)
+     */
+    val required: List<String>? = null,
+    /**
+     * JSON Schema: schema for additional properties not listed in `properties` (used when `type` is `'object'`).
+     */
+    val additionalProperties: ConfigPropertySchema? = null
+)
+
+@Serializable
+data class ConfigSchema(
+    /**
+     * JSON Schema: always `'object'`
+     */
+    val type: String,
+    /**
+     * JSON Schema: property descriptors keyed by property id
+     */
+    val properties: Map<String, ConfigPropertySchema>,
+    /**
+     * JSON Schema: list of required property ids
+     */
+    val required: List<String>? = null
+)
+
+@Serializable
+data class PendingMessage(
+    /**
+     * Unique identifier for this pending message
+     */
+    val id: String,
+    /**
+     * The message that will start the next turn
+     */
+    val message: Message
+)
+
+@Serializable
+data class ChatState(
+    /**
+     * Chat URI
+     */
+    val resource: String,
+    /**
+     * Chat title
+     */
+    val title: String,
+    /**
+     * Current chat status (reuses SessionStatus shape)
+     */
+    val status: SessionStatus,
+    /**
+     * Human-readable description of what the chat is currently doing
+     */
+    val activity: String? = null,
+    /**
+     * Last modification timestamp (ISO 8601, e.g. `"2025-03-10T18:42:03.123Z"`)
+     */
+    val modifiedAt: String,
+    /**
+     * Aggregate summary of file changes associated with this chat. Servers may
+     * populate this to give clients a quick at-a-glance view of the chat's
+     * footprint without requiring the client to subscribe to a changeset.
+     */
+    val changes: ChangesSummary? = null,
+    /**
+     * How this chat came into existence
+     */
+    val origin: ChatOrigin? = null,
+    /**
+     * Whether this chat is eligible to be the source of `moveChat`, including
+     * same-session ordering.
+     *
+     * The host is authoritative. Absence means `false`. A `true` value does not
+     * guarantee that a particular request will succeed. A chat referenced by its
+     * owning session's `defaultChat` MUST NOT be movable.
+     */
+    val movable: Boolean? = null,
+    /**
+     * How the user can interact with this chat. See {@link ChatInteractivity}.
+     *
+     * Supports agent-team patterns where worker chats are read-only or hidden.
+     * Absence defaults to {@link ChatInteractivity.Full} for backward
+     * compatibility.
+     */
+    val interactivity: ChatInteractivity? = null,
+    /**
+     * The subset of the session's
+     * {@link SessionState.workingDirectories | `workingDirectories`} that this
+     * chat's agent has tool access to. Every entry MUST be present in the owning
+     * session's `workingDirectories`; servers MUST reject a
+     * `chat/workingDirectorySet` action that violates this constraint.
+     *
+     * When absent, the chat inherits the full session set. When present but empty
+     * (not recommended), the chat has no working-directory tool access at all.
+     *
+     * Dispatch `chat/workingDirectorySet` / `chat/workingDirectoryRemoved` to
+     * update the subset on a running chat.
+     */
+    val workingDirectories: List<String>? = null,
+    /**
+     * Catalogue of changesets the server can produce for this chat. Each entry
+     * advertises a subscribable view of file changes scoped to the chat's
+     * effective working directories and the URI template the client expands
+     * before subscribing. See {@link Changeset} for the full shape and
+     * {@link /guide/changesets | Changesets} for an overview of the model.
+     *
+     * This catalogue is intentionally absent from {@link ChatSummary}; clients
+     * obtain it by subscribing to the chat channel.
+     */
+    val changesets: List<Changeset>? = null,
+    /**
+     * Work running in the background for this chat, such as shells and
+     * subagents. Only active work is listed: hosts remove an entry once the work
+     * ends. An entry may have been started by an earlier turn rather than the
+     * {@link ChatState.activeTurn | activeTurn}.
+     *
+     * Like {@link ChatState.changesets | changesets}, this is intentionally
+     * absent from {@link ChatSummary}; clients obtain it by subscribing to the
+     * chat channel.
+     */
+    val backgroundWork: List<BackgroundWork>? = null,
+    /**
+     * Live canvases currently exposed by this chat.
+     *
+     * Entries intentionally contain only subscribable channel references.
+     * Clients subscribe to each resource for the experimental presentation
+     * state, including its current live source URL.
+     */
+    val canvases: List<CanvasReference>? = null,
+    /**
+     * Completed turns
+     */
+    val turns: List<Turn>,
+    /**
+     * Cursor for loading older completed turns into this chat state.
+     *
+     * Presence means `turns` is a tail window and more historical turns are
+     * available. Pass this opaque cursor to `fetchTurns`; the host MUST insert
+     * the loaded turns into state and update or clear this cursor before
+     * responding. Absence means the state contains all retained turns.
+     */
+    val turnsNextCursor: String? = null,
+    /**
+     * Currently in-progress turn
+     */
+    val activeTurn: ActiveTurn? = null,
+    /**
+     * Message to inject into the current turn at a convenient point
+     */
+    val steeringMessage: PendingMessage? = null,
+    /**
+     * Messages to send automatically as new turns after the current turn finishes
+     */
+    val queuedMessages: List<PendingMessage>? = null,
+    /**
+     * The user's in-progress draft input for this chat — the message they are
+     * composing but have not sent yet, including its
+     * {@link Message.model | model} / {@link Message.agent | agent} selection
+     * and attachments.
+     *
+     * Clients MAY periodically sync their local input state into this field so
+     * a draft survives reloads and is visible to other clients viewing the same
+     * chat. Eager syncing is **not** required — clients SHOULD debounce and MAY
+     * sync only at convenient points. When presenting input UI for an existing
+     * chat, clients SHOULD use any `draft` to initialize their input state.
+     * Cleared (set to `undefined`) once the message is sent.
+     */
+    val draft: Message? = null,
+    /**
+     * Additional provider-specific metadata for this chat.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null
+)
+
+@Serializable
+data class ChatSummary(
+    /**
+     * Chat URI
+     */
+    val resource: String,
+    /**
+     * Chat title
+     */
+    val title: String,
+    /**
+     * Current chat status (reuses SessionStatus shape)
+     */
+    val status: SessionStatus,
+    /**
+     * Human-readable description of what the chat is currently doing
+     */
+    val activity: String? = null,
+    /**
+     * Last modification timestamp (ISO 8601, e.g. `"2025-03-10T18:42:03.123Z"`)
+     */
+    val modifiedAt: String,
+    /**
+     * Aggregate summary of file changes associated with this chat. Servers may
+     * populate this to give clients a quick at-a-glance view of the chat's
+     * footprint without requiring the client to subscribe to a changeset.
+     */
+    val changes: ChangesSummary? = null,
+    /**
+     * How this chat came into existence
+     */
+    val origin: ChatOrigin? = null,
+    /**
+     * Whether this chat is structurally eligible to be the source of
+     * `moveChat`. Absence means `false`.
+     *
+     * See {@link ChatState.movable} for the full semantics.
+     */
+    val movable: Boolean? = null,
+    /**
+     * How the user can interact with this chat. See {@link ChatInteractivity}.
+     *
+     * Supports agent-team patterns where worker chats are read-only or hidden.
+     * Absence defaults to {@link ChatInteractivity.Full} for backward
+     * compatibility.
+     */
+    val interactivity: ChatInteractivity? = null,
+    /**
+     * The subset of the session's working directories this chat uses.
+     * See {@link ChatState.workingDirectories} for the full semantics.
+     */
+    val workingDirectories: List<String>? = null
+)
+
+@Serializable
+data class SideChatSelection(
+    /**
+     * Exact selected-text snapshot captured at `createChat` acceptance.
+     *
+     * MUST be non-empty.
+     */
+    val text: String,
+    /**
+     * Optional provenance for the response part that contained {@link text} when
+     * the host took the snapshot.
+     *
+     * Advisory only: this is not a live range or offset and MUST NOT be used to
+     * recompute `text`.
+     */
+    val responsePartId: String? = null
+)
+
+@Serializable
+data class SessionState(
+    /**
+     * Agent provider ID
+     */
+    val provider: String,
+    /**
+     * Session title
+     */
+    val title: String,
+    /**
+     * Current session status
+     */
+    val status: SessionStatus,
+    /**
+     * Human-readable description of what the session is currently doing
+     */
+    val activity: String? = null,
+    /**
+     * Durable {@link AutomationSessionOrigin}, when an automation run created this session.
+     */
+    val origin: SessionOrigin? = null,
+    /**
+     * Server-owned project for this session
+     */
+    val project: ProjectInfo? = null,
+    /**
+     * The working directories the session's agent has tool access to, as
+     * maintained by working-directory actions. Directories are equal peers except
+     * when the agent advertises
+     * {@link MultipleWorkingDirectoriesCapability.immutablePrimary} without
+     * {@link MultipleWorkingDirectoriesCapability.primaryReplacement} (the first
+     * entry is then a fixed process root), or advertises `primaryReplacement`
+     * (the first entry is a protected, replaceable primary slot). Individual chats
+     * MAY restrict to a subset via
+     * {@link ChatSummary.workingDirectories | their own `workingDirectories`}; a
+     * chat that sets none operates against this full set.
+     */
+    val workingDirectories: List<String>? = null,
+    /**
+     * Lightweight summary of this session's inline annotations channel
+     * (`ahp-session:/<uuid>/annotations`). Surfaced so badge UI can render
+     * annotation / entry counts without subscribing. Absent when the session
+     * does not expose an annotations channel.
+     */
+    val annotations: AnnotationsSummary? = null,
+    /**
+     * Session initialization state
+     */
+    val lifecycle: SessionLifecycle,
+    /**
+     * Error details if creation failed
+     */
+    val creationError: ErrorInfo? = null,
+    /**
+     * Tools provided by the server (agent host) for this session
+     */
+    val serverTools: List<ToolDefinition>? = null,
+    /**
+     * The clients currently providing tools and interactive capabilities to this
+     * session. If multiple tools or customizations are provided by the same
+     * active client, an agent host MAY deduplicate them when exposed to a model,
+     * with a preference given to the client that started the turn.
+     *
+     * Membership is host-managed: clients add (or refresh) themselves with
+     * `session/activeClientSet`, and the host removes them with
+     * `session/activeClientRemoved` when they unsubscribe, disconnect without
+     * reconnecting in time, or reconnect without resubscribing to the session.
+     */
+    val activeClients: List<SessionActiveClient>,
+    /**
+     * Catalog of chats in this session.
+     *
+     * Order is host-authoritative and durable. Catalog order is independent of
+     * `defaultChat`.
+     */
+    val chats: List<ChatSummary>,
+    /**
+     * The chat that receives input when the user addresses the session without
+     * selecting a specific chat. This routing designation does not determine the
+     * chat's catalog position. Hosts MAY change it over the session's lifetime.
+     */
+    val defaultChat: String? = null,
+    /**
+     * Session configuration schema and current values
+     */
+    val config: SessionConfigState? = null,
+    /**
+     * Top-level customizations active in this session.
+     *
+     * Always one of the {@link Customization} variants:
+     *
+     * - Container customizations ({@link PluginCustomization},
+     * {@link DirectoryCustomization}) whose children — agents, skills,
+     * prompts, rules, hooks, MCP servers — live in each container's
+     * {@link ContainerCustomizationBase.children | `children`} array.
+     * - Top-level {@link McpServerCustomization} entries the host
+     * surfaces directly (for example a globally-configured MCP server
+     * that isn't bundled in a plugin or directory). MCP servers may
+     * also appear as children of a container.
+     *
+     * Client-published plugins arrive via
+     * {@link SessionActiveClient.customizations | `activeClients[].customizations`}
+     * and the host propagates them into this list (typically with the
+     * container's `clientId` set and `children` populated). Clients
+     * publish in container shape only; bare MCP servers at the top level
+     * are server-originated.
+     */
+    val customizations: List<Customization>? = null,
+    /**
+     * Catalogue of changesets the server can produce for this session. Each
+     * entry advertises a subscribable view of file changes (uncommitted,
+     * session-wide, per-turn, etc.) and the URI template the client expands
+     * before subscribing. See {@link Changeset} for the full shape and
+     * {@link /guide/changesets | Changesets} for an overview of the model.
+     */
+    val changesets: List<Changeset>? = null,
+    /**
+     * Outstanding input the session is blocked on, aggregated across every chat
+     * so a client can discover and answer it from the session channel alone,
+     * without subscribing to individual chats.
+     *
+     * Each entry is self-sufficient: it carries the owning chat's URI plus every
+     * identifier the client needs to respond. A client answers by dispatching the
+     * ordinary `chat/​*` action to that chat's channel — see
+     * {@link SessionInputRequest} for the per-variant response path. A list
+     * holding any entry other than
+     * {@link SessionInputRequestKind.ToolClientExecution} implies
+     * {@link SessionStatus.InputNeeded} on {@link SessionSummary.status};
+     * client-execution entries are work delegated to a client rather than a
+     * prompt, so they leave the session's activity unchanged.
+     *
+     * Host-managed: the host upserts entries with `session/inputNeededSet` as
+     * chats raise requests and removes them with `session/inputNeededRemoved`
+     * once the underlying request resolves.
+     */
+    val inputNeeded: List<SessionInputRequest>? = null,
+    /**
+     * Additional provider-specific metadata for this session.
+     *
+     * Clients MAY look for well-known keys here to provide enhanced UI.
+     * For example, a `git` key may provide extra git metadata about the session's
+     * working directories.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null
+)
+
+@Serializable
+data class SessionActiveClient(
+    /**
+     * Client identifier (matches `clientId` from `initialize`)
+     */
+    val clientId: String,
+    /**
+     * Human-readable client name (e.g. `"VS Code"`)
+     */
+    val displayName: String? = null,
+    /**
+     * Tools this client provides to the session
+     */
+    val tools: List<ToolDefinition>,
+    /**
+     * Plugin customizations this client contributes to the session.
+     *
+     * Clients publish in [Open Plugins](https://open-plugins.com/) format
+     * — i.e. always container-shaped plugins. They MAY synthesize virtual
+     * plugins in memory and rely on the host to expand them into concrete
+     * children inside {@link SessionState.customizations}.
+     */
+    val customizations: List<ClientPluginCustomization>? = null
+)
+
+@Serializable
+data class BackgroundShellWork(
+    /**
+     * Identifier of this entry, unique within the owning chat across all kinds.
+     * The host derives it however it likes (for example from the kind plus the
+     * agent's own task id); consumers MUST treat it as opaque. It is the key for
+     * the `chat/backgroundWorkSet` / `chat/backgroundWorkRemoved` upsert
+     * convention.
+     */
+    val id: String,
+    /**
+     * Human-readable label, such as the command's purpose or the subagent's name.
+     */
+    val label: String,
+    /**
+     * ISO 8601 timestamp when the work started.
+     */
+    val startedAt: String,
+    /**
+     * Provider-specific metadata.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null,
+    val kind: BackgroundWorkKind,
+    /**
+     * Command line, displayed as plain text.
+     */
+    val command: String,
+    /**
+     * Terminal carrying this shell's output. Hosts SHOULD set this whenever they
+     * can show that output. Clients open it like
+     * {@link ToolResultTerminalContent.resource}; `isPty` on its
+     * {@link TerminalState} says whether the output is plain text.
+     */
+    val terminal: String? = null
+)
+
+@Serializable
+data class BackgroundSubagentWork(
+    /**
+     * Identifier of this entry, unique within the owning chat across all kinds.
+     * The host derives it however it likes (for example from the kind plus the
+     * agent's own task id); consumers MUST treat it as opaque. It is the key for
+     * the `chat/backgroundWorkSet` / `chat/backgroundWorkRemoved` upsert
+     * convention.
+     */
+    val id: String,
+    /**
+     * Human-readable label, such as the command's purpose or the subagent's name.
+     */
+    val label: String,
+    /**
+     * ISO 8601 timestamp when the work started.
+     */
+    val startedAt: String,
+    /**
+     * Provider-specific metadata.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null,
+    val kind: BackgroundWorkKind,
+    /**
+     * The subagent's chat: the same chat the spawning tool call's
+     * {@link ToolResultSubagentContent.resource} points to.
+     */
+    val chat: String
+)
+
+@Serializable
+data class CanvasReference(
+    /**
+     * Canvas channel URI. Subscribe to this resource for the full state.
+     */
+    val resource: String
+)
+
+@Serializable
+data class CanvasState(
+    /**
+     * Stable caller-supplied instance identifier.
+     */
+    val instanceId: String,
+    /**
+     * Owning extension/provider identifier.
+     */
+    val extensionId: String,
+    /**
+     * Owning extension display name, when available.
+     */
+    val extensionName: String? = null,
+    /**
+     * Provider-local canvas type identifier.
+     */
+    val canvasId: String,
+    /**
+     * Provider-supplied title, when available.
+     */
+    val title: String? = null,
+    /**
+     * Provider-supplied status text, when available.
+     */
+    val status: String? = null,
+    /**
+     * Current absolute HTTP(S) source URL; absent when the live source is unavailable.
+     * Hosts MUST clear this field when the provider becomes unavailable.
+     *
+     * Source URLs MUST be redacted from diagnostic logs and MUST NOT be reused
+     * from persisted state after a provider or host restart.
+     */
+    val url: String? = null
+)
+
+@Serializable
+data class SessionChatInputRequest(
+    /**
+     * Stable key for this entry, unique within the session's
+     * {@link SessionState.inputNeeded} list. The host derives it however it likes
+     * (for example from the chat URI plus the underlying request or tool-call
+     * id); consumers MUST treat it as opaque. It is the key for the
+     * `session/inputNeededSet` / `session/inputNeededRemoved` upsert convention.
+     */
+    val id: String,
+    /**
+     * The chat the underlying request lives in. This is the channel a client
+     * dispatches its response to — it does not need to have subscribed to that
+     * chat first.
+     */
+    val chat: String,
+    val kind: SessionInputRequestKind,
+    /**
+     * The mirrored chat input request.
+     */
+    val request: ChatInputRequest
+)
+
+@Serializable
+data class SessionToolConfirmationRequest(
+    /**
+     * Stable key for this entry, unique within the session's
+     * {@link SessionState.inputNeeded} list. The host derives it however it likes
+     * (for example from the chat URI plus the underlying request or tool-call
+     * id); consumers MUST treat it as opaque. It is the key for the
+     * `session/inputNeededSet` / `session/inputNeededRemoved` upsert convention.
+     */
+    val id: String,
+    /**
+     * The chat the underlying request lives in. This is the channel a client
+     * dispatches its response to — it does not need to have subscribed to that
+     * chat first.
+     */
+    val chat: String,
+    val kind: SessionInputRequestKind,
+    /**
+     * The turn the tool call belongs to.
+     */
+    val turnId: String,
+    /**
+     * The tool call awaiting confirmation.
+     */
+    val toolCall: ToolCallConfirmationState
+)
+
+@Serializable
+data class SessionToolClientExecutionRequest(
+    /**
+     * Stable key for this entry, unique within the session's
+     * {@link SessionState.inputNeeded} list. The host derives it however it likes
+     * (for example from the chat URI plus the underlying request or tool-call
+     * id); consumers MUST treat it as opaque. It is the key for the
+     * `session/inputNeededSet` / `session/inputNeededRemoved` upsert convention.
+     */
+    val id: String,
+    /**
+     * The chat the underlying request lives in. This is the channel a client
+     * dispatches its response to — it does not need to have subscribed to that
+     * chat first.
+     */
+    val chat: String,
+    val kind: SessionInputRequestKind,
+    /**
+     * The turn the tool call belongs to.
+     */
+    val turnId: String,
+    /**
+     * The `clientId` expected to execute the tool. Matches the `clientId` of the
+     * tool call's client {@link ToolCallContributor}.
+     */
+    val clientId: String,
+    /**
+     * The running tool call the session wants the owning client to execute. The
+     * host only ever populates this with a {@link ToolCallRunningState}.
+     */
+    val toolCall: ToolCallRunningState
+)
+
+@Serializable
+data class SessionToolAuthenticationRequest(
+    /**
+     * Stable key for this entry, unique within the session's
+     * {@link SessionState.inputNeeded} list. The host derives it however it likes
+     * (for example from the chat URI plus the underlying request or tool-call
+     * id); consumers MUST treat it as opaque. It is the key for the
+     * `session/inputNeededSet` / `session/inputNeededRemoved` upsert convention.
+     */
+    val id: String,
+    /**
+     * The chat the underlying request lives in. This is the channel a client
+     * dispatches its response to — it does not need to have subscribed to that
+     * chat first.
+     */
+    val chat: String,
+    val kind: SessionInputRequestKind,
+    /**
+     * The turn the tool call belongs to.
+     */
+    val turnId: String,
+    /**
+     * The tool call awaiting authentication.
+     */
+    val toolCall: ToolCallAuthRequiredState
+)
+
+@Serializable
+data class SessionSummary(
+    /**
+     * Agent provider ID
+     */
+    val provider: String,
+    /**
+     * Session title
+     */
+    val title: String,
+    /**
+     * Current session status
+     */
+    val status: SessionStatus,
+    /**
+     * Human-readable description of what the session is currently doing
+     */
+    val activity: String? = null,
+    /**
+     * Durable {@link AutomationSessionOrigin}, when an automation run created this session.
+     */
+    val origin: SessionOrigin? = null,
+    /**
+     * Server-owned project for this session
+     */
+    val project: ProjectInfo? = null,
+    /**
+     * The working directories the session's agent has tool access to, as
+     * maintained by working-directory actions. Directories are equal peers except
+     * when the agent advertises
+     * {@link MultipleWorkingDirectoriesCapability.immutablePrimary} without
+     * {@link MultipleWorkingDirectoriesCapability.primaryReplacement} (the first
+     * entry is then a fixed process root), or advertises `primaryReplacement`
+     * (the first entry is a protected, replaceable primary slot). Individual chats
+     * MAY restrict to a subset via
+     * {@link ChatSummary.workingDirectories | their own `workingDirectories`}; a
+     * chat that sets none operates against this full set.
+     */
+    val workingDirectories: List<String>? = null,
+    /**
+     * Lightweight summary of this session's inline annotations channel
+     * (`ahp-session:/<uuid>/annotations`). Surfaced so badge UI can render
+     * annotation / entry counts without subscribing. Absent when the session
+     * does not expose an annotations channel.
+     */
+    val annotations: AnnotationsSummary? = null,
+    /**
+     * Session URI
+     */
+    val resource: String,
+    /**
+     * Creation timestamp (ISO 8601, e.g. `"2025-03-10T18:42:03.123Z"`)
+     */
+    val createdAt: String,
+    /**
+     * Last modification timestamp (ISO 8601, e.g. `"2025-03-10T18:42:03.123Z"`)
+     */
+    val modifiedAt: String,
+    /**
+     * Aggregate summary of file changes associated with this session. Servers
+     * may populate this to give clients a quick at-a-glance view of the
+     * session's footprint (e.g., for list rendering) without requiring the
+     * client to subscribe to a changeset.
+     */
+    val changes: ChangesSummary? = null,
+    /**
+     * Lightweight server-defined metadata clients may use for the session
+     * presentation. The protocol does not interpret these values; producers
+     * SHOULD keep the payload small because summaries appear in session lists
+     * and session notifications.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null,
+    /**
+     * Lightweight host-authoritative ordered chat catalog.
+     */
+    val chats: List<SessionChatSummary>? = null,
+    /**
+     * Chat that receives input when none is selected, independent of catalog position.
+     */
+    val defaultChat: String? = null
+)
+
+@Serializable
+data class SessionChatSummary(
+    /**
+     * Canonical chat URI
+     */
+    val resource: String,
+    /**
+     * Human-readable chat title
+     */
+    val title: String,
+    /**
+     * How this chat was created, when known
+     */
+    val origin: ChatOrigin? = null,
+    /**
+     * How the user can interact with this chat.
+     *
+     * Generic clients use this to omit hidden chats and disable input for
+     * read-only chats. Absence defaults to {@link ChatInteractivity.Full} for
+     * backward compatibility.
+     */
+    val interactivity: ChatInteractivity? = null,
+    /**
+     * Current chat status, matching {@link ChatSummary.status}.
+     *
+     * Includes the activity bits and the orthogonal {@link SessionStatus.IsRead}
+     * and {@link SessionStatus.IsArchived} flags. Generic clients use these bits
+     * to present read, unread, or archived chats in session lists without
+     * subscribing to the session or chat channel. Absence means the host did
+     * not provide the status; clients MUST treat it as unknown, not as unread
+     * or unarchived.
+     */
+    val status: SessionStatus? = null,
+    /**
+     * Aggregate summary of file changes associated with this chat.
+     *
+     * Servers may populate this so session lists can show per-chat change
+     * counts without subscribing to the session or chat channel. Updates travel
+     * with the rest of the catalog in `root/sessionSummaryChanged`.
+     */
+    val changes: ChangesSummary? = null
+)
+
+@Serializable
+data class ChangesSummary(
+    /**
+     * Total number of inserted lines across all changed files.
+     */
+    val additions: Long? = null,
+    /**
+     * Total number of deleted lines across all changed files.
+     */
+    val deletions: Long? = null,
+    /**
+     * Number of files that have changes.
+     */
+    val files: Long? = null
+)
+
+@Serializable
+data class ProjectInfo(
+    /**
+     * Project URI
+     */
+    val uri: String,
+    /**
+     * Human-readable project name
+     */
+    val displayName: String
+)
+
+@Serializable
+data class SessionConfigState(
+    /**
+     * JSON Schema describing available configuration properties
+     */
+    val schema: SessionConfigSchema,
+    /**
+     * Current configuration values
+     */
+    val values: Map<String, JsonElement>
+)
+
+@Serializable
+data class Turn(
+    /**
+     * Turn identifier
+     */
+    val id: String,
+    /**
+     * ISO 8601 timestamp when this turn started.
+     */
+    val startedAt: String? = null,
+    /**
+     * Turn duration in milliseconds.
+     */
+    val duration: Long? = null,
+    /**
+     * The message that initiated the turn
+     */
+    val message: Message,
+    /**
+     * All response content in stream order: text, tool calls, reasoning, and content refs.
+     *
+     * Consumers should derive display text by concatenating markdown parts,
+     * and find tool calls by filtering for `ToolCall` parts.
+     */
+    val responseParts: List<ResponsePart>,
+    /**
+     * Token usage info
+     */
+    val usage: UsageInfo? = null,
+    /**
+     * How the turn ended
+     */
+    val state: TurnState
+)
+
+@Serializable
+data class ActiveTurn(
+    /**
+     * Turn identifier
+     */
+    val id: String,
+    /**
+     * ISO 8601 timestamp when this turn started.
+     */
+    val startedAt: String,
+    /**
+     * The message that initiated the turn
+     */
+    val message: Message,
+    /**
+     * All response content in stream order: text, tool calls, reasoning, and content refs.
+     *
+     * Tool call parts include `pendingPermissions` when permissions are awaiting user approval.
+     */
+    val responseParts: List<ResponsePart>,
+    /**
+     * Token usage info
+     */
+    val usage: UsageInfo? = null
+)
+
+@Serializable
+data class Message(
+    /**
+     * Message text
+     */
+    val text: String,
+    /**
+     * The origin of the message
+     */
+    val origin: MessageOrigin,
+    /**
+     * File/selection attachments
+     */
+    val attachments: List<MessageAttachment>? = null,
+    /**
+     * The model this message was, or will be, sent with.
+     *
+     * For historic user/agent messages this records the model actually used, so
+     * a client editing or resending the message can retain that selection. For a
+     * {@link ChatState.draft | draft} it carries the model the user picked for
+     * the message they are composing. Absent means the agent host's default
+     * model applies.
+     */
+    val model: ModelSelection? = null,
+    /**
+     * The custom agent this message was, or will be, sent with.
+     *
+     * For historic messages this records the agent actually used; for a
+     * {@link ChatState.draft | draft} it carries the agent the user picked.
+     * Absent means no custom agent — the provider's default behavior applies.
+     */
+    val agent: AgentSelection? = null,
+    /**
+     * Additional provider-specific metadata for this message.
+     *
+     * Clients MAY look for well-known keys here to provide enhanced UI, and
+     * agent hosts MAY use it to carry context that does not fit any other
+     * field. Mirrors the MCP `_meta` convention.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null
+)
+
+@Serializable
+data class MessageOrigin(
+    /**
+     * The kind of actor that produced the message.
+     */
+    val kind: MessageKind
+)
+
+@Serializable
+data class ChatInputOption(
+    /**
+     * Stable option identifier; for MCP enum values this is the enum string
+     */
+    val id: String,
+    /**
+     * Display label
+     */
+    val label: String,
+    /**
+     * Optional secondary text
+     */
+    val description: String? = null,
+    /**
+     * Whether this option is the recommended/default choice
+     */
+    val recommended: Boolean? = null
+)
+
+@Serializable
+data class ChatInputTextAnswerValue(
+    val kind: ChatInputAnswerValueKind,
+    val value: String
+)
+
+@Serializable
+data class ChatInputNumberAnswerValue(
+    val kind: ChatInputAnswerValueKind,
+    val value: Double
+)
+
+@Serializable
+data class ChatInputBooleanAnswerValue(
+    val kind: ChatInputAnswerValueKind,
+    val value: Boolean
+)
+
+@Serializable
+data class ChatInputSelectedAnswerValue(
+    val kind: ChatInputAnswerValueKind,
+    val value: String,
+    /**
+     * Free-form text entered instead of selecting an option
+     */
+    val freeformValues: List<String>? = null
+)
+
+@Serializable
+data class ChatInputSelectedManyAnswerValue(
+    val kind: ChatInputAnswerValueKind,
+    val value: List<String>,
+    /**
+     * Free-form text entered in addition to selected options
+     */
+    val freeformValues: List<String>? = null
+)
+
+@Serializable
+data class ChatInputAnswered(
+    /**
+     * Answer state
+     */
+    val state: ChatInputAnswerState,
+    /**
+     * Answer value
+     */
+    val value: ChatInputAnswerValue
+)
+
+@Serializable
+data class ChatInputSkipped(
+    /**
+     * Answer state
+     */
+    val state: ChatInputAnswerState,
+    /**
+     * Free-form reason or value captured while skipping, if any
+     */
+    val freeformValues: List<String>? = null
+)
+
+@Serializable
+data class ChatInputTextQuestion(
+    /**
+     * Stable question identifier used as the key in `answers`
+     */
+    val id: String,
+    /**
+     * Short display title
+     */
+    val title: String? = null,
+    /**
+     * Prompt shown to the user
+     */
+    val message: String,
+    /**
+     * Whether the user must answer this question to accept the request
+     */
+    val required: Boolean? = null,
+    val kind: ChatInputQuestionKind,
+    /**
+     * Format hint for text questions, such as `email`, `uri`, `date`, or `date-time`
+     */
+    val format: String? = null,
+    /**
+     * Minimum string length
+     */
+    val min: Long? = null,
+    /**
+     * Maximum string length
+     */
+    val max: Long? = null,
+    /**
+     * Default text
+     */
+    val defaultValue: String? = null
+)
+
+@Serializable
+data class ChatInputNumberQuestion(
+    /**
+     * Stable question identifier used as the key in `answers`
+     */
+    val id: String,
+    /**
+     * Short display title
+     */
+    val title: String? = null,
+    /**
+     * Prompt shown to the user
+     */
+    val message: String,
+    /**
+     * Whether the user must answer this question to accept the request
+     */
+    val required: Boolean? = null,
+    val kind: ChatInputQuestionKind,
+    /**
+     * Minimum value
+     */
+    val min: Double? = null,
+    /**
+     * Maximum value
+     */
+    val max: Double? = null,
+    /**
+     * Default numeric value
+     */
+    val defaultValue: Double? = null
+)
+
+@Serializable
+data class ChatInputBooleanQuestion(
+    /**
+     * Stable question identifier used as the key in `answers`
+     */
+    val id: String,
+    /**
+     * Short display title
+     */
+    val title: String? = null,
+    /**
+     * Prompt shown to the user
+     */
+    val message: String,
+    /**
+     * Whether the user must answer this question to accept the request
+     */
+    val required: Boolean? = null,
+    val kind: ChatInputQuestionKind,
+    /**
+     * Default boolean value
+     */
+    val defaultValue: Boolean? = null
+)
+
+@Serializable
+data class ChatInputSingleSelectQuestion(
+    /**
+     * Stable question identifier used as the key in `answers`
+     */
+    val id: String,
+    /**
+     * Short display title
+     */
+    val title: String? = null,
+    /**
+     * Prompt shown to the user
+     */
+    val message: String,
+    /**
+     * Whether the user must answer this question to accept the request
+     */
+    val required: Boolean? = null,
+    val kind: ChatInputQuestionKind,
+    /**
+     * Options the user may select from
+     */
+    val options: List<ChatInputOption>,
+    /**
+     * Whether the user may enter text instead of selecting an option
+     */
+    val allowFreeformInput: Boolean? = null
+)
+
+@Serializable
+data class ChatInputMultiSelectQuestion(
+    /**
+     * Stable question identifier used as the key in `answers`
+     */
+    val id: String,
+    /**
+     * Short display title
+     */
+    val title: String? = null,
+    /**
+     * Prompt shown to the user
+     */
+    val message: String,
+    /**
+     * Whether the user must answer this question to accept the request
+     */
+    val required: Boolean? = null,
+    val kind: ChatInputQuestionKind,
+    /**
+     * Options the user may select from
+     */
+    val options: List<ChatInputOption>,
+    /**
+     * Whether the user may enter text in addition to selecting options
+     */
+    val allowFreeformInput: Boolean? = null,
+    /**
+     * Minimum selected item count
+     */
+    val min: Long? = null,
+    /**
+     * Maximum selected item count
+     */
+    val max: Long? = null
+)
+
+@Serializable
+data class ChatInputRequest(
+    /**
+     * Stable request identifier
+     */
+    val id: String,
+    /**
+     * Display message for the request as a whole
+     */
+    val message: String? = null,
+    /**
+     * URL the user should review or open, for URL-style elicitations
+     */
+    val url: String? = null,
+    /**
+     * Ordered questions to ask the user
+     */
+    val questions: List<ChatInputQuestion>? = null,
+    /**
+     * Current draft or submitted answers, keyed by question ID
+     */
+    val answers: Map<String, ChatInputAnswer>? = null
+)
+
+@Serializable
+data class TextPosition(
+    /**
+     * Zero-based line number.
+     */
+    val line: Long,
+    /**
+     * Zero-based character offset within the line.
+     */
+    val character: Long
+)
+
+@Serializable
+data class TextRange(
+    /**
+     * Start position of the range.
+     */
+    val start: TextPosition,
+    /**
+     * End position of the range.
+     */
+    val end: TextPosition
+)
+
+@Serializable
+data class TextSelection(
+    /**
+     * The range covered by the selection.
+     */
+    val range: TextRange
+)
+
+@Serializable
+data class SimpleMessageAttachment(
+    /**
+     * A human-readable label for the attachment (e.g. the filename of a file
+     * attachment). Used for display in UI.
+     */
+    val label: String,
+    /**
+     * If defined, the range in {@link Message.text} that references this
+     * attachment. This is a text range, not a byte range.
+     */
+    val range: TextRange? = null,
+    /**
+     * Advisory display hint for clients rendering this attachment. Recognized
+     * values include:
+     *
+     * - `'image'`: the attachment is an image
+     * - `'document'`: the attachment is a textual document
+     * - `'symbol'`: the attachment is a code symbol (e.g. a function or class)
+     * - `'directory'`: the attachment is a folder
+     * - `'selection'`: the attachment is a selection within a document
+     *
+     * Implementations MAY provide additional values; clients SHOULD fall back
+     * to a reasonable default when an unknown value is encountered.
+     */
+    val displayKind: String? = null,
+    /**
+     * Additional implementation-defined metadata for the attachment.
+     *
+     * If the attachment was produced by the `completions` command, the client
+     * MUST preserve every property of `_meta` originally returned by the agent
+     * host when sending the user message containing the accepted completion.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null,
+    /**
+     * Discriminant
+     */
+    val type: MessageAttachmentKind,
+    /**
+     * Representation of the attachment as it should be shown to the model.
+     *
+     * If the attachment was produced by the client, this property MUST be
+     * defined so the agent host can correctly interpret the attachment. This
+     * property MAY be omitted when the attachment originated from a
+     * `completions` response.
+     */
+    val modelRepresentation: String? = null
+)
+
+@Serializable
+data class MessageEmbeddedResourceAttachment(
+    /**
+     * A human-readable label for the attachment (e.g. the filename of a file
+     * attachment). Used for display in UI.
+     */
+    val label: String,
+    /**
+     * If defined, the range in {@link Message.text} that references this
+     * attachment. This is a text range, not a byte range.
+     */
+    val range: TextRange? = null,
+    /**
+     * Advisory display hint for clients rendering this attachment. Recognized
+     * values include:
+     *
+     * - `'image'`: the attachment is an image
+     * - `'document'`: the attachment is a textual document
+     * - `'symbol'`: the attachment is a code symbol (e.g. a function or class)
+     * - `'directory'`: the attachment is a folder
+     * - `'selection'`: the attachment is a selection within a document
+     *
+     * Implementations MAY provide additional values; clients SHOULD fall back
+     * to a reasonable default when an unknown value is encountered.
+     */
+    val displayKind: String? = null,
+    /**
+     * Additional implementation-defined metadata for the attachment.
+     *
+     * If the attachment was produced by the `completions` command, the client
+     * MUST preserve every property of `_meta` originally returned by the agent
+     * host when sending the user message containing the accepted completion.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null,
+    /**
+     * Discriminant
+     */
+    val type: MessageAttachmentKind,
+    /**
+     * Base64-encoded binary data
+     */
+    val data: String,
+    /**
+     * Content MIME type (e.g. `"image/png"`, `"application/pdf"`)
+     */
+    val contentType: String,
+    /**
+     * Optional selection within the attached textual resource.
+     *
+     * Only meaningful for textual resources.
+     */
+    val selection: TextSelection? = null
+)
+
+@Serializable
+data class MessageResourceAttachment(
+    /**
+     * A human-readable label for the attachment (e.g. the filename of a file
+     * attachment). Used for display in UI.
+     */
+    val label: String,
+    /**
+     * If defined, the range in {@link Message.text} that references this
+     * attachment. This is a text range, not a byte range.
+     */
+    val range: TextRange? = null,
+    /**
+     * Advisory display hint for clients rendering this attachment. Recognized
+     * values include:
+     *
+     * - `'image'`: the attachment is an image
+     * - `'document'`: the attachment is a textual document
+     * - `'symbol'`: the attachment is a code symbol (e.g. a function or class)
+     * - `'directory'`: the attachment is a folder
+     * - `'selection'`: the attachment is a selection within a document
+     *
+     * Implementations MAY provide additional values; clients SHOULD fall back
+     * to a reasonable default when an unknown value is encountered.
+     */
+    val displayKind: String? = null,
+    /**
+     * Additional implementation-defined metadata for the attachment.
+     *
+     * If the attachment was produced by the `completions` command, the client
+     * MUST preserve every property of `_meta` originally returned by the agent
+     * host when sending the user message containing the accepted completion.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null,
+    /**
+     * Content URI
+     */
+    val uri: String,
+    /**
+     * Approximate size in bytes
+     */
+    val sizeHint: Long? = null,
+    /**
+     * Content MIME type
+     */
+    val contentType: String? = null,
+    /**
+     * Content nonce
+     */
+    val nonce: String? = null,
+    /**
+     * Discriminant
+     */
+    val type: MessageAttachmentKind,
+    /**
+     * Optional selection within the referenced textual resource.
+     *
+     * Only meaningful for textual resources.
+     */
+    val selection: TextSelection? = null
+)
+
+@Serializable
+data class MessageAnnotationsAttachment(
+    /**
+     * A human-readable label for the attachment (e.g. the filename of a file
+     * attachment). Used for display in UI.
+     */
+    val label: String,
+    /**
+     * If defined, the range in {@link Message.text} that references this
+     * attachment. This is a text range, not a byte range.
+     */
+    val range: TextRange? = null,
+    /**
+     * Advisory display hint for clients rendering this attachment. Recognized
+     * values include:
+     *
+     * - `'image'`: the attachment is an image
+     * - `'document'`: the attachment is a textual document
+     * - `'symbol'`: the attachment is a code symbol (e.g. a function or class)
+     * - `'directory'`: the attachment is a folder
+     * - `'selection'`: the attachment is a selection within a document
+     *
+     * Implementations MAY provide additional values; clients SHOULD fall back
+     * to a reasonable default when an unknown value is encountered.
+     */
+    val displayKind: String? = null,
+    /**
+     * Additional implementation-defined metadata for the attachment.
+     *
+     * If the attachment was produced by the `completions` command, the client
+     * MUST preserve every property of `_meta` originally returned by the agent
+     * host when sending the user message containing the accepted completion.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null,
+    /**
+     * Discriminant
+     */
+    val type: MessageAttachmentKind,
+    /**
+     * The annotations channel URI (typically `ahp-session:/<uuid>/annotations`).
+     * Matches {@link AnnotationsSummary.resource}.
+     */
+    val resource: String,
+    /**
+     * Specific {@link Annotation.id | annotation ids} to reference. When
+     * omitted, the attachment references all annotations on the channel.
+     */
+    val annotationIds: List<String>? = null
+)
+
+@Serializable
+data class MessageChatAttachment(
+    /**
+     * A human-readable label for the attachment (e.g. the filename of a file
+     * attachment). Used for display in UI.
+     */
+    val label: String,
+    /**
+     * If defined, the range in {@link Message.text} that references this
+     * attachment. This is a text range, not a byte range.
+     */
+    val range: TextRange? = null,
+    /**
+     * Advisory display hint for clients rendering this attachment. Recognized
+     * values include:
+     *
+     * - `'image'`: the attachment is an image
+     * - `'document'`: the attachment is a textual document
+     * - `'symbol'`: the attachment is a code symbol (e.g. a function or class)
+     * - `'directory'`: the attachment is a folder
+     * - `'selection'`: the attachment is a selection within a document
+     *
+     * Implementations MAY provide additional values; clients SHOULD fall back
+     * to a reasonable default when an unknown value is encountered.
+     */
+    val displayKind: String? = null,
+    /**
+     * Additional implementation-defined metadata for the attachment.
+     *
+     * If the attachment was produced by the `completions` command, the client
+     * MUST preserve every property of `_meta` originally returned by the agent
+     * host when sending the user message containing the accepted completion.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null,
+    /**
+     * Discriminant
+     */
+    val type: MessageAttachmentKind,
+    /**
+     * URI of the referenced chat.
+     */
+    val resource: String,
+    /**
+     * Last completed turn included in the referenced transcript. When omitted,
+     * the host pins the latest completed turn when accepting the message.
+     */
+    val endTurn: String? = null
+)
+
+@Serializable
+data class MarkdownResponsePart(
+    /**
+     * Discriminant
+     */
+    val kind: ResponsePartKind,
+    /**
+     * Part identifier, used by `chat/delta` to target this part for content appends
+     */
+    val id: String,
+    /**
+     * Markdown content
+     */
+    val content: String
+)
+
+@Serializable
+data class ContentRef(
+    /**
+     * Content URI
+     */
+    val uri: String,
+    /**
+     * Approximate size in bytes
+     */
+    val sizeHint: Long? = null,
+    /**
+     * Content MIME type
+     */
+    val contentType: String? = null,
+    /**
+     * Content nonce
+     */
+    val nonce: String? = null
+)
+
+@Serializable
+data class ResourceResponsePart(
+    /**
+     * Content URI
+     */
+    val uri: String,
+    /**
+     * Approximate size in bytes
+     */
+    val sizeHint: Long? = null,
+    /**
+     * Content MIME type
+     */
+    val contentType: String? = null,
+    /**
+     * Content nonce
+     */
+    val nonce: String? = null,
+    /**
+     * Discriminant
+     */
+    val kind: ResponsePartKind
+)
+
+@Serializable
+data class ToolCallResponsePart(
+    /**
+     * Discriminant
+     */
+    val kind: ResponsePartKind,
+    /**
+     * Full tool call lifecycle state
+     */
+    val toolCall: ToolCallState
+)
+
+@Serializable
+data class ReasoningResponsePart(
+    /**
+     * Discriminant
+     */
+    val kind: ResponsePartKind,
+    /**
+     * Part identifier, used by `chat/reasoning` to target this part for content appends
+     */
+    val id: String,
+    /**
+     * Accumulated reasoning text
+     */
+    val content: String
+)
+
+@Serializable
+data class SystemNotificationResponsePart(
+    /**
+     * Discriminant
+     */
+    val kind: ResponsePartKind,
+    /**
+     * The text of the system notification
+     */
+    val content: StringOrMarkdown,
+    /**
+     * Additional provider-specific metadata for this notification.
+     *
+     * A host MAY attach a machine-readable descriptor of what triggered the
+     * notification so clients can categorize, icon, group, filter, or localize
+     * it without parsing `content`. Clients MAY look for well-known keys here to
+     * provide enhanced UI, and MUST render coherently from `content` alone when
+     * `_meta` is absent or unrecognized.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null
+)
+
+@Serializable
+data class InputRequestResponsePart(
+    /**
+     * Discriminant
+     */
+    val kind: ResponsePartKind,
+    /**
+     * The request, carrying its `id`, `message`, `url`, `questions`, and current
+     * draft or submitted `answers`.
+     */
+    val request: ChatInputRequest,
+    /**
+     * How the request was resolved. Absent until a client submits `accept`,
+     * `decline`, or `cancel` with `chat/inputCompleted`.
+     */
+    val response: ChatInputResponseKind? = null
+)
+
+@Serializable
+data class ErrorResponsePart(
+    /**
+     * Discriminant
+     */
+    val kind: ResponsePartKind,
+    /**
+     * Error details.
+     */
+    val error: ErrorInfo,
+    /**
+     * Whether the host can resume the turn from this error. Only `true` enables resume.
+     */
+    val resumable: Boolean? = null
+)
+
+@Serializable
+data class ToolCallResult(
+    /**
+     * Whether the tool succeeded
+     */
+    val success: Boolean,
+    /**
+     * Past-tense description of what the tool did
+     */
+    val pastTenseMessage: StringOrMarkdown,
+    /**
+     * Unstructured result content blocks.
+     *
+     * This mirrors the `content` field of MCP `CallToolResult`.
+     */
+    val content: List<ToolResultContent>? = null,
+    /**
+     * Optional structured result object.
+     *
+     * This mirrors the `structuredContent` field of MCP `CallToolResult`.
+     */
+    val structuredContent: Map<String, JsonElement>? = null,
+    /**
+     * Error details if the tool failed
+     */
+    val error: JsonElement? = null
+)
+
+@Serializable
+data class ToolCallStreamingState(
+    /**
+     * Unique tool call identifier
+     */
+    val toolCallId: String,
+    /**
+     * Internal tool name (for debugging/logging)
+     */
+    val toolName: String,
+    /**
+     * Human-readable tool name
+     */
+    val displayName: String,
+    /**
+     * Human-readable description of what the tool invocation intends to do
+     */
+    val intention: String? = null,
+    /**
+     * Reference to the contributor of the tool being called.
+     */
+    val contributor: ToolCallContributor? = null,
+    /**
+     * Additional provider-specific metadata for this tool call.
+     *
+     * This MAY include a `ui` field corresponding to the MCP Apps (SEP-1865)
+     * `McpUiToolMeta` found in MCP tool calls, which may be used in combination
+     * with the {@link contributor} to serve MCP Apps.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null,
+    val status: ToolCallStatus,
+    /**
+     * Partial parameters accumulated from tool-call deltas.
+     */
+    val partialInput: String? = null,
+    /**
+     * Progress message shown while parameters are streaming
+     */
+    val invocationMessage: StringOrMarkdown? = null
+)
+
+@Serializable
+data class ToolCallPendingConfirmationState(
+    /**
+     * Unique tool call identifier
+     */
+    val toolCallId: String,
+    /**
+     * Internal tool name (for debugging/logging)
+     */
+    val toolName: String,
+    /**
+     * Human-readable tool name
+     */
+    val displayName: String,
+    /**
+     * Human-readable description of what the tool invocation intends to do
+     */
+    val intention: String? = null,
+    /**
+     * Reference to the contributor of the tool being called.
+     */
+    val contributor: ToolCallContributor? = null,
+    /**
+     * Additional provider-specific metadata for this tool call.
+     *
+     * This MAY include a `ui` field corresponding to the MCP Apps (SEP-1865)
+     * `McpUiToolMeta` found in MCP tool calls, which may be used in combination
+     * with the {@link contributor} to serve MCP Apps.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null,
+    /**
+     * Message describing what the tool will do
+     */
+    val invocationMessage: StringOrMarkdown,
+    /**
+     * Final tool input.
+     *
+     * Referenced input is mutable until the tool call leaves
+     * `pending-confirmation`. When the client confirms with `editedToolInput`,
+     * the host MUST replace the resource contents before echoing the accepted
+     * confirmation action. Clients MUST NOT cache tool input across confirmation.
+     */
+    val toolInput: ToolInput? = null,
+    val status: ToolCallStatus,
+    /**
+     * Short title for the confirmation prompt (e.g. `"Run in terminal"`, `"Write file"`)
+     */
+    val confirmationTitle: StringOrMarkdown? = null,
+    /**
+     * Risk assessment that informed the confirmation requirement.
+     */
+    val riskAssessment: ToolCallRiskAssessment? = null,
+    /**
+     * File edits that this tool call will perform, for preview before confirmation
+     */
+    val edits: FileEditCollection? = null,
+    /**
+     * Whether the agent host allows the client to edit the tool's input parameters before confirming
+     */
+    val editable: Boolean? = null,
+    /**
+     * Options the server offers for this confirmation. When present, the client
+     * SHOULD render these instead of a plain approve/deny UI. Each option
+     * belongs to a {@link ConfirmationOptionGroup} so the client can still
+     * categorise the choices.
+     */
+    val options: List<ConfirmationOption>? = null
+)
+
+@Serializable
+data class ToolCallRunningState(
+    /**
+     * Unique tool call identifier
+     */
+    val toolCallId: String,
+    /**
+     * Internal tool name (for debugging/logging)
+     */
+    val toolName: String,
+    /**
+     * Human-readable tool name
+     */
+    val displayName: String,
+    /**
+     * Human-readable description of what the tool invocation intends to do
+     */
+    val intention: String? = null,
+    /**
+     * Reference to the contributor of the tool being called.
+     */
+    val contributor: ToolCallContributor? = null,
+    /**
+     * Additional provider-specific metadata for this tool call.
+     *
+     * This MAY include a `ui` field corresponding to the MCP Apps (SEP-1865)
+     * `McpUiToolMeta` found in MCP tool calls, which may be used in combination
+     * with the {@link contributor} to serve MCP Apps.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null,
+    /**
+     * Message describing what the tool will do
+     */
+    val invocationMessage: StringOrMarkdown,
+    /**
+     * Final tool input.
+     *
+     * Referenced input is mutable until the tool call leaves
+     * `pending-confirmation`. When the client confirms with `editedToolInput`,
+     * the host MUST replace the resource contents before echoing the accepted
+     * confirmation action. Clients MUST NOT cache tool input across confirmation.
+     */
+    val toolInput: ToolInput? = null,
+    /**
+     * How the tool was confirmed for execution
+     */
+    val confirmed: ToolCallConfirmationReason,
+    /**
+     * The confirmation option the user selected, if confirmation options were provided
+     */
+    val selectedOption: ConfirmationOption? = null,
+    val status: ToolCallStatus,
+    /**
+     * Partial content produced while the tool is still executing.
+     *
+     * For example, a terminal content block lets clients subscribe to live
+     * output before the tool completes.
+     */
+    val content: List<ToolResultContent>? = null
+)
+
+@Serializable
+data class ToolCallAuthRequiredState(
+    /**
+     * Unique tool call identifier
+     */
+    val toolCallId: String,
+    /**
+     * Internal tool name (for debugging/logging)
+     */
+    val toolName: String,
+    /**
+     * Human-readable tool name
+     */
+    val displayName: String,
+    /**
+     * Human-readable description of what the tool invocation intends to do
+     */
+    val intention: String? = null,
+    /**
+     * Reference to the contributor of the tool being called.
+     */
+    val contributor: ToolCallContributor? = null,
+    /**
+     * Additional provider-specific metadata for this tool call.
+     *
+     * This MAY include a `ui` field corresponding to the MCP Apps (SEP-1865)
+     * `McpUiToolMeta` found in MCP tool calls, which may be used in combination
+     * with the {@link contributor} to serve MCP Apps.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null,
+    /**
+     * Message describing what the tool will do
+     */
+    val invocationMessage: StringOrMarkdown,
+    /**
+     * Final tool input.
+     *
+     * Referenced input is mutable until the tool call leaves
+     * `pending-confirmation`. When the client confirms with `editedToolInput`,
+     * the host MUST replace the resource contents before echoing the accepted
+     * confirmation action. Clients MUST NOT cache tool input across confirmation.
+     */
+    val toolInput: ToolInput? = null,
+    /**
+     * How the tool was confirmed for execution
+     */
+    val confirmed: ToolCallConfirmationReason,
+    /**
+     * The confirmation option the user selected, if confirmation options were provided
+     */
+    val selectedOption: ConfirmationOption? = null,
+    val status: ToolCallStatus,
+    /**
+     * The authentication challenge blocking this invocation.
+     */
+    val auth: McpAuthRequirement,
+    /**
+     * Partial content produced before the call paused for authentication.
+     */
+    val content: List<ToolResultContent>? = null
+)
+
+@Serializable
+data class ToolCallPendingResultConfirmationState(
+    /**
+     * Unique tool call identifier
+     */
+    val toolCallId: String,
+    /**
+     * Internal tool name (for debugging/logging)
+     */
+    val toolName: String,
+    /**
+     * Human-readable tool name
+     */
+    val displayName: String,
+    /**
+     * Human-readable description of what the tool invocation intends to do
+     */
+    val intention: String? = null,
+    /**
+     * Reference to the contributor of the tool being called.
+     */
+    val contributor: ToolCallContributor? = null,
+    /**
+     * Additional provider-specific metadata for this tool call.
+     *
+     * This MAY include a `ui` field corresponding to the MCP Apps (SEP-1865)
+     * `McpUiToolMeta` found in MCP tool calls, which may be used in combination
+     * with the {@link contributor} to serve MCP Apps.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null,
+    /**
+     * Message describing what the tool will do
+     */
+    val invocationMessage: StringOrMarkdown,
+    /**
+     * Final tool input.
+     *
+     * Referenced input is mutable until the tool call leaves
+     * `pending-confirmation`. When the client confirms with `editedToolInput`,
+     * the host MUST replace the resource contents before echoing the accepted
+     * confirmation action. Clients MUST NOT cache tool input across confirmation.
+     */
+    val toolInput: ToolInput? = null,
+    /**
+     * Whether the tool succeeded
+     */
+    val success: Boolean,
+    /**
+     * Past-tense description of what the tool did
+     */
+    val pastTenseMessage: StringOrMarkdown,
+    /**
+     * Unstructured result content blocks.
+     *
+     * This mirrors the `content` field of MCP `CallToolResult`.
+     */
+    val content: List<ToolResultContent>? = null,
+    /**
+     * Optional structured result object.
+     *
+     * This mirrors the `structuredContent` field of MCP `CallToolResult`.
+     */
+    val structuredContent: Map<String, JsonElement>? = null,
+    /**
+     * Error details if the tool failed
+     */
+    val error: JsonElement? = null,
+    /**
+     * How the tool was confirmed for execution
+     */
+    val confirmed: ToolCallConfirmationReason,
+    /**
+     * The confirmation option the user selected, if confirmation options were provided
+     */
+    val selectedOption: ConfirmationOption? = null,
+    val status: ToolCallStatus
+)
+
+@Serializable
+data class ToolCallCompletedState(
+    /**
+     * Unique tool call identifier
+     */
+    val toolCallId: String,
+    /**
+     * Internal tool name (for debugging/logging)
+     */
+    val toolName: String,
+    /**
+     * Human-readable tool name
+     */
+    val displayName: String,
+    /**
+     * Human-readable description of what the tool invocation intends to do
+     */
+    val intention: String? = null,
+    /**
+     * Reference to the contributor of the tool being called.
+     */
+    val contributor: ToolCallContributor? = null,
+    /**
+     * Additional provider-specific metadata for this tool call.
+     *
+     * This MAY include a `ui` field corresponding to the MCP Apps (SEP-1865)
+     * `McpUiToolMeta` found in MCP tool calls, which may be used in combination
+     * with the {@link contributor} to serve MCP Apps.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null,
+    /**
+     * Message describing what the tool will do
+     */
+    val invocationMessage: StringOrMarkdown,
+    /**
+     * Final tool input.
+     *
+     * Referenced input is mutable until the tool call leaves
+     * `pending-confirmation`. When the client confirms with `editedToolInput`,
+     * the host MUST replace the resource contents before echoing the accepted
+     * confirmation action. Clients MUST NOT cache tool input across confirmation.
+     */
+    val toolInput: ToolInput? = null,
+    /**
+     * Whether the tool succeeded
+     */
+    val success: Boolean,
+    /**
+     * Past-tense description of what the tool did
+     */
+    val pastTenseMessage: StringOrMarkdown,
+    /**
+     * Unstructured result content blocks.
+     *
+     * This mirrors the `content` field of MCP `CallToolResult`.
+     */
+    val content: List<ToolResultContent>? = null,
+    /**
+     * Optional structured result object.
+     *
+     * This mirrors the `structuredContent` field of MCP `CallToolResult`.
+     */
+    val structuredContent: Map<String, JsonElement>? = null,
+    /**
+     * Error details if the tool failed
+     */
+    val error: JsonElement? = null,
+    /**
+     * How the tool was confirmed for execution
+     */
+    val confirmed: ToolCallConfirmationReason,
+    /**
+     * The confirmation option the user selected, if confirmation options were provided
+     */
+    val selectedOption: ConfirmationOption? = null,
+    val status: ToolCallStatus
+)
+
+@Serializable
+data class ToolCallCancelledState(
+    /**
+     * Unique tool call identifier
+     */
+    val toolCallId: String,
+    /**
+     * Internal tool name (for debugging/logging)
+     */
+    val toolName: String,
+    /**
+     * Human-readable tool name
+     */
+    val displayName: String,
+    /**
+     * Human-readable description of what the tool invocation intends to do
+     */
+    val intention: String? = null,
+    /**
+     * Reference to the contributor of the tool being called.
+     */
+    val contributor: ToolCallContributor? = null,
+    /**
+     * Additional provider-specific metadata for this tool call.
+     *
+     * This MAY include a `ui` field corresponding to the MCP Apps (SEP-1865)
+     * `McpUiToolMeta` found in MCP tool calls, which may be used in combination
+     * with the {@link contributor} to serve MCP Apps.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null,
+    /**
+     * Message describing what the tool will do
+     */
+    val invocationMessage: StringOrMarkdown,
+    /**
+     * Final tool input.
+     *
+     * Referenced input is mutable until the tool call leaves
+     * `pending-confirmation`. When the client confirms with `editedToolInput`,
+     * the host MUST replace the resource contents before echoing the accepted
+     * confirmation action. Clients MUST NOT cache tool input across confirmation.
+     */
+    val toolInput: ToolInput? = null,
+    val status: ToolCallStatus,
+    /**
+     * Why the tool was cancelled
+     */
+    val reason: ToolCallCancellationReason,
+    /**
+     * Optional message explaining the cancellation
+     */
+    val reasonMessage: StringOrMarkdown? = null,
+    /**
+     * What the user suggested doing instead
+     */
+    val userSuggestion: Message? = null,
+    /**
+     * The confirmation option the user selected, if confirmation options were provided
+     */
+    val selectedOption: ConfirmationOption? = null
+)
+
+@Serializable
+data class ToolCallRiskAssessmentLoadingState(
+    val kind: ToolCallRiskAssessmentKind,
+    val status: ToolCallRiskAssessmentStatus
+)
+
+@Serializable
+data class ToolCallRiskAssessmentCompleteState(
+    val kind: ToolCallRiskAssessmentKind,
+    val status: ToolCallRiskAssessmentStatus,
+    val reason: StringOrMarkdown,
+    /**
+     * The judge's normalized safety score, where `0` is unsafe and `1` is safe.
+     */
+    val safety: Double
+)
+
+@Serializable
+data class ConfirmationOption(
+    /**
+     * Unique identifier for the option, returned in the confirmed action
+     */
+    val id: String,
+    /**
+     * Human-readable label displayed to the user
+     */
+    val label: String,
+    /**
+     * Whether this option represents an approval or denial
+     */
+    val kind: ConfirmationOptionKind,
+    /**
+     * Logical group number for visual categorisation.
+     *
+     * Clients SHOULD display options in the order they are defined and MAY
+     * use differing group numbers to insert dividers between logical clusters
+     * of options.
+     */
+    val group: Long? = null
+)
+
+@Serializable
+data class ToolDefinition(
+    /**
+     * Unique tool identifier
+     */
+    val name: String,
+    /**
+     * Human-readable display name
+     */
+    val title: String? = null,
+    /**
+     * Description of what the tool does
+     */
+    val description: String? = null,
+    /**
+     * JSON Schema defining the expected input parameters.
+     *
+     * Optional because client-provided tools may not have formal schemas.
+     * Mirrors MCP `Tool.inputSchema`.
+     */
+    val inputSchema: JsonElement? = null,
+    /**
+     * JSON Schema defining the structure of the tool's output.
+     *
+     * Mirrors MCP `Tool.outputSchema`.
+     */
+    val outputSchema: JsonElement? = null,
+    /**
+     * Behavioral hints about the tool. All properties are advisory.
+     */
+    val annotations: ToolAnnotations? = null,
+    /**
+     * Additional provider-specific metadata.
+     *
+     * Mirrors the MCP `_meta` convention.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null
+)
+
+@Serializable
+data class ToolAnnotations(
+    /**
+     * Alternate human-readable title
+     */
+    val title: String? = null,
+    /**
+     * Tool does not modify its environment (default: false)
+     */
+    val readOnlyHint: Boolean? = null,
+    /**
+     * Tool may perform destructive updates (default: true)
+     */
+    val destructiveHint: Boolean? = null,
+    /**
+     * Repeated calls with the same arguments have no additional effect (default: false)
+     */
+    val idempotentHint: Boolean? = null,
+    /**
+     * Tool may interact with external entities (default: true)
+     */
+    val openWorldHint: Boolean? = null
+)
+
+@Serializable
+data class ToolResultTextContent(
+    val type: ToolResultContentType,
+    /**
+     * The text content
+     */
+    val text: String
+)
+
+@Serializable
+data class ToolResultEmbeddedResourceContent(
+    val type: ToolResultContentType,
+    /**
+     * Base64-encoded data
+     */
+    val data: String,
+    /**
+     * Content type (e.g. `"image/png"`, `"application/pdf"`)
+     */
+    val contentType: String
+)
+
+@Serializable
+data class ToolResultResourceContent(
+    /**
+     * Content URI
+     */
+    val uri: String,
+    /**
+     * Approximate size in bytes
+     */
+    val sizeHint: Long? = null,
+    /**
+     * Content MIME type
+     */
+    val contentType: String? = null,
+    /**
+     * Content nonce
+     */
+    val nonce: String? = null,
+    val type: ToolResultContentType
+)
+
+@Serializable
+data class ToolResultFileEditContent(
+    /**
+     * The file state before the edit. Absent for file creations or for in-place file edits.
+     */
+    val before: FileEditSide? = null,
+    /**
+     * The file state after the edit. Absent for file deletions.
+     */
+    val after: FileEditSide? = null,
+    /**
+     * Optional diff display metadata
+     */
+    val diff: FileEditDiffStats? = null,
+    val type: ToolResultContentType
+)
+
+@Serializable
+data class ToolResultTerminalContent(
+    val type: ToolResultContentType,
+    /**
+     * Terminal URI (subscribable for live or retained terminal state)
+     */
+    val resource: String,
+    /**
+     * Display title for the terminal content
+     */
+    val title: String,
+    /**
+     * Whether this terminal-style resource is backed by a pseudoterminal.
+     * When `false`, output is plain text and clients do not need to parse
+     * VT sequences.
+     */
+    val isPty: Boolean? = null,
+    /**
+     * Outcome of the command, present once it has exited.
+     */
+    val result: TerminalCommandResult? = null
+)
+
+@Serializable
+data class ToolResultSubagentContent(
+    val type: ToolResultContentType,
+    /**
+     * Worker chat URI (subscribable for full chat state)
+     */
+    val resource: String,
+    /**
+     * Display title for the subagent
+     */
+    val title: String,
+    /**
+     * Internal agent name
+     */
+    val agentName: String? = null,
+    /**
+     * Human-readable description of the subagent's task
+     */
+    val description: String? = null
+)
+
+@Serializable
+data class CustomizationLoadingState(
+    val kind: CustomizationLoadStatus
+)
+
+@Serializable
+data class CustomizationLoadedState(
+    val kind: CustomizationLoadStatus
+)
+
+@Serializable
+data class CustomizationDegradedState(
+    val kind: CustomizationLoadStatus,
+    /**
+     * Human-readable description of the warning.
+     */
+    val message: String
+)
+
+@Serializable
+data class CustomizationErrorState(
+    val kind: CustomizationLoadStatus,
+    /**
+     * Human-readable error message.
+     */
+    val message: String
+)
+
+@Serializable
+data class PluginCustomization(
+    /**
+     * Session-unique opaque identifier. Used by every action that targets a
+     * specific customization. Minted by whoever publishes the customization
+     * (typically the agent host).
+     */
+    val id: String,
+    /**
+     * Source URI for this customization. A plugin URL, a file URI, or a
+     * directory URI.
+     *
+     * For declarations that live inside a larger file — e.g. an MCP
+     * server declared inline in a `plugins.json` manifest — `uri` points
+     * to the containing file and {@link CustomizationBase.range | `range`}
+     * narrows it to the declaration's span.
+     */
+    val uri: String,
+    /**
+     * Human-readable name.
+     */
+    val name: String,
+    /**
+     * Icons for UI display.
+     */
+    val icons: List<Icon>? = null,
+    /**
+     * Optional span within {@link CustomizationBase.uri | `uri`} when this
+     * customization is a subset of a larger file (for example, one entry
+     * in an inline `mcpServers` block of a `plugins.json` manifest).
+     * Absent when the customization covers the whole resource.
+     */
+    val range: TextRange? = null,
+    /**
+     * Additional provider-specific metadata for this customization.
+     *
+     * Mirrors the MCP `_meta` convention. Optional and opaque to the
+     * protocol; producers and consumers agree on its contents
+     * out-of-band.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null,
+    /**
+     * `clientId` of the client that contributed this container. Absent for
+     * server-originated entries.
+     */
+    val clientId: String? = null,
+    /**
+     * Host-reported load state. Absent means the host has not yet reported
+     * a load state for this container.
+     */
+    val load: CustomizationLoadState? = null,
+    /**
+     * Children discovered inside this container.
+     *
+     * Absent means the host has not parsed this container yet. An empty
+     * array means the host parsed the container and it contributes
+     * nothing.
+     */
+    val children: List<ChildCustomization>? = null,
+    val type: CustomizationType,
+    /**
+     * Explicit enablement decisions. See {@link McpServerCustomization.enablement}.
+     */
+    val enablement: List<CustomizationEnablement>? = null,
+    /**
+     * Version of the plugin, sourced from the
+     * [Open Plugins](https://open-plugins.com/) manifest's optional
+     * `version` field (semver, e.g. `"1.2.0"`). Absent when the manifest
+     * declares no version — the field is optional there — or the source
+     * has no version concept. Provenance / display only: the host neither
+     * parses nor enforces it.
+     */
+    val version: String? = null
+)
+
+@Serializable
+data class ClientPluginCustomization(
+    /**
+     * Session-unique opaque identifier. Used by every action that targets a
+     * specific customization. Minted by whoever publishes the customization
+     * (typically the agent host).
+     */
+    val id: String,
+    /**
+     * Source URI for this customization. A plugin URL, a file URI, or a
+     * directory URI.
+     *
+     * For declarations that live inside a larger file — e.g. an MCP
+     * server declared inline in a `plugins.json` manifest — `uri` points
+     * to the containing file and {@link CustomizationBase.range | `range`}
+     * narrows it to the declaration's span.
+     */
+    val uri: String,
+    /**
+     * Human-readable name.
+     */
+    val name: String,
+    /**
+     * Icons for UI display.
+     */
+    val icons: List<Icon>? = null,
+    /**
+     * Optional span within {@link CustomizationBase.uri | `uri`} when this
+     * customization is a subset of a larger file (for example, one entry
+     * in an inline `mcpServers` block of a `plugins.json` manifest).
+     * Absent when the customization covers the whole resource.
+     */
+    val range: TextRange? = null,
+    /**
+     * Additional provider-specific metadata for this customization.
+     *
+     * Mirrors the MCP `_meta` convention. Optional and opaque to the
+     * protocol; producers and consumers agree on its contents
+     * out-of-band.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null,
+    /**
+     * `clientId` of the client that contributed this container. Absent for
+     * server-originated entries.
+     */
+    val clientId: String? = null,
+    /**
+     * Host-reported load state. Absent means the host has not yet reported
+     * a load state for this container.
+     */
+    val load: CustomizationLoadState? = null,
+    /**
+     * Children discovered inside this container.
+     *
+     * Absent means the host has not parsed this container yet. An empty
+     * array means the host parsed the container and it contributes
+     * nothing.
+     */
+    val children: List<ChildCustomization>? = null,
+    val type: CustomizationType,
+    /**
+     * Explicit enablement decisions. See {@link McpServerCustomization.enablement}.
+     */
+    val enablement: List<CustomizationEnablement>? = null,
+    /**
+     * Version of the plugin, sourced from the
+     * [Open Plugins](https://open-plugins.com/) manifest's optional
+     * `version` field (semver, e.g. `"1.2.0"`). Absent when the manifest
+     * declares no version — the field is optional there — or the source
+     * has no version concept. Provenance / display only: the host neither
+     * parses nor enforces it.
+     */
+    val version: String? = null,
+    /**
+     * Opaque version token used by the host to detect changes.
+     */
+    val nonce: String? = null,
+    /**
+     * Explicit enablement decisions for children this plugin contributes,
+     * keyed by child name (for MCP servers, the server name as it appears in
+     * the bundled `.mcp.json`).
+     *
+     * Bundled children are discovered by the host rather than published by the
+     * client, so the client cannot attach `enablement` to them directly. This
+     * carries the client's global decision for each one; the host applies it
+     * under the child's durable key.
+     */
+    val childEnablement: Map<String, List<CustomizationEnablement>>? = null
+)
+
+@Serializable
+data class DirectoryCustomization(
+    /**
+     * Session-unique opaque identifier. Used by every action that targets a
+     * specific customization. Minted by whoever publishes the customization
+     * (typically the agent host).
+     */
+    val id: String,
+    /**
+     * Source URI for this customization. A plugin URL, a file URI, or a
+     * directory URI.
+     *
+     * For declarations that live inside a larger file — e.g. an MCP
+     * server declared inline in a `plugins.json` manifest — `uri` points
+     * to the containing file and {@link CustomizationBase.range | `range`}
+     * narrows it to the declaration's span.
+     */
+    val uri: String,
+    /**
+     * Human-readable name.
+     */
+    val name: String,
+    /**
+     * Icons for UI display.
+     */
+    val icons: List<Icon>? = null,
+    /**
+     * Optional span within {@link CustomizationBase.uri | `uri`} when this
+     * customization is a subset of a larger file (for example, one entry
+     * in an inline `mcpServers` block of a `plugins.json` manifest).
+     * Absent when the customization covers the whole resource.
+     */
+    val range: TextRange? = null,
+    /**
+     * Additional provider-specific metadata for this customization.
+     *
+     * Mirrors the MCP `_meta` convention. Optional and opaque to the
+     * protocol; producers and consumers agree on its contents
+     * out-of-band.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null,
+    /**
+     * `clientId` of the client that contributed this container. Absent for
+     * server-originated entries.
+     */
+    val clientId: String? = null,
+    /**
+     * Host-reported load state. Absent means the host has not yet reported
+     * a load state for this container.
+     */
+    val load: CustomizationLoadState? = null,
+    /**
+     * Children discovered inside this container.
+     *
+     * Absent means the host has not parsed this container yet. An empty
+     * array means the host parsed the container and it contributes
+     * nothing.
+     */
+    val children: List<ChildCustomization>? = null,
+    val type: CustomizationType,
+    /**
+     * Whether this container is currently enabled.
+     */
+    val enabled: Boolean,
+    /**
+     * Which child customization type this directory holds.
+     */
+    val contents: CustomizationType,
+    /**
+     * Whether clients may write into this directory.
+     */
+    val writable: Boolean
+)
+
+@Serializable
+data class AgentCustomization(
+    /**
+     * Session-unique opaque identifier. Used by every action that targets a
+     * specific customization. Minted by whoever publishes the customization
+     * (typically the agent host).
+     */
+    val id: String,
+    /**
+     * Source URI for this customization. A plugin URL, a file URI, or a
+     * directory URI.
+     *
+     * For declarations that live inside a larger file — e.g. an MCP
+     * server declared inline in a `plugins.json` manifest — `uri` points
+     * to the containing file and {@link CustomizationBase.range | `range`}
+     * narrows it to the declaration's span.
+     */
+    val uri: String,
+    /**
+     * Human-readable name.
+     */
+    val name: String,
+    /**
+     * Icons for UI display.
+     */
+    val icons: List<Icon>? = null,
+    /**
+     * Optional span within {@link CustomizationBase.uri | `uri`} when this
+     * customization is a subset of a larger file (for example, one entry
+     * in an inline `mcpServers` block of a `plugins.json` manifest).
+     * Absent when the customization covers the whole resource.
+     */
+    val range: TextRange? = null,
+    /**
+     * Additional provider-specific metadata for this customization.
+     *
+     * Mirrors the MCP `_meta` convention. Optional and opaque to the
+     * protocol; producers and consumers agree on its contents
+     * out-of-band.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null,
+    /**
+     * Whether this child is individually enabled. Absent means enabled, so a
+     * producer only needs to set it to surface a child that exists but is
+     * turned off on its own.
+     *
+     * This flag is independent of the parent container's: the **effective**
+     * enabled state of a plugin child is the plugin's derived enabled value and
+     * `(child.enabled ?? true)`, so a disabled plugin disables every child
+     * regardless of each child's own flag. A directory child instead uses the
+     * directory's `enabled` value and its own flag.
+     *
+     * A child is turned on or off by id with
+     * {@link SessionCustomizationToggledAction | `session/customizationToggled`}.
+     */
+    val enabled: Boolean? = null,
+    val type: CustomizationType,
+    /**
+     * Short description of what the agent specializes in and when to
+     * invoke it. Sourced from the agent file's frontmatter `description`.
+     */
+    val description: String? = null,
+    /**
+     * Model the agent is pinned to, sourced from the agent file's
+     * frontmatter `model`. Absent means the agent inherits the session's
+     * default model.
+     */
+    val model: String? = null,
+    /**
+     * Allowlist of tool names the agent is scoped to, sourced from the
+     * agent file's frontmatter `tools`. A non-empty list restricts the
+     * agent to exactly those tools. Absent — or an empty list — imposes no
+     * restriction beyond the session default: the agent may use any
+     * available tool. Producers express "no restriction" by omitting the
+     * field rather than sending an empty array, so an empty list carries no
+     * meaning distinct from absence.
+     */
+    val tools: List<String>? = null,
+    /**
+     * When `true`, the agent will not auto-delegate to this custom agent
+     * as a sub-agent; it can only be selected by the user. Absent or
+     * `false` means the agent may delegate to it.
+     */
+    val disableModelInvocation: Boolean? = null,
+    /**
+     * When `true`, the user cannot select this custom agent (for example,
+     * in a picker); it remains available for the agent to auto-delegate
+     * to. Absent or `false` means the user may select it.
+     */
+    val disableUserInvocation: Boolean? = null
+)
+
+@Serializable
+data class SkillCustomization(
+    /**
+     * Session-unique opaque identifier. Used by every action that targets a
+     * specific customization. Minted by whoever publishes the customization
+     * (typically the agent host).
+     */
+    val id: String,
+    /**
+     * Source URI for this customization. A plugin URL, a file URI, or a
+     * directory URI.
+     *
+     * For declarations that live inside a larger file — e.g. an MCP
+     * server declared inline in a `plugins.json` manifest — `uri` points
+     * to the containing file and {@link CustomizationBase.range | `range`}
+     * narrows it to the declaration's span.
+     */
+    val uri: String,
+    /**
+     * Human-readable name.
+     */
+    val name: String,
+    /**
+     * Icons for UI display.
+     */
+    val icons: List<Icon>? = null,
+    /**
+     * Optional span within {@link CustomizationBase.uri | `uri`} when this
+     * customization is a subset of a larger file (for example, one entry
+     * in an inline `mcpServers` block of a `plugins.json` manifest).
+     * Absent when the customization covers the whole resource.
+     */
+    val range: TextRange? = null,
+    /**
+     * Additional provider-specific metadata for this customization.
+     *
+     * Mirrors the MCP `_meta` convention. Optional and opaque to the
+     * protocol; producers and consumers agree on its contents
+     * out-of-band.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null,
+    /**
+     * Whether this child is individually enabled. Absent means enabled, so a
+     * producer only needs to set it to surface a child that exists but is
+     * turned off on its own.
+     *
+     * This flag is independent of the parent container's: the **effective**
+     * enabled state of a plugin child is the plugin's derived enabled value and
+     * `(child.enabled ?? true)`, so a disabled plugin disables every child
+     * regardless of each child's own flag. A directory child instead uses the
+     * directory's `enabled` value and its own flag.
+     *
+     * A child is turned on or off by id with
+     * {@link SessionCustomizationToggledAction | `session/customizationToggled`}.
+     */
+    val enabled: Boolean? = null,
+    val type: CustomizationType,
+    /**
+     * Short description used for help text and auto-invocation matching.
+     * Sourced from the skill's frontmatter `description`.
+     */
+    val description: String? = null,
+    /**
+     * When `true`, only the user can invoke this skill — the agent will not
+     * auto-invoke it. Sourced from the command skill's frontmatter
+     * `disable-model-invocation` flag.
+     */
+    val disableModelInvocation: Boolean? = null,
+    /**
+     * When `true`, the user cannot directly invoke this skill (for example,
+     * as a slash command); it remains available for the agent to
+     * auto-invoke. Absent or `false` means the user may invoke it.
+     */
+    val disableUserInvocation: Boolean? = null
+)
+
+@Serializable
+data class PromptCustomization(
+    /**
+     * Session-unique opaque identifier. Used by every action that targets a
+     * specific customization. Minted by whoever publishes the customization
+     * (typically the agent host).
+     */
+    val id: String,
+    /**
+     * Source URI for this customization. A plugin URL, a file URI, or a
+     * directory URI.
+     *
+     * For declarations that live inside a larger file — e.g. an MCP
+     * server declared inline in a `plugins.json` manifest — `uri` points
+     * to the containing file and {@link CustomizationBase.range | `range`}
+     * narrows it to the declaration's span.
+     */
+    val uri: String,
+    /**
+     * Human-readable name.
+     */
+    val name: String,
+    /**
+     * Icons for UI display.
+     */
+    val icons: List<Icon>? = null,
+    /**
+     * Optional span within {@link CustomizationBase.uri | `uri`} when this
+     * customization is a subset of a larger file (for example, one entry
+     * in an inline `mcpServers` block of a `plugins.json` manifest).
+     * Absent when the customization covers the whole resource.
+     */
+    val range: TextRange? = null,
+    /**
+     * Additional provider-specific metadata for this customization.
+     *
+     * Mirrors the MCP `_meta` convention. Optional and opaque to the
+     * protocol; producers and consumers agree on its contents
+     * out-of-band.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null,
+    /**
+     * Whether this child is individually enabled. Absent means enabled, so a
+     * producer only needs to set it to surface a child that exists but is
+     * turned off on its own.
+     *
+     * This flag is independent of the parent container's: the **effective**
+     * enabled state of a plugin child is the plugin's derived enabled value and
+     * `(child.enabled ?? true)`, so a disabled plugin disables every child
+     * regardless of each child's own flag. A directory child instead uses the
+     * directory's `enabled` value and its own flag.
+     *
+     * A child is turned on or off by id with
+     * {@link SessionCustomizationToggledAction | `session/customizationToggled`}.
+     */
+    val enabled: Boolean? = null,
+    val type: CustomizationType,
+    /**
+     * Short description of what the prompt does.
+     */
+    val description: String? = null
+)
+
+@Serializable
+data class RuleCustomization(
+    /**
+     * Session-unique opaque identifier. Used by every action that targets a
+     * specific customization. Minted by whoever publishes the customization
+     * (typically the agent host).
+     */
+    val id: String,
+    /**
+     * Source URI for this customization. A plugin URL, a file URI, or a
+     * directory URI.
+     *
+     * For declarations that live inside a larger file — e.g. an MCP
+     * server declared inline in a `plugins.json` manifest — `uri` points
+     * to the containing file and {@link CustomizationBase.range | `range`}
+     * narrows it to the declaration's span.
+     */
+    val uri: String,
+    /**
+     * Human-readable name.
+     */
+    val name: String,
+    /**
+     * Icons for UI display.
+     */
+    val icons: List<Icon>? = null,
+    /**
+     * Optional span within {@link CustomizationBase.uri | `uri`} when this
+     * customization is a subset of a larger file (for example, one entry
+     * in an inline `mcpServers` block of a `plugins.json` manifest).
+     * Absent when the customization covers the whole resource.
+     */
+    val range: TextRange? = null,
+    /**
+     * Additional provider-specific metadata for this customization.
+     *
+     * Mirrors the MCP `_meta` convention. Optional and opaque to the
+     * protocol; producers and consumers agree on its contents
+     * out-of-band.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null,
+    /**
+     * Whether this child is individually enabled. Absent means enabled, so a
+     * producer only needs to set it to surface a child that exists but is
+     * turned off on its own.
+     *
+     * This flag is independent of the parent container's: the **effective**
+     * enabled state of a plugin child is the plugin's derived enabled value and
+     * `(child.enabled ?? true)`, so a disabled plugin disables every child
+     * regardless of each child's own flag. A directory child instead uses the
+     * directory's `enabled` value and its own flag.
+     *
+     * A child is turned on or off by id with
+     * {@link SessionCustomizationToggledAction | `session/customizationToggled`}.
+     */
+    val enabled: Boolean? = null,
+    val type: CustomizationType,
+    /**
+     * Description of what the rule enforces.
+     */
+    val description: String? = null,
+    /**
+     * When `true`, the rule is always active (subject to `globs` if any).
+     * When `false` or absent, the agent or user decides whether to apply
+     * the rule.
+     */
+    val alwaysApply: Boolean? = null,
+    /**
+     * Glob patterns the rule applies to. When present, the rule is only
+     * active for matching files.
+     */
+    val globs: List<String>? = null
+)
+
+@Serializable
+data class HookCustomization(
+    /**
+     * Session-unique opaque identifier. Used by every action that targets a
+     * specific customization. Minted by whoever publishes the customization
+     * (typically the agent host).
+     */
+    val id: String,
+    /**
+     * Source URI for this customization. A plugin URL, a file URI, or a
+     * directory URI.
+     *
+     * For declarations that live inside a larger file — e.g. an MCP
+     * server declared inline in a `plugins.json` manifest — `uri` points
+     * to the containing file and {@link CustomizationBase.range | `range`}
+     * narrows it to the declaration's span.
+     */
+    val uri: String,
+    /**
+     * Human-readable name.
+     */
+    val name: String,
+    /**
+     * Icons for UI display.
+     */
+    val icons: List<Icon>? = null,
+    /**
+     * Optional span within {@link CustomizationBase.uri | `uri`} when this
+     * customization is a subset of a larger file (for example, one entry
+     * in an inline `mcpServers` block of a `plugins.json` manifest).
+     * Absent when the customization covers the whole resource.
+     */
+    val range: TextRange? = null,
+    /**
+     * Additional provider-specific metadata for this customization.
+     *
+     * Mirrors the MCP `_meta` convention. Optional and opaque to the
+     * protocol; producers and consumers agree on its contents
+     * out-of-band.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null,
+    /**
+     * Whether this child is individually enabled. Absent means enabled, so a
+     * producer only needs to set it to surface a child that exists but is
+     * turned off on its own.
+     *
+     * This flag is independent of the parent container's: the **effective**
+     * enabled state of a plugin child is the plugin's derived enabled value and
+     * `(child.enabled ?? true)`, so a disabled plugin disables every child
+     * regardless of each child's own flag. A directory child instead uses the
+     * directory's `enabled` value and its own flag.
+     *
+     * A child is turned on or off by id with
+     * {@link SessionCustomizationToggledAction | `session/customizationToggled`}.
+     */
+    val enabled: Boolean? = null,
+    val type: CustomizationType
+)
+
+@Serializable
+data class McpServerCustomization(
+    /**
+     * Session-unique opaque identifier. Used by every action that targets a
+     * specific customization. Minted by whoever publishes the customization
+     * (typically the agent host).
+     */
+    val id: String,
+    /**
+     * Source URI for this customization. A plugin URL, a file URI, or a
+     * directory URI.
+     *
+     * For declarations that live inside a larger file — e.g. an MCP
+     * server declared inline in a `plugins.json` manifest — `uri` points
+     * to the containing file and {@link CustomizationBase.range | `range`}
+     * narrows it to the declaration's span.
+     */
+    val uri: String,
+    /**
+     * Human-readable name.
+     */
+    val name: String,
+    /**
+     * Icons for UI display.
+     */
+    val icons: List<Icon>? = null,
+    /**
+     * Optional span within {@link CustomizationBase.uri | `uri`} when this
+     * customization is a subset of a larger file (for example, one entry
+     * in an inline `mcpServers` block of a `plugins.json` manifest).
+     * Absent when the customization covers the whole resource.
+     */
+    val range: TextRange? = null,
+    /**
+     * Additional provider-specific metadata for this customization.
+     *
+     * Mirrors the MCP `_meta` convention. Optional and opaque to the
+     * protocol; producers and consumers agree on its contents
+     * out-of-band.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null,
+    val type: CustomizationType,
+    /**
+     * Explicit enablement decisions for this customization, one entry per scope
+     * that has one. This is a wire contract: producers MUST publish entries
+     * sorted by descending specificity (Session, Workspace, then Global).
+     * The agent host emits at most one Workspace entry, for the session's primary
+     * working directory. Consumers MAY treat
+     * `enablement[0]` as the decisive decision and
+     * `enablement?.[0]?.enabled ?? true` as the effective enabled value. An
+     * absent or empty array means no explicit decision exists, so the
+     * customization is enabled by default.
+     *
+     * Flows in both directions. A client publishes this alongside a customization
+     * to assert its global decision, which is authoritative for the Global scope;
+     * a client always includes its global entry, even when enabled. The host
+     * publishes the fully resolved set across all scopes, and consumers derive
+     * the effective enabled value from that set.
+     */
+    val enablement: List<CustomizationEnablement>? = null,
+    /**
+     * Current lifecycle state of the MCP server.
+     */
+    val state: McpServerState,
+    /**
+     * An `mcp://`-protocol channel the client uses to side-channel traffic
+     * into the upstream MCP server itself. The channel is NOT a fresh raw MCP
+     * connection: it piggybacks on the AHP transport
+     * and skips the MCP `initialize` sequence.
+     *
+     * The agent host MAY only serve a subset of MCP on this
+     * channel; the served subset is described by domain-specific
+     * capabilities such as those in
+     * {@link McpServerCustomizationApps.capabilities}.
+     *
+     * The channel URI SHOULD be stable across the server's lifetime, but
+     * the agent host MAY change it (for example across a restart) and
+     * MAY only expose it while the server is in
+     * {@link McpServerStatus.Ready | `Ready`}. Absence means no
+     * side-channel is currently available.
+     */
+    val channel: String? = null,
+    /**
+     * MCP App support. This property SHOULD be advertised for MCP servers
+     * which support apps.
+     */
+    val mcpApp: McpServerCustomizationApps? = null
+)
+
+@Serializable
+data class McpServerCustomizationApps(
+    /**
+     * The subset of MCP App
+     * [`HostCapabilities`](https://github.com/modelcontextprotocol/ext-apps/blob/main/specification/draft/apps.mdx)
+     * the AHP host can satisfy for Views backed by this server. The
+     * client feeds these straight through into the `hostCapabilities` of
+     * the `ui/initialize` response delivered to the View.
+     */
+    val capabilities: AhpMcpUiHostCapabilities
+)
+
+@Serializable
+data class AhpMcpUiHostCapabilities(
+    /**
+     * Producer proxies the MCP `tools/​*` methods to the upstream server.
+     */
+    val serverTools: JsonElement? = null,
+    /**
+     * Producer proxies the MCP `resources/​*` methods to the upstream server.
+     */
+    val serverResources: JsonElement? = null,
+    /**
+     * Producer accepts `notifications/message` log entries from the App via `mcpNotification`.
+     */
+    val logging: Map<String, JsonElement>? = null,
+    /**
+     * Producer serves `sampling/createMessage` via `mcpMethodCall`.
+     */
+    val sampling: JsonElement? = null
+)
+
+@Serializable
+data class McpServerStartingState(
+    val kind: McpServerStatus,
+    /**
+     * Hosts SHOULD set this to `true` when this server's startup will hold back
+     * the processing of new messages (for example, the next turn) while the
+     * server's contributions — such as its tools — are discovered.
+     *
+     * Clients MAY dispatch
+     * {@link SessionMcpServerBackgroundRequestedAction | `session/mcpServerBackgroundRequested`}
+     * through an appropriate affordance to ask the host to background the
+     * startup.
+     */
+    val blocking: Boolean? = null
+)
+
+@Serializable
+data class McpServerReadyState(
+    val kind: McpServerStatus
+)
+
+@Serializable
+data class McpServerAuthRequiredState(
+    /**
+     * Why authentication is required.
+     */
+    val reason: McpAuthRequiredReason,
+    /**
+     * Pre-registered OAuth client to use for authorization. When present, clients
+     * MUST use these credentials instead of dynamic client registration.
+     */
+    val oauthClient: McpOAuthClient? = null,
+    /**
+     * RFC 9728 Protected Resource Metadata. The `resource` field is the
+     * canonical MCP server URI per RFC 8707, used as the OAuth `resource`
+     * indicator. `authorization_servers` is REQUIRED by the MCP
+     * authorization spec.
+     */
+    val resource: ProtectedResourceMetadata,
+    /**
+     * Scopes required for the current challenge, parsed from the
+     * `WWW-Authenticate: Bearer scope="…"` header (or `scopes_supported`
+     * fallback). Authoritative for the next authorization request — clients
+     * MUST NOT assume any subset/superset relationship to
+     * `resource.scopes_supported`.
+     */
+    val requiredScopes: List<String>? = null,
+    /**
+     * Human-readable hint, typically from the OAuth `error_description`.
+     */
+    val description: String? = null,
+    val kind: McpServerStatus
+)
+
+@Serializable
+data class McpServerErrorState(
+    val kind: McpServerStatus,
+    /**
+     * Error details.
+     */
+    val error: ErrorInfo
+)
+
+@Serializable
+data class McpServerStoppedState(
+    val kind: McpServerStatus
+)
+
+@Serializable
+data class McpOAuthClient(
+    /**
+     * OAuth client identifier registered with the authorization server.
+     */
+    val clientId: String,
+    /**
+     * OAuth client secret for a confidential client. Absence means the client is
+     * public and uses a secretless flow such as authorization code with PKCE.
+     */
+    val clientSecret: String? = null
+)
+
+@Serializable
+data class McpAuthRequirement(
+    /**
+     * Why authentication is required.
+     */
+    val reason: McpAuthRequiredReason,
+    /**
+     * Pre-registered OAuth client to use for authorization. When present, clients
+     * MUST use these credentials instead of dynamic client registration.
+     */
+    val oauthClient: McpOAuthClient? = null,
+    /**
+     * RFC 9728 Protected Resource Metadata. The `resource` field is the
+     * canonical MCP server URI per RFC 8707, used as the OAuth `resource`
+     * indicator. `authorization_servers` is REQUIRED by the MCP
+     * authorization spec.
+     */
+    val resource: ProtectedResourceMetadata,
+    /**
+     * Scopes required for the current challenge, parsed from the
+     * `WWW-Authenticate: Bearer scope="…"` header (or `scopes_supported`
+     * fallback). Authoritative for the next authorization request — clients
+     * MUST NOT assume any subset/superset relationship to
+     * `resource.scopes_supported`.
+     */
+    val requiredScopes: List<String>? = null,
+    /**
+     * Human-readable hint, typically from the OAuth `error_description`.
+     */
+    val description: String? = null
+)
+
+@Serializable
+data class ToolCallClientContributor(
+    val kind: ToolCallContributorKind,
+    /**
+     * If this tool is provided by a client, the `clientId` of the owning client.
+     * Absent for server-side tools.
+     *
+     * When set, the identified client is responsible for executing the tool and
+     * dispatching `chat/toolCallComplete` with the result.
+     */
+    val clientId: String
+)
+
+@Serializable
+data class ToolCallMcpContributor(
+    val kind: ToolCallContributorKind,
+    /**
+     * Customization ID of the corresponding MCP server in {@link SessionState.customizations}.
+     */
+    val customizationId: String
+)
+
+@Serializable
+data class FileEditSide(
+    /**
+     * URI of the file on this side of the edit
+     */
+    val uri: String,
+    /**
+     * Reference to the file content on this side of the edit
+     */
+    val content: ContentRef
+)
+
+@Serializable
+data class FileEditDiffStats(
+    /**
+     * Number of items added (e.g., lines for text files, cells for notebooks)
+     */
+    val added: Long? = null,
+    /**
+     * Number of items removed (e.g., lines for text files, cells for notebooks)
+     */
+    val removed: Long? = null
+)
+
+@Serializable
+data class FileEdit(
+    /**
+     * The file state before the edit. Absent for file creations or for in-place file edits.
+     */
+    val before: FileEditSide? = null,
+    /**
+     * The file state after the edit. Absent for file deletions.
+     */
+    val after: FileEditSide? = null,
+    /**
+     * Optional diff display metadata
+     */
+    val diff: FileEditDiffStats? = null
+)
+
+@Serializable
+data class FileEditCollection(
+    val items: List<FileEdit>
+)
+
+@Serializable
+data class TerminalCommandResult(
+    /**
+     * Exit code from the completed command, if reported by the runtime
+     */
+    val exitCode: Long? = null,
+    /**
+     * Preview of the command's output, for clients that are not subscribed
+     * to the terminal or that arrive after it is disposed. When `isPty` is
+     * `true` the preview may contain VT sequences; when `false` it is plain
+     * text.
+     */
+    val preview: String? = null,
+    /**
+     * Whether `preview` is known to be incomplete or truncated
+     */
+    val truncated: Boolean? = null
+)
+
+@Serializable
+data class TerminalInfo(
+    /**
+     * Terminal URI (subscribable for full terminal state)
+     */
+    val resource: String,
+    /**
+     * Human-readable terminal title
+     */
+    val title: String,
+    /**
+     * Who currently holds this terminal
+     */
+    val claim: TerminalClaim,
+    /**
+     * Current terminal process lifecycle.
+     */
+    val lifecycle: TerminalLifecycleState
+)
+
+@Serializable
+data class TerminalClientClaim(
+    /**
+     * Discriminant
+     */
+    val kind: TerminalClaimKind,
+    /**
+     * The `clientId` of the claiming client
+     */
+    val clientId: String
+)
+
+@Serializable
+data class TerminalSessionClaim(
+    /**
+     * Discriminant
+     */
+    val kind: TerminalClaimKind,
+    /**
+     * Session URI that claimed the terminal
+     */
+    val session: String,
+    /**
+     * Chat URI that claimed the terminal.
+     */
+    val chat: String,
+    /**
+     * Optional turn identifier within the chat.
+     */
+    val turnId: String? = null,
+    /**
+     * Optional tool call identifier within the turn
+     */
+    val toolCallId: String? = null
+)
+
+@Serializable
+data class TerminalRunningLifecycleState(
+    val status: TerminalLifecycleStatus
+)
+
+@Serializable
+data class TerminalExitedLifecycleState(
+    val status: TerminalLifecycleStatus,
+    /**
+     * Process exit code, if the runtime reported one.
+     */
+    val exitCode: Long? = null
+)
+
+@Serializable
+data class TerminalState(
+    /**
+     * Human-readable terminal title
+     */
+    val title: String,
+    /**
+     * Current working directory of the terminal process
+     */
+    val cwd: String? = null,
+    /**
+     * Terminal width in columns
+     */
+    val cols: Long? = null,
+    /**
+     * Terminal height in rows
+     */
+    val rows: Long? = null,
+    /**
+     * Typed content parts, replacing the flat `content: string`.
+     *
+     * Naive consumers that only need the raw VT stream can reconstruct it with:
+     * `content.map(p => p.type === 'command' ? p.output : p.value).join('')`
+     *
+     * Consumers that need command boundaries can filter by part type.
+     */
+    val content: List<TerminalContentPart>,
+    /**
+     * Current terminal process lifecycle.
+     */
+    val lifecycle: TerminalLifecycleState,
+    /**
+     * Who currently holds this terminal
+     */
+    val claim: TerminalClaim,
+    /**
+     * Whether this terminal emits `terminal/commandExecuted` and
+     * `terminal/commandFinished` actions and populates `command`-typed parts.
+     *
+     * Clients MUST check this flag before relying on command detection.
+     * Do NOT use the presence of a `command` part as a feature flag — parts
+     * are absent in the normal idle state.
+     */
+    val supportsCommandDetection: Boolean? = null,
+    /**
+     * Whether this terminal-style resource is backed by a pseudoterminal.
+     * When `false`, output is plain text and clients do not need to parse
+     * VT sequences.
+     */
+    val isPty: Boolean? = null
+)
+
+@Serializable
+data class TerminalUnclassifiedPart(
+    val type: String,
+    /**
+     * Accumulated VT output. Appended to by `terminal/data` when no command is executing.
+     */
+    val value: String
+)
+
+@Serializable
+data class TerminalCommandPart(
+    val type: String,
+    /**
+     * Stable id matching the `commandId` on the corresponding
+     * `terminal/commandExecuted` and `terminal/commandFinished` actions.
+     */
+    val commandId: String,
+    /**
+     * The command line submitted to the shell.
+     */
+    val commandLine: String,
+    /**
+     * Accumulated VT output. Appended to by `terminal/data` while `isComplete`
+     * is false. Shell integration escape sequences are stripped by the server.
+     */
+    val output: String,
+    /**
+     * Unix timestamp (ms) when execution started, as reported by the server.
+     */
+    val timestamp: Long,
+    /**
+     * Whether the command has finished.
+     */
+    val isComplete: Boolean,
+    /**
+     * Shell exit code. Set at completion. `undefined` if unknown.
+     */
+    val exitCode: Long? = null,
+    /**
+     * Wall-clock duration in milliseconds. Set at completion.
+     */
+    val durationMs: Long? = null
+)
+
+@Serializable
+data class UsageInfo(
+    /**
+     * Input tokens consumed
+     */
+    val inputTokens: Long? = null,
+    /**
+     * Output tokens generated
+     */
+    val outputTokens: Long? = null,
+    /**
+     * Model used
+     */
+    val model: String? = null,
+    /**
+     * Tokens read from cache
+     */
+    val cacheReadTokens: Long? = null,
+    /**
+     * Additional provider-specific metadata for this usage report.
+     * Clients MAY look for well-known optional keys here to provide enhanced UI.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null
+)
+
+@Serializable
+data class ErrorInfo(
+    /**
+     * Error type identifier
+     */
+    val errorType: String,
+    /**
+     * Human-readable error message
+     */
+    val message: String,
+    /**
+     * Stack trace
+     */
+    val stack: String? = null,
+    /**
+     * Additional provider-specific metadata for this error.
+     * Clients MAY look for well-known optional keys here to provide enhanced UI
+     * (e.g. a structured chat fetch error for richer, localized messaging).
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null
+)
+
+@Serializable
+data class Snapshot(
+    /**
+     * The subscribed channel URI (e.g. `ahp-root://`, `ahp-session:/<uuid>`, `ahp-chat:/<uuid>`, or `ahp-canvas:/<uuid>`)
+     */
+    val resource: String,
+    /**
+     * The current state of the resource
+     */
+    val state: SnapshotState,
+    /**
+     * The `serverSeq` at which this snapshot was taken. Subsequent actions will have `serverSeq > fromSeq`.
+     */
+    val fromSeq: Long
+)
+
+@Serializable
+data class Changeset(
+    /**
+     * Human-readable label, e.g. `"Uncommitted Changes"`.
+     */
+    val label: String,
+    /**
+     * RFC 6570 URI template. Clients parse the variables directly out of the
+     * template using the standard `{name}` syntax — they are not redeclared
+     * here.
+     *
+     * Only the following template shapes are defined by this protocol; any
+     * other variable name MUST be ignored by clients (there is no
+     * protocol-defined way to obtain values for unknown variables):
+     *
+     * | Variables in template                       | Meaning                                                                              |
+     * | ------------------------------------------- | ------------------------------------------------------------------------------------ |
+     * | _(none)_                                    | A static changeset scoped to the advertising session or chat. The template is itself a subscribable URI. |
+     * | `{turnId}`                                  | Per-turn slice. Expand with a `Turn.id` from the advertising chat or session.        |
+     * | `{originalTurnId}` and `{modifiedTurnId}`   | Diff between two turns. Both variables MUST be present.                              |
+     *
+     * Future protocol versions MAY add new well-known variables.
+     */
+    val uriTemplate: String,
+    /**
+     * Optional longer description.
+     */
+    val description: String? = null,
+    /**
+     * Advisory hint describing what kind of changeset this is, so clients can
+     * group, sort, or render an appropriate icon without parsing
+     * {@link uriTemplate}. Recognized values include:
+     *
+     * - `'session'`: a static, session-wide changeset covering all changes the
+     * agent has produced in this session.
+     * - `'branch'`: changes relative to a base branch (e.g. a feature branch
+     * diffed against `main`).
+     * - `'uncommitted'`: the workspace's current uncommitted changes.
+     * - `'turn'`: changes produced by a single turn. Typically paired with a
+     * `{turnId}` variable in {@link uriTemplate}.
+     * - `'compare-turns'`: a diff between two turns. Typically paired with
+     * `{originalTurnId}` and `{modifiedTurnId}` variables in
+     * {@link uriTemplate}.
+     *
+     * Implementations MAY provide additional values; clients SHOULD fall back
+     * to a reasonable default when an unknown value is encountered.
+     */
+    val changeKind: String,
+    /**
+     * Optional capability declarations for this changeset. Absent (or an empty
+     * object) means the changeset advertises no optional capabilities.
+     *
+     * Because the catalogue entry is delivered up-front on the advertising
+     * session or chat's changeset list, clients can decide whether to surface
+     * capability-gated UI (such as review checkboxes) without first subscribing
+     * to the changeset URI. Mirrors the presence-flag convention of
+     * `ClientCapabilities`.
+     */
+    val capabilities: ChangesetCapabilities? = null
+)
+
+@Serializable
+data class ChangesetCapabilities(
+    /**
+     * The changeset supports the per-file **review** workflow. When declared,
+     * clients MAY surface a GitHub-style "Viewed" toggle per file and dispatch
+     * {@link ChangesetFilesReviewChangedAction | `changeset/filesReviewChanged`} to
+     * set each file's {@link ChangesetFile.reviewed} flag. Clients that omit
+     * handling MUST treat the changeset as non-reviewable.
+     */
+    val review: Map<String, JsonElement>? = null
+)
+
+@Serializable
+data class ChangesetState(
+    /**
+     * Computation lifecycle.
+     */
+    val status: ChangesetStatus,
+    /**
+     * Present iff `status === ChangesetStatus.Error`.
+     */
+    val error: ErrorInfo? = null,
+    /**
+     * Files in this changeset, keyed by {@link ChangesetFile.id}.
+     */
+    val files: List<ChangesetFile>,
+    /**
+     * Operations the client may invoke against this changeset. Omit when no
+     * operations are available.
+     */
+    val operations: List<ChangesetOperation>? = null
+)
+
+@Serializable
+data class ChangesetFile(
+    /**
+     * Stable identifier within the changeset. Typically `after.uri`
+     * (or `before.uri` for deletions).
+     */
+    val id: String,
+    /**
+     * Reuses the existing {@link FileEdit} shape. Clients derive line
+     * additions, deletions, and rename/create/delete semantics from this.
+     */
+    val edit: FileEdit,
+    /**
+     * Whether a reviewer has marked this file as reviewed (the GitHub-style
+     * "Viewed" checkbox). Absent is equivalent to `false` — clients MUST treat
+     * a missing value as not-yet-reviewed.
+     *
+     * Requires the changeset to advertise {@link ChangesetCapabilities.review}.
+     * Clients toggle it by dispatching
+     * {@link ChangesetFilesReviewChangedAction | `changeset/filesReviewChanged`};
+     * the server MAY also originate it (e.g. an agent self-reviewing its own
+     * output).
+     *
+     * There is no content version in the protocol, so review is **not** reset
+     * automatically when a file's contents change under a stable id. The server,
+     * which is the authority on what changed, resets review explicitly — either
+     * by re-emitting the file (via {@link ChangesetFileSetAction} or
+     * {@link ChangesetContentChangedAction}) without `reviewed: true`, or by
+     * dispatching `changeset/filesReviewChanged` with `reviewed: false`.
+     */
+    val reviewed: Boolean? = null,
+    /**
+     * Server-defined opaque metadata, surfaced to operations and tooling
+     * but not interpreted by the protocol.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null
+)
+
+@Serializable
+data class ChangesetOperation(
+    /**
+     * Stable identifier, unique within this changeset.
+     */
+    val id: String,
+    /**
+     * Human-readable button/menu label.
+     */
+    val label: String,
+    /**
+     * Optional longer description shown on hover or in tooltips.
+     */
+    val description: String? = null,
+    /**
+     * Where this operation can be invoked.
+     */
+    val scopes: List<ChangesetOperationScope>,
+    /**
+     * Optional confirmation prompt to show before invoking. When present,
+     * the client MUST display this message to the user (typically in a
+     * confirmation dialog) and only invoke the operation after the user
+     * accepts. The presence of this field also signals that the operation
+     * is destructive — clients SHOULD style the affirmative button
+     * accordingly (e.g. with a warning colour).
+     */
+    val confirmation: StringOrMarkdown? = null,
+    /**
+     * Optional generic icon hint, e.g. `"check"`, `"trash"`.
+     */
+    val icon: String? = null,
+    /**
+     * Optional group identifier, used to group related operations together.
+     */
+    val group: String? = null,
+    /**
+     * Current execution status. The server sets
+     * {@link ChangesetOperationStatus.Running | Running} while an invocation
+     * is in flight, {@link ChangesetOperationStatus.Error | Error} when the
+     * most recent invocation failed, and
+     * {@link ChangesetOperationStatus.Idle | Idle} otherwise.
+     *
+     * Clients SHOULD reflect this state in the UI — e.g. disabling the
+     * control or showing a spinner while `Running`, and surfacing
+     * {@link error} while `Error`.
+     */
+    val status: ChangesetOperationStatus,
+    /**
+     * Cause of failure. Present iff
+     * `status === ChangesetOperationStatus.Error`; otherwise omitted.
+     */
+    val error: ErrorInfo? = null
+)
+
+@Serializable
+data class AnnotationsSummary(
+    /**
+     * The subscribable annotations channel URI for the owning session
+     * (typically `ahp-session:/<uuid>/annotations`). Surfaced explicitly even
+     * though it is derivable from the session URI so badge UI does not need
+     * to know the derivation rule.
+     */
+    val resource: String,
+    /**
+     * Total number of {@link Annotation} entries in the channel.
+     */
+    val annotationCount: Long,
+    /**
+     * Total number of {@link AnnotationEntry} entries across every annotation.
+     */
+    val entryCount: Long
+)
+
+@Serializable
+data class AnnotationsState(
+    /**
+     * Annotations in this channel, keyed by {@link Annotation.id}.
+     */
+    val annotations: List<Annotation>
+)
+
+@Serializable
+data class AnnotationOrigin(
+    /**
+     * Owning session URI.
+     */
+    val session: String,
+    /**
+     * Owning chat URI, when the annotation is scoped to a chat.
+     */
+    val chat: String? = null,
+    /**
+     * Turn identifier within {@link chat}, when the annotation is scoped to a turn.
+     */
+    val turnId: String? = null
+)
+
+@Serializable
+data class Annotation(
+    /**
+     * Stable identifier within the annotations channel. Assigned by the client
+     * that dispatches the creating {@link AnnotationsSetAction}.
+     */
+    val id: String,
+    /**
+     * Provenance of the content this annotation is anchored to.
+     */
+    val origin: AnnotationOrigin,
+    /**
+     * The file the annotation is anchored to.
+     */
+    val resource: String,
+    /**
+     * Range within {@link resource} the annotation is anchored to. When
+     * omitted the annotation is anchored to the entire file.
+     */
+    val range: TextRange? = null,
+    /**
+     * Whether the annotation has been resolved. Newly created annotations are
+     * always unresolved (`false`); a client marks an annotation resolved (or
+     * re-opens it) by dispatching an {@link AnnotationsUpdatedAction} carrying
+     * the updated flag (or an {@link AnnotationsSetAction} when replacing the
+     * whole annotation).
+     */
+    val resolved: Boolean,
+    /**
+     * Entries in this annotation, in dispatch order (oldest first). MUST
+     * contain at least one entry.
+     */
+    val entries: List<AnnotationEntry>,
+    /**
+     * Producer-defined opaque metadata, surfaced to tooling but not
+     * interpreted by the protocol.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null
+)
+
+@Serializable
+data class AnnotationEntry(
+    /**
+     * Stable identifier within the enclosing annotation. Assigned by the client
+     * that dispatches the {@link AnnotationsEntrySetAction} (or the enclosing
+     * {@link AnnotationsSetAction}) introducing the entry.
+     */
+    val id: String,
+    /**
+     * Entry body. A bare `string` is rendered as plain text; pass
+     * `{ markdown: "…" }` to opt into Markdown rendering. See
+     * {@link StringOrMarkdown}.
+     */
+    val text: StringOrMarkdown,
+    /**
+     * Producer-defined opaque metadata, surfaced to tooling but not
+     * interpreted by the protocol.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null
+)
+
+@Serializable
+data class TelemetryCapabilities(
+    /**
+     * Channel URI (or RFC 6570 URI template) for OTLP log records
+     * (`otlp/exportLogs` notifications).
+     *
+     * The following template variables are defined by this protocol; any
+     * other variable name MUST be ignored by clients (there is no
+     * protocol-defined way to obtain values for unknown variables):
+     *
+     * | Variables in template | Meaning                                                                                                 |
+     * | --------------------- | ------------------------------------------------------------------------------------------------------- |
+     * | _(none)_              | The host does not support subscriber-side severity filtering. The template is itself a subscribable URI. |
+     * | `{level}`             | Minimum OTLP severity to deliver. Expand to one of the [OTLP `SeverityNumber`](https://opentelemetry.io/docs/specs/otel/logs/data-model/#field-severitynumber) short names (case-insensitive): `trace`, `debug`, `info`, `warn`, `error`, `fatal`. The server delivers log records whose `severityNumber` falls in the corresponding band or above. |
+     *
+     * Hosts SHOULD honour the expanded `{level}`; clients MUST still filter
+     * defensively in case a host ignores the parameter. Hosts that do not
+     * advertise `{level}` deliver all severities.
+     *
+     * Future protocol versions MAY add new well-known variables (e.g. scope
+     * or attribute filters).
+     */
+    val logs: String? = null,
+    /**
+     * Channel URI for OTLP spans (`otlp/exportTraces` notifications). No
+     * template variables are defined by this protocol version.
+     */
+    val traces: String? = null,
+    /**
+     * Channel URI for OTLP metric data points (`otlp/exportMetrics`
+     * notifications). No template variables are defined by this protocol
+     * version.
+     */
+    val metrics: String? = null
+)
+
+@Serializable
+data class ResourceWatchState(
+    /**
+     * The URI being watched. For recursive watches this is the root of the
+     * subtree; for non-recursive watches this is the single file or
+     * directory.
+     */
+    val root: String,
+    /**
+     * `true` if the watcher reports changes for descendants of `root`;
+     * `false` if it only reports changes to `root` itself (and, when
+     * `root` is a directory, its direct children).
+     */
+    val recursive: Boolean,
+    /**
+     * Optional glob patterns or paths relative to `root` to exclude from
+     * change reporting.
+     */
+    val excludes: JsonElement? = null,
+    /**
+     * Optional glob patterns or paths relative to `root` to restrict
+     * change reporting to. Omit to report every change under `root`
+     * subject to `excludes`.
+     */
+    val includes: JsonElement? = null
+)
+
+@Serializable
+data class ResourceChange(
+    /**
+     * The URI of the resource that changed.
+     */
+    val uri: String,
+    /**
+     * The kind of change observed.
+     */
+    val type: ResourceChangeType
+)
+
+@Serializable
+data class AutomationSessionOrigin(
+    val kind: SessionOriginKind,
+    /**
+     * Owning {@link AutomationEntry.resource}.
+     */
+    val automation: String,
+    /**
+     * Owning {@link AutomationRunState.resource}.
+     */
+    val run: String
+)
+
+@Serializable
+data class AutomationSchedule(
+    /**
+     * Five-field AHP cron expression described by {@link AutomationSchedule}.
+     */
+    val expression: String,
+    /**
+     * IANA Time Zone Database identifier used to interpret the expression, for
+     * example `"UTC"` or `"Europe/Berlin"`.
+     */
+    val timeZone: String
+)
+
+@Serializable
+data class AutomationScheduleTrigger(
+    /**
+     * Identifier unique and stable within this automation definition. Recorded in
+     * {@link AutomationTriggeredRunOrigin.triggerId} when this trigger creates a
+     * run.
+     */
+    val id: String,
+    val kind: AutomationTriggerKind,
+    /**
+     * Recurrence and time zone evaluated by the host.
+     */
+    val schedule: AutomationSchedule,
+    /**
+     * Policy for missed occurrences. Omission is equivalent to
+     * {@link AutomationMisfirePolicy.RunOnce}.
+     */
+    val misfirePolicy: AutomationMisfirePolicy? = null
+)
+
+@Serializable
+data class AutomationEventTrigger(
+    /**
+     * Identifier unique and stable within this automation definition. Recorded in
+     * {@link AutomationTriggeredRunOrigin.triggerId} when this trigger creates a
+     * run.
+     */
+    val id: String,
+    val kind: AutomationTriggerKind,
+    /**
+     * Matches {@link AutomationTriggerDefinition.type}.
+     */
+    val type: String,
+    /**
+     * Host-normalized human-readable trigger type name.
+     */
+    val title: String,
+    /**
+     * Optional host-normalized explanation of the trigger source.
+     */
+    val description: String? = null,
+    /**
+     * Selected events for this trigger type.
+     *
+     * Event ids carry the trigger semantics. Titles and descriptions are
+     * last-known display metadata and do not indicate current availability.
+     */
+    val events: List<AutomationTriggerEventDefinition>,
+    /**
+     * Values described by {@link AutomationTriggerDefinition.configSchema}.
+     * Clients MUST preserve unknown entries when editing other fields.
+     */
+    val config: Map<String, JsonElement>? = null
+)
+
+@Serializable
+data class AutomationTriggerEventDefinition(
+    /**
+     * Stable event id.
+     */
+    val id: String,
+    /**
+     * Human-readable event name.
+     */
+    val title: String,
+    /**
+     * Optional longer explanation of when this event fires.
+     */
+    val description: String? = null
+)
+
+@Serializable
+data class AutomationTriggerDefinition(
+    /**
+     * Stable type id stored in {@link AutomationEventTrigger.type}.
+     */
+    val type: String,
+    /**
+     * Human-readable trigger type name.
+     */
+    val title: String,
+    /**
+     * Optional longer explanation of the trigger source.
+     */
+    val description: String? = null,
+    /**
+     * Events available for selection. Saved triggers retain their selected event descriptors.
+     */
+    val events: List<AutomationTriggerEventDefinition>,
+    /**
+     * Optional schema for {@link AutomationEventTrigger.config}.
+     */
+    val configSchema: ConfigSchema? = null
+)
+
+@Serializable
+data class AutomationSessionTemplate(
+    /**
+     * Provider id matching {@link AgentInfo.provider}. Omit to use the host's default provider.
+     */
+    val provider: String? = null,
+    /**
+     * Optional model selection resolved when a run starts. Its
+     * {@link ModelSelection.id} matches a {@link SessionModelInfo.id} advertised
+     * by the selected provider.
+     */
+    val model: ModelSelection? = null,
+    /**
+     * Optional custom agent selection identified by {@link AgentSelection.uri}.
+     */
+    val agent: AgentSelection? = null,
+    /**
+     * Ordered working-directory URIs for each created session, equivalent to
+     * {@link CreateSessionParams.workingDirectories}. Absence means a
+     * workspace-less session.
+     */
+    val workingDirectories: List<String>? = null,
+    /**
+     * Session configuration values equivalent to
+     * {@link CreateSessionParams.config}, normally obtained from
+     * {@link ResolveSessionConfigResult.values}.
+     */
+    val config: Map<String, JsonElement>? = null,
+    /**
+     * Client plugins to make available in every run session, in the same
+     * published shape as
+     * {@link SessionActiveClient.customizations | `activeClients[].customizations`}.
+     * Entries are keyed by `id`.
+     *
+     * Runs usually start when no client is connected, so the host does not
+     * resolve these URIs at run time. Instead, when it accepts a
+     * {@link AutomationCreateRequestedAction | `automation/createRequested`} or
+     * {@link AutomationUpdateRequestedAction | `automation/updateRequested`}
+     * that adds an entry or changes an entry's `uri` or `nonce`, the host
+     * captures a host-owned copy of the plugin. For client-served URIs such as
+     * `virtual://…`, it reads the contents from the dispatching client with
+     * server→client `resource*` requests. If a capture fails, the host rejects
+     * the whole action. Entries whose `id`, `uri`, and `nonce` are unchanged keep
+     * their existing copy, so any client can re-submit a template it received
+     * without being able to serve the plugin itself. The resulting copies are
+     * reported in {@link AutomationEntry.customizations}.
+     *
+     * The host MAY share one stored copy between entries with equal `uri` and
+     * `nonce`, including across automations; this is not observable to clients.
+     *
+     * Clients MUST NOT set this field unless the host advertises
+     * {@link AutomationCapabilities.customizations}.
+     */
+    val customizations: List<ClientPluginCustomization>? = null
+)
+
+@Serializable
+data class AutomationDefinition(
+    /**
+     * Human-readable automation name.
+     */
+    val title: String,
+    /**
+     * Initial message sent to every newly created run session. Its
+     * {@link Message.origin} kind MUST be {@link MessageKind.Automation}.
+     */
+    val message: Message,
+    /**
+     * Template used to create fresh sessions for each run.
+     */
+    val session: AutomationSessionTemplate,
+    /**
+     * Whether automatic triggers may create runs. Manual runs remain available
+     * whenever {@link AutomationOperation.Run} is advertised.
+     */
+    val enabled: Boolean,
+    /**
+     * Automatic triggers. An empty list means manual-only.
+     */
+    val triggers: List<AutomationTrigger>,
+    /**
+     * Self-disable rules combined with logical OR: the host sets
+     * {@link AutomationDefinition.enabled} to `false` when any condition is met.
+     * Absent or empty means no automatic disable conditions. Each
+     * {@link AutomationDisableConditionKind} may appear at most once; hosts MUST
+     * reject create or update requests containing duplicate kinds.
+     *
+     * Only automatic (scheduled) runs are governed; manual runs via
+     * {@link RunAutomationParams | runAutomation} are never blocked. For a
+     * {@link AutomationAfterRunsCondition}, usage is tracked by the host-owned
+     * {@link AutomationEntry.runCount}. Adding that kind when absent or
+     * a disabled→enabled transition starts a fresh allowance. Clearing the
+     * conditions does not re-enable a disabled automation. See the
+     * {@link /guide/automations | Automations Guide}.
+     */
+    val disableConditions: List<AutomationDisableCondition>? = null,
+    /**
+     * Opaque implementation-defined metadata. Clients MUST preserve unknown
+     * entries when updating the definition.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null
+)
+
+@Serializable
+data class AutomationDefinitionPatch(
+    /**
+     * Replacement {@link AutomationDefinition.title}.
+     */
+    val title: String? = null,
+    /**
+     * Replacement {@link AutomationDefinition.message}.
+     */
+    val message: Message? = null,
+    /**
+     * Replacement {@link AutomationDefinition.session}. The host revalidates
+     * affected event triggers when their discovery context changes, and
+     * captures {@link AutomationSessionTemplate.customizations} entries that
+     * are new or whose `uri` or `nonce` changed.
+     */
+    val session: AutomationSessionTemplate? = null,
+    /**
+     * Replacement {@link AutomationDefinition.enabled}.
+     */
+    val enabled: Boolean? = null,
+    /**
+     * Complete replacement {@link AutomationDefinition.triggers}. The host
+     * validates event ids and normalizes event-trigger titles and descriptions.
+     */
+    val triggers: List<AutomationTrigger>? = null,
+    /**
+     * Complete replacement {@link AutomationDefinition.disableConditions}.
+     * Omit to leave unchanged; supply an empty array to remove all conditions.
+     * Each kind may appear at most once; hosts MUST reject duplicate kinds.
+     * Clearing conditions does not change {@link AutomationDefinition.enabled}.
+     */
+    val disableConditions: List<AutomationDisableCondition>? = null,
+    /**
+     * Complete replacement {@link AutomationDefinition._meta}.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null
+)
+
+@Serializable
+data class AutomationAfterRunsCondition(
+    val kind: AutomationDisableConditionKind,
+    /**
+     * Positive-integer cap on scheduled runs.
+     */
+    val max: Long
+)
+
+@Serializable
+data class AutomationAfterDateCondition(
+    val kind: AutomationDisableConditionKind,
+    /**
+     * ISO 8601 timestamp after which scheduling stops.
+     */
+    val date: String
+)
+
+@Serializable
+data class AutomationEntry(
+    /**
+     * Stable `ahp-automation:/<id>` resource identifier.
+     */
+    val resource: String,
+    /**
+     * Current durable definition.
+     */
+    val definition: AutomationDefinition,
+    /**
+     * Earliest schedule occurrence awaiting evaluation, as an ISO 8601 timestamp. It may be in the past while catch-up is pending.
+     */
+    val nextRunAt: String? = null,
+    /**
+     * Host-owned count of scheduled runs consumed against the current
+     * {@link AutomationAfterRunsCondition} allowance. Authoritative usage for the
+     * **current** allowance, not a lifetime total: the host resets it to `0` when
+     * a disabled→enabled transition starts a fresh allowance or a
+     * {@link AutomationAfterRunsCondition} is added when none was present. It is NOT
+     * reconstructed from {@link runs} (a bounded, prunable window). The host
+     * increments it atomically when it admits a scheduled run, including runs
+     * later cancelled or failed.
+     *
+     * Absent when {@link AutomationDefinition.disableConditions} contains no
+     * {@link AutomationAfterRunsCondition}.
+     */
+    val runCount: Long? = null,
+    /**
+     * Newest-first retained run summaries. This is a bounded window; use
+     * {@link FetchAutomationRunsParams | fetchAutomationRuns} when
+     * {@link AutomationEntry.runsNextCursor} is present.
+     */
+    val runs: List<AutomationRunSummary>,
+    /**
+     * Opaque cursor passed as {@link FetchAutomationRunsParams.cursor} for the next older run-history page.
+     */
+    val runsNextCursor: String? = null,
+    /**
+     * Operations currently permitted for this automation.
+     */
+    val operations: List<AutomationOperation>,
+    /**
+     * Host-owned copies of the plugins in
+     * {@link AutomationSessionTemplate.customizations}, one per template entry
+     * with the same `id`. Absent when the template has no customizations.
+     *
+     * Each copy's `uri` identifies the captured contents, which clients can
+     * browse with `resourceRead`. `children` and `load` report what the host
+     * found in that copy, independent of whether the originating client is
+     * connected. `clientId` is absent because the copy no longer depends on a
+     * client.
+     *
+     * Every run session receives these plugins in
+     * {@link SessionState.customizations}, with the enablement from the
+     * matching template entry.
+     */
+    val customizations: List<PluginCustomization>? = null,
+    /**
+     * Creation timestamp in ISO 8601 format.
+     */
+    val createdAt: String,
+    /**
+     * Last definition modification timestamp in ISO 8601 format.
+     */
+    val modifiedAt: String,
+    /**
+     * Opaque host-defined state metadata.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null
+)
+
+@Serializable
+data class AutomationState(
+    /**
+     * Full automation entries keyed by {@link AutomationEntry.resource}.
+     */
+    val entries: List<AutomationEntry>,
+    /**
+     * Opaque host-defined catalogue metadata.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null
+)
+
+@Serializable
+data class AutomationManualRunOrigin(
+    val kind: AutomationRunOriginKind
+)
+
+@Serializable
+data class AutomationTriggeredRunOrigin(
+    val kind: AutomationRunOriginKind,
+    /**
+     * Matches the stable {@link AutomationScheduleTrigger.id} or
+     * {@link AutomationEventTrigger.id} in the definition.
+     */
+    val triggerId: String,
+    /**
+     * Intended schedule occurrence as an ISO 8601 timestamp. Present for
+     * schedule triggers and normally absent for event triggers.
+     */
+    val scheduledFor: String? = null,
+    /**
+     * `true` when this is a catch-up run created by
+     * {@link AutomationMisfirePolicy.RunOnce}.
+     */
+    val catchUp: Boolean? = null,
+    /**
+     * Host-defined, non-secret event provenance suitable for display or audit.
+     * This is descriptive context, not an input that clients replay.
+     */
+    val event: Map<String, JsonElement>? = null
+)
+
+@Serializable
+data class AutomationPendingRunLifecycle(
+    val status: AutomationRunStatus,
+    /**
+     * Run creation timestamp in ISO 8601 format.
+     */
+    val createdAt: String
+)
+
+@Serializable
+data class AutomationRunningRunLifecycle(
+    val status: AutomationRunStatus,
+    /**
+     * Run creation timestamp in ISO 8601 format.
+     */
+    val createdAt: String,
+    /**
+     * First execution start timestamp in ISO 8601 format.
+     */
+    val startedAt: String
+)
+
+@Serializable
+data class AutomationCompletedRunLifecycle(
+    val status: AutomationRunStatus,
+    /**
+     * Run creation timestamp in ISO 8601 format.
+     */
+    val createdAt: String,
+    /**
+     * First execution start timestamp in ISO 8601 format.
+     */
+    val startedAt: String,
+    /**
+     * Completion timestamp in ISO 8601 format.
+     */
+    val completedAt: String,
+    /**
+     * Optional aggregate model usage across all linked sessions.
+     */
+    val usage: UsageInfo? = null
+)
+
+@Serializable
+data class AutomationFailedRunLifecycle(
+    val status: AutomationRunStatus,
+    /**
+     * Run creation timestamp in ISO 8601 format.
+     */
+    val createdAt: String,
+    /**
+     * First execution start timestamp in ISO 8601 format, when execution began.
+     */
+    val startedAt: String? = null,
+    /**
+     * Failure timestamp in ISO 8601 format.
+     */
+    val completedAt: String,
+    /**
+     * Stable machine-readable and human-readable failure information.
+     */
+    val error: ErrorInfo
+)
+
+@Serializable
+data class AutomationCancelledRunLifecycle(
+    val status: AutomationRunStatus,
+    /**
+     * Run creation timestamp in ISO 8601 format.
+     */
+    val createdAt: String,
+    /**
+     * First execution start timestamp in ISO 8601 format, when execution began.
+     */
+    val startedAt: String? = null,
+    /**
+     * Cancellation completion timestamp in ISO 8601 format.
+     */
+    val completedAt: String
+)
+
+@Serializable
+data class AutomationRunSummary(
+    /**
+     * Subscribable `ahp-automation-run:` URI matching {@link AutomationRunState.resource}.
+     */
+    val resource: String,
+    /**
+     * Owning `ahp-automation:` URI matching {@link AutomationRunState.automation}.
+     */
+    val automation: String,
+    /**
+     * Immutable provenance matching {@link AutomationRunState.origin}.
+     */
+    val origin: AutomationRunOrigin,
+    /**
+     * Current or terminal lifecycle snapshot matching {@link AutomationRunState.lifecycle}.
+     */
+    val lifecycle: AutomationRunLifecycle,
+    /**
+     * Session matching {@link AutomationRunState.primarySession}, when selected.
+     */
+    val primarySession: String? = null,
+    /**
+     * Number of entries in {@link AutomationRunState.sessions}.
+     */
+    val sessionCount: Long,
+    /**
+     * Opaque host-defined summary metadata.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null
+)
+
+@Serializable
+data class AutomationRunState(
+    /**
+     * URI of this automation-run channel.
+     */
+    val resource: String,
+    /**
+     * Owning `ahp-automation:` URI matching {@link AutomationEntry.resource}.
+     */
+    val automation: String,
+    /**
+     * Immutable provenance describing how this run was created.
+     */
+    val origin: AutomationRunOrigin,
+    /**
+     * Current or terminal lifecycle.
+     */
+    val lifecycle: AutomationRunLifecycle,
+    /**
+     * Ordered, unique session URIs belonging to this run, each matching
+     * {@link SessionState.resource}. Entries may represent retries, parallel
+     * workers, or delegated attempts.
+     */
+    val sessions: List<String>,
+    /**
+     * Member of {@link AutomationRunState.sessions} that the host recommends opening first.
+     */
+    val primarySession: String? = null,
+    /**
+     * Opaque host-defined run metadata.
+     */
+    @SerialName("_meta")
+    val meta: Map<String, JsonElement>? = null
+)
+
+// ─── Customization Enablement Union ─────────────────────────────────────
+
+/**
+ * A single explicit customization enablement decision.
+ */
+@Serializable(with = CustomizationEnablementSerializer::class)
+sealed interface CustomizationEnablement {
+    @JvmInline value class Global(val value: CustomizationEnablementGlobal) : CustomizationEnablement
+    @JvmInline value class Workspace(val value: CustomizationEnablementWorkspace) : CustomizationEnablement
+    @JvmInline value class Session(val value: CustomizationEnablementSession) : CustomizationEnablement
+}
+
+@Serializable
+data class CustomizationEnablementGlobal(
+    val enabled: Boolean,
+    val kind: String = "global",
+)
+
+@Serializable
+data class CustomizationEnablementWorkspace(
+    val uri: URI,
+    val enabled: Boolean,
+    val kind: String = "workspace",
+)
+
+@Serializable
+data class CustomizationEnablementSession(
+    val enabled: Boolean,
+    val kind: String = "session",
+)
+
+internal object CustomizationEnablementSerializer : KSerializer<CustomizationEnablement> {
+    override val descriptor: SerialDescriptor =
+        buildClassSerialDescriptor("CustomizationEnablement")
+
+    override fun deserialize(decoder: Decoder): CustomizationEnablement {
+        val input = decoder as? JsonDecoder
+            ?: error("CustomizationEnablement can only be deserialized from JSON")
+        val element = input.decodeJsonElement()
+        val obj = element as? JsonObject
+            ?: error("Expected JsonObject for CustomizationEnablement")
+        return when ((obj["kind"] as? JsonPrimitive)?.contentOrNull) {
+            "global" -> CustomizationEnablement.Global(
+                input.json.decodeFromJsonElement(CustomizationEnablementGlobal.serializer(), element),
+            )
+            "workspace" -> CustomizationEnablement.Workspace(
+                input.json.decodeFromJsonElement(CustomizationEnablementWorkspace.serializer(), element),
+            )
+            "session" -> CustomizationEnablement.Session(
+                input.json.decodeFromJsonElement(CustomizationEnablementSession.serializer(), element),
+            )
+            else -> error("Unknown CustomizationEnablement kind")
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: CustomizationEnablement) {
+        val output = encoder as? JsonEncoder
+            ?: error("CustomizationEnablement can only be serialized to JSON")
+        val element: JsonElement = when (value) {
+            is CustomizationEnablement.Global ->
+                output.json.encodeToJsonElement(CustomizationEnablementGlobal.serializer(), value.value)
+            is CustomizationEnablement.Workspace ->
+                output.json.encodeToJsonElement(CustomizationEnablementWorkspace.serializer(), value.value)
+            is CustomizationEnablement.Session ->
+                output.json.encodeToJsonElement(CustomizationEnablementSession.serializer(), value.value)
+        }
+        output.encodeJsonElement(element)
+    }
+}
+
+// ─── Tool Input ──────────────────────────────────────────────────────────────
+
+/**
+ * Raw tool input represented inline or by content reference.
+ */
+@Serializable(with = ToolInputSerializer::class)
+sealed interface ToolInput {
+    @JvmInline value class Inline(val value: String) : ToolInput
+    @JvmInline value class ContentReference(val value: ContentRef) : ToolInput
+}
+
+internal object ToolInputSerializer : KSerializer<ToolInput> {
+    override val descriptor: SerialDescriptor =
+        buildClassSerialDescriptor("ToolInput")
+
+    override fun deserialize(decoder: Decoder): ToolInput {
+        val input = decoder as? JsonDecoder
+            ?: error("ToolInput can only be deserialized from JSON")
+        return when (val element = input.decodeJsonElement()) {
+            is JsonPrimitive -> ToolInput.Inline(
+                element.contentOrNull ?: error("ToolInput string must not be null"),
+            )
+            is JsonObject -> ToolInput.ContentReference(
+                input.json.decodeFromJsonElement(ContentRef.serializer(), element),
+            )
+            else -> error("ToolInput must be a string or ContentRef object")
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: ToolInput) {
+        val output = encoder as? JsonEncoder
+            ?: error("ToolInput can only be serialized to JSON")
+        val element = when (value) {
+            is ToolInput.Inline -> JsonPrimitive(value.value)
+            is ToolInput.ContentReference ->
+                output.json.encodeToJsonElement(ContentRef.serializer(), value.value)
+        }
+        output.encodeJsonElement(element)
+    }
+}
+
+// ─── Discriminated Unions ───────────────────────────────────────────────────
+
+@Serializable(with = ChatOriginSerializer::class)
+sealed interface ChatOrigin {
+    @JvmInline value class User(val value: ChatOriginUser) : ChatOrigin
+    @JvmInline value class Fork(val value: ChatOriginFork) : ChatOrigin
+    @JvmInline value class SideChat(val value: ChatOriginSideChat) : ChatOrigin
+    @JvmInline value class Tool(val value: ChatOriginTool) : ChatOrigin
+    @JvmInline value class Unknown(val raw: JsonObject) : ChatOrigin
+}
+
+@Serializable
+data class ChatOriginUser(
+    val kind: ChatOriginKind = ChatOriginKind.USER,
+)
+
+@Serializable
+data class ChatOriginFork(
+    val kind: ChatOriginKind = ChatOriginKind.FORK,
+    val chat: String,
+    val turnId: String,
+)
+
+@Serializable
+data class ChatOriginTool(
+    val kind: ChatOriginKind = ChatOriginKind.TOOL,
+    val chat: String,
+    val toolCallId: String,
+)
+
+@Serializable
+data class ChatOriginSideChat(
+    val kind: ChatOriginKind = ChatOriginKind.SIDE_CHAT,
+    val chat: String,
+    val turnId: String,
+    val selection: SideChatSelection? = null,
+)
+
+internal object ChatOriginSerializer : KSerializer<ChatOrigin> {
+    override val descriptor: SerialDescriptor = buildClassSerialDescriptor("ChatOrigin")
+
+    override fun deserialize(decoder: Decoder): ChatOrigin {
+        val input = decoder as? JsonDecoder ?: error("ChatOrigin can only be deserialized from JSON")
+        val element = input.decodeJsonElement()
+        val obj = element as? JsonObject ?: error("Expected JsonObject for ChatOrigin")
+        return when ((obj["kind"] as? JsonPrimitive)?.contentOrNull) {
+            "user" -> ChatOrigin.User(input.json.decodeFromJsonElement(ChatOriginUser.serializer(), element))
+            "fork" -> ChatOrigin.Fork(input.json.decodeFromJsonElement(ChatOriginFork.serializer(), element))
+            "sideChat" -> ChatOrigin.SideChat(input.json.decodeFromJsonElement(ChatOriginSideChat.serializer(), element))
+            "tool" -> ChatOrigin.Tool(input.json.decodeFromJsonElement(ChatOriginTool.serializer(), element))
+            else -> ChatOrigin.Unknown(obj)
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: ChatOrigin) {
+        val output = encoder as? JsonEncoder ?: error("ChatOrigin can only be serialized to JSON")
+        val element: JsonElement = when (value) {
+            is ChatOrigin.User -> output.json.encodeToJsonElement(ChatOriginUser.serializer(), value.value)
+            is ChatOrigin.Fork -> output.json.encodeToJsonElement(ChatOriginFork.serializer(), value.value)
+            is ChatOrigin.SideChat -> output.json.encodeToJsonElement(ChatOriginSideChat.serializer(), value.value)
+            is ChatOrigin.Tool -> output.json.encodeToJsonElement(ChatOriginTool.serializer(), value.value)
+            is ChatOrigin.Unknown -> value.raw
+        }
+        output.encodeJsonElement(element)
+    }
+}
+
+@Serializable(with = ResponsePartSerializer::class)
+sealed interface ResponsePart
+
+@JvmInline
+value class ResponsePartMarkdown(val value: MarkdownResponsePart) : ResponsePart
+@JvmInline
+value class ResponsePartContentRef(val value: ResourceResponsePart) : ResponsePart
+@JvmInline
+value class ResponsePartToolCall(val value: ToolCallResponsePart) : ResponsePart
+@JvmInline
+value class ResponsePartReasoning(val value: ReasoningResponsePart) : ResponsePart
+@JvmInline
+value class ResponsePartSystemNotification(val value: SystemNotificationResponsePart) : ResponsePart
+@JvmInline
+value class ResponsePartInputRequest(val value: InputRequestResponsePart) : ResponsePart
+@JvmInline
+value class ResponsePartError(val value: ErrorResponsePart) : ResponsePart
+/**
+ * Forward-compat catch-all for unknown ResponsePart discriminators.
+ *
+ * Older clients may receive newer wire variants they don't recognise; capturing
+ * the raw `JsonObject` lets such payloads round-trip through the client unchanged.
+ * Reducers handle this variant conservatively on a per-union basis (typically
+ * as a no-op, but see `Reducers.kt` for the exact treatment).
+ */
+@JvmInline
+value class ResponsePartUnknown(val raw: JsonObject) : ResponsePart
+
+internal object ResponsePartSerializer : KSerializer<ResponsePart> {
+    override val descriptor: SerialDescriptor =
+        buildClassSerialDescriptor("ResponsePart")
+
+    override fun deserialize(decoder: Decoder): ResponsePart {
+        val input = decoder as? JsonDecoder
+            ?: error("ResponsePart can only be deserialized from JSON")
+        val element = input.decodeJsonElement()
+        val obj = element as? JsonObject
+            ?: error("Expected JsonObject for ResponsePart")
+        val discriminant = (obj["kind"] as? JsonPrimitive)?.content
+            ?: return ResponsePartUnknown(obj)
+        return when (discriminant) {
+            "markdown" -> ResponsePartMarkdown(input.json.decodeFromJsonElement(MarkdownResponsePart.serializer(), element))
+            "contentRef" -> ResponsePartContentRef(input.json.decodeFromJsonElement(ResourceResponsePart.serializer(), element))
+            "toolCall" -> ResponsePartToolCall(input.json.decodeFromJsonElement(ToolCallResponsePart.serializer(), element))
+            "reasoning" -> ResponsePartReasoning(input.json.decodeFromJsonElement(ReasoningResponsePart.serializer(), element))
+            "systemNotification" -> ResponsePartSystemNotification(input.json.decodeFromJsonElement(SystemNotificationResponsePart.serializer(), element))
+            "inputRequest" -> ResponsePartInputRequest(input.json.decodeFromJsonElement(InputRequestResponsePart.serializer(), element))
+            "error" -> ResponsePartError(input.json.decodeFromJsonElement(ErrorResponsePart.serializer(), element))
+            else -> ResponsePartUnknown(obj)
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: ResponsePart) {
+        val output = encoder as? JsonEncoder
+            ?: error("ResponsePart can only be serialized to JSON")
+        val element: JsonElement = when (value) {
+            is ResponsePartMarkdown -> output.json.encodeToJsonElement(MarkdownResponsePart.serializer(), value.value)
+            is ResponsePartContentRef -> output.json.encodeToJsonElement(ResourceResponsePart.serializer(), value.value)
+            is ResponsePartToolCall -> output.json.encodeToJsonElement(ToolCallResponsePart.serializer(), value.value)
+            is ResponsePartReasoning -> output.json.encodeToJsonElement(ReasoningResponsePart.serializer(), value.value)
+            is ResponsePartSystemNotification -> output.json.encodeToJsonElement(SystemNotificationResponsePart.serializer(), value.value)
+            is ResponsePartInputRequest -> output.json.encodeToJsonElement(InputRequestResponsePart.serializer(), value.value)
+            is ResponsePartError -> output.json.encodeToJsonElement(ErrorResponsePart.serializer(), value.value)
+            is ResponsePartUnknown -> value.raw
+        }
+        output.encodeJsonElement(element)
+    }
+}
+
+@Serializable(with = ToolCallStateSerializer::class)
+sealed interface ToolCallState
+
+@JvmInline
+value class ToolCallStateStreaming(val value: ToolCallStreamingState) : ToolCallState
+@JvmInline
+value class ToolCallStatePendingConfirmation(val value: ToolCallPendingConfirmationState) : ToolCallState
+@JvmInline
+value class ToolCallStateRunning(val value: ToolCallRunningState) : ToolCallState
+@JvmInline
+value class ToolCallStateAuthRequired(val value: ToolCallAuthRequiredState) : ToolCallState
+@JvmInline
+value class ToolCallStatePendingResultConfirmation(val value: ToolCallPendingResultConfirmationState) : ToolCallState
+@JvmInline
+value class ToolCallStateCompleted(val value: ToolCallCompletedState) : ToolCallState
+@JvmInline
+value class ToolCallStateCancelled(val value: ToolCallCancelledState) : ToolCallState
+/**
+ * Forward-compat catch-all for unknown ToolCallState discriminators.
+ *
+ * Older clients may receive newer wire variants they don't recognise; capturing
+ * the raw `JsonObject` lets such payloads round-trip through the client unchanged.
+ * Reducers handle this variant conservatively on a per-union basis (typically
+ * as a no-op, but see `Reducers.kt` for the exact treatment).
+ */
+@JvmInline
+value class ToolCallStateUnknown(val raw: JsonObject) : ToolCallState
+
+internal object ToolCallStateSerializer : KSerializer<ToolCallState> {
+    override val descriptor: SerialDescriptor =
+        buildClassSerialDescriptor("ToolCallState")
+
+    override fun deserialize(decoder: Decoder): ToolCallState {
+        val input = decoder as? JsonDecoder
+            ?: error("ToolCallState can only be deserialized from JSON")
+        val element = input.decodeJsonElement()
+        val obj = element as? JsonObject
+            ?: error("Expected JsonObject for ToolCallState")
+        val discriminant = (obj["status"] as? JsonPrimitive)?.content
+            ?: return ToolCallStateUnknown(obj)
+        return when (discriminant) {
+            "streaming" -> ToolCallStateStreaming(input.json.decodeFromJsonElement(ToolCallStreamingState.serializer(), element))
+            "pending-confirmation" -> ToolCallStatePendingConfirmation(input.json.decodeFromJsonElement(ToolCallPendingConfirmationState.serializer(), element))
+            "running" -> ToolCallStateRunning(input.json.decodeFromJsonElement(ToolCallRunningState.serializer(), element))
+            "auth-required" -> ToolCallStateAuthRequired(input.json.decodeFromJsonElement(ToolCallAuthRequiredState.serializer(), element))
+            "pending-result-confirmation" -> ToolCallStatePendingResultConfirmation(input.json.decodeFromJsonElement(ToolCallPendingResultConfirmationState.serializer(), element))
+            "completed" -> ToolCallStateCompleted(input.json.decodeFromJsonElement(ToolCallCompletedState.serializer(), element))
+            "cancelled" -> ToolCallStateCancelled(input.json.decodeFromJsonElement(ToolCallCancelledState.serializer(), element))
+            else -> ToolCallStateUnknown(obj)
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: ToolCallState) {
+        val output = encoder as? JsonEncoder
+            ?: error("ToolCallState can only be serialized to JSON")
+        val element: JsonElement = when (value) {
+            is ToolCallStateStreaming -> output.json.encodeToJsonElement(ToolCallStreamingState.serializer(), value.value)
+            is ToolCallStatePendingConfirmation -> output.json.encodeToJsonElement(ToolCallPendingConfirmationState.serializer(), value.value)
+            is ToolCallStateRunning -> output.json.encodeToJsonElement(ToolCallRunningState.serializer(), value.value)
+            is ToolCallStateAuthRequired -> output.json.encodeToJsonElement(ToolCallAuthRequiredState.serializer(), value.value)
+            is ToolCallStatePendingResultConfirmation -> output.json.encodeToJsonElement(ToolCallPendingResultConfirmationState.serializer(), value.value)
+            is ToolCallStateCompleted -> output.json.encodeToJsonElement(ToolCallCompletedState.serializer(), value.value)
+            is ToolCallStateCancelled -> output.json.encodeToJsonElement(ToolCallCancelledState.serializer(), value.value)
+            is ToolCallStateUnknown -> value.raw
+        }
+        output.encodeJsonElement(element)
+    }
+}
+
+@Serializable(with = ToolCallConfirmationStateSerializer::class)
+sealed interface ToolCallConfirmationState
+
+@JvmInline
+value class ToolCallConfirmationStatePendingConfirmation(val value: ToolCallPendingConfirmationState) : ToolCallConfirmationState
+@JvmInline
+value class ToolCallConfirmationStatePendingResultConfirmation(val value: ToolCallPendingResultConfirmationState) : ToolCallConfirmationState
+/**
+ * Forward-compat catch-all for unknown ToolCallConfirmationState discriminators.
+ *
+ * Older clients may receive newer wire variants they don't recognise; capturing
+ * the raw `JsonObject` lets such payloads round-trip through the client unchanged.
+ * Reducers handle this variant conservatively on a per-union basis (typically
+ * as a no-op, but see `Reducers.kt` for the exact treatment).
+ */
+@JvmInline
+value class ToolCallConfirmationStateUnknown(val raw: JsonObject) : ToolCallConfirmationState
+
+internal object ToolCallConfirmationStateSerializer : KSerializer<ToolCallConfirmationState> {
+    override val descriptor: SerialDescriptor =
+        buildClassSerialDescriptor("ToolCallConfirmationState")
+
+    override fun deserialize(decoder: Decoder): ToolCallConfirmationState {
+        val input = decoder as? JsonDecoder
+            ?: error("ToolCallConfirmationState can only be deserialized from JSON")
+        val element = input.decodeJsonElement()
+        val obj = element as? JsonObject
+            ?: error("Expected JsonObject for ToolCallConfirmationState")
+        val discriminant = (obj["status"] as? JsonPrimitive)?.content
+            ?: return ToolCallConfirmationStateUnknown(obj)
+        return when (discriminant) {
+            "pending-confirmation" -> ToolCallConfirmationStatePendingConfirmation(input.json.decodeFromJsonElement(ToolCallPendingConfirmationState.serializer(), element))
+            "pending-result-confirmation" -> ToolCallConfirmationStatePendingResultConfirmation(input.json.decodeFromJsonElement(ToolCallPendingResultConfirmationState.serializer(), element))
+            else -> ToolCallConfirmationStateUnknown(obj)
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: ToolCallConfirmationState) {
+        val output = encoder as? JsonEncoder
+            ?: error("ToolCallConfirmationState can only be serialized to JSON")
+        val element: JsonElement = when (value) {
+            is ToolCallConfirmationStatePendingConfirmation -> output.json.encodeToJsonElement(ToolCallPendingConfirmationState.serializer(), value.value)
+            is ToolCallConfirmationStatePendingResultConfirmation -> output.json.encodeToJsonElement(ToolCallPendingResultConfirmationState.serializer(), value.value)
+            is ToolCallConfirmationStateUnknown -> value.raw
+        }
+        output.encodeJsonElement(element)
+    }
+}
+
+@Serializable(with = TerminalClaimSerializer::class)
+sealed interface TerminalClaim
+
+@JvmInline
+value class TerminalClaimClient(val value: TerminalClientClaim) : TerminalClaim
+@JvmInline
+value class TerminalClaimSession(val value: TerminalSessionClaim) : TerminalClaim
+
+internal object TerminalClaimSerializer : KSerializer<TerminalClaim> {
+    override val descriptor: SerialDescriptor =
+        buildClassSerialDescriptor("TerminalClaim")
+
+    override fun deserialize(decoder: Decoder): TerminalClaim {
+        val input = decoder as? JsonDecoder
+            ?: error("TerminalClaim can only be deserialized from JSON")
+        val element = input.decodeJsonElement()
+        val obj = element as? JsonObject
+            ?: error("Expected JsonObject for TerminalClaim")
+        val discriminant = (obj["kind"] as? JsonPrimitive)?.content
+            ?: error("Missing kind discriminator on TerminalClaim")
+        return when (discriminant) {
+            "client" -> TerminalClaimClient(input.json.decodeFromJsonElement(TerminalClientClaim.serializer(), element))
+            "session" -> TerminalClaimSession(input.json.decodeFromJsonElement(TerminalSessionClaim.serializer(), element))
+            else -> error("Unknown TerminalClaim discriminator: $discriminant")
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: TerminalClaim) {
+        val output = encoder as? JsonEncoder
+            ?: error("TerminalClaim can only be serialized to JSON")
+        val element: JsonElement = when (value) {
+            is TerminalClaimClient -> output.json.encodeToJsonElement(TerminalClientClaim.serializer(), value.value)
+            is TerminalClaimSession -> output.json.encodeToJsonElement(TerminalSessionClaim.serializer(), value.value)
+        }
+        output.encodeJsonElement(element)
+    }
+}
+
+@Serializable(with = TerminalContentPartSerializer::class)
+sealed interface TerminalContentPart
+
+@JvmInline
+value class TerminalContentPartUnclassified(val value: TerminalUnclassifiedPart) : TerminalContentPart
+@JvmInline
+value class TerminalContentPartCommand(val value: TerminalCommandPart) : TerminalContentPart
+/**
+ * Forward-compat catch-all for unknown TerminalContentPart discriminators.
+ *
+ * Older clients may receive newer wire variants they don't recognise; capturing
+ * the raw `JsonObject` lets such payloads round-trip through the client unchanged.
+ * Reducers handle this variant conservatively on a per-union basis (typically
+ * as a no-op, but see `Reducers.kt` for the exact treatment).
+ */
+@JvmInline
+value class TerminalContentPartUnknown(val raw: JsonObject) : TerminalContentPart
+
+internal object TerminalContentPartSerializer : KSerializer<TerminalContentPart> {
+    override val descriptor: SerialDescriptor =
+        buildClassSerialDescriptor("TerminalContentPart")
+
+    override fun deserialize(decoder: Decoder): TerminalContentPart {
+        val input = decoder as? JsonDecoder
+            ?: error("TerminalContentPart can only be deserialized from JSON")
+        val element = input.decodeJsonElement()
+        val obj = element as? JsonObject
+            ?: error("Expected JsonObject for TerminalContentPart")
+        val discriminant = (obj["type"] as? JsonPrimitive)?.content
+            ?: return TerminalContentPartUnknown(obj)
+        return when (discriminant) {
+            "unclassified" -> TerminalContentPartUnclassified(input.json.decodeFromJsonElement(TerminalUnclassifiedPart.serializer(), element))
+            "command" -> TerminalContentPartCommand(input.json.decodeFromJsonElement(TerminalCommandPart.serializer(), element))
+            else -> TerminalContentPartUnknown(obj)
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: TerminalContentPart) {
+        val output = encoder as? JsonEncoder
+            ?: error("TerminalContentPart can only be serialized to JSON")
+        val element: JsonElement = when (value) {
+            is TerminalContentPartUnclassified -> output.json.encodeToJsonElement(TerminalUnclassifiedPart.serializer(), value.value)
+            is TerminalContentPartCommand -> output.json.encodeToJsonElement(TerminalCommandPart.serializer(), value.value)
+            is TerminalContentPartUnknown -> value.raw
+        }
+        output.encodeJsonElement(element)
+    }
+}
+
+@Serializable(with = ChatInputQuestionSerializer::class)
+sealed interface ChatInputQuestion
+
+@JvmInline
+value class ChatInputQuestionText(val value: ChatInputTextQuestion) : ChatInputQuestion
+@JvmInline
+value class ChatInputQuestionNumber(val value: ChatInputNumberQuestion) : ChatInputQuestion
+@JvmInline
+value class ChatInputQuestionBoolean(val value: ChatInputBooleanQuestion) : ChatInputQuestion
+@JvmInline
+value class ChatInputQuestionSingleSelect(val value: ChatInputSingleSelectQuestion) : ChatInputQuestion
+@JvmInline
+value class ChatInputQuestionMultiSelect(val value: ChatInputMultiSelectQuestion) : ChatInputQuestion
+/**
+ * Forward-compat catch-all for unknown ChatInputQuestion discriminators.
+ *
+ * Older clients may receive newer wire variants they don't recognise; capturing
+ * the raw `JsonObject` lets such payloads round-trip through the client unchanged.
+ * Reducers handle this variant conservatively on a per-union basis (typically
+ * as a no-op, but see `Reducers.kt` for the exact treatment).
+ */
+@JvmInline
+value class ChatInputQuestionUnknown(val raw: JsonObject) : ChatInputQuestion
+
+internal object ChatInputQuestionSerializer : KSerializer<ChatInputQuestion> {
+    override val descriptor: SerialDescriptor =
+        buildClassSerialDescriptor("ChatInputQuestion")
+
+    override fun deserialize(decoder: Decoder): ChatInputQuestion {
+        val input = decoder as? JsonDecoder
+            ?: error("ChatInputQuestion can only be deserialized from JSON")
+        val element = input.decodeJsonElement()
+        val obj = element as? JsonObject
+            ?: error("Expected JsonObject for ChatInputQuestion")
+        val discriminant = (obj["kind"] as? JsonPrimitive)?.content
+            ?: return ChatInputQuestionUnknown(obj)
+        return when (discriminant) {
+            "text" -> ChatInputQuestionText(input.json.decodeFromJsonElement(ChatInputTextQuestion.serializer(), element))
+            "number" -> ChatInputQuestionNumber(input.json.decodeFromJsonElement(ChatInputNumberQuestion.serializer(), element))
+            "integer" -> ChatInputQuestionNumber(input.json.decodeFromJsonElement(ChatInputNumberQuestion.serializer(), element))
+            "boolean" -> ChatInputQuestionBoolean(input.json.decodeFromJsonElement(ChatInputBooleanQuestion.serializer(), element))
+            "single-select" -> ChatInputQuestionSingleSelect(input.json.decodeFromJsonElement(ChatInputSingleSelectQuestion.serializer(), element))
+            "multi-select" -> ChatInputQuestionMultiSelect(input.json.decodeFromJsonElement(ChatInputMultiSelectQuestion.serializer(), element))
+            else -> ChatInputQuestionUnknown(obj)
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: ChatInputQuestion) {
+        val output = encoder as? JsonEncoder
+            ?: error("ChatInputQuestion can only be serialized to JSON")
+        val element: JsonElement = when (value) {
+            is ChatInputQuestionText -> output.json.encodeToJsonElement(ChatInputTextQuestion.serializer(), value.value)
+            is ChatInputQuestionNumber -> output.json.encodeToJsonElement(ChatInputNumberQuestion.serializer(), value.value)
+            is ChatInputQuestionBoolean -> output.json.encodeToJsonElement(ChatInputBooleanQuestion.serializer(), value.value)
+            is ChatInputQuestionSingleSelect -> output.json.encodeToJsonElement(ChatInputSingleSelectQuestion.serializer(), value.value)
+            is ChatInputQuestionMultiSelect -> output.json.encodeToJsonElement(ChatInputMultiSelectQuestion.serializer(), value.value)
+            is ChatInputQuestionUnknown -> value.raw
+        }
+        output.encodeJsonElement(element)
+    }
+}
+
+@Serializable(with = ChatInputAnswerValueSerializer::class)
+sealed interface ChatInputAnswerValue
+
+@JvmInline
+value class ChatInputAnswerValueText(val value: ChatInputTextAnswerValue) : ChatInputAnswerValue
+@JvmInline
+value class ChatInputAnswerValueNumber(val value: ChatInputNumberAnswerValue) : ChatInputAnswerValue
+@JvmInline
+value class ChatInputAnswerValueBoolean(val value: ChatInputBooleanAnswerValue) : ChatInputAnswerValue
+@JvmInline
+value class ChatInputAnswerValueSelected(val value: ChatInputSelectedAnswerValue) : ChatInputAnswerValue
+@JvmInline
+value class ChatInputAnswerValueSelectedMany(val value: ChatInputSelectedManyAnswerValue) : ChatInputAnswerValue
+/**
+ * Forward-compat catch-all for unknown ChatInputAnswerValue discriminators.
+ *
+ * Older clients may receive newer wire variants they don't recognise; capturing
+ * the raw `JsonObject` lets such payloads round-trip through the client unchanged.
+ * Reducers handle this variant conservatively on a per-union basis (typically
+ * as a no-op, but see `Reducers.kt` for the exact treatment).
+ */
+@JvmInline
+value class ChatInputAnswerValueUnknown(val raw: JsonObject) : ChatInputAnswerValue
+
+internal object ChatInputAnswerValueSerializer : KSerializer<ChatInputAnswerValue> {
+    override val descriptor: SerialDescriptor =
+        buildClassSerialDescriptor("ChatInputAnswerValue")
+
+    override fun deserialize(decoder: Decoder): ChatInputAnswerValue {
+        val input = decoder as? JsonDecoder
+            ?: error("ChatInputAnswerValue can only be deserialized from JSON")
+        val element = input.decodeJsonElement()
+        val obj = element as? JsonObject
+            ?: error("Expected JsonObject for ChatInputAnswerValue")
+        val discriminant = (obj["kind"] as? JsonPrimitive)?.content
+            ?: return ChatInputAnswerValueUnknown(obj)
+        return when (discriminant) {
+            "text" -> ChatInputAnswerValueText(input.json.decodeFromJsonElement(ChatInputTextAnswerValue.serializer(), element))
+            "number" -> ChatInputAnswerValueNumber(input.json.decodeFromJsonElement(ChatInputNumberAnswerValue.serializer(), element))
+            "boolean" -> ChatInputAnswerValueBoolean(input.json.decodeFromJsonElement(ChatInputBooleanAnswerValue.serializer(), element))
+            "selected" -> ChatInputAnswerValueSelected(input.json.decodeFromJsonElement(ChatInputSelectedAnswerValue.serializer(), element))
+            "selected-many" -> ChatInputAnswerValueSelectedMany(input.json.decodeFromJsonElement(ChatInputSelectedManyAnswerValue.serializer(), element))
+            else -> ChatInputAnswerValueUnknown(obj)
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: ChatInputAnswerValue) {
+        val output = encoder as? JsonEncoder
+            ?: error("ChatInputAnswerValue can only be serialized to JSON")
+        val element: JsonElement = when (value) {
+            is ChatInputAnswerValueText -> output.json.encodeToJsonElement(ChatInputTextAnswerValue.serializer(), value.value)
+            is ChatInputAnswerValueNumber -> output.json.encodeToJsonElement(ChatInputNumberAnswerValue.serializer(), value.value)
+            is ChatInputAnswerValueBoolean -> output.json.encodeToJsonElement(ChatInputBooleanAnswerValue.serializer(), value.value)
+            is ChatInputAnswerValueSelected -> output.json.encodeToJsonElement(ChatInputSelectedAnswerValue.serializer(), value.value)
+            is ChatInputAnswerValueSelectedMany -> output.json.encodeToJsonElement(ChatInputSelectedManyAnswerValue.serializer(), value.value)
+            is ChatInputAnswerValueUnknown -> value.raw
+        }
+        output.encodeJsonElement(element)
+    }
+}
+
+@Serializable(with = ChatInputAnswerSerializer::class)
+sealed interface ChatInputAnswer
+
+@JvmInline
+value class ChatInputAnswerDraft(val value: ChatInputAnswered) : ChatInputAnswer
+@JvmInline
+value class ChatInputAnswerSkipped(val value: ChatInputSkipped) : ChatInputAnswer
+
+internal object ChatInputAnswerSerializer : KSerializer<ChatInputAnswer> {
+    override val descriptor: SerialDescriptor =
+        buildClassSerialDescriptor("ChatInputAnswer")
+
+    override fun deserialize(decoder: Decoder): ChatInputAnswer {
+        val input = decoder as? JsonDecoder
+            ?: error("ChatInputAnswer can only be deserialized from JSON")
+        val element = input.decodeJsonElement()
+        val obj = element as? JsonObject
+            ?: error("Expected JsonObject for ChatInputAnswer")
+        val discriminant = (obj["state"] as? JsonPrimitive)?.content
+            ?: error("Missing state discriminator on ChatInputAnswer")
+        return when (discriminant) {
+            "draft" -> ChatInputAnswerDraft(input.json.decodeFromJsonElement(ChatInputAnswered.serializer(), element))
+            "submitted" -> ChatInputAnswerDraft(input.json.decodeFromJsonElement(ChatInputAnswered.serializer(), element))
+            "skipped" -> ChatInputAnswerSkipped(input.json.decodeFromJsonElement(ChatInputSkipped.serializer(), element))
+            else -> error("Unknown ChatInputAnswer discriminator: $discriminant")
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: ChatInputAnswer) {
+        val output = encoder as? JsonEncoder
+            ?: error("ChatInputAnswer can only be serialized to JSON")
+        val element: JsonElement = when (value) {
+            is ChatInputAnswerDraft -> output.json.encodeToJsonElement(ChatInputAnswered.serializer(), value.value)
+            is ChatInputAnswerSkipped -> output.json.encodeToJsonElement(ChatInputSkipped.serializer(), value.value)
+        }
+        output.encodeJsonElement(element)
+    }
+}
+
+@Serializable(with = MessageAttachmentSerializer::class)
+sealed interface MessageAttachment
+
+@JvmInline
+value class MessageAttachmentSimple(val value: SimpleMessageAttachment) : MessageAttachment
+@JvmInline
+value class MessageAttachmentEmbeddedResource(val value: MessageEmbeddedResourceAttachment) : MessageAttachment
+@JvmInline
+value class MessageAttachmentResource(val value: MessageResourceAttachment) : MessageAttachment
+@JvmInline
+value class MessageAttachmentAnnotations(val value: MessageAnnotationsAttachment) : MessageAttachment
+@JvmInline
+value class MessageAttachmentChat(val value: MessageChatAttachment) : MessageAttachment
+/**
+ * Forward-compat catch-all for unknown MessageAttachment discriminators.
+ *
+ * Older clients may receive newer wire variants they don't recognise; capturing
+ * the raw `JsonObject` lets such payloads round-trip through the client unchanged.
+ * Reducers handle this variant conservatively on a per-union basis (typically
+ * as a no-op, but see `Reducers.kt` for the exact treatment).
+ */
+@JvmInline
+value class MessageAttachmentUnknown(val raw: JsonObject) : MessageAttachment
+
+internal object MessageAttachmentSerializer : KSerializer<MessageAttachment> {
+    override val descriptor: SerialDescriptor =
+        buildClassSerialDescriptor("MessageAttachment")
+
+    override fun deserialize(decoder: Decoder): MessageAttachment {
+        val input = decoder as? JsonDecoder
+            ?: error("MessageAttachment can only be deserialized from JSON")
+        val element = input.decodeJsonElement()
+        val obj = element as? JsonObject
+            ?: error("Expected JsonObject for MessageAttachment")
+        val discriminant = (obj["type"] as? JsonPrimitive)?.content
+            ?: return MessageAttachmentUnknown(obj)
+        return when (discriminant) {
+            "simple" -> MessageAttachmentSimple(input.json.decodeFromJsonElement(SimpleMessageAttachment.serializer(), element))
+            "embeddedResource" -> MessageAttachmentEmbeddedResource(input.json.decodeFromJsonElement(MessageEmbeddedResourceAttachment.serializer(), element))
+            "resource" -> MessageAttachmentResource(input.json.decodeFromJsonElement(MessageResourceAttachment.serializer(), element))
+            "annotations" -> MessageAttachmentAnnotations(input.json.decodeFromJsonElement(MessageAnnotationsAttachment.serializer(), element))
+            "chat" -> MessageAttachmentChat(input.json.decodeFromJsonElement(MessageChatAttachment.serializer(), element))
+            else -> MessageAttachmentUnknown(obj)
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: MessageAttachment) {
+        val output = encoder as? JsonEncoder
+            ?: error("MessageAttachment can only be serialized to JSON")
+        val element: JsonElement = when (value) {
+            is MessageAttachmentSimple -> output.json.encodeToJsonElement(SimpleMessageAttachment.serializer(), value.value)
+            is MessageAttachmentEmbeddedResource -> output.json.encodeToJsonElement(MessageEmbeddedResourceAttachment.serializer(), value.value)
+            is MessageAttachmentResource -> output.json.encodeToJsonElement(MessageResourceAttachment.serializer(), value.value)
+            is MessageAttachmentAnnotations -> output.json.encodeToJsonElement(MessageAnnotationsAttachment.serializer(), value.value)
+            is MessageAttachmentChat -> output.json.encodeToJsonElement(MessageChatAttachment.serializer(), value.value)
+            is MessageAttachmentUnknown -> value.raw
+        }
+        output.encodeJsonElement(element)
+    }
+}
+
+@Serializable(with = CustomizationSerializer::class)
+sealed interface Customization
+
+@JvmInline
+value class CustomizationPlugin(val value: PluginCustomization) : Customization
+@JvmInline
+value class CustomizationDirectory(val value: DirectoryCustomization) : Customization
+@JvmInline
+value class CustomizationMcpServer(val value: McpServerCustomization) : Customization
+/**
+ * Forward-compat catch-all for unknown Customization discriminators.
+ *
+ * Older clients may receive newer wire variants they don't recognise; capturing
+ * the raw `JsonObject` lets such payloads round-trip through the client unchanged.
+ * Reducers handle this variant conservatively on a per-union basis (typically
+ * as a no-op, but see `Reducers.kt` for the exact treatment).
+ */
+@JvmInline
+value class CustomizationUnknown(val raw: JsonObject) : Customization
+
+internal object CustomizationSerializer : KSerializer<Customization> {
+    override val descriptor: SerialDescriptor =
+        buildClassSerialDescriptor("Customization")
+
+    override fun deserialize(decoder: Decoder): Customization {
+        val input = decoder as? JsonDecoder
+            ?: error("Customization can only be deserialized from JSON")
+        val element = input.decodeJsonElement()
+        val obj = element as? JsonObject
+            ?: error("Expected JsonObject for Customization")
+        val discriminant = (obj["type"] as? JsonPrimitive)?.content
+            ?: return CustomizationUnknown(obj)
+        return when (discriminant) {
+            "plugin" -> CustomizationPlugin(input.json.decodeFromJsonElement(PluginCustomization.serializer(), element))
+            "directory" -> CustomizationDirectory(input.json.decodeFromJsonElement(DirectoryCustomization.serializer(), element))
+            "mcpServer" -> CustomizationMcpServer(input.json.decodeFromJsonElement(McpServerCustomization.serializer(), element))
+            else -> CustomizationUnknown(obj)
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: Customization) {
+        val output = encoder as? JsonEncoder
+            ?: error("Customization can only be serialized to JSON")
+        val element: JsonElement = when (value) {
+            is CustomizationPlugin -> output.json.encodeToJsonElement(PluginCustomization.serializer(), value.value)
+            is CustomizationDirectory -> output.json.encodeToJsonElement(DirectoryCustomization.serializer(), value.value)
+            is CustomizationMcpServer -> output.json.encodeToJsonElement(McpServerCustomization.serializer(), value.value)
+            is CustomizationUnknown -> value.raw
+        }
+        output.encodeJsonElement(element)
+    }
+}
+
+@Serializable(with = ChildCustomizationSerializer::class)
+sealed interface ChildCustomization
+
+@JvmInline
+value class ChildCustomizationAgent(val value: AgentCustomization) : ChildCustomization
+@JvmInline
+value class ChildCustomizationSkill(val value: SkillCustomization) : ChildCustomization
+@JvmInline
+value class ChildCustomizationPrompt(val value: PromptCustomization) : ChildCustomization
+@JvmInline
+value class ChildCustomizationRule(val value: RuleCustomization) : ChildCustomization
+@JvmInline
+value class ChildCustomizationHook(val value: HookCustomization) : ChildCustomization
+@JvmInline
+value class ChildCustomizationMcpServer(val value: McpServerCustomization) : ChildCustomization
+/**
+ * Forward-compat catch-all for unknown ChildCustomization discriminators.
+ *
+ * Older clients may receive newer wire variants they don't recognise; capturing
+ * the raw `JsonObject` lets such payloads round-trip through the client unchanged.
+ * Reducers handle this variant conservatively on a per-union basis (typically
+ * as a no-op, but see `Reducers.kt` for the exact treatment).
+ */
+@JvmInline
+value class ChildCustomizationUnknown(val raw: JsonObject) : ChildCustomization
+
+internal object ChildCustomizationSerializer : KSerializer<ChildCustomization> {
+    override val descriptor: SerialDescriptor =
+        buildClassSerialDescriptor("ChildCustomization")
+
+    override fun deserialize(decoder: Decoder): ChildCustomization {
+        val input = decoder as? JsonDecoder
+            ?: error("ChildCustomization can only be deserialized from JSON")
+        val element = input.decodeJsonElement()
+        val obj = element as? JsonObject
+            ?: error("Expected JsonObject for ChildCustomization")
+        val discriminant = (obj["type"] as? JsonPrimitive)?.content
+            ?: return ChildCustomizationUnknown(obj)
+        return when (discriminant) {
+            "agent" -> ChildCustomizationAgent(input.json.decodeFromJsonElement(AgentCustomization.serializer(), element))
+            "skill" -> ChildCustomizationSkill(input.json.decodeFromJsonElement(SkillCustomization.serializer(), element))
+            "prompt" -> ChildCustomizationPrompt(input.json.decodeFromJsonElement(PromptCustomization.serializer(), element))
+            "rule" -> ChildCustomizationRule(input.json.decodeFromJsonElement(RuleCustomization.serializer(), element))
+            "hook" -> ChildCustomizationHook(input.json.decodeFromJsonElement(HookCustomization.serializer(), element))
+            "mcpServer" -> ChildCustomizationMcpServer(input.json.decodeFromJsonElement(McpServerCustomization.serializer(), element))
+            else -> ChildCustomizationUnknown(obj)
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: ChildCustomization) {
+        val output = encoder as? JsonEncoder
+            ?: error("ChildCustomization can only be serialized to JSON")
+        val element: JsonElement = when (value) {
+            is ChildCustomizationAgent -> output.json.encodeToJsonElement(AgentCustomization.serializer(), value.value)
+            is ChildCustomizationSkill -> output.json.encodeToJsonElement(SkillCustomization.serializer(), value.value)
+            is ChildCustomizationPrompt -> output.json.encodeToJsonElement(PromptCustomization.serializer(), value.value)
+            is ChildCustomizationRule -> output.json.encodeToJsonElement(RuleCustomization.serializer(), value.value)
+            is ChildCustomizationHook -> output.json.encodeToJsonElement(HookCustomization.serializer(), value.value)
+            is ChildCustomizationMcpServer -> output.json.encodeToJsonElement(McpServerCustomization.serializer(), value.value)
+            is ChildCustomizationUnknown -> value.raw
+        }
+        output.encodeJsonElement(element)
+    }
+}
+
+@Serializable(with = CustomizationLoadStateSerializer::class)
+sealed interface CustomizationLoadState
+
+@JvmInline
+value class CustomizationLoadStateLoading(val value: CustomizationLoadingState) : CustomizationLoadState
+@JvmInline
+value class CustomizationLoadStateLoaded(val value: CustomizationLoadedState) : CustomizationLoadState
+@JvmInline
+value class CustomizationLoadStateDegraded(val value: CustomizationDegradedState) : CustomizationLoadState
+@JvmInline
+value class CustomizationLoadStateError(val value: CustomizationErrorState) : CustomizationLoadState
+
+internal object CustomizationLoadStateSerializer : KSerializer<CustomizationLoadState> {
+    override val descriptor: SerialDescriptor =
+        buildClassSerialDescriptor("CustomizationLoadState")
+
+    override fun deserialize(decoder: Decoder): CustomizationLoadState {
+        val input = decoder as? JsonDecoder
+            ?: error("CustomizationLoadState can only be deserialized from JSON")
+        val element = input.decodeJsonElement()
+        val obj = element as? JsonObject
+            ?: error("Expected JsonObject for CustomizationLoadState")
+        val discriminant = (obj["kind"] as? JsonPrimitive)?.content
+            ?: error("Missing kind discriminator on CustomizationLoadState")
+        return when (discriminant) {
+            "loading" -> CustomizationLoadStateLoading(input.json.decodeFromJsonElement(CustomizationLoadingState.serializer(), element))
+            "loaded" -> CustomizationLoadStateLoaded(input.json.decodeFromJsonElement(CustomizationLoadedState.serializer(), element))
+            "degraded" -> CustomizationLoadStateDegraded(input.json.decodeFromJsonElement(CustomizationDegradedState.serializer(), element))
+            "error" -> CustomizationLoadStateError(input.json.decodeFromJsonElement(CustomizationErrorState.serializer(), element))
+            else -> error("Unknown CustomizationLoadState discriminator: $discriminant")
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: CustomizationLoadState) {
+        val output = encoder as? JsonEncoder
+            ?: error("CustomizationLoadState can only be serialized to JSON")
+        val element: JsonElement = when (value) {
+            is CustomizationLoadStateLoading -> output.json.encodeToJsonElement(CustomizationLoadingState.serializer(), value.value)
+            is CustomizationLoadStateLoaded -> output.json.encodeToJsonElement(CustomizationLoadedState.serializer(), value.value)
+            is CustomizationLoadStateDegraded -> output.json.encodeToJsonElement(CustomizationDegradedState.serializer(), value.value)
+            is CustomizationLoadStateError -> output.json.encodeToJsonElement(CustomizationErrorState.serializer(), value.value)
+        }
+        output.encodeJsonElement(element)
+    }
+}
+
+@Serializable(with = McpServerStateSerializer::class)
+sealed interface McpServerState
+
+@JvmInline
+value class McpServerStateStarting(val value: McpServerStartingState) : McpServerState
+@JvmInline
+value class McpServerStateReady(val value: McpServerReadyState) : McpServerState
+@JvmInline
+value class McpServerStateAuthRequired(val value: McpServerAuthRequiredState) : McpServerState
+@JvmInline
+value class McpServerStateError(val value: McpServerErrorState) : McpServerState
+@JvmInline
+value class McpServerStateStopped(val value: McpServerStoppedState) : McpServerState
+/**
+ * Forward-compat catch-all for unknown McpServerState discriminators.
+ *
+ * Older clients may receive newer wire variants they don't recognise; capturing
+ * the raw `JsonObject` lets such payloads round-trip through the client unchanged.
+ * Reducers handle this variant conservatively on a per-union basis (typically
+ * as a no-op, but see `Reducers.kt` for the exact treatment).
+ */
+@JvmInline
+value class McpServerStateUnknown(val raw: JsonObject) : McpServerState
+
+internal object McpServerStateSerializer : KSerializer<McpServerState> {
+    override val descriptor: SerialDescriptor =
+        buildClassSerialDescriptor("McpServerState")
+
+    override fun deserialize(decoder: Decoder): McpServerState {
+        val input = decoder as? JsonDecoder
+            ?: error("McpServerState can only be deserialized from JSON")
+        val element = input.decodeJsonElement()
+        val obj = element as? JsonObject
+            ?: error("Expected JsonObject for McpServerState")
+        val discriminant = (obj["kind"] as? JsonPrimitive)?.content
+            ?: return McpServerStateUnknown(obj)
+        return when (discriminant) {
+            "starting" -> McpServerStateStarting(input.json.decodeFromJsonElement(McpServerStartingState.serializer(), element))
+            "ready" -> McpServerStateReady(input.json.decodeFromJsonElement(McpServerReadyState.serializer(), element))
+            "authRequired" -> McpServerStateAuthRequired(input.json.decodeFromJsonElement(McpServerAuthRequiredState.serializer(), element))
+            "error" -> McpServerStateError(input.json.decodeFromJsonElement(McpServerErrorState.serializer(), element))
+            "stopped" -> McpServerStateStopped(input.json.decodeFromJsonElement(McpServerStoppedState.serializer(), element))
+            else -> McpServerStateUnknown(obj)
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: McpServerState) {
+        val output = encoder as? JsonEncoder
+            ?: error("McpServerState can only be serialized to JSON")
+        val element: JsonElement = when (value) {
+            is McpServerStateStarting -> output.json.encodeToJsonElement(McpServerStartingState.serializer(), value.value)
+            is McpServerStateReady -> output.json.encodeToJsonElement(McpServerReadyState.serializer(), value.value)
+            is McpServerStateAuthRequired -> output.json.encodeToJsonElement(McpServerAuthRequiredState.serializer(), value.value)
+            is McpServerStateError -> output.json.encodeToJsonElement(McpServerErrorState.serializer(), value.value)
+            is McpServerStateStopped -> output.json.encodeToJsonElement(McpServerStoppedState.serializer(), value.value)
+            is McpServerStateUnknown -> value.raw
+        }
+        output.encodeJsonElement(element)
+    }
+}
+
+@Serializable(with = ToolCallContributorSerializer::class)
+sealed interface ToolCallContributor
+
+@JvmInline
+value class ToolCallContributorClient(val value: ToolCallClientContributor) : ToolCallContributor
+@JvmInline
+value class ToolCallContributorMcp(val value: ToolCallMcpContributor) : ToolCallContributor
+/**
+ * Forward-compat catch-all for unknown ToolCallContributor discriminators.
+ *
+ * Older clients may receive newer wire variants they don't recognise; capturing
+ * the raw `JsonObject` lets such payloads round-trip through the client unchanged.
+ * Reducers handle this variant conservatively on a per-union basis (typically
+ * as a no-op, but see `Reducers.kt` for the exact treatment).
+ */
+@JvmInline
+value class ToolCallContributorUnknown(val raw: JsonObject) : ToolCallContributor
+
+internal object ToolCallContributorSerializer : KSerializer<ToolCallContributor> {
+    override val descriptor: SerialDescriptor =
+        buildClassSerialDescriptor("ToolCallContributor")
+
+    override fun deserialize(decoder: Decoder): ToolCallContributor {
+        val input = decoder as? JsonDecoder
+            ?: error("ToolCallContributor can only be deserialized from JSON")
+        val element = input.decodeJsonElement()
+        val obj = element as? JsonObject
+            ?: error("Expected JsonObject for ToolCallContributor")
+        val discriminant = (obj["kind"] as? JsonPrimitive)?.content
+            ?: return ToolCallContributorUnknown(obj)
+        return when (discriminant) {
+            "client" -> ToolCallContributorClient(input.json.decodeFromJsonElement(ToolCallClientContributor.serializer(), element))
+            "mcp" -> ToolCallContributorMcp(input.json.decodeFromJsonElement(ToolCallMcpContributor.serializer(), element))
+            else -> ToolCallContributorUnknown(obj)
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: ToolCallContributor) {
+        val output = encoder as? JsonEncoder
+            ?: error("ToolCallContributor can only be serialized to JSON")
+        val element: JsonElement = when (value) {
+            is ToolCallContributorClient -> output.json.encodeToJsonElement(ToolCallClientContributor.serializer(), value.value)
+            is ToolCallContributorMcp -> output.json.encodeToJsonElement(ToolCallMcpContributor.serializer(), value.value)
+            is ToolCallContributorUnknown -> value.raw
+        }
+        output.encodeJsonElement(element)
+    }
+}
+
+@Serializable(with = ToolCallRiskAssessmentSerializer::class)
+sealed interface ToolCallRiskAssessment
+
+@JvmInline
+value class ToolCallRiskAssessmentLoading(val value: ToolCallRiskAssessmentLoadingState) : ToolCallRiskAssessment
+@JvmInline
+value class ToolCallRiskAssessmentComplete(val value: ToolCallRiskAssessmentCompleteState) : ToolCallRiskAssessment
+/**
+ * Forward-compat catch-all for unknown ToolCallRiskAssessment discriminators.
+ *
+ * Older clients may receive newer wire variants they don't recognise; capturing
+ * the raw `JsonObject` lets such payloads round-trip through the client unchanged.
+ * Reducers handle this variant conservatively on a per-union basis (typically
+ * as a no-op, but see `Reducers.kt` for the exact treatment).
+ */
+@JvmInline
+value class ToolCallRiskAssessmentUnknown(val raw: JsonObject) : ToolCallRiskAssessment
+
+internal object ToolCallRiskAssessmentSerializer : KSerializer<ToolCallRiskAssessment> {
+    override val descriptor: SerialDescriptor =
+        buildClassSerialDescriptor("ToolCallRiskAssessment")
+
+    override fun deserialize(decoder: Decoder): ToolCallRiskAssessment {
+        val input = decoder as? JsonDecoder
+            ?: error("ToolCallRiskAssessment can only be deserialized from JSON")
+        val element = input.decodeJsonElement()
+        val obj = element as? JsonObject
+            ?: error("Expected JsonObject for ToolCallRiskAssessment")
+        val discriminant = (obj["status"] as? JsonPrimitive)?.content
+            ?: return ToolCallRiskAssessmentUnknown(obj)
+        return when (discriminant) {
+            "loading" -> ToolCallRiskAssessmentLoading(input.json.decodeFromJsonElement(ToolCallRiskAssessmentLoadingState.serializer(), element))
+            "complete" -> ToolCallRiskAssessmentComplete(input.json.decodeFromJsonElement(ToolCallRiskAssessmentCompleteState.serializer(), element))
+            else -> ToolCallRiskAssessmentUnknown(obj)
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: ToolCallRiskAssessment) {
+        val output = encoder as? JsonEncoder
+            ?: error("ToolCallRiskAssessment can only be serialized to JSON")
+        val element: JsonElement = when (value) {
+            is ToolCallRiskAssessmentLoading -> output.json.encodeToJsonElement(ToolCallRiskAssessmentLoadingState.serializer(), value.value)
+            is ToolCallRiskAssessmentComplete -> output.json.encodeToJsonElement(ToolCallRiskAssessmentCompleteState.serializer(), value.value)
+            is ToolCallRiskAssessmentUnknown -> value.raw
+        }
+        output.encodeJsonElement(element)
+    }
+}
+
+@Serializable(with = TerminalLifecycleStateSerializer::class)
+sealed interface TerminalLifecycleState
+
+@JvmInline
+value class TerminalLifecycleStateRunning(val value: TerminalRunningLifecycleState) : TerminalLifecycleState
+@JvmInline
+value class TerminalLifecycleStateExited(val value: TerminalExitedLifecycleState) : TerminalLifecycleState
+
+internal object TerminalLifecycleStateSerializer : KSerializer<TerminalLifecycleState> {
+    override val descriptor: SerialDescriptor =
+        buildClassSerialDescriptor("TerminalLifecycleState")
+
+    override fun deserialize(decoder: Decoder): TerminalLifecycleState {
+        val input = decoder as? JsonDecoder
+            ?: error("TerminalLifecycleState can only be deserialized from JSON")
+        val element = input.decodeJsonElement()
+        val obj = element as? JsonObject
+            ?: error("Expected JsonObject for TerminalLifecycleState")
+        val discriminant = (obj["status"] as? JsonPrimitive)?.content
+            ?: error("Missing status discriminator on TerminalLifecycleState")
+        return when (discriminant) {
+            "running" -> TerminalLifecycleStateRunning(input.json.decodeFromJsonElement(TerminalRunningLifecycleState.serializer(), element))
+            "exited" -> TerminalLifecycleStateExited(input.json.decodeFromJsonElement(TerminalExitedLifecycleState.serializer(), element))
+            else -> error("Unknown TerminalLifecycleState discriminator: $discriminant")
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: TerminalLifecycleState) {
+        val output = encoder as? JsonEncoder
+            ?: error("TerminalLifecycleState can only be serialized to JSON")
+        val element: JsonElement = when (value) {
+            is TerminalLifecycleStateRunning -> output.json.encodeToJsonElement(TerminalRunningLifecycleState.serializer(), value.value)
+            is TerminalLifecycleStateExited -> output.json.encodeToJsonElement(TerminalExitedLifecycleState.serializer(), value.value)
+        }
+        output.encodeJsonElement(element)
+    }
+}
+
+@Serializable(with = SessionInputRequestSerializer::class)
+sealed interface SessionInputRequest
+
+@JvmInline
+value class SessionInputRequestChatInput(val value: SessionChatInputRequest) : SessionInputRequest
+@JvmInline
+value class SessionInputRequestToolConfirmation(val value: SessionToolConfirmationRequest) : SessionInputRequest
+@JvmInline
+value class SessionInputRequestToolClientExecution(val value: SessionToolClientExecutionRequest) : SessionInputRequest
+@JvmInline
+value class SessionInputRequestToolAuthentication(val value: SessionToolAuthenticationRequest) : SessionInputRequest
+/**
+ * Forward-compat catch-all for unknown SessionInputRequest discriminators.
+ *
+ * Older clients may receive newer wire variants they don't recognise; capturing
+ * the raw `JsonObject` lets such payloads round-trip through the client unchanged.
+ * Reducers handle this variant conservatively on a per-union basis (typically
+ * as a no-op, but see `Reducers.kt` for the exact treatment).
+ */
+@JvmInline
+value class SessionInputRequestUnknown(val raw: JsonObject) : SessionInputRequest
+
+internal object SessionInputRequestSerializer : KSerializer<SessionInputRequest> {
+    override val descriptor: SerialDescriptor =
+        buildClassSerialDescriptor("SessionInputRequest")
+
+    override fun deserialize(decoder: Decoder): SessionInputRequest {
+        val input = decoder as? JsonDecoder
+            ?: error("SessionInputRequest can only be deserialized from JSON")
+        val element = input.decodeJsonElement()
+        val obj = element as? JsonObject
+            ?: error("Expected JsonObject for SessionInputRequest")
+        val discriminant = (obj["kind"] as? JsonPrimitive)?.content
+            ?: return SessionInputRequestUnknown(obj)
+        return when (discriminant) {
+            "chatInput" -> SessionInputRequestChatInput(input.json.decodeFromJsonElement(SessionChatInputRequest.serializer(), element))
+            "toolConfirmation" -> SessionInputRequestToolConfirmation(input.json.decodeFromJsonElement(SessionToolConfirmationRequest.serializer(), element))
+            "toolClientExecution" -> SessionInputRequestToolClientExecution(input.json.decodeFromJsonElement(SessionToolClientExecutionRequest.serializer(), element))
+            "toolAuthentication" -> SessionInputRequestToolAuthentication(input.json.decodeFromJsonElement(SessionToolAuthenticationRequest.serializer(), element))
+            else -> SessionInputRequestUnknown(obj)
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: SessionInputRequest) {
+        val output = encoder as? JsonEncoder
+            ?: error("SessionInputRequest can only be serialized to JSON")
+        val element: JsonElement = when (value) {
+            is SessionInputRequestChatInput -> output.json.encodeToJsonElement(SessionChatInputRequest.serializer(), value.value)
+            is SessionInputRequestToolConfirmation -> output.json.encodeToJsonElement(SessionToolConfirmationRequest.serializer(), value.value)
+            is SessionInputRequestToolClientExecution -> output.json.encodeToJsonElement(SessionToolClientExecutionRequest.serializer(), value.value)
+            is SessionInputRequestToolAuthentication -> output.json.encodeToJsonElement(SessionToolAuthenticationRequest.serializer(), value.value)
+            is SessionInputRequestUnknown -> value.raw
+        }
+        output.encodeJsonElement(element)
+    }
+}
+@Serializable(with = BackgroundWorkSerializer::class)
+sealed interface BackgroundWork
+
+@JvmInline
+value class BackgroundWorkShell(val value: BackgroundShellWork) : BackgroundWork
+@JvmInline
+value class BackgroundWorkSubagent(val value: BackgroundSubagentWork) : BackgroundWork
+/**
+ * Forward-compat catch-all for unknown BackgroundWork discriminators.
+ *
+ * Older clients may receive newer wire variants they don't recognise; capturing
+ * the raw `JsonObject` lets such payloads round-trip through the client unchanged.
+ * Reducers handle this variant conservatively on a per-union basis (typically
+ * as a no-op, but see `Reducers.kt` for the exact treatment).
+ */
+@JvmInline
+value class BackgroundWorkUnknown(val raw: JsonObject) : BackgroundWork
+
+internal object BackgroundWorkSerializer : KSerializer<BackgroundWork> {
+    override val descriptor: SerialDescriptor =
+        buildClassSerialDescriptor("BackgroundWork")
+
+    override fun deserialize(decoder: Decoder): BackgroundWork {
+        val input = decoder as? JsonDecoder
+            ?: error("BackgroundWork can only be deserialized from JSON")
+        val element = input.decodeJsonElement()
+        val obj = element as? JsonObject
+            ?: error("Expected JsonObject for BackgroundWork")
+        val discriminant = (obj["kind"] as? JsonPrimitive)?.content
+            ?: return BackgroundWorkUnknown(obj)
+        return when (discriminant) {
+            "shell" -> BackgroundWorkShell(input.json.decodeFromJsonElement(BackgroundShellWork.serializer(), element))
+            "subagent" -> BackgroundWorkSubagent(input.json.decodeFromJsonElement(BackgroundSubagentWork.serializer(), element))
+            else -> BackgroundWorkUnknown(obj)
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: BackgroundWork) {
+        val output = encoder as? JsonEncoder
+            ?: error("BackgroundWork can only be serialized to JSON")
+        val element: JsonElement = when (value) {
+            is BackgroundWorkShell -> output.json.encodeToJsonElement(BackgroundShellWork.serializer(), value.value)
+            is BackgroundWorkSubagent -> output.json.encodeToJsonElement(BackgroundSubagentWork.serializer(), value.value)
+            is BackgroundWorkUnknown -> value.raw
+        }
+        output.encodeJsonElement(element)
+    }
+}
+
+@Serializable(with = SessionOriginSerializer::class)
+sealed interface SessionOrigin
+
+@JvmInline
+value class SessionOriginAutomation(val value: AutomationSessionOrigin) : SessionOrigin
+/**
+ * Forward-compat catch-all for unknown SessionOrigin discriminators.
+ *
+ * Older clients may receive newer wire variants they don't recognise; capturing
+ * the raw `JsonObject` lets such payloads round-trip through the client unchanged.
+ * Reducers handle this variant conservatively on a per-union basis (typically
+ * as a no-op, but see `Reducers.kt` for the exact treatment).
+ */
+@JvmInline
+value class SessionOriginUnknown(val raw: JsonObject) : SessionOrigin
+
+internal object SessionOriginSerializer : KSerializer<SessionOrigin> {
+    override val descriptor: SerialDescriptor =
+        buildClassSerialDescriptor("SessionOrigin")
+
+    override fun deserialize(decoder: Decoder): SessionOrigin {
+        val input = decoder as? JsonDecoder
+            ?: error("SessionOrigin can only be deserialized from JSON")
+        val element = input.decodeJsonElement()
+        val obj = element as? JsonObject
+            ?: error("Expected JsonObject for SessionOrigin")
+        val discriminant = (obj["kind"] as? JsonPrimitive)?.content
+            ?: return SessionOriginUnknown(obj)
+        return when (discriminant) {
+            "automation" -> SessionOriginAutomation(input.json.decodeFromJsonElement(AutomationSessionOrigin.serializer(), element))
+            else -> SessionOriginUnknown(obj)
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: SessionOrigin) {
+        val output = encoder as? JsonEncoder
+            ?: error("SessionOrigin can only be serialized to JSON")
+        val element: JsonElement = when (value) {
+            is SessionOriginAutomation -> output.json.encodeToJsonElement(AutomationSessionOrigin.serializer(), value.value)
+            is SessionOriginUnknown -> value.raw
+        }
+        val encodedObject = element.jsonObject.toMutableMap()
+        val discriminant = when (value) {
+            is SessionOriginAutomation -> "automation"
+            is SessionOriginUnknown -> null
+        }
+        if (discriminant != null) encodedObject["kind"] = JsonPrimitive(discriminant)
+        output.encodeJsonElement(JsonObject(encodedObject))
+    }
+}
+
+@Serializable(with = AutomationTriggerSerializer::class)
+sealed interface AutomationTrigger
+
+@JvmInline
+value class AutomationTriggerSchedule(val value: AutomationScheduleTrigger) : AutomationTrigger
+@JvmInline
+value class AutomationTriggerEvent(val value: AutomationEventTrigger) : AutomationTrigger
+
+internal object AutomationTriggerSerializer : KSerializer<AutomationTrigger> {
+    override val descriptor: SerialDescriptor =
+        buildClassSerialDescriptor("AutomationTrigger")
+
+    override fun deserialize(decoder: Decoder): AutomationTrigger {
+        val input = decoder as? JsonDecoder
+            ?: error("AutomationTrigger can only be deserialized from JSON")
+        val element = input.decodeJsonElement()
+        val obj = element as? JsonObject
+            ?: error("Expected JsonObject for AutomationTrigger")
+        val discriminant = (obj["kind"] as? JsonPrimitive)?.content
+            ?: error("Missing kind discriminator on AutomationTrigger")
+        return when (discriminant) {
+            "schedule" -> AutomationTriggerSchedule(input.json.decodeFromJsonElement(AutomationScheduleTrigger.serializer(), element))
+            "event" -> AutomationTriggerEvent(input.json.decodeFromJsonElement(AutomationEventTrigger.serializer(), element))
+            else -> error("Unknown AutomationTrigger discriminator: $discriminant")
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: AutomationTrigger) {
+        val output = encoder as? JsonEncoder
+            ?: error("AutomationTrigger can only be serialized to JSON")
+        val element: JsonElement = when (value) {
+            is AutomationTriggerSchedule -> output.json.encodeToJsonElement(AutomationScheduleTrigger.serializer(), value.value)
+            is AutomationTriggerEvent -> output.json.encodeToJsonElement(AutomationEventTrigger.serializer(), value.value)
+        }
+        val encodedObject = element.jsonObject.toMutableMap()
+        val discriminant = when (value) {
+            is AutomationTriggerSchedule -> "schedule"
+            is AutomationTriggerEvent -> "event"
+        }
+        if (discriminant != null) encodedObject["kind"] = JsonPrimitive(discriminant)
+        output.encodeJsonElement(JsonObject(encodedObject))
+    }
+}
+
+@Serializable(with = AutomationDisableConditionSerializer::class)
+sealed interface AutomationDisableCondition
+
+@JvmInline
+value class AutomationDisableConditionAfterRuns(val value: AutomationAfterRunsCondition) : AutomationDisableCondition
+@JvmInline
+value class AutomationDisableConditionAfterDate(val value: AutomationAfterDateCondition) : AutomationDisableCondition
+
+internal object AutomationDisableConditionSerializer : KSerializer<AutomationDisableCondition> {
+    override val descriptor: SerialDescriptor =
+        buildClassSerialDescriptor("AutomationDisableCondition")
+
+    override fun deserialize(decoder: Decoder): AutomationDisableCondition {
+        val input = decoder as? JsonDecoder
+            ?: error("AutomationDisableCondition can only be deserialized from JSON")
+        val element = input.decodeJsonElement()
+        val obj = element as? JsonObject
+            ?: error("Expected JsonObject for AutomationDisableCondition")
+        val discriminant = (obj["kind"] as? JsonPrimitive)?.content
+            ?: error("Missing kind discriminator on AutomationDisableCondition")
+        return when (discriminant) {
+            "afterRuns" -> AutomationDisableConditionAfterRuns(input.json.decodeFromJsonElement(AutomationAfterRunsCondition.serializer(), element))
+            "afterDate" -> AutomationDisableConditionAfterDate(input.json.decodeFromJsonElement(AutomationAfterDateCondition.serializer(), element))
+            else -> error("Unknown AutomationDisableCondition discriminator: $discriminant")
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: AutomationDisableCondition) {
+        val output = encoder as? JsonEncoder
+            ?: error("AutomationDisableCondition can only be serialized to JSON")
+        val element: JsonElement = when (value) {
+            is AutomationDisableConditionAfterRuns -> output.json.encodeToJsonElement(AutomationAfterRunsCondition.serializer(), value.value)
+            is AutomationDisableConditionAfterDate -> output.json.encodeToJsonElement(AutomationAfterDateCondition.serializer(), value.value)
+        }
+        val encodedObject = element.jsonObject.toMutableMap()
+        val discriminant = when (value) {
+            is AutomationDisableConditionAfterRuns -> "afterRuns"
+            is AutomationDisableConditionAfterDate -> "afterDate"
+        }
+        if (discriminant != null) encodedObject["kind"] = JsonPrimitive(discriminant)
+        output.encodeJsonElement(JsonObject(encodedObject))
+    }
+}
+
+@Serializable(with = AutomationRunOriginSerializer::class)
+sealed interface AutomationRunOrigin
+
+@JvmInline
+value class AutomationRunOriginManual(val value: AutomationManualRunOrigin) : AutomationRunOrigin
+@JvmInline
+value class AutomationRunOriginTrigger(val value: AutomationTriggeredRunOrigin) : AutomationRunOrigin
+
+internal object AutomationRunOriginSerializer : KSerializer<AutomationRunOrigin> {
+    override val descriptor: SerialDescriptor =
+        buildClassSerialDescriptor("AutomationRunOrigin")
+
+    override fun deserialize(decoder: Decoder): AutomationRunOrigin {
+        val input = decoder as? JsonDecoder
+            ?: error("AutomationRunOrigin can only be deserialized from JSON")
+        val element = input.decodeJsonElement()
+        val obj = element as? JsonObject
+            ?: error("Expected JsonObject for AutomationRunOrigin")
+        val discriminant = (obj["kind"] as? JsonPrimitive)?.content
+            ?: error("Missing kind discriminator on AutomationRunOrigin")
+        return when (discriminant) {
+            "manual" -> AutomationRunOriginManual(input.json.decodeFromJsonElement(AutomationManualRunOrigin.serializer(), element))
+            "trigger" -> AutomationRunOriginTrigger(input.json.decodeFromJsonElement(AutomationTriggeredRunOrigin.serializer(), element))
+            else -> error("Unknown AutomationRunOrigin discriminator: $discriminant")
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: AutomationRunOrigin) {
+        val output = encoder as? JsonEncoder
+            ?: error("AutomationRunOrigin can only be serialized to JSON")
+        val element: JsonElement = when (value) {
+            is AutomationRunOriginManual -> output.json.encodeToJsonElement(AutomationManualRunOrigin.serializer(), value.value)
+            is AutomationRunOriginTrigger -> output.json.encodeToJsonElement(AutomationTriggeredRunOrigin.serializer(), value.value)
+        }
+        val encodedObject = element.jsonObject.toMutableMap()
+        val discriminant = when (value) {
+            is AutomationRunOriginManual -> "manual"
+            is AutomationRunOriginTrigger -> "trigger"
+        }
+        if (discriminant != null) encodedObject["kind"] = JsonPrimitive(discriminant)
+        output.encodeJsonElement(JsonObject(encodedObject))
+    }
+}
+
+@Serializable(with = AutomationRunLifecycleSerializer::class)
+sealed interface AutomationRunLifecycle
+
+@JvmInline
+value class AutomationRunLifecyclePending(val value: AutomationPendingRunLifecycle) : AutomationRunLifecycle
+@JvmInline
+value class AutomationRunLifecycleRunning(val value: AutomationRunningRunLifecycle) : AutomationRunLifecycle
+@JvmInline
+value class AutomationRunLifecycleCompleted(val value: AutomationCompletedRunLifecycle) : AutomationRunLifecycle
+@JvmInline
+value class AutomationRunLifecycleFailed(val value: AutomationFailedRunLifecycle) : AutomationRunLifecycle
+@JvmInline
+value class AutomationRunLifecycleCancelled(val value: AutomationCancelledRunLifecycle) : AutomationRunLifecycle
+
+internal object AutomationRunLifecycleSerializer : KSerializer<AutomationRunLifecycle> {
+    override val descriptor: SerialDescriptor =
+        buildClassSerialDescriptor("AutomationRunLifecycle")
+
+    override fun deserialize(decoder: Decoder): AutomationRunLifecycle {
+        val input = decoder as? JsonDecoder
+            ?: error("AutomationRunLifecycle can only be deserialized from JSON")
+        val element = input.decodeJsonElement()
+        val obj = element as? JsonObject
+            ?: error("Expected JsonObject for AutomationRunLifecycle")
+        val discriminant = (obj["status"] as? JsonPrimitive)?.content
+            ?: error("Missing status discriminator on AutomationRunLifecycle")
+        return when (discriminant) {
+            "pending" -> AutomationRunLifecyclePending(input.json.decodeFromJsonElement(AutomationPendingRunLifecycle.serializer(), element))
+            "running" -> AutomationRunLifecycleRunning(input.json.decodeFromJsonElement(AutomationRunningRunLifecycle.serializer(), element))
+            "completed" -> AutomationRunLifecycleCompleted(input.json.decodeFromJsonElement(AutomationCompletedRunLifecycle.serializer(), element))
+            "failed" -> AutomationRunLifecycleFailed(input.json.decodeFromJsonElement(AutomationFailedRunLifecycle.serializer(), element))
+            "cancelled" -> AutomationRunLifecycleCancelled(input.json.decodeFromJsonElement(AutomationCancelledRunLifecycle.serializer(), element))
+            else -> error("Unknown AutomationRunLifecycle discriminator: $discriminant")
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: AutomationRunLifecycle) {
+        val output = encoder as? JsonEncoder
+            ?: error("AutomationRunLifecycle can only be serialized to JSON")
+        val element: JsonElement = when (value) {
+            is AutomationRunLifecyclePending -> output.json.encodeToJsonElement(AutomationPendingRunLifecycle.serializer(), value.value)
+            is AutomationRunLifecycleRunning -> output.json.encodeToJsonElement(AutomationRunningRunLifecycle.serializer(), value.value)
+            is AutomationRunLifecycleCompleted -> output.json.encodeToJsonElement(AutomationCompletedRunLifecycle.serializer(), value.value)
+            is AutomationRunLifecycleFailed -> output.json.encodeToJsonElement(AutomationFailedRunLifecycle.serializer(), value.value)
+            is AutomationRunLifecycleCancelled -> output.json.encodeToJsonElement(AutomationCancelledRunLifecycle.serializer(), value.value)
+        }
+        val encodedObject = element.jsonObject.toMutableMap()
+        val discriminant = when (value) {
+            is AutomationRunLifecyclePending -> "pending"
+            is AutomationRunLifecycleRunning -> "running"
+            is AutomationRunLifecycleCompleted -> "completed"
+            is AutomationRunLifecycleFailed -> "failed"
+            is AutomationRunLifecycleCancelled -> "cancelled"
+        }
+        if (discriminant != null) encodedObject["status"] = JsonPrimitive(discriminant)
+        output.encodeJsonElement(JsonObject(encodedObject))
+    }
+}
+
+@Serializable(with = ToolResultContentSerializer::class)
+sealed interface ToolResultContent {
+    @JvmInline value class Text(val value: ToolResultTextContent) : ToolResultContent
+    @JvmInline value class EmbeddedResource(val value: ToolResultEmbeddedResourceContent) : ToolResultContent
+    @JvmInline value class Resource(val value: ToolResultResourceContent) : ToolResultContent
+    @JvmInline value class FileEdit(val value: ToolResultFileEditContent) : ToolResultContent
+    @JvmInline value class Terminal(val value: ToolResultTerminalContent) : ToolResultContent
+    @JvmInline value class Subagent(val value: ToolResultSubagentContent) : ToolResultContent
+
+    /**
+     * Forward-compat catch-all for unknown ToolResultContent types.
+     *
+     * Older clients may receive newer wire variants they don't recognise; capturing
+     * the raw `JsonObject` lets such payloads round-trip through the client unchanged.
+     */
+    @JvmInline value class Unknown(val raw: JsonObject) : ToolResultContent
+}
+
+internal object ToolResultContentSerializer : KSerializer<ToolResultContent> {
+    override val descriptor: SerialDescriptor =
+        buildClassSerialDescriptor("ToolResultContent")
+
+    override fun deserialize(decoder: Decoder): ToolResultContent {
+        val input = decoder as? JsonDecoder
+            ?: error("ToolResultContent can only be deserialized from JSON")
+        val element = input.decodeJsonElement()
+        val obj = element as? JsonObject
+            ?: error("Expected JsonObject for ToolResultContent")
+        val type = (obj["type"] as? JsonPrimitive)?.contentOrNull
+            ?: return ToolResultContent.Unknown(obj)
+        return when (type) {
+            "text" -> ToolResultContent.Text(input.json.decodeFromJsonElement(ToolResultTextContent.serializer(), element))
+            "embeddedResource" -> ToolResultContent.EmbeddedResource(input.json.decodeFromJsonElement(ToolResultEmbeddedResourceContent.serializer(), element))
+            "resource" -> ToolResultContent.Resource(input.json.decodeFromJsonElement(ToolResultResourceContent.serializer(), element))
+            "fileEdit" -> ToolResultContent.FileEdit(input.json.decodeFromJsonElement(ToolResultFileEditContent.serializer(), element))
+            "terminal" -> ToolResultContent.Terminal(input.json.decodeFromJsonElement(ToolResultTerminalContent.serializer(), element))
+            "subagent" -> ToolResultContent.Subagent(input.json.decodeFromJsonElement(ToolResultSubagentContent.serializer(), element))
+            else -> ToolResultContent.Unknown(obj)
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: ToolResultContent) {
+        val output = encoder as? JsonEncoder
+            ?: error("ToolResultContent can only be serialized to JSON")
+        val element: JsonElement = when (value) {
+            is ToolResultContent.Text -> output.json.encodeToJsonElement(ToolResultTextContent.serializer(), value.value)
+            is ToolResultContent.EmbeddedResource -> output.json.encodeToJsonElement(ToolResultEmbeddedResourceContent.serializer(), value.value)
+            is ToolResultContent.Resource -> output.json.encodeToJsonElement(ToolResultResourceContent.serializer(), value.value)
+            is ToolResultContent.FileEdit -> output.json.encodeToJsonElement(ToolResultFileEditContent.serializer(), value.value)
+            is ToolResultContent.Terminal -> output.json.encodeToJsonElement(ToolResultTerminalContent.serializer(), value.value)
+            is ToolResultContent.Subagent -> output.json.encodeToJsonElement(ToolResultSubagentContent.serializer(), value.value)
+            is ToolResultContent.Unknown -> value.raw
+        }
+        output.encodeJsonElement(element)
+    }
+}
+
+/**
+ * The state payload of a snapshot.
+ */
+@Serializable(with = SnapshotStateSerializer::class)
+sealed interface SnapshotState {
+    @JvmInline value class Root(val value: RootState) : SnapshotState
+    @JvmInline value class Session(val value: SessionState) : SnapshotState
+    @JvmInline value class Chat(val value: ChatState) : SnapshotState
+    @JvmInline value class Canvas(val value: CanvasState) : SnapshotState
+    @JvmInline value class Terminal(val value: TerminalState) : SnapshotState
+    @JvmInline value class Changeset(val value: ChangesetState) : SnapshotState
+    @JvmInline value class ResourceWatch(val value: ResourceWatchState) : SnapshotState
+    @JvmInline value class Annotations(val value: AnnotationsState) : SnapshotState
+    @JvmInline value class Automations(val value: AutomationState) : SnapshotState
+    @JvmInline value class AutomationRun(val value: AutomationRunState) : SnapshotState
+}
+
+internal object SnapshotStateSerializer : KSerializer<SnapshotState> {
+    override val descriptor: SerialDescriptor =
+        buildClassSerialDescriptor("SnapshotState")
+
+    override fun deserialize(decoder: Decoder): SnapshotState {
+        val input = decoder as? JsonDecoder
+            ?: error("SnapshotState can only be deserialized from JSON")
+        val element = input.decodeJsonElement()
+        val obj = element as? JsonObject
+            ?: error("Expected JsonObject for SnapshotState")
+        // Try the most distinctive shape first. AutomationRunState has required
+        // `automation`, `origin`, and `sessions`; AutomationState has
+        // required `entries`; SessionState has required
+        // `lifecycle`; ChatState has required `turns`; ChangesetState has
+        // required `status` + `files`; ResourceWatchState has required
+        // `root` + `recursive`; AnnotationsState has required `annotations`
+        // (checked after session, whose optional annotations summary reuses the
+        // key); TerminalState has required `content`; RootState is the
+        // catch-all.
+        return when {
+            obj.containsKey("automation") && obj.containsKey("origin") && obj.containsKey("sessions") ->
+                SnapshotState.AutomationRun(input.json.decodeFromJsonElement(AutomationRunState.serializer(), element))
+            obj.containsKey("entries") ->
+                SnapshotState.Automations(input.json.decodeFromJsonElement(AutomationState.serializer(), element))
+            obj.containsKey("lifecycle") -> SnapshotState.Session(input.json.decodeFromJsonElement(SessionState.serializer(), element))
+            obj.containsKey("turns") -> SnapshotState.Chat(input.json.decodeFromJsonElement(ChatState.serializer(), element))
+            obj.containsKey("instanceId") && obj.containsKey("extensionId") && obj.containsKey("canvasId") ->
+                SnapshotState.Canvas(input.json.decodeFromJsonElement(CanvasState.serializer(), element))
+            obj.containsKey("status") && obj.containsKey("files") ->
+                SnapshotState.Changeset(input.json.decodeFromJsonElement(ChangesetState.serializer(), element))
+            obj.containsKey("root") && obj.containsKey("recursive") ->
+                SnapshotState.ResourceWatch(input.json.decodeFromJsonElement(ResourceWatchState.serializer(), element))
+            obj.containsKey("annotations") ->
+                SnapshotState.Annotations(input.json.decodeFromJsonElement(AnnotationsState.serializer(), element))
+            obj.containsKey("content") ->
+                SnapshotState.Terminal(input.json.decodeFromJsonElement(TerminalState.serializer(), element))
+            else -> SnapshotState.Root(input.json.decodeFromJsonElement(RootState.serializer(), element))
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: SnapshotState) {
+        val output = encoder as? JsonEncoder
+            ?: error("SnapshotState can only be serialized to JSON")
+        val element: JsonElement = when (value) {
+            is SnapshotState.Root -> output.json.encodeToJsonElement(RootState.serializer(), value.value)
+            is SnapshotState.Session -> output.json.encodeToJsonElement(SessionState.serializer(), value.value)
+            is SnapshotState.Chat -> output.json.encodeToJsonElement(ChatState.serializer(), value.value)
+            is SnapshotState.Canvas -> output.json.encodeToJsonElement(CanvasState.serializer(), value.value)
+            is SnapshotState.Terminal -> output.json.encodeToJsonElement(TerminalState.serializer(), value.value)
+            is SnapshotState.Changeset -> output.json.encodeToJsonElement(ChangesetState.serializer(), value.value)
+            is SnapshotState.ResourceWatch -> output.json.encodeToJsonElement(ResourceWatchState.serializer(), value.value)
+            is SnapshotState.Annotations -> output.json.encodeToJsonElement(AnnotationsState.serializer(), value.value)
+            is SnapshotState.Automations -> output.json.encodeToJsonElement(AutomationState.serializer(), value.value)
+            is SnapshotState.AutomationRun -> output.json.encodeToJsonElement(AutomationRunState.serializer(), value.value)
+        }
+        output.encodeJsonElement(element)
+    }
+}

@@ -1,4 +1,11 @@
 package dev.ahpclient.app
+import dev.ahpclient.platform.randomUuid
+
+import dev.ahpclient.platform.platformSynchronized
+
+import dev.ahpclient.platform.Synchronized
+
+import kotlin.concurrent.Volatile
 
 import com.microsoft.agenthostprotocol.generated.ChatSource
 import com.microsoft.agenthostprotocol.generated.Message
@@ -48,10 +55,17 @@ import dev.ahpclient.state.extras
 import dev.ahpclient.tunnel.DevTunnelsClient
 import dev.ahpclient.tunnel.DevTunnelsException
 import dev.ahpclient.tunnel.TunnelInfo
-import java.io.IOException
-import java.time.Duration
-import java.time.Instant
-import java.util.concurrent.atomic.AtomicBoolean
+import dev.ahpclient.platform.IOException
+import dev.ahpclient.platform.Duration
+import dev.ahpclient.platform.durationBetween
+import dev.ahpclient.platform.durationOfDays
+import dev.ahpclient.platform.durationOfMinutes
+import dev.ahpclient.platform.seconds
+import dev.ahpclient.platform.INSTANT_EPOCH
+import dev.ahpclient.platform.Instant
+import dev.ahpclient.platform.instantNow
+import dev.ahpclient.platform.parseInstant
+import dev.ahpclient.platform.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -91,12 +105,12 @@ class AppController(
     private val lastHost: LastHostStore,
     private val sessions: HostSessionFactory,
     private val scope: CoroutineScope,
-    private val now: () -> Instant = Instant::now,
+    private val now: () -> Instant = ::instantNow,
     private val interaction: InteractionConsent = InteractionConsent(),
     /** The device check in front of every tool approval. The default refuses everything, so a build with no gate can never approve. */
     private val approvalGate: ApprovalGate = ApprovalGate { false },
     /** How close to running out a sign-in is renewed. */
-    private val renewBefore: Duration = Duration.ofMinutes(5),
+    private val renewBefore: Duration = durationOfMinutes(5),
     /** Where renewals are noted, for a debug build's log: only what happened, never a token. */
     private val note: (String) -> Unit = {},
     /** How long the app must be out of sight before the live session lets go of its chats and channels (see [HostSession.park]). */
@@ -162,7 +176,7 @@ class AppController(
 
     private val directConsents = HashMap<String, InteractionConsent>()
 
-    private fun consentFor(host: DirectHost): InteractionConsent = synchronized(directConsents) { directConsents.getOrPut(host.id) { directConsent(host) } }
+    private fun consentFor(host: DirectHost): InteractionConsent = platformSynchronized(directConsents) { directConsents.getOrPut(host.id) { directConsent(host) } }
 
     private val activeConsent get() = consentOf(_state.value)
 
@@ -385,9 +399,9 @@ class AppController(
     suspend fun setProUnlocked(on: Boolean): Boolean {
         val saved = pro.setUnlocked(on)
         if (!pro.unlocked.value) {
-            val hadWrite = interaction.allowed.value || synchronized(directConsents) { directConsents.values.any { it.allowed.value } }
+            val hadWrite = interaction.allowed.value || platformSynchronized(directConsents) { directConsents.values.any { it.allowed.value } }
             interaction.revokeEntitlement()
-            val directs = synchronized(directConsents) { directConsents.values.toList() }
+            val directs = platformSynchronized(directConsents) { directConsents.values.toList() }
             directs.forEach { it.revokeEntitlement() }
             keepOnlyFocusedHost()
             if (hadWrite) {
@@ -496,7 +510,7 @@ class AppController(
         val current = directHosts
         if (current.size >= DirectHostCodec.MAX_HOSTS) return AddHostResult.Invalid("That is as many hosts as can be kept (${DirectHostCodec.MAX_HOSTS}). Remove one first.")
         current.firstOrNull { it.url == ok.url }?.let { return AddHostResult.Invalid("That address is already added as “${it.name}”.") }
-        val host = DirectHost(DirectHost.ID_PREFIX + java.util.UUID.randomUUID(), DirectHostCodec.cleanName(name).ifEmpty { ok.host }, ok.url)
+        val host = DirectHost(DirectHost.ID_PREFIX + randomUuid(), DirectHostCodec.cleanName(name).ifEmpty { ok.host }, ok.url)
         val secret = token.trim()
         return try {
             if (secret.isNotEmpty()) (directVault ?: return AddHostResult.NotSaved).put(host.id, Secret(secret))
@@ -536,7 +550,7 @@ class AppController(
         } catch (_: IOException) {
         } catch (_: VaultCryptoException) {
         }
-        synchronized(directConsents) { directConsents.remove(id) }?.forget() ?: directConsent(host).forget()
+        platformSynchronized(directConsents) { directConsents.remove(id) }?.forget() ?: directConsent(host).forget()
         safeClearCache()
         publishDirect()
     }
@@ -1263,7 +1277,7 @@ class AppController(
         } catch (e: VaultCryptoException) {
             failSignIn("Signed in, but the token could not be stored securely on this device.")
         } catch (e: Exception) {
-            failSignIn("Sign-in failed unexpectedly (${e.javaClass.simpleName}).")
+            failSignIn("Sign-in failed unexpectedly (${(e::class.simpleName ?: "Exception")}).")
         }
     }
 
@@ -1286,7 +1300,7 @@ class AppController(
         val held = token ?: throw DevTunnelsException.AuthExpired()
         val expiresAt = held.expiresAt
         val expired = expiresAt != null && !now().isBefore(expiresAt)
-        val due = expired || (expiresAt != null && !now().plus(renewBefore).isBefore(expiresAt))
+        val due = expired || (expiresAt != null && !now().plusSeconds(renewBefore.seconds).isBefore(expiresAt))
         if (!due) return held
         val usable = !expired
         val refresh = held.refresh
@@ -1299,7 +1313,7 @@ class AppController(
                 val result = try {
                     auth.refresh(refresh)
                 } catch (e: IOException) {
-                    note("renewal not attempted: ${e.javaClass.simpleName}")
+                    note("renewal not attempted: ${(e::class.simpleName ?: "Exception")}")
                     return@withContext if (usable) held else throw e
                 } catch (e: GitHubAuthException) {
                     return@withContext if (usable) held else throw IOException("Could not renew the GitHub sign-in", e)
@@ -1388,7 +1402,7 @@ class AppController(
             } catch (e: IOException) {
                 HostList.Failed("Could not reach the Dev Tunnels service. Check the connection and try again.")
             } catch (e: Exception) {
-                HostList.Failed("Could not load your hosts (${e.javaClass.simpleName}).")
+                HostList.Failed("Could not load your hosts (${(e::class.simpleName ?: "Exception")}).")
             }
             val direct = directEntries()
             // While the cold start still needs the tunnel list to reach the last host, a failed load stays pending and is retried with backoff.

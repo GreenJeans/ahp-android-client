@@ -14,8 +14,8 @@ import com.microsoft.agenthostprotocol.generated.SessionState
 import com.microsoft.agenthostprotocol.generated.SessionSummary
 import com.microsoft.agenthostprotocol.generated.SideChatSource
 import com.microsoft.agenthostprotocol.generated.StateAction
-import java.io.IOException
-import java.util.UUID
+import dev.ahpclient.platform.IOException
+import dev.ahpclient.platform.randomUuid
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.JsonElement
 
@@ -82,7 +82,7 @@ class SessionManager(
     private val dispatch: suspend (channel: String, action: StateAction) -> DispatchOutcome,
     private val commands: ManagementCommands,
     private val gate: ApprovalGate,
-    private val newId: () -> String = { UUID.randomUUID().toString() },
+    private val newId: () -> String = { randomUuid() },
 ) {
     /** The agents the host lists, in its order. */
     fun offeredAgents(): List<AgentInfo> = agents()

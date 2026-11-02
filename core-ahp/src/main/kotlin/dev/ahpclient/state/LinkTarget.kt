@@ -1,8 +1,9 @@
 package dev.ahpclient.state
 
 import dev.ahpclient.app.SafeLinks
-import java.net.URLDecoder
-import java.net.URLEncoder
+import dev.ahpclient.platform.parseUri
+import dev.ahpclient.platform.urlDecodeUtf8
+import dev.ahpclient.platform.urlEncodeUtf8
 
 /**
  * What a link in an agent's text can be made to do on a phone. Only things that make sense here are listed: a web page, a mail
@@ -41,11 +42,7 @@ sealed interface LinkTarget {
             }
         }
 
-        private fun hostOf(url: String): String = try {
-            java.net.URI(url).host.orEmpty()
-        } catch (_: java.net.URISyntaxException) {
-            ""
-        }
+        private fun hostOf(url: String): String = parseUri(url)?.host.orEmpty()
     }
 }
 
@@ -80,7 +77,7 @@ data class HostFileTarget(
     }
 
     fun toInternalUri(): String {
-        val encodedPath = URLEncoder.encode(rawPath, Charsets.UTF_8.name())
+        val encodedPath = urlEncodeUtf8(rawPath)
         val startParam = startLine?.let { "&start=$it" }.orEmpty()
         val endParam = endLine?.let { "&end=$it" }.orEmpty()
         return "$INTERNAL_PREFIX?path=$encodedPath$startParam$endParam"
@@ -167,11 +164,7 @@ data class HostFileTarget(
                 val key = pair.substring(0, eq)
                 val value = pair.substring(eq + 1)
                 when (key) {
-                    "path" -> path = try {
-                        URLDecoder.decode(value, Charsets.UTF_8.name())
-                    } catch (_: IllegalArgumentException) {
-                        null
-                    }
+                    "path" -> path = urlDecodeUtf8(value)
                     "start" -> start = value.toIntOrNull()?.takeIf { it > 0 }
                     "end" -> end = value.toIntOrNull()?.takeIf { it > 0 }
                 }

@@ -1,4 +1,5 @@
 package dev.ahpclient.state
+import dev.ahpclient.platform.*
 
 import com.microsoft.agenthostprotocol.generated.ChatInputOption
 import com.microsoft.agenthostprotocol.generated.ChatInputQuestion
@@ -19,7 +20,10 @@ import com.microsoft.agenthostprotocol.generated.StringOrMarkdown
 import com.microsoft.agenthostprotocol.generated.ToolCallConfirmationState
 import com.microsoft.agenthostprotocol.generated.ToolCallConfirmationStatePendingConfirmation
 import com.microsoft.agenthostprotocol.generated.ToolCallConfirmationStatePendingResultConfirmation
-import java.time.Instant
+import dev.ahpclient.platform.INSTANT_EPOCH
+import dev.ahpclient.platform.Instant
+import dev.ahpclient.platform.instantNow
+import dev.ahpclient.platform.parseInstant
 
 /** What the agent is waiting on, in words. This client is read-only, so it only ever describes the request. */
 data class InputRequestView(
@@ -87,11 +91,7 @@ data class AnnotationsSummaryView(
 }
 
 fun displayPath(uri: String): String {
-    val parsed = try {
-        java.net.URI(uri)
-    } catch (_: java.net.URISyntaxException) {
-        return uri
-    }
+    val parsed = parseUri(uri) ?: return uri
     val path = parsed.path ?: return uri
     if (parsed.scheme != "file") return uri
     // A Windows drive path arrives as /c:/Users/..., and the leading slash is noise.

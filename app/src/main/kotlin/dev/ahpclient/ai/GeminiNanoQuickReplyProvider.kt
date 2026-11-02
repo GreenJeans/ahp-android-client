@@ -34,17 +34,6 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
- * Availability of the on-device Gemini Nano model via Android AICore / ML Kit GenAI Prompt API.
- */
-enum class NanoStatus(val label: String) {
-    CHECKING("Checking on-device model…"),
-    AVAILABLE("Gemini Nano ready on-device"),
-    DOWNLOADABLE("Gemini Nano available to download"),
-    DOWNLOADING("Downloading Gemini Nano…"),
-    UNAVAILABLE("Using smart extract (Gemini Nano not supported on this device)"),
-}
-
-/**
  * Quick-reply generator supporting both:
  * 1. **External / Local AI Provider** (Google Gemini, OpenAI-compatible / Ollama / LM Studio / OpenRouter, or Anthropic)
  *    when enabled in settings. Surfaces explicit errors when the configured provider fails rather than silently masquerading
@@ -58,10 +47,10 @@ class GeminiNanoQuickReplyProvider(
     private val apiKeyVault: DirectHostVault? = null,
     private val modelFactory: () -> GenerativeModel = { Generation.getClient() },
     private val baseUrl: String = DEFAULT_GEMINI_BASE_URL,
-) : QuickReplyProvider {
+) : QuickReplyController {
 
     private val _status = MutableStateFlow(NanoStatus.CHECKING)
-    val status: StateFlow<NanoStatus> = _status.asStateFlow()
+    override val status: StateFlow<NanoStatus> = _status.asStateFlow()
 
     private val cache = LruCache<String, QuickReplySuggestion>(24)
 
@@ -89,14 +78,14 @@ class GeminiNanoQuickReplyProvider(
     /**
      * Saves the user's external AI provider configuration, sealing any new API key in [apiKeyVault].
      */
-    suspend fun saveGoogleAiConfig(
+    override suspend fun saveGoogleAiConfig(
         enabled: Boolean,
         modelName: String,
         systemPrompt: String,
-        newApiKey: String? = null,
-        clearKey: Boolean = false,
-        providerKind: AiProviderKind = ui?.googleAiConfig?.value?.providerKind ?: AiProviderKind.GOOGLE_GEMINI,
-        endpointUrl: String = ui?.googleAiConfig?.value?.baseUrl ?: providerKind.defaultBaseUrl,
+        newApiKey: String?,
+        clearKey: Boolean,
+        providerKind: AiProviderKind,
+        endpointUrl: String,
     ): Boolean = withContext(Dispatchers.IO) {
         val settings = ui ?: return@withContext false
         val vault = apiKeyVault
@@ -145,10 +134,10 @@ class GeminiNanoQuickReplyProvider(
      * Fetches the live list of available model IDs from the given provider endpoint so the UI can present
      * relevant, up-to-date model chips instead of hardcoded names.
      */
-    suspend fun fetchAvailableModels(
+    override suspend fun fetchAvailableModels(
         providerKind: AiProviderKind,
         endpointUrl: String,
-        overrideApiKey: String? = null,
+        overrideApiKey: String?,
     ): Result<List<String>> = withContext(Dispatchers.IO) {
         val client = http ?: return@withContext Result.failure(IllegalStateException("HTTP client unavailable."))
         val savedKey = apiKeyVault?.get(GOOGLE_AI_VAULT_KEY)?.reveal()?.trim()
@@ -212,7 +201,7 @@ class GeminiNanoQuickReplyProvider(
     /**
      * Queries AICore for the current on-device Gemini Nano feature status.
      */
-    suspend fun refreshStatus(): NanoStatus = withContext(Dispatchers.IO) {
+    override suspend fun refreshStatus(): NanoStatus = withContext(Dispatchers.IO) {
         val model = getOrCreateClient()
         if (model == null) {
             _status.value = NanoStatus.UNAVAILABLE
@@ -237,7 +226,7 @@ class GeminiNanoQuickReplyProvider(
     /**
      * Triggers an on-device model download when AICore reports [FeatureStatus.DOWNLOADABLE].
      */
-    fun triggerDownload() {
+    override fun triggerDownload() {
         val model = getOrCreateClient() ?: return
         if (_status.value == NanoStatus.DOWNLOADING) return
         scope.launch(Dispatchers.IO) {
