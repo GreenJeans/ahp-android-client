@@ -304,6 +304,8 @@ class CustomizationsTest {
 
         val skillEntry = view.entriesIn(CustomizationCategory.SKILLS).single()
         assertEquals("skill-eval", skillEntry.name)
+        assertEquals("s-skill-eval", skillEntry.customizationId)
+        assertTrue(skillEntry.canToggle)
         assertEquals("[signals]", skillEntry.argumentHint)
         assertTrue(skillEntry.canViewFile)
 
@@ -322,7 +324,9 @@ class CustomizationsTest {
         assertEquals("Connection refused", errorMcp.description)
 
         val toolEntry = view.entriesIn(CustomizationCategory.TOOLS).single()
-        assertEquals("bash", toolEntry.name)
+        assertEquals("Run Bash", toolEntry.name)
+        assertEquals("bash", toolEntry.source)
+        assertFalse(toolEntry.canToggle)
         assertTrue("Destructive" in toolEntry.badges)
     }
 }

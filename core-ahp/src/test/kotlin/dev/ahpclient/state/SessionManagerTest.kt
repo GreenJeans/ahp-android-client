@@ -712,6 +712,7 @@ class SessionManagerTest {
         assertEquals("""{"type":"session/mcpServerStartRequested","id":"srv-1"}""", wire(SessionActions.startMcpServer("srv-1")).toString())
         assertEquals("""{"type":"session/mcpServerStopRequested","id":"srv-1"}""", wire(SessionActions.stopMcpServer("srv-1")).toString())
         assertEquals("""{"type":"session/mcpServerBackgroundRequested","id":"srv-1"}""", wire(SessionActions.backgroundMcpServer("srv-1")).toString())
+        assertEquals("""{"type":"session/customizationToggled","id":"skill-1","enablement":[{"enabled":true,"kind":"session"}]}""", wire(SessionActions.customizationToggled("skill-1", true)).toString())
     }
 
     @Test
@@ -747,6 +748,24 @@ class SessionManagerTest {
         assertEquals(ManageResult.InvalidChoice, rig.manager.controlMcpServer(s1, "   ", McpServerControlAction.START))
         rig.allowed = false
         assertEquals(ManageResult.NotAllowed, rig.manager.controlMcpServer(s1, "github", McpServerControlAction.START))
+    }
+
+    @Test
+    fun `toggleCustomization validates live customization ids and dispatches session enablement`() = runTest {
+        val rig = Rig()
+        val plugin = Ahp.json.decodeFromString(
+            com.microsoft.agenthostprotocol.generated.Customization.serializer(),
+            """{"type":"plugin","id":"plugin-1","uri":"file:///plugin","name":"Plugin","children":[{"type":"skill","id":"skill-1","uri":"file:///skill","name":"Skill"}]}""",
+        )
+        rig.states[s1] = state("ready", c1 to "Main").copy(customizations = listOf(plugin))
+
+        assertEquals(ManageResult.Done(), rig.manager.toggleCustomization(s1, "skill-1", false))
+        assertEquals(s1, rig.sent.single().first)
+        assertEquals(
+            """{"type":"session/customizationToggled","id":"skill-1","enablement":[{"enabled":false,"kind":"session"}]}""",
+            wire(rig.sent.single().second).toString(),
+        )
+        assertEquals(ManageResult.InvalidChoice, rig.manager.toggleCustomization(s1, "stale", true))
     }
 
     @Test

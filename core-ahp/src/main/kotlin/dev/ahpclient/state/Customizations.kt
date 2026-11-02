@@ -128,6 +128,8 @@ data class CustomizationEntry(
     val isReady: Boolean = false,
     val argumentHint: String? = null,
     val badges: List<String> = emptyList(),
+    val customizationId: String? = null,
+    val canToggle: Boolean = false,
 ) {
     /** Whether this customization is backed by a host `file://` URI that can be opened in the file viewer. */
     val canViewFile: Boolean get() = uri?.let { HostFileTarget.of(it) } != null
@@ -736,6 +738,8 @@ object SlashCommands {
                         plugins.add(
                             CustomizationEntry(
                                 id = "plugin:${p.id.ifBlank { p.uri }}",
+                                customizationId = p.id.takeIf { it.isNotBlank() },
+                                canToggle = p.id.isNotBlank(),
                                 category = CustomizationCategory.PLUGINS,
                                 name = sourceName,
                                 description = cleanText(desc, MAX_DESCRIPTION),
@@ -833,6 +837,8 @@ object SlashCommands {
                     skills.add(
                         CustomizationEntry(
                             id = "skill:${s.uri.ifBlank { s.id.ifBlank { name } }}",
+                            customizationId = s.id.takeIf { it.isNotBlank() },
+                            canToggle = s.id.isNotBlank(),
                             category = CustomizationCategory.SKILLS,
                             name = name,
                             description = cleanText(s.description, MAX_DESCRIPTION),
@@ -859,6 +865,8 @@ object SlashCommands {
                     instructions.add(
                         CustomizationEntry(
                             id = "prompt:${p.uri.ifBlank { p.id.ifBlank { name } }}",
+                            customizationId = p.id.takeIf { it.isNotBlank() },
+                            canToggle = p.id.isNotBlank(),
                             category = CustomizationCategory.INSTRUCTIONS,
                             name = name,
                             description = cleanText(p.description, MAX_DESCRIPTION),
@@ -889,6 +897,8 @@ object SlashCommands {
                     instructions.add(
                         CustomizationEntry(
                             id = "rule:${r.uri.ifBlank { r.id.ifBlank { name } }}",
+                            customizationId = r.id.takeIf { it.isNotBlank() },
+                            canToggle = r.id.isNotBlank(),
                             category = CustomizationCategory.INSTRUCTIONS,
                             name = name,
                             description = cleanText(r.description, MAX_DESCRIPTION),
@@ -922,6 +932,8 @@ object SlashCommands {
                     agents.add(
                         CustomizationEntry(
                             id = "agent:${a.uri.ifBlank { a.id.ifBlank { name } }}",
+                            customizationId = a.id.takeIf { it.isNotBlank() },
+                            canToggle = a.id.isNotBlank(),
                             category = CustomizationCategory.AGENTS,
                             name = name,
                             description = cleanText(a.description, MAX_DESCRIPTION),
@@ -942,6 +954,8 @@ object SlashCommands {
                     hooks.add(
                         CustomizationEntry(
                             id = "hook:${h.uri.ifBlank { h.id.ifBlank { name } }}",
+                            customizationId = h.id.takeIf { it.isNotBlank() },
+                            canToggle = h.id.isNotBlank(),
                             category = CustomizationCategory.HOOKS,
                             name = name,
                             uri = h.uri.takeIf { it.isNotBlank() },
@@ -1001,10 +1015,10 @@ object SlashCommands {
         return CustomizationEntry(
             id = "tool:$name",
             category = CustomizationCategory.TOOLS,
-            name = name,
+            name = title ?: name,
             description = desc,
+            source = name.takeIf { title != null },
             userInvokable = false,
-            statusLabel = title,
             isReady = true,
             badges = badges,
         )

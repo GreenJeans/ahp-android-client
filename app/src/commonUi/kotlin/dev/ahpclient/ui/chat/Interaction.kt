@@ -63,6 +63,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -680,6 +681,7 @@ private fun ActiveSlashCommandBar(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 6.dp, vertical = 2.dp)
+            .semantics(mergeDescendants = true) {}
             .testTag("composer_active_skill"),
     ) {
         Row(
@@ -1567,6 +1569,7 @@ internal fun ApprovalButtons(choices: List<ApprovalChoice>, toolCallId: String, 
  */
 @Composable
 internal fun QuestionForm(form: InputForm, actions: ChatActionsUi, modifier: Modifier = Modifier) {
+    val keyboard = LocalSoftwareKeyboardController.current
     val values = remember(form.requestId) { mutableStateMapOf<String, FormValue>().apply { form.questions.forEach { put(it.id, form.initial(it)) } } }
     var problems by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var busy by remember { mutableStateOf(false) }
@@ -1623,7 +1626,10 @@ internal fun QuestionForm(form: InputForm, actions: ChatActionsUi, modifier: Mod
             Button(
                 onClick = {
                     when (val check = form.check(values)) {
-                        is FormCheck.Problems -> problems = check.byQuestion
+                        is FormCheck.Problems -> {
+                            keyboard?.hide()
+                            problems = check.byQuestion
+                        }
                         is FormCheck.Ready -> finish { actions.answer(form.requestId, check.answers) }
                     }
                 },

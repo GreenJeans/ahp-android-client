@@ -171,6 +171,7 @@ class ManageUiTest {
 
     private fun showNewSession(calls: Calls, manage: ManageActionsUi = actions(calls), onCreated: (String) -> Unit = {}) {
         rule.setContent { AhpTheme { NewSessionIconButton(manage, onCreated) } }
+        rule.waitForIdle()
         rule.onNodeWithTag("new_session").performClick()
     }
 

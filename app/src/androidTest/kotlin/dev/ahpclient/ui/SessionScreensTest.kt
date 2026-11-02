@@ -846,6 +846,37 @@ class SessionScreensTest {
     }
 
     @Test
+    fun customizationSwitchDispatchesTheSelectedSessionEnablement() {
+        val toggles = mutableListOf<Pair<String, Boolean>>()
+        val view = CustomizationsView(
+            entries = listOf(
+                CustomizationEntry(
+                    id = "skill:1",
+                    category = CustomizationCategory.SKILLS,
+                    name = "reviewer",
+                    enabled = true,
+                    customizationId = "skill-id",
+                    canToggle = true,
+                ),
+            ),
+        )
+        rule.setContent {
+            AhpTheme {
+                CustomizationsSheetContent(
+                    customizations = view,
+                    initialCategory = CustomizationCategory.SKILLS,
+                    onDismiss = {},
+                    onToggleCustomization = { id, enabled -> toggles += id to enabled },
+                )
+            }
+        }
+
+        rule.onNodeWithTag("customization_toggle_skill:1").assertIsDisplayed().performClick()
+
+        assertEquals(listOf("skill-id" to false), toggles)
+    }
+
+    @Test
     fun detailsShowAnnotationsSummaryWhenPresent() {
         val withAnnotations = Ahp.json.decodeFromString(
             SessionState.serializer(),

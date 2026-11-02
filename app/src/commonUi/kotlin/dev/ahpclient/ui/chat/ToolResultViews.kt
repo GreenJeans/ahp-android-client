@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.MaterialTheme
@@ -28,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import dev.ahpclient.state.Clipped
 import dev.ahpclient.state.InputLine
 import dev.ahpclient.state.ToolDetail
+import dev.ahpclient.state.RiskLevelView
 import dev.ahpclient.state.ToolResultView
 import dev.ahpclient.platform.formatInteger
 
@@ -65,6 +67,24 @@ internal fun ToolDetailBody(
                 Column(modifier = Modifier.semantics(mergeDescendants = true) {}.testTag("tool_waiting"), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(waiting, style = MaterialTheme.typography.titleSmall)
                     if (!approveHere) Text(ToolDetail.APPROVE_ELSEWHERE, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+            detail.riskAssessment?.let { risk ->
+                val highRisk = risk.level == RiskLevelView.HIGH_RISK
+                Surface(
+                    color = if (highRisk) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = if (highRisk) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth().testTag("tool_risk_assessment"),
+                ) {
+                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        if (risk.level == RiskLevelView.LOADING) androidx.compose.material3.CircularProgressIndicator(Modifier.padding(2.dp).size(20.dp), strokeWidth = 2.dp)
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(if (risk.level == RiskLevelView.LOADING) risk.statusLabel else "Risk: ${risk.statusLabel}", style = MaterialTheme.typography.labelLarge)
+                            risk.reason?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                            risk.safetyScore?.let { Text("Safety ${"%.0f".format(it * 100)}%", style = MaterialTheme.typography.labelSmall) }
+                        }
+                    }
                 }
             }
             if (detail.input.isNotEmpty()) {

@@ -165,6 +165,9 @@ class NotificationInputNeededSink(
      */
     fun postReplyStatus(resource: String, status: String) {
         MonitorChannels.ensure(context)
+        // Some Android notification services keep the original content text when a post is replaced under the same tag/id.
+        // Cancel first so the status is observable immediately and the reply affordance cannot remain on the old notification.
+        manager.cancel(resource, NOTIFICATION_ID)
         val open = PendingIntent.getActivity(
             context,
             resource.hashCode(),

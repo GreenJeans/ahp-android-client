@@ -258,6 +258,15 @@ fun SessionScreen(
             } else {
                 null
             },
+            onToggleCustomization = if (manage != null && sessionUri.isNotEmpty()) {
+                { id, enabled ->
+                    scope.launch {
+                        notice = ManageMessages.describe(manage.toggleCustomization(sessionUri, id, enabled))
+                    }
+                }
+            } else {
+                null
+            },
         )
     }
 }

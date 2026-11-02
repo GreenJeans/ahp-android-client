@@ -126,6 +126,7 @@ class CapabilityPolicyTest {
         "session/mcpServerStartRequested",
         "session/mcpServerStopRequested",
         "session/mcpServerBackgroundRequested",
+        "session/customizationToggled",
         "changeset/filesReviewChanged",
     )
 
@@ -148,7 +149,7 @@ class CapabilityPolicyTest {
     }
 
     @Test
-    fun `MANAGE allows the nine interaction actions and exactly three more`() {
+    fun `MANAGE allows interaction actions and exactly four more`() {
         (interactActions + manageActions).forEach { CapabilityPolicy.MANAGE.check("dispatchAction", it) }
         assertEquals(manageActions, CapabilityPolicy.MANAGE_ACTIONS)
         assertEquals(manageCommands, CapabilityPolicy.MANAGE_COMMANDS)
@@ -168,7 +169,7 @@ class CapabilityPolicyTest {
             null, "", "session/isReadChanged ", "Session/isReadChanged",
             "terminal/input", "terminal/resized", "terminal/claimed",
             "session/activeClientSet", "session/chatAdded", "session/chatRemoved", "session/workingDirectorySet",
-            "session/mcpServerStarted", "session/mcpServerStopped", "session/customizationToggled",
+            "session/mcpServerStarted", "session/mcpServerStopped",
             "chat/titleChanged", "chat/responsePart", "chat/toolCallStart", "chat/turnComplete",
             "root/activeSessionsChanged",
         )

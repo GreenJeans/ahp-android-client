@@ -242,6 +242,7 @@ private fun Shell(
                 setChatRead = controller.manager::setChatRead,
                 setChatArchived = controller.manager::setChatArchived,
                 controlMcpServer = controller.manager::controlMcpServer,
+                toggleCustomization = controller.manager::toggleCustomization,
             )
         }
     } else {

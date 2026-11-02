@@ -28,6 +28,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -79,6 +80,7 @@ fun CustomizationsSheet(
     onUseAgent: ((String) -> Unit)? = null,
     onControlMcpServer: ((String, McpServerControlAction) -> Unit)? = null,
     onViewFile: ((HostFileTarget) -> Unit)? = null,
+    onToggleCustomization: ((String, Boolean) -> Unit)? = null,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
@@ -94,6 +96,7 @@ fun CustomizationsSheet(
             onUseAgent = onUseAgent,
             onControlMcpServer = onControlMcpServer,
             onViewFile = onViewFile,
+            onToggleCustomization = onToggleCustomization,
         )
     }
 }
@@ -109,6 +112,7 @@ fun CustomizationsSheetContent(
     onUseAgent: ((String) -> Unit)? = null,
     onControlMcpServer: ((String, McpServerControlAction) -> Unit)? = null,
     onViewFile: ((HostFileTarget) -> Unit)? = null,
+    onToggleCustomization: ((String, Boolean) -> Unit)? = null,
 ) {
     var selectedCategoryName by rememberSaveable(initialCategory) { mutableStateOf(initialCategory?.name) }
     var query by rememberSaveable(initialQuery) { mutableStateOf(initialQuery) }
@@ -321,6 +325,7 @@ fun CustomizationsSheetContent(
                 items(matchingEntries, key = { it.id }) { entry ->
                     CustomizationEntryCard(
                         onControlMcpServer = onControlMcpServer,
+                        onToggleCustomization = onToggleCustomization,
                         entry = entry,
                         onUseSlashCommand = onUseSlashCommand?.let { use ->
                             { cmdName ->
@@ -355,6 +360,7 @@ private fun CustomizationEntryCard(
     onUseAgent: ((String) -> Unit)?,
     onControlMcpServer: ((String, McpServerControlAction) -> Unit)? = null,
     onViewFile: ((HostFileTarget) -> Unit)?,
+    onToggleCustomization: ((String, Boolean) -> Unit)?,
 ) {
     val isSlashInvokable = (entry.category == CustomizationCategory.SKILLS ||
         (entry.category == CustomizationCategory.INSTRUCTIONS && entry.statusLabel == "Prompt")) &&
@@ -420,7 +426,16 @@ private fun CustomizationEntryCard(
                     }
                 }
 
-                entry.statusLabel?.let { status ->
+                val toggleCustomization = onToggleCustomization
+                if (entry.canToggle && entry.customizationId != null && toggleCustomization != null) {
+                    entry.customizationId?.let { customizationId ->
+                        Switch(
+                            checked = entry.enabled,
+                            onCheckedChange = { toggleCustomization(customizationId, it) },
+                            modifier = Modifier.testTag("customization_toggle_${entry.id}"),
+                        )
+                    }
+                } else entry.statusLabel?.let { status ->
                     val containerColor = when {
                         entry.isError -> MaterialTheme.colorScheme.errorContainer
                         !entry.enabled -> MaterialTheme.colorScheme.surfaceVariant
