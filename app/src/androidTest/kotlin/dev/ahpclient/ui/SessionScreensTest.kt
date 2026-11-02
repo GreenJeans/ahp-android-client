@@ -39,6 +39,7 @@ import dev.ahpclient.state.ActivityState
 import dev.ahpclient.state.CustomizationCategory
 import dev.ahpclient.state.CustomizationEntry
 import dev.ahpclient.state.CustomizationsView
+import dev.ahpclient.state.ChangesetEntry
 import dev.ahpclient.state.McpServerControlAction
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.ManageResult
@@ -789,6 +790,29 @@ class SessionScreensTest {
 
         rule.onAllNodesWithText("Branch").assertCountEquals(0)
         rule.onAllNodesWithText("Git status").assertCountEquals(0)
+    }
+
+    @Test
+    fun changesChipOpensAnActiveChatChangeset() {
+        val opened = mutableListOf<Pair<String, String>>()
+        rule.setContent {
+            AhpTheme {
+                SessionScreen(
+                    detailState(),
+                    null,
+                    ConnState.Online,
+                    now,
+                    {},
+                    shownChat = mainChatUri,
+                    chatChangesets = listOf(ChangesetEntry("Chat changes", null, "uncommitted", "ahp-changeset:/chat")),
+                    onOpenChangeset = { uri, label -> opened += uri to label },
+                )
+            }
+        }
+
+        rule.onNodeWithTag("changes_chip").assertIsDisplayed().performClick()
+
+        assertEquals(listOf("ahp-changeset:/chat" to "Chat changes"), opened)
     }
 
     @Test

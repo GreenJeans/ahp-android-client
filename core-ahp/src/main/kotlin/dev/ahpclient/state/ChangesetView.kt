@@ -150,6 +150,7 @@ data class ChangesetEntry(val label: String, val description: String?, val kind:
     companion object {
         private const val MAX_LABEL = 120
         private const val MAX_URI = 512
+        const val MAX_ENTRIES = 500
 
         fun from(changeset: Changeset): ChangesetEntry {
             val template = changeset.uriTemplate
@@ -161,6 +162,17 @@ data class ChangesetEntry(val label: String, val description: String?, val kind:
                 uri = template.takeIf { plain },
                 reviewable = changeset.capabilities?.review != null,
             )
+        }
+
+        /** Uses the active chat's version when it advertises the same changeset, then adds session-wide entries it lacks. */
+        fun merge(session: List<ChangesetEntry>, chat: List<ChangesetEntry>): List<ChangesetEntry> {
+            val seen = HashSet<String>()
+            return buildList {
+                for (entry in chat + session) {
+                    if (size >= MAX_ENTRIES) break
+                    if (entry.uri == null || seen.add(entry.uri)) add(entry)
+                }
+            }
         }
     }
 }

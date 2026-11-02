@@ -34,6 +34,7 @@ import dev.ahpclient.app.OpenChat
 import dev.ahpclient.app.SignInStep
 import dev.ahpclient.data.UiSettings
 import dev.ahpclient.state.ChangeStats
+import dev.ahpclient.state.ChangesetEntry
 import dev.ahpclient.state.ChatConfig
 import dev.ahpclient.state.ChatInteractor
 import dev.ahpclient.state.ConnState
@@ -505,6 +506,12 @@ private fun SessionPage(
             null
         }
         val chatUsage = remember(openChatState) { HostExtras.chatUsage(openChatState) }
+        val chatChangeStats = remember(openChatState, changes) {
+            if (openChatState?.changes != null) ChangeStats.of(openChatState.changes) else changes
+        }
+        val chatChangesets: List<ChangesetEntry> = remember(openChatState) {
+            openChatState?.changesets.orEmpty().take(ChangesetEntry.MAX_ENTRIES).map { ChangesetEntry.from(it) }
+        }
         val backgroundWork = remember(openChatState) { Transcript.backgroundWorkOf(openChatState) }
         val canvases = remember(openChatState) { Transcript.canvasesOf(openChatState) }
         var requestedChat by remember { mutableStateOf<String?>(null) }
@@ -519,7 +526,8 @@ private fun SessionPage(
             now = now,
             onBack = controller::closeSession,
             onMenu = onMenu,
-            changes = changes,
+            changes = chatChangeStats,
+            chatChangesets = chatChangesets,
             shownChat = chat?.uri,
             onSelectChat = controller::selectChat,
             manage = manageActions,

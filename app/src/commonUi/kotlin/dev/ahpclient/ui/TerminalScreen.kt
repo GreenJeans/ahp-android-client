@@ -13,6 +13,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -55,10 +56,11 @@ fun TerminalScreen(state: TerminalState?, error: Throwable?, connection: ConnSta
                 if (connection != ConnState.Online) ConnectionLine(connection)
                 view?.let {
                     // Said, not only coloured, and announced when it changes: a command that finishes while the screen is open.
-                    Text(it.status, style = MaterialTheme.typography.labelLarge, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }.testTag("terminal_status"))
-                    it.cwd?.let { cwd ->
-                        Text(cwd, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("terminal_cwd"))
-                    }
+                    Text(
+                        listOfNotNull(it.status, it.cwd).joinToString(" · "),
+                        style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }.testTag("terminal_status"),
+                    )
                 }
             }
             val sideMargin = Modifier.padding(horizontal = 24.dp)
@@ -118,13 +120,37 @@ private fun TerminalBody(view: TerminalView) {
             } else {
                 SelectionContainer(modifier = Modifier.weight(1f)) {
                     LazyColumn(state = listState, modifier = Modifier.fillMaxSize().testTag("terminal_list")) {
-                        itemsIndexed(view.lines, key = { index, _ -> index }) { _, line ->
-                            Text(
-                                line.ifEmpty { " " },
-                                style = MaterialTheme.typography.bodySmall,
-                                fontFamily = FontFamily.Monospace,
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).testTag("terminal_line"),
-                            )
+                        itemsIndexed(view.lines, key = { index, _ -> index }) { index, line ->
+                            val command = view.commands.firstOrNull { it.lineIndex == index }
+                            if (command != null) {
+                                Column(modifier = Modifier.fillMaxWidth().testTag("terminal_command_$index")) {
+                                    HorizontalDivider(modifier = Modifier.padding(horizontal = 24.dp, vertical = 3.dp))
+                                    androidx.compose.foundation.layout.Row(
+                                        modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 4.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                    ) {
+                                        Text(
+                                            "$ ${command.commandLine}",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontFamily = FontFamily.Monospace,
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                        val exit = command.exitCode
+                                        if (command.isComplete && exit != null) {
+                                            Text("Exit $exit", style = MaterialTheme.typography.labelSmall)
+                                        } else if (!command.isComplete) {
+                                            Text("Running", style = MaterialTheme.typography.labelSmall)
+                                        }
+                                    }
+                                }
+                            } else {
+                                Text(
+                                    line.ifEmpty { " " },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontFamily = FontFamily.Monospace,
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).testTag("terminal_line"),
+                                )
+                            }
                         }
                     }
                 }

@@ -97,6 +97,7 @@ fun SessionScreen(
     onMenu: (() -> Unit)? = null,
     /** The totals of what the session has changed, for the bar. */
     changes: ChangeStats? = null,
+    chatChangesets: List<ChangesetEntry> = emptyList(),
     shownChat: String? = null,
     onSelectChat: (String) -> Unit = {},
     manage: ManageActionsUi? = null,
@@ -123,6 +124,7 @@ fun SessionScreen(
     chat: @Composable () -> Unit = {},
 ) {
     val detail = remember(state, now, summary) { state?.let { SessionDetail.from(it, now, summary) } }
+    val changesets = remember(detail, chatChangesets) { ChangesetEntry.merge(detail?.changesets.orEmpty(), chatChangesets) }
     var showDetails by rememberSaveable { mutableStateOf(false) }
     val customizations = remember(state, rootState) { SlashCommands.customizationsOf(state, rootState) }
     var showCustomizations by rememberSaveable { mutableStateOf(false) }
@@ -176,7 +178,7 @@ fun SessionScreen(
                     onOpenSubagent = onOpenSubagent,
                     onOpenTerminal = onOpenTerminal,
                 )
-                ChangesChip(changes, detail.changesets, onOpenChangeset)
+                ChangesChip(changes, changesets, onOpenChangeset)
                 SessionMenu(
                     detail = detail,
                     sessionUri = sessionUri,

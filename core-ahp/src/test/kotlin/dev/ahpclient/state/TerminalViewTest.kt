@@ -125,7 +125,8 @@ class TerminalViewTest {
 
         val view = TerminalView.from(state(content = content))
 
-        assertEquals(listOf("$ npm test", "ok", "[exit code 1]", "$ "), view.lines)
+        assertEquals(listOf("$ npm test", "ok", "$ "), view.lines)
+        assertEquals(listOf(TerminalCommandView("npm test", 0, true, 1L)), view.commands)
     }
 
     @Test
@@ -135,6 +136,8 @@ class TerminalViewTest {
 
         assertEquals(listOf("$ ls", "a"), TerminalView.from(state(content = done)).lines)
         assertEquals(listOf("$ sleep 9"), TerminalView.from(state(content = running)).lines)
+        assertEquals(0L, TerminalView.from(state(content = done)).commands.single().exitCode)
+        assertFalse(TerminalView.from(state(content = running)).commands.single().isComplete)
     }
 
     @Test

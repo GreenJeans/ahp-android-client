@@ -43,12 +43,21 @@ object TerminalLinks {
  * on screen are swapped for a visible mark. Cursor movement is not replayed, so a program that redraws several lines in place
  * (a progress display) shows what it printed in order rather than what a terminal would end up showing.
  */
+data class TerminalCommandView(
+    val commandLine: String,
+    /** Index of the flattened command line replaced by the structured header. */
+    val lineIndex: Int,
+    val isComplete: Boolean,
+    val exitCode: Long?,
+)
+
 data class TerminalView(
     val title: String,
     val running: Boolean,
     val status: String,
     val cwd: String?,
     val lines: List<String>,
+    val commands: List<TerminalCommandView> = emptyList(),
     /** How many earlier lines were left out because only the last [MAX_LINES] are kept. */
     val omittedLines: Int,
 ) {
@@ -60,11 +69,22 @@ data class TerminalView(
 
         private const val MAX_TITLE = 120
         private const val MAX_CWD = 200
+        private const val MAX_COMMAND_CHARS = 240
+        private const val MAX_COMMANDS = 200
         private const val TAB = 8
 
         fun from(state: TerminalState): TerminalView {
             val (raw, cut) = tailOf(state)
             val (lines, omitted) = plainLines(raw, dropFirst = cut)
+            var searchFrom = 0
+            val recentCommands = state.content.asReversed().asSequence().filterIsInstance<TerminalContentPartCommand>().take(MAX_COMMANDS).toList().asReversed()
+            val commands = recentCommands.asSequence().mapNotNull { part ->
+                val commandLine = commandLabel(part.value.commandLine)
+                val expected = "$ $commandLine"
+                val lineIndex = (searchFrom until lines.size).firstOrNull { lines[it] == expected } ?: return@mapNotNull null
+                searchFrom = lineIndex + 1
+                TerminalCommandView(commandLine, lineIndex, part.value.isComplete, part.value.exitCode)
+            }.toList()
             val lifecycle = state.lifecycle
             val running = lifecycle is TerminalLifecycleStateRunning
             val status = when (lifecycle) {
@@ -78,6 +98,7 @@ data class TerminalView(
                 status = status,
                 cwd = state.cwd?.takeIf { it.isNotBlank() }?.let { LineDiff.clean(displayPath(it).take(MAX_CWD)) },
                 lines = lines,
+                commands = commands,
                 omittedLines = omitted,
             )
         }
@@ -106,16 +127,16 @@ data class TerminalView(
             return pieces.asReversed().joinToString("") to cut
         }
 
-        /** What a command shows: the line that was run, its output, and, once it has finished with a failure, how it ended. */
+        /** Text used to find a command's position in the bounded flattened output. */
         private fun commandText(part: TerminalContentPartCommand): String {
             val command = part.value
-            val body = StringBuilder("$ ").append(command.commandLine).append('\n').append(command.output)
-            if (command.isComplete && command.exitCode != null && command.exitCode != 0L) {
-                if (!body.endsWith("\n")) body.append('\n')
-                body.append("[exit code ").append(command.exitCode).append("]\n")
-            }
+            val body = StringBuilder("$ ").append(commandLabel(command.commandLine)).append('\n').append(command.output)
             return body.toString()
         }
+
+        private fun commandLabel(value: String): String = LineDiff.clean(
+            value.replace(Regex("[\\r\\n\\t]+"), " ").filterNot { it.isISOControl() }.take(MAX_COMMAND_CHARS),
+        )
 
         private fun plainLines(raw: String, dropFirst: Boolean): Pair<List<String>, Int> {
             val done = ArrayDeque<String>()
