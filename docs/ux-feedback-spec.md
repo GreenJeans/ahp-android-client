@@ -63,8 +63,8 @@ Nine items from using the app day to day. Most are about keeping context in a lo
 
 **Acceptance criteria**
 
-- [ ] **AC-U3.1** The Suggest button is no longer in the chip row, its touch target is still at least 48 dp, and its spoken label is unchanged.
-- [ ] **AC-U3.2** At 360 dp wide, with the agent and model chips showing, nothing in the message box is cut off.
+- [x] **AC-U3.1** The Suggest button is no longer in the chip row, its touch target is still at least 48 dp, and its spoken label is unchanged.
+- [x] **AC-U3.2** At 360 dp wide, with the agent and model chips showing, nothing in the message box is cut off. (Checked at 320 dp: the row scrolls and send stays in view.)
 
 ## U4 — Chips: scrolling, wording and placement
 
@@ -74,11 +74,24 @@ Nine items from using the app day to day. Most are about keeping context in a lo
 
 **Proposal.** A design pass first, written down as a short table: each chip, what it says (short form, for example the model's short name and the agent's name without its path), what it says to a screen reader, and where it lives. Then the row scrolls sideways when it does not fit, with the most used chip first. The pass also decides whether mode and approvals, now hidden in the agent sheet, get a chip of their own.
 
+**Design pass (2026-11-03, with U3).** The message box, from top to bottom: attached files, the text field, then one row. The text field carries the Suggest button as its trailing icon. The row has a part that scrolls sideways (the controls that set up the message) and a fixed part on the right (steer, send options, send), so sending is never scrolled away.
+
+| Control | Where | Shows | Spoken | Change |
+|---|---|---|---|---|
+| Attach | Scrolling row, first | Paperclip icon | "Attach files" | None |
+| Suggest | Text field, trailing icon, only while quick replies can be asked for | Sparkle icon | "Suggest quick replies" | Was a "Suggest" chip in the row (U3) |
+| Slash commands | Scrolling row | `/` | "Slash commands" | None |
+| Agent and chat options | Scrolling row | The agent's name; "Chat options" when the host offers no agents but does offer mode or approvals | "Agent: …" or "Chat options" | Was "Default agent" even when the host had no agents to pick from |
+| Model | Scrolling row, last | Model name and any settings ("Claude Sonnet 5.5 · Thorough"), cut at about 200 dp | "Model: " and the whole label | Was squeezed into the width left over |
+| Steer now, send options, send | Fixed, right | As today | As today | None |
+
+Kept as they are: the order (attach, then the controls that change what the message is sent with), and mode and approvals inside the agent sheet. A chip of their own is left for later, once it is clear how often they are changed per message.
+
 **Acceptance criteria**
 
-- [ ] **AC-U4.1** The chip row scrolls sideways when it is wider than the screen; no chip is cut off mid-word.
-- [ ] **AC-U4.2** Each chip's text follows the table from the design pass, and its spoken description names what it is ("Model: …", "Agent: …").
-- [ ] **AC-U4.3** The design pass is recorded in this spec before the code changes.
+- [ ] **AC-U4.1** The chip row scrolls sideways when it is wider than the screen; no chip is cut off mid-word. (Half done: the row scrolls; a model label longer than about 200 dp still ends in an ellipsis on screen, though it is spoken whole.)
+- [x] **AC-U4.2** Each chip's text follows the table from the design pass, and its spoken description names what it is ("Model: …", "Agent: …").
+- [x] **AC-U4.3** The design pass is recorded in this spec before the code changes.
 
 ## U5 — Side chats, forks and sub-chats
 
