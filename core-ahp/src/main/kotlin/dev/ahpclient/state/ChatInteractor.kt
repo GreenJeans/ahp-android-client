@@ -152,6 +152,9 @@ sealed interface InteractResult {
     /** The mode or approvals the person picked is not one the host offers or lets this chat change (any more), so nothing was sent. */
     data object InvalidConfig : InteractResult
 
+    /** The files the person attached cannot go (too many, too big, not a type the agent can read, or an image for a model that cannot see), so nothing was sent. */
+    data class InvalidAttachments(val problem: AttachmentProblem) : InteractResult
+
     /** Sending failed before anything left the phone (offline, or the connection was just lost). Safe to try again. */
     data class NotSent(val cause: Throwable) : InteractResult
 
@@ -222,16 +225,26 @@ class ChatInteractor(
         return deliver(ChatConfigActions.set(key, value))
     }
 
-    suspend fun send(text: String, model: ModelChoice? = null, agent: AgentPick = AgentPick.Keep): InteractResult {
+    /** Why [files] cannot go with a message on [model] (or on the model in use, when none is named), or null when they can. Checked as the host describes the model now. */
+    private fun attachmentProblem(files: List<ComposerAttachment>, model: ModelChoice?): AttachmentProblem? {
+        if (files.isEmpty()) return null
+        val id = (model ?: modelInUse())?.id
+        return Attachments.problem(files, models().firstOrNull { it.id == id }?.supportsVision)
+    }
+
+    /** [attachments] are files the person picked for this message; they go as embedded resources and are checked first (see [Attachments.problem]). */
+    suspend fun send(text: String, model: ModelChoice? = null, agent: AgentPick = AgentPick.Keep, attachments: List<ComposerAttachment> = emptyList()): InteractResult {
         val state = usable() ?: return InteractResult.NotAllowed
         if (text.isBlank()) return InteractResult.Blank
         if (model != null && !ModelOptions.isOffered(models(), model)) return InteractResult.InvalidModel
         val resolved = resolveAgent(agent, state) ?: return InteractResult.InvalidAgent
+        attachmentProblem(attachments, model)?.let { return InteractResult.InvalidAttachments(it) }
+        val files = attachments.map { it.toWire() }
         // A turn already running cannot take a second one: the message waits in the queue and starts when it ends.
         val action = if (state.activeTurn == null) {
-            ChatActions.startTurn(newId(), now(), text, model = wire(model), agent = resolved.uri)
+            ChatActions.startTurn(newId(), now(), text, model = wire(model), agent = resolved.uri, attachments = files)
         } else {
-            ChatActions.queueMessage(newId(), text, wire(model), resolved.uri)
+            ChatActions.queueMessage(newId(), text, wire(model), resolved.uri, files)
         }
         return deliver(action)
     }
@@ -277,31 +290,34 @@ class ChatInteractor(
         usable()?.let { deliver(ChatActions.completeInput(requestId, InputResponse.CANCEL)) } ?: InteractResult.NotAllowed
 
     /** A message that steers the turn running now. Needs a running turn: with none, a new message is [send], not a steer. */
-    suspend fun steer(text: String, model: ModelChoice? = null, agent: AgentPick = AgentPick.Keep): InteractResult {
+    suspend fun steer(text: String, model: ModelChoice? = null, agent: AgentPick = AgentPick.Keep, attachments: List<ComposerAttachment> = emptyList()): InteractResult {
         val state = usable() ?: return InteractResult.NotAllowed
         if (text.isBlank()) return InteractResult.Blank
         if (state.activeTurn == null) return InteractResult.NoActiveTurn
         if (model != null && !ModelOptions.isOffered(models(), model)) return InteractResult.InvalidModel
         val resolved = resolveAgent(agent, state) ?: return InteractResult.InvalidAgent
-        return deliver(ChatActions.steerTurn(newId(), text, wire(model), resolved.uri))
+        attachmentProblem(attachments, model)?.let { return InteractResult.InvalidAttachments(it) }
+        return deliver(ChatActions.steerTurn(newId(), text, wire(model), resolved.uri, attachments.map { it.toWire() }))
     }
 
     /** Explicitly queues a user message to run after the active turn (or starts a turn if the chat is already idle). */
-    suspend fun queue(text: String, model: ModelChoice? = null, agent: AgentPick = AgentPick.Keep): InteractResult =
-        send(text, model, agent)
+    suspend fun queue(text: String, model: ModelChoice? = null, agent: AgentPick = AgentPick.Keep, attachments: List<ComposerAttachment> = emptyList()): InteractResult =
+        send(text, model, agent, attachments)
 
     /** Stops the currently running turn (if any) and immediately starts a new turn with [text]. */
-    suspend fun stopAndSend(text: String, model: ModelChoice? = null, agent: AgentPick = AgentPick.Keep): InteractResult {
+    suspend fun stopAndSend(text: String, model: ModelChoice? = null, agent: AgentPick = AgentPick.Keep, attachments: List<ComposerAttachment> = emptyList()): InteractResult {
         val state = usable() ?: return InteractResult.NotAllowed
         if (text.isBlank()) return InteractResult.Blank
         if (model != null && !ModelOptions.isOffered(models(), model)) return InteractResult.InvalidModel
         val resolved = resolveAgent(agent, state) ?: return InteractResult.InvalidAgent
+        // Checked before the running turn is stopped, so a refusal leaves it running.
+        attachmentProblem(attachments, model)?.let { return InteractResult.InvalidAttachments(it) }
         val active = state.activeTurn
         if (active != null) {
             val stopped = deliver(ChatActions.cancelTurn(active.id))
             if (!InteractMessages.succeeded(stopped)) return stopped
         }
-        return deliver(ChatActions.startTurn(newId(), now(), text, model = wire(model), agent = resolved.uri))
+        return deliver(ChatActions.startTurn(newId(), now(), text, model = wire(model), agent = resolved.uri, attachments = attachments.map { it.toWire() }))
     }
 
     /**
@@ -331,9 +347,11 @@ class ChatInteractor(
         if (model != null && !ModelOptions.isOffered(models(), model)) return InteractResult.InvalidModel
         val resolved = resolveAgent(agent, state) ?: return InteractResult.InvalidAgent
         val previousTurnId = previousTurnOf(state, turnId) ?: return InteractResult.NoSuchRequest
+        // The message keeps the files it went with: editing its words, or sending it again, must not silently drop them.
+        val kept = (state.turns.firstOrNull { it.id == turnId }?.message ?: state.activeTurn?.takeIf { it.id == turnId }?.message)?.attachments.orEmpty()
         val truncated = deliver(ChatActions.truncate(previousTurnId.id))
         if (!InteractMessages.succeeded(truncated)) return truncated
-        return deliver(ChatActions.startTurn(newId(), now(), newText, model = wire(model), agent = resolved.uri))
+        return deliver(ChatActions.startTurn(newId(), now(), newText, model = wire(model), agent = resolved.uri, attachments = kept))
     }
 
     /**

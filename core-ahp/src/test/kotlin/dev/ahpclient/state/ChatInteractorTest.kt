@@ -14,6 +14,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -298,6 +299,81 @@ class ChatInteractorTest {
         val chosen = rig().apply { models = listOf(sized) }
         chosen.interactor.send("hi", ModelChoice("sized", mapOf("contextSize" to "200000")))
         assertEquals("""{"id":"sized","config":{"contextSize":200000}}""", chosen.modelOf())
+    }
+
+    // ---- attachments -------------------------------------------------------------------------------------------
+
+    private val note = ComposerAttachment("notes.txt", "text/plain", "hi".encodeToByteArray())
+    private val photo = ComposerAttachment("photo.png", "image/png", byteArrayOf(1, 2, 3))
+
+    private fun Rig.attachmentsOf(index: Int = 0) = wire(index)["message"]!!.jsonObject["attachments"]?.jsonArray
+
+    @Test
+    fun `a file goes out inside the message as an embedded resource, whether it starts a turn, queues or steers`() = runTest {
+        val idle = rig()
+        idle.interactor.send("look", attachments = listOf(note))
+        val file = idle.attachmentsOf()!!.single().jsonObject
+        assertEquals("embeddedResource", file["type"]!!.jsonPrimitive.content)
+        assertEquals("notes.txt", file["label"]!!.jsonPrimitive.content)
+        assertEquals("text/plain", file["contentType"]!!.jsonPrimitive.content)
+        assertEquals("aGk=", file["data"]!!.jsonPrimitive.content)
+        assertEquals("document", file["displayKind"]!!.jsonPrimitive.content)
+
+        val busy = rig(chat(active = activeTurn()))
+        busy.interactor.send("later", attachments = listOf(photo))
+        busy.interactor.steer("now", attachments = listOf(photo))
+        assertEquals(listOf("chat/pendingMessageSet", "chat/pendingMessageSet"), busy.types())
+        assertEquals("image", busy.attachmentsOf(0)!!.single().jsonObject["displayKind"]!!.jsonPrimitive.content)
+        assertEquals("image", busy.attachmentsOf(1)!!.single().jsonObject["displayKind"]!!.jsonPrimitive.content)
+
+        val stopping = rig(chat(active = activeTurn()))
+        stopping.interactor.stopAndSend("instead", attachments = listOf(note))
+        assertEquals(listOf("chat/turnCancelled", "chat/turnStarted"), stopping.types())
+        assertEquals(1, stopping.attachmentsOf(1)!!.size)
+    }
+
+    @Test
+    fun `a message with no files carries no attachments field`() = runTest {
+        val rig = rig()
+        rig.interactor.send("plain")
+        assertNull(rig.attachmentsOf())
+    }
+
+    @Test
+    fun `files that cannot go stop the message before anything is sent, and a refused stop and send leaves the turn running`() = runTest {
+        val rig = rig(chat(active = activeTurn()))
+        val tooMany = List(Attachments.MAX_COUNT + 1) { note }
+        assertEquals(InteractResult.InvalidAttachments(AttachmentProblem.TooMany(Attachments.MAX_COUNT)), rig.interactor.send("x", attachments = tooMany))
+        assertEquals(InteractResult.InvalidAttachments(AttachmentProblem.Unsupported("a.zip")), rig.interactor.steer("x", attachments = listOf(ComposerAttachment("a.zip", "application/zip", byteArrayOf(1)))))
+        assertEquals(InteractResult.InvalidAttachments(AttachmentProblem.Empty("e.txt")), rig.interactor.stopAndSend("x", attachments = listOf(ComposerAttachment("e.txt", "text/plain", byteArrayOf()))))
+        assertTrue(rig.sent.isEmpty())
+    }
+
+    @Test
+    fun `an image is refused for a model the host says cannot see, and allowed when the host says nothing`() = runTest {
+        val blind = rig().apply { models = listOf(ModelOption("blind", "Blind", emptyList(), supportsVision = false)) }
+        assertEquals(InteractResult.InvalidAttachments(AttachmentProblem.NoVision), blind.interactor.send("x", ModelChoice("blind"), attachments = listOf(photo)))
+        assertTrue(blind.sent.isEmpty())
+        blind.interactor.send("x", ModelChoice("blind"), attachments = listOf(note))
+        assertEquals(1, blind.sent.size)
+
+        val unknown = rig().apply { models = listOf(ModelOption("m", "M", emptyList())) }
+        unknown.interactor.send("x", ModelChoice("m"), attachments = listOf(photo))
+        assertEquals(1, unknown.sent.size)
+    }
+
+    @Test
+    fun `editing or retrying a message keeps the files it went with`() = runTest {
+        val withFile = Ahp.json.decodeFromString(
+            ChatState.serializer(),
+            """{"resource":"$uri","title":"Chat","status":8,"modifiedAt":"2026-10-22T10:00:00.000Z","turns":[
+                {"id":"t1","message":{"text":"see","origin":{"kind":"user"},"attachments":[{"type":"embeddedResource","label":"a.png","data":"AQID","contentType":"image/png"}]},"responseParts":[],"startedAt":"2026-10-22T10:00:00.000Z","state":"complete"}]}""",
+        )
+        val rig = rig(withFile)
+        rig.interactor.editAndResend("t1", "see again")
+        val kept = rig.attachmentsOf(1)!!.single().jsonObject
+        assertEquals("a.png", kept["label"]!!.jsonPrimitive.content)
+        assertEquals("AQID", kept["data"]!!.jsonPrimitive.content)
     }
 
     @Test
