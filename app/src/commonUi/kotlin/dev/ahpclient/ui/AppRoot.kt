@@ -139,18 +139,22 @@ private fun Shell(
 
     val open = connected?.open
     // A session's own chat is part of the session page, left by leaving the session. Only a subagent's transcript is a screen over it.
-    val subagentOpen = open?.chat?.parent != null
-    val changesetOpen = open?.changeset != null
-    val diffOpen = open?.changeset?.diff != null
-    val terminalOpen = open?.terminal != null
-    val canvasOpen = open?.canvas != null
-    val overlayOpen = subagentOpen || changesetOpen || diffOpen || terminalOpen || canvasOpen
-    // The screens over a session. Back from the session itself, from Settings and the inbox, and from the menu is in HomeDrawer.
-    PlatformBackHandler(enabled = subagentOpen && !terminalOpen && !changesetOpen && !canvasOpen) { controller.closeChat() }
-    PlatformBackHandler(enabled = canvasOpen) { controller.closeCanvas() }
-    PlatformBackHandler(enabled = terminalOpen) { controller.closeTerminal() }
-    PlatformBackHandler(enabled = changesetOpen && !diffOpen) { controller.closeChangeset() }
-    PlatformBackHandler(enabled = diffOpen) { controller.closeDiff() }
+    val screens = OverlayScreens(
+        subagent = open?.chat?.parent != null,
+        changeset = open?.changeset != null,
+        diff = open?.changeset?.diff != null,
+        terminal = open?.terminal != null,
+        canvas = open?.canvas != null,
+    )
+    val overlayOpen = screens.any
+    OverlayBackHandlers(
+        screens,
+        onCloseChat = controller::closeChat,
+        onCloseCanvas = controller::closeCanvas,
+        onCloseTerminal = controller::closeTerminal,
+        onCloseChangeset = controller::closeChangeset,
+        onCloseDiff = controller::closeDiff,
+    )
     val menu = rememberHomeMenu(open?.uri, page != Page.MAIN)
     CloseMenuOnRequest(sessionRequests, menu)
     // A host that connects, or goes (removing the connected host from Settings), brings the menu back: Settings and the inbox are of the
