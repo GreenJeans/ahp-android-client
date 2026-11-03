@@ -184,6 +184,9 @@ class ChatInteractor(
     /** The model id the host reports for this chat's session (E6), used when the chat itself has not named a model yet. */
     private val sessionModel: () -> String? = { null },
 ) {
+    /** [model] as it goes on the wire: with the host's own defaults for the settings the person left alone (see [ModelOptions.prepare]). */
+    private fun wire(model: ModelChoice?): ModelChoice? = model?.let { ModelOptions.prepare(models(), it) }
+
     /** The models a message in this chat may be sent with, as the host offers them now. */
     fun modelOptions(): List<ModelOption> = models()
 
@@ -226,9 +229,9 @@ class ChatInteractor(
         val resolved = resolveAgent(agent, state) ?: return InteractResult.InvalidAgent
         // A turn already running cannot take a second one: the message waits in the queue and starts when it ends.
         val action = if (state.activeTurn == null) {
-            ChatActions.startTurn(newId(), now(), text, model = model, agent = resolved.uri)
+            ChatActions.startTurn(newId(), now(), text, model = wire(model), agent = resolved.uri)
         } else {
-            ChatActions.queueMessage(newId(), text, model, resolved.uri)
+            ChatActions.queueMessage(newId(), text, wire(model), resolved.uri)
         }
         return deliver(action)
     }
@@ -280,7 +283,7 @@ class ChatInteractor(
         if (state.activeTurn == null) return InteractResult.NoActiveTurn
         if (model != null && !ModelOptions.isOffered(models(), model)) return InteractResult.InvalidModel
         val resolved = resolveAgent(agent, state) ?: return InteractResult.InvalidAgent
-        return deliver(ChatActions.steerTurn(newId(), text, model, resolved.uri))
+        return deliver(ChatActions.steerTurn(newId(), text, wire(model), resolved.uri))
     }
 
     /** Explicitly queues a user message to run after the active turn (or starts a turn if the chat is already idle). */
@@ -298,7 +301,7 @@ class ChatInteractor(
             val stopped = deliver(ChatActions.cancelTurn(active.id))
             if (!InteractMessages.succeeded(stopped)) return stopped
         }
-        return deliver(ChatActions.startTurn(newId(), now(), text, model = model, agent = resolved.uri))
+        return deliver(ChatActions.startTurn(newId(), now(), text, model = wire(model), agent = resolved.uri))
     }
 
     /**
@@ -330,7 +333,7 @@ class ChatInteractor(
         val previousTurnId = previousTurnOf(state, turnId) ?: return InteractResult.NoSuchRequest
         val truncated = deliver(ChatActions.truncate(previousTurnId.id))
         if (!InteractMessages.succeeded(truncated)) return truncated
-        return deliver(ChatActions.startTurn(newId(), now(), newText, model = model, agent = resolved.uri))
+        return deliver(ChatActions.startTurn(newId(), now(), newText, model = wire(model), agent = resolved.uri))
     }
 
     /**
@@ -382,7 +385,7 @@ class ChatInteractor(
         if (text.isBlank()) return null
         if (model != null && !ModelOptions.isOffered(models(), model)) return null
         val resolved = resolveAgent(agent, state) ?: return null
-        return ChatActions.message(text, model, resolved.uri)
+        return ChatActions.message(text, wire(model), resolved.uri)
     }
 
     /** Wrapper for the turn id before a target turn (`id == null` means before the very first turn). */

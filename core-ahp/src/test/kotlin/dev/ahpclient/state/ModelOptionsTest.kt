@@ -26,6 +26,53 @@ class ModelOptionsTest {
         """{"type":"string","title":"Thinking","enum":["low","high"],"enumLabels":["Quick","Thorough"],"default":"low"}""",
     )
 
+    private val contextSize = property(
+        "contextSize",
+        """{"type":"number","title":"Context size","enum":[200000,936000],"default":936000}""",
+    )
+
+    @Test
+    fun `a number setting with a list of whole numbers is offered, with its default, and a size reads with separators`() {
+        val setting = ModelOptions.of(agent(model("a", schema = schema(contextSize)))).single().settings.single()
+
+        assertEquals("contextSize", setting.id)
+        assertTrue(setting.numeric)
+        assertEquals(listOf("200000" to "200,000", "936000" to "936,000"), setting.values.map { it.value to it.label })
+        assertEquals("936000", setting.default)
+    }
+
+    @Test
+    fun `a number setting with a fraction, a text value or no list is left out, and a default outside the list is not kept`() {
+        val fraction = property("f", """{"type":"number","title":"F","enum":[0.5,1.5]}""")
+        val text = property("t", """{"type":"number","title":"T","enum":["big"]}""")
+        val noList = property("n", """{"type":"number","title":"N","default":3}""")
+        val stray = property("s", """{"type":"number","title":"S","enum":[1,2],"default":5}""")
+
+        val settings = ModelOptions.of(agent(model("a", schema = schema(fraction, text, noList, stray)))).single().settings
+
+        assertEquals(listOf("s"), settings.map { it.id })
+        assertNull(settings.single().default)
+    }
+
+    @Test
+    fun `preparing a choice adds the host's defaults the person did not set, marks number settings, and keeps what was picked`() {
+        val options = ModelOptions.of(agent(model("a", schema = schema(thinking, contextSize))))
+
+        val plain = ModelOptions.prepare(options, ModelChoice("a"))
+        val picked = ModelOptions.prepare(options, ModelChoice("a", mapOf("thinking" to "high", "contextSize" to "200000")))
+
+        assertEquals(mapOf("thinking" to "low", "contextSize" to "936000"), plain.config)
+        assertEquals(setOf("contextSize"), plain.numeric)
+        assertEquals(mapOf("thinking" to "high", "contextSize" to "200000"), picked.config)
+    }
+
+    @Test
+    fun `preparing a choice for a model that is not offered changes nothing`() {
+        val choice = ModelChoice("ghost", mapOf("x" to "1"))
+
+        assertEquals(choice, ModelOptions.prepare(emptyList(), choice))
+    }
+
     @Test
     fun `an agent's models are listed in the host's order with their names`() {
         val options = ModelOptions.of(agent(model("auto", "Auto"), model("claude-sonnet-5.5", "Claude Sonnet 5.5")))

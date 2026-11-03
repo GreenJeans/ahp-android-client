@@ -4,16 +4,32 @@ import com.microsoft.agenthostprotocol.generated.AgentInfo
 import com.microsoft.agenthostprotocol.generated.ChatState
 import com.microsoft.agenthostprotocol.generated.ModelSelection
 import com.microsoft.agenthostprotocol.generated.PolicyState
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import kotlin.math.abs
+import kotlin.math.round
 
-/** What a person picks for one message: a model the host offers, and values for its settings. Every value is a string. */
-data class ModelChoice(val id: String, val config: Map<String, String> = emptyMap())
+/**
+ * What a person picks for one message: a model the host offers, and values for its settings. Every value is held as a string;
+ * [numeric] names the settings the host declares as numbers, which go on the wire as numbers. It is filled in when a message is
+ * built (see [ModelOptions.prepare]), so a pick never has to carry it.
+ */
+data class ModelChoice(val id: String, val config: Map<String, String> = emptyMap(), val numeric: Set<String> = emptySet())
 
 data class ModelSettingValue(val value: String, val label: String)
 
-/** One setting of a model (a thinking level, say), as a short list of values to pick from. */
-data class ModelSetting(val id: String, val title: String, val values: List<ModelSettingValue>)
+/**
+ * One setting of a model (a thinking level, a context size), as a short list of values to pick from. [numeric] is true when the
+ * host declares the setting as a number. [default] is the host's own default, when it is one of [values].
+ */
+data class ModelSetting(
+    val id: String,
+    val title: String,
+    val values: List<ModelSettingValue>,
+    val numeric: Boolean = false,
+    val default: String? = null,
+)
 
 data class ModelOption(val id: String, val name: String, val settings: List<ModelSetting>)
 
@@ -28,6 +44,7 @@ object ModelOptions {
     const val MAX_SETTINGS = 10
     const val MAX_VALUES = 30
     private const val MAX_TEXT = 80
+    private const val MAX_WHOLE = 1e15
 
     fun of(agent: AgentInfo?): List<ModelOption> =
         agent?.models.orEmpty()
@@ -39,15 +56,44 @@ object ModelOptions {
                     id = model.id,
                     name = model.name.ifBlank { model.id }.take(MAX_TEXT),
                     settings = model.configSchema?.properties.orEmpty().mapNotNull { (id, property) ->
-                        if (property.type != "string" || property.readOnly == true) return@mapNotNull null
+                        val numeric = property.type == "number" || property.type == "integer"
+                        if ((property.type != "string" && !numeric) || property.readOnly == true) return@mapNotNull null
                         val values = property.enum.orEmpty().mapIndexedNotNull { i, raw ->
-                            val value = (raw as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() } ?: return@mapIndexedNotNull null
-                            ModelSettingValue(value, property.enumLabels?.getOrNull(i)?.takeIf { it.isNotBlank() }?.take(MAX_TEXT) ?: value.take(MAX_TEXT))
+                            val value = plainValue(raw, numeric) ?: return@mapIndexedNotNull null
+                            ModelSettingValue(value, property.enumLabels?.getOrNull(i)?.takeIf { it.isNotBlank() }?.take(MAX_TEXT) ?: (if (numeric) grouped(value) else value).take(MAX_TEXT))
                         }.distinctBy { it.value }.take(MAX_VALUES)
-                        if (values.isEmpty()) null else ModelSetting(id, property.title.ifBlank { id }.take(MAX_TEXT), values)
+                        val default = plainValue(property.default, numeric)?.takeIf { d -> values.any { it.value == d } }
+                        if (values.isEmpty()) null else ModelSetting(id, property.title.ifBlank { id }.take(MAX_TEXT), values, numeric, default)
                     }.take(MAX_SETTINGS),
                 )
             }
+
+    /** "936000" as "936,000", so a size reads at a glance. */
+    private fun grouped(whole: String): String {
+        val digits = whole.removePrefix("-")
+        val spaced = digits.reversed().chunked(3).joinToString(",").reversed()
+        return if (whole.startsWith("-")) "-$spaced" else spaced
+    }
+
+    /** A setting's value as text: a text value for a text setting, a whole number for a number setting. Anything else is left out. */
+    private fun plainValue(raw: JsonElement?, numeric: Boolean): String? {
+        val primitive = raw as? JsonPrimitive ?: return null
+        if (!numeric) return primitive.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
+        if (primitive.isString) return null
+        return primitive.content.toDoubleOrNull()?.takeIf { it.isFinite() && it == round(it) && abs(it) < MAX_WHOLE }?.toLong()?.toString()
+    }
+
+    /**
+     * What goes on the wire for [choice]: each setting the host declares a default for, and the person has not set, gets that
+     * default (the host's own value, never one made up here), and the settings the host declares as numbers are marked so they
+     * are sent as numbers. VS Code sends a model's settings this way; a message that leaves them out can run the model at a smaller
+     * context size than the host's default, and fail on a chat whose fixed context does not fit.
+     */
+    fun prepare(options: List<ModelOption>, choice: ModelChoice): ModelChoice {
+        val settings = options.firstOrNull { it.id == choice.id }?.settings ?: return choice
+        val config = choice.config + settings.filter { it.default != null && it.id !in choice.config }.associate { it.id to it.default!! }
+        return choice.copy(config = config, numeric = settings.filter { it.numeric && it.id in config }.mapTo(HashSet()) { it.id })
+    }
 
     /** The models of the agent whose provider is [provider], or none when there is no such agent (or no provider). */
     fun forProvider(agents: List<AgentInfo>, provider: String?): List<ModelOption> =

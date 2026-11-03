@@ -174,7 +174,12 @@ object ChatActions {
                 "model",
                 buildJsonObject {
                     put("id", model.id)
-                    if (model.config.isNotEmpty()) put("config", JsonObject(model.config.mapValues { JsonPrimitive(it.value) }))
+                    if (model.config.isNotEmpty()) {
+                        put(
+                            "config",
+                            JsonObject(model.config.mapValues { (key, value) -> (if (key in model.numeric) value.toLongOrNull()?.let { JsonPrimitive(it) } else null) ?: JsonPrimitive(value) }),
+                        )
+                    }
                 },
             )
         }

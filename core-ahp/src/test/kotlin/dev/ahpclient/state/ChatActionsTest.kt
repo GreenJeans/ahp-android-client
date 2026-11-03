@@ -78,6 +78,15 @@ class ChatActionsTest {
     }
 
     @Test
+    fun `a setting marked as a number goes out as a number, and the others as text`() {
+        val choice = ModelChoice("m", mapOf("contextSize" to "936000", "thinking" to "high"), numeric = setOf("contextSize"))
+
+        val sent = wire(ChatActions.startTurn("t", at, "hi", model = choice))
+
+        assertEquals("""{"id":"m","config":{"contextSize":936000,"thinking":"high"}}""", sent.getValue("message").jsonObject.getValue("model").toString())
+    }
+
+    @Test
     fun `queueMessage and removeQueuedMessage use the queued kind`() {
         val set = ChatActions.queueMessage("q-1", "later")
         val removed = ChatActions.removeQueuedMessage("q-1")

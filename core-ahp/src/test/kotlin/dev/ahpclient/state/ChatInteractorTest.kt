@@ -283,6 +283,23 @@ class ChatInteractorTest {
 
     private fun Rig.modelOf(index: Int = 0) = wire(index)["message"]!!.jsonObject["model"]?.toString()
 
+    private val sized = ModelOption(
+        "sized",
+        "Sized",
+        listOf(ModelSetting("contextSize", "Context size", listOf(ModelSettingValue("200000", "200,000"), ModelSettingValue("936000", "936,000")), numeric = true, default = "936000")),
+    )
+
+    @Test
+    fun `a message goes out with the host's default for a setting the person left alone, as a number for a number setting`() = runTest {
+        val plain = rig().apply { models = listOf(sized) }
+        plain.interactor.send("hi", ModelChoice("sized"))
+        assertEquals("""{"id":"sized","config":{"contextSize":936000}}""", plain.modelOf())
+
+        val chosen = rig().apply { models = listOf(sized) }
+        chosen.interactor.send("hi", ModelChoice("sized", mapOf("contextSize" to "200000")))
+        assertEquals("""{"id":"sized","config":{"contextSize":200000}}""", chosen.modelOf())
+    }
+
     @Test
     fun `a model the host offers goes out with the message, whether it starts a turn, queues or steers`() = runTest {
         val idle = rig().apply { models = listOf(sonnet) }
