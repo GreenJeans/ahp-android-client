@@ -20,7 +20,7 @@ class CapabilityPolicyTest {
         "dispatchAction", "authenticate",
         "resourceWrite", "resourceList", "resourceCopy", "resourceDelete", "resourceMove", "resourceMkdir", "resourceRequest", "resourceResolve",
         "createSession", "disposeSession", "createChat", "disposeChat", "createTerminal", "disposeTerminal",
-        "invokeChangesetOperation", "createResourceWatch", "completions", "resolveSessionConfig", "sessionConfigCompletions",
+        "invokeChangesetOperation", "createResourceWatch", "resolveSessionConfig", "sessionConfigCompletions",
         "runAutomation", "fetchAutomationRuns", "listAutomationTriggerDefinitions", "channel/credit", "tcp/data", "", "Initialize",
     )
 
@@ -114,8 +114,17 @@ class CapabilityPolicyTest {
             assertFailsWith<CapabilityDeniedException>(query) { CapabilityPolicy.INTERACT.check(query) }
             CapabilityPolicy.MANAGE.check(query)
         }
-        // The composer's completions are a different question, asked on a chat, and are not allowed at any tier yet.
-        assertFailsWith<CapabilityDeniedException> { CapabilityPolicy.MANAGE.check("completions") }
+    }
+
+    @Test
+    fun `the composer's completions are asked on a chat by INTERACT and MANAGE, never by READ`() {
+        assertEquals(setOf("completions"), CapabilityPolicy.COMPOSER_QUERIES)
+        assertFailsWith<CapabilityDeniedException> { CapabilityPolicy.READ.check("completions") }
+        CapabilityPolicy.INTERACT.check("completions")
+        CapabilityPolicy.MANAGE.check("completions")
+        // The neighbours stay closed: asking is not an action, and an action type does not open it for READ.
+        assertFailsWith<CapabilityDeniedException> { CapabilityPolicy.READ.check("completions", "chat/turnStarted") }
+        assertFailsWith<CapabilityDeniedException> { CapabilityPolicy.INTERACT.check("Completions") }
     }
 
     private val manageActions = setOf(

@@ -1070,6 +1070,8 @@ class AppController(
             ChatConfig.view(open?.store?.state?.value, uri, open?.store?.chatMutableKeys?.value.orEmpty(), store.ownConfig.value)
         },
         sessionModel = { sessionModelFor(session) },
+        completionTriggers = { session.completionTriggers.value },
+        completions = session::completions,
     )
 
     /** The model the host reports on the open session's state or summary (E6), used when the chat itself has not named one yet. */
