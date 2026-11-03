@@ -54,3 +54,26 @@ Runs of the P1 to P5 work against a real host. Boxes in `docs/protocol-completio
 **P5 add folder (15:36).** Details → Add folder offered a list of the host's recent folders (the phone does not take a typed path). Choosing `c:/Users/Tyler.Morita/source/repos/skill-packs` was refused: the sheet showed "The host refused it: Session working-directory actions require an Editor Window client." The session folder list did not change, and the host log showed no working-directory action being applied. So this VS Code host only accepts the working-directory actions from an Editor Window client, and a phone client is not one. The refusal reason reached the screen unchanged and the app stayed consistent, which is the behaviour AC-P5 asks for on a refusal; the success path (the host echoing the added folder) cannot be exercised against this host. Open question: whether the app should hide "Add folder" on hosts that refuse it, or only report the refusal after a tap. Not decided.
 
 **Observation for the MCP display-name item.** The MCP server names shown in the Customizations sheet are readable, so a `customizationId` for an MCP contributor may already be the server's name on this host. This is not confirmed: no tool call carrying an MCP contributor was seen yet.
+
+## 2026-11-03: Pixel 10, N3a attachments against the same host
+
+**Setup.** Debug build of the merged N3a tree (`0b0acf2`) installed over the existing app on the Pixel 10 (sign-in kept). A 27-byte text file (`attach-check.txt`, content "The secret word is PELICAN.") was pushed to the phone's Downloads. A throwaway Copilot session with no folder was started, the file was picked through the system chooser, and a message asking for the secret word was sent with it.
+
+| Check | Result | Notes |
+|---|---|---|
+| The paperclip opens the system chooser and a picked file shows as a chip | Pass | Chip `attach-check.txt` with a remove mark appeared above the field |
+| The send is accepted and the host receives the file | Pass | Host log: `sendMessage called: "..." (1 attachments)`, both times the file was sent |
+| The model can read the file | **Fail** | Copilot provider, Claude Sonnet 5.5, no tools: "Unknown. The file's contents weren't included in the message, and I can't open it without tools." |
+| The first send on the host's Default model | Not a result | The turn failed with `compaction_static_context_blocked` (the host's own system prompt and 223 tools exceeded that model's usable context). Unrelated to the file; changing the model fixed it |
+
+**What this does and does not show.** The wire message left the phone and the host counted one attachment, so the app's side of N3a works against a real host. The Copilot provider did not give the file's text to the model. Not known: whether the host drops `embeddedResource` attachments, passes only a name, or passes the content in a form this model ignored. The app cannot tell from the host's answer.
+
+**Not yet run (next, in order of cheapness)**
+
+- The same file attached to a Claude-provider session, to see whether the gap is the Copilot provider or the encoding
+- An image attachment (the `displayKind: image` path), to see whether images are handled where text files are not
+- A `resource` (URI) attachment variant, if the host documents one for files
+
+**Cost note.** The retry that got an answer used 243.4k tokens ($1.00 on the host's meter); a loop of these is not free.
+
+**Left behind.** One throwaway Copilot session on the host (titled "secret word in file"), to be deleted by the host owner.
