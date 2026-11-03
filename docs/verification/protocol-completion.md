@@ -63,17 +63,16 @@ Runs of the P1 to P5 work against a real host. Boxes in `docs/protocol-completio
 |---|---|---|
 | The paperclip opens the system chooser and a picked file shows as a chip | Pass | Chip `attach-check.txt` with a remove mark appeared above the field |
 | The send is accepted and the host receives the file | Pass | Host log: `sendMessage called: "..." (1 attachments)`, both times the file was sent |
-| The model can read the file | **Fail** | Copilot provider, Claude Sonnet 5.5, no tools: "Unknown. The file's contents weren't included in the message, and I can't open it without tools." |
+| The model answered from the file with tools forbidden | Fail, and the test was wrong | Copilot provider, Claude Sonnet 5.5, told to use no tools: "The file's contents weren't included in the message, and I can't open it without tools." The host does not paste the content into the message (see the Claude rows below) |
+| Claude provider, text file, tools allowed | Pass | "Use your Read tool on the attached text file": the session ran `Read attach-check.txt` and answered PELICAN |
+| Claude provider, image, tools allowed | Pass | `Read attach-image.png` and the answer HERON (the image said HERON) |
+| Claude provider, image, tools forbidden | Fail, expected | "The image came through as a file path, not inline, so I can't see it unless I open it with the Read tool" |
 | The first send on the host's Default model | Not a result | The turn failed with `compaction_static_context_blocked` (the host's own system prompt and 223 tools exceeded that model's usable context). Unrelated to the file; changing the model fixed it |
 
-**What this does and does not show.** The wire message left the phone and the host counted one attachment, so the app's side of N3a works against a real host. The Copilot provider did not give the file's text to the model. Not known: whether the host drops `embeddedResource` attachments, passes only a name, or passes the content in a form this model ignored. The app cannot tell from the host's answer.
+**What this shows.** N3a works against a real VS Code host. The send is accepted, the host counts the file, and the model reaches the content: this host saves the attachment and gives the model a file path, not the content inline. A text file and an image both came through that way on a Claude-provider session, and the model read them with its Read tool. A turn with tools forbidden cannot read them.
 
-**Not yet run (next, in order of cheapness)**
+**What it means for the app.** The model has to be allowed to read files in the session for an attachment to be useful. Nothing in the app can change that; it is how this host presents attachments. The note on the composer or in the spec should not promise that the model "sees" the file in a no-tools or read-only session. Not checked: a Copilot-provider session with tools allowed (the Copilot turn above forbade tools), and whether the image reaches a model's vision when the host passes the file inline.
 
-- The same file attached to a Claude-provider session, to see whether the gap is the Copilot provider or the encoding
-- An image attachment (the `displayKind: image` path), to see whether images are handled where text files are not
-- A `resource` (URI) attachment variant, if the host documents one for files
+**Cost note.** The Copilot retry on the oversized default context used 243.4k tokens ($1.00 on the host's meter). The Claude turns used about 150 tokens each.
 
-**Cost note.** The retry that got an answer used 243.4k tokens ($1.00 on the host's meter); a loop of these is not free.
-
-**Left behind.** One throwaway Copilot session on the host (titled "secret word in file"), to be deleted by the host owner.
+**Left behind.** Two throwaway sessions on the host ("secret word in file" on Copilot, "identify word in image" on Claude), to be deleted by the host owner.
