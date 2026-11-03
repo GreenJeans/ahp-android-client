@@ -1025,8 +1025,8 @@ class ChatScreenTest {
     fun scrollingBackSlidesTheComposerOffScreenAndJumpingBackRestoresIt() {
         val actions = ChatActionsUi(
             running = false,
-            send = { _, _, _ -> dev.ahpclient.state.InteractResult.Sent(dev.ahpclient.state.DispatchOutcome.Accepted) },
-            steer = { _, _, _ -> dev.ahpclient.state.InteractResult.Sent(dev.ahpclient.state.DispatchOutcome.Accepted) },
+            send = { _, _, _, _ -> dev.ahpclient.state.InteractResult.Sent(dev.ahpclient.state.DispatchOutcome.Accepted) },
+            steer = { _, _, _, _ -> dev.ahpclient.state.InteractResult.Sent(dev.ahpclient.state.DispatchOutcome.Accepted) },
             cancel = { dev.ahpclient.state.InteractResult.Sent(dev.ahpclient.state.DispatchOutcome.Accepted) },
             approve = { _, _ -> dev.ahpclient.state.InteractResult.Sent(dev.ahpclient.state.DispatchOutcome.Accepted) },
             deny = { _, _ -> dev.ahpclient.state.InteractResult.Sent(dev.ahpclient.state.DispatchOutcome.Accepted) },

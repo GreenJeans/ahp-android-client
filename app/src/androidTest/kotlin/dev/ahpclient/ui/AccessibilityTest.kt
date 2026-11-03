@@ -328,8 +328,8 @@ class AccessibilityTest {
 
     private fun chatActions(running: Boolean = false, agents: List<AgentChoice> = emptyList(), agentInUse: String? = null, config: ChatConfigView = ChatConfigView.NONE) = ChatActionsUi(
         running = running,
-        send = { _, _, _ -> InteractResult.Sent(DispatchOutcome.Accepted) },
-        steer = { _, _, _ -> InteractResult.Sent(DispatchOutcome.Accepted) },
+        send = { _, _, _, _ -> InteractResult.Sent(DispatchOutcome.Accepted) },
+        steer = { _, _, _, _ -> InteractResult.Sent(DispatchOutcome.Accepted) },
         cancel = { InteractResult.Sent(DispatchOutcome.Accepted) },
         approve = { _, _ -> InteractResult.Sent(DispatchOutcome.Accepted) },
         deny = { _, _ -> InteractResult.Sent(DispatchOutcome.Accepted) },

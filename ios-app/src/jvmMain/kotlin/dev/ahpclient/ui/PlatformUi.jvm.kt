@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
+import dev.ahpclient.state.ComposerAttachment
 import org.jetbrains.skia.Image
 
 @Composable
@@ -21,6 +22,9 @@ object JvmStubPlatformUiActions : PlatformUiActions {
 
 @Composable
 fun PlatformBackHandler(enabled: Boolean = true, onBack: () -> Unit) = Unit
+
+@Composable
+fun rememberAttachmentPicker(onPicked: (List<ComposerAttachment>) -> Unit, onUnreadable: (String) -> Unit): AttachmentPicker? = null
 
 @Composable
 fun KeepScreenAwakeEffect(keepAwake: Boolean) = Unit

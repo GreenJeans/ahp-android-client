@@ -1,7 +1,18 @@
 package dev.ahpclient.ui.chat
 
+import android.net.Uri
+import androidx.activity.compose.LocalActivityResultRegistryOwner
+import androidx.activity.result.ActivityResultRegistry
+import androidx.activity.result.ActivityResultRegistryOwner
+import androidx.activity.result.contract.ActivityResultContract
+import androidx.core.app.ActivityOptionsCompat
 import androidx.compose.foundation.layout.size
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.test.platform.app.InstrumentationRegistry
+import dev.ahpclient.state.ComposerAttachment
+import java.io.File
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.Modifier
@@ -88,6 +99,7 @@ class InteractionUiTest {
 
     private class Calls {
         val sent = mutableListOf<String>()
+        val sentFiles = mutableListOf<List<ComposerAttachment>>()
         val sentModels = mutableListOf<ModelChoice?>()
         val sentAgents = mutableListOf<AgentPick>()
         val steeredAgents = mutableListOf<AgentPick>()
@@ -131,8 +143,8 @@ class InteractionUiTest {
         quickReplyProvider: QuickReplyProvider? = null,
     ) = ChatActionsUi(
         running = running,
-        send = { text, model, agent -> calls.sent += text; calls.sentModels += model; calls.sentAgents += agent; calls.result },
-        steer = { text, model, agent -> calls.steered += text; calls.steeredModels += model; calls.steeredAgents += agent; calls.result },
+        send = { text, model, agent, files -> calls.sent += text; calls.sentFiles += files; calls.sentModels += model; calls.sentAgents += agent; calls.result },
+        steer = { text, model, agent, _ -> calls.steered += text; calls.steeredModels += model; calls.steeredAgents += agent; calls.result },
         cancel = { calls.cancels++; calls.result },
         approve = { id, option -> calls.approved += id to option; calls.result },
         deny = { id, option -> calls.denied += id to option; calls.result },
@@ -150,7 +162,7 @@ class InteractionUiTest {
         startOver = { calls.startOvers++; calls.result },
         editAndResend = { turnId, newText, _, _ -> calls.editedResends += turnId to newText; calls.result },
         retryTurn = { turnId, _, _ -> calls.retriedTurns += turnId; calls.result },
-        stopAndSend = { text, _, _ -> calls.stopAndSends += text; calls.result },
+        stopAndSend = { text, _, _, _ -> calls.stopAndSends += text; calls.result },
         removePending = { id -> calls.removedPending += id; calls.result },
         reorderQueue = { order -> calls.reorderedQueues += order; calls.result },
         canFork = canFork,
@@ -216,6 +228,89 @@ class InteractionUiTest {
         rule.onNodeWithTag("composer_input").performTextInput("hi")
         rule.onNodeWithTag("composer_send").performClick()
         rule.waitForIdle()
+    }
+
+    // ---- attachments --------------------------------------------------------------------------------------------
+
+    /** Shows the chat with a chooser that "picks" [picked] the moment it opens, as the system's would. */
+    private fun showPicking(actions: ChatActionsUi, picked: List<Uri>, shown: Transcript = transcript()) = rule.setContent {
+        val registry = remember {
+            object : ActivityResultRegistry() {
+                override fun <I, O> onLaunch(requestCode: Int, contract: ActivityResultContract<I, O>, input: I, options: ActivityOptionsCompat?) {
+                    dispatchResult(requestCode, picked)
+                }
+            }
+        }
+        val owner = remember { object : ActivityResultRegistryOwner { override val activityResultRegistry = registry } }
+        CompositionLocalProvider(LocalActivityResultRegistryOwner provides owner) {
+            AhpTheme { ChatScreen(shown, null, false, null, ConnState.Online, {}, {}, {}, actions = actions) }
+        }
+    }
+
+    private fun file(name: String, content: String): Uri {
+        val dir = InstrumentationRegistry.getInstrumentation().targetContext.cacheDir
+        return Uri.fromFile(File(dir, name).apply { writeText(content) })
+    }
+
+    private fun attachAndWait(chips: Int) {
+        rule.onNodeWithTag("composer_attach").performClick()
+        rule.waitUntil(5_000) { rule.onAllNodesWithTag("composer_attachment_${chips - 1}").fetchSemanticsNodes().isNotEmpty() }
+    }
+
+    @Test
+    fun aPickedFileShowsAsAChipAndGoesOutWithTheMessage() {
+        val calls = Calls()
+        showPicking(actions(calls), listOf(file("notes.txt", "hello")))
+
+        attachAndWait(1)
+        rule.onNodeWithTag("composer_attachment_0").assertContentDescriptionEquals("Remove attachment notes.txt")
+        sendHi()
+
+        val sent = calls.sentFiles.single().single()
+        assertEquals("notes.txt", sent.label)
+        assertEquals("text/plain", sent.contentType)
+        assertEquals("hello", sent.bytes.decodeToString())
+        rule.onAllNodesWithTag("composer_attachment_0").assertCountEquals(0)
+    }
+
+    @Test
+    fun tappingAChipTakesTheFileOffTheMessage() {
+        val calls = Calls()
+        showPicking(actions(calls), listOf(file("notes.txt", "hello")))
+
+        attachAndWait(1)
+        rule.onNodeWithTag("composer_attachment_0").performClick()
+        sendHi()
+
+        assertEquals(listOf(emptyList<ComposerAttachment>()), calls.sentFiles.map { it.toList() })
+    }
+
+    @Test
+    fun aFileThatIsNotAnImageOrTextIsRefusedWithAReasonAndNothingIsAttached() {
+        val calls = Calls()
+        showPicking(actions(calls), listOf(file("archive.zip", "PK")))
+
+        rule.onNodeWithTag("composer_attach").performClick()
+        rule.waitUntil(5_000) { rule.onAllNodesWithTag("composer_notice").fetchSemanticsNodes().isNotEmpty() }
+
+        rule.onNodeWithTag("composer_notice").assertTextContains("archive.zip is not an image or a text file", substring = true)
+        rule.onAllNodesWithTag("composer_attachment_0").assertCountEquals(0)
+    }
+
+    @Test
+    fun aSideChatIsNotOfferedWhileFilesAreAttachedSoTheyAreNeverLeftBehind() {
+        val calls = Calls()
+        showPicking(
+            actions(calls, running = true, canSideChat = true),
+            listOf(file("notes.txt", "hello")),
+            Transcript("Fix the build", ActivityState.IN_PROGRESS, null, emptyList(), hasOlder = false, activeTurnId = "t1"),
+        )
+
+        attachAndWait(1)
+        rule.onNodeWithTag("composer_input").performTextInput("side")
+        rule.onNodeWithTag("composer_send_options").performClick()
+
+        rule.onNodeWithTag("composer_mode_side_chat").assertIsNotEnabled()
     }
 
     @Test
