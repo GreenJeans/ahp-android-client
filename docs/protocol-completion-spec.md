@@ -62,6 +62,8 @@ As built: a picked value is sent only if the host's next `resolveSessionConfig` 
 
 **N3: P6b, composer completions.** Larger than the table above suggests, so it comes after N2. Every `CompletionItem` carries a required `MessageAttachment`, and `ChatInteractor` and `ChatActions` send no attachments today, so sending them has to be built first. The range offsets are UTF-16 and the only kind defined is `USER_MESSAGE`.
 
+*N3a, sending attachments (built, on `claude/n3-attachments`).* A message can carry up to 5 picked files, as `embeddedResource` attachments (images and text, 5 MB each and 8 MB together; these limits are this app's, the protocol sets none). Android has a paperclip button that opens the system document chooser; iOS and the JVM stub have no chooser yet, so they show no button. An image is refused only when the host says the model in use cannot see (`supportsVision == false`); a host that says nothing lets it through. Editing or retrying a message keeps the files it went with. Fork and side chat send words only, so they are refused while files are attached rather than dropping them. Not built: attachment-only messages (a message still needs text), showing a sent message's files in the transcript, shrinking large photos (a 6 MB photo is refused), keeping files across rotation, and host-supplied attachments, which are what N3b's completions return. Not yet checked against a live host: whether it accepts a message of this size and shape, and how it shows the image or text to the model.
+
 P7 (automations) and P8 (host terminals) keep their order after these.
 
 ### Corrections to the slices below

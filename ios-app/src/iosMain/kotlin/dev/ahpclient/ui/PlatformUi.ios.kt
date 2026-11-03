@@ -9,6 +9,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import dev.ahpclient.app.SafeLinks
+import dev.ahpclient.state.ComposerAttachment
 import dev.ahpclient.state.LinkTarget
 import kotlinx.cinterop.useContents
 import org.jetbrains.skia.Image
@@ -113,6 +114,10 @@ private fun topViewController(): UIViewController? {
 fun PlatformBackHandler(enabled: Boolean = true, onBack: () -> Unit) {
     // iOS navigation uses top bar back affordance and sheet dismissal.
 }
+
+/** No chooser on iOS yet (it needs UIDocumentPicker through UIKit interop), so the screen shows no attach button there. */
+@Composable
+fun rememberAttachmentPicker(onPicked: (List<ComposerAttachment>) -> Unit, onUnreadable: (String) -> Unit): AttachmentPicker? = null
 
 @Composable
 fun KeepScreenAwakeEffect(keepAwake: Boolean) {

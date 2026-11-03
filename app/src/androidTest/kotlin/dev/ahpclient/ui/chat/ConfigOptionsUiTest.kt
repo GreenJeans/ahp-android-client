@@ -81,8 +81,8 @@ class ConfigOptionsUiTest {
 
     private fun actions(calls: Calls, config: ChatConfigView = view(), agents: List<AgentChoice> = emptyList(), agentInUse: String? = null, running: Boolean = false) = ChatActionsUi(
         running = running,
-        send = { _, _, agent -> calls.sentAgents += agent; done },
-        steer = { _, _, _ -> done },
+        send = { _, _, agent, _ -> calls.sentAgents += agent; done },
+        steer = { _, _, _, _ -> done },
         cancel = { done },
         approve = { _, _ -> done },
         deny = { _, _ -> done },

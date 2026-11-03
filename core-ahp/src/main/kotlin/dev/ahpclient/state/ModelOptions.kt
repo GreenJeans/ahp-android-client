@@ -31,7 +31,7 @@ data class ModelSetting(
     val default: String? = null,
 )
 
-data class ModelOption(val id: String, val name: String, val settings: List<ModelSetting>)
+data class ModelOption(val id: String, val name: String, val settings: List<ModelSetting>, val supportsVision: Boolean? = null)
 
 /**
  * The models a host offers for an agent, reduced to what a phone can show and send back: a model the host has not disabled,
@@ -65,6 +65,7 @@ object ModelOptions {
                         val default = plainValue(property.default, numeric)?.takeIf { d -> values.any { it.value == d } }
                         if (values.isEmpty()) null else ModelSetting(id, property.title.ifBlank { id }.take(MAX_TEXT), values, numeric, default)
                     }.take(MAX_SETTINGS),
+                    supportsVision = model.supportsVision,
                 )
             }
 

@@ -81,6 +81,8 @@ import dev.ahpclient.state.ConfigControl
 import dev.ahpclient.state.ConfigKind
 import dev.ahpclient.state.AgentChoice
 import dev.ahpclient.state.AgentPick
+import dev.ahpclient.state.Attachments
+import dev.ahpclient.state.ComposerAttachment
 import dev.ahpclient.state.CustomAgents
 import dev.ahpclient.state.ApprovalChoice
 import dev.ahpclient.state.FormCheck
@@ -122,6 +124,7 @@ import dev.ahpclient.state.SlashCommands
 import dev.ahpclient.ui.SlashCommandPickerSheet
 import dev.ahpclient.ui.formatSlashCommandName
 import dev.ahpclient.ui.AppIcons
+import dev.ahpclient.ui.rememberAttachmentPicker
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -135,8 +138,8 @@ import kotlinx.coroutines.launch
 class ChatActionsUi(
     /** True while the agent is working: a message sent now waits its turn, can steer the turn, and there is something to stop. */
     val running: Boolean,
-    val send: suspend (text: String, model: ModelChoice?, agent: AgentPick) -> InteractResult,
-    val steer: suspend (text: String, model: ModelChoice?, agent: AgentPick) -> InteractResult,
+    val send: suspend (text: String, model: ModelChoice?, agent: AgentPick, attachments: List<ComposerAttachment>) -> InteractResult,
+    val steer: suspend (text: String, model: ModelChoice?, agent: AgentPick, attachments: List<ComposerAttachment>) -> InteractResult,
     val cancel: suspend () -> InteractResult,
     val approve: suspend (toolCallId: String, optionId: String?) -> InteractResult,
     val deny: suspend (toolCallId: String, optionId: String?) -> InteractResult,
@@ -167,7 +170,7 @@ class ChatActionsUi(
     /** Resumes a resumable failed turn or truncates + re-sends [turnId]. */
     val retryTurn: suspend (turnId: String, model: ModelChoice?, agent: AgentPick) -> InteractResult = { _, _, _ -> InteractResult.NotAllowed },
     /** Cancels the running turn and starts a new turn with [text]. */
-    val stopAndSend: suspend (text: String, model: ModelChoice?, agent: AgentPick) -> InteractResult = { _, _, _ -> InteractResult.NotAllowed },
+    val stopAndSend: suspend (text: String, model: ModelChoice?, agent: AgentPick, attachments: List<ComposerAttachment>) -> InteractResult = { _, _, _, _ -> InteractResult.NotAllowed },
     /** Removes a pending (steering or queued) message by [id]. */
     val removePending: suspend (id: String) -> InteractResult = { InteractResult.NotAllowed },
     /** Reorders the queued messages to match [order]. */
@@ -208,6 +211,9 @@ class ChatActionsUi(
 private const val MAX_LABEL = 80
 private const val MAX_QUESTION_TEXT = 4_000
 private const val MAX_OPTION_TEXT = 1_000
+
+/** A fork or a side chat starts from the message's words alone, so attached files are never silently left behind. */
+private const val FILES_STAY_HERE = "Files can only be sent in this chat. Remove them to fork or ask in a side chat."
 
 /** How long a form waits after the last change before it tells the host what has been entered. */
 private const val DRAFT_PAUSE_MS = 700L
@@ -995,6 +1001,17 @@ internal fun Composer(
     }
     var busy by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<String?>(null) }
+    // Held in memory only: picked files can be large, so they are not saved across a rotation the way the draft text is.
+    var attached by remember { mutableStateOf<List<ComposerAttachment>>(emptyList()) }
+    val picker = rememberAttachmentPicker(
+        onPicked = { files ->
+            val all = attached + files
+            val problem = Attachments.problem(all, vision = null)
+            if (problem == null) attached = all
+            notice = problem?.let(Attachments::describe)
+        },
+        onUnreadable = { notice = it },
+    )
     val scope = rememberCoroutineScope()
     val canSend = text.isNotBlank() && !busy
     val chipColors = AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest)
@@ -1111,7 +1128,10 @@ internal fun Composer(
                     false
                 }
             }
-            "fork" -> if (actions.canFork) {
+            "fork" -> if (actions.canFork && attached.isNotEmpty()) {
+                notice = FILES_STAY_HERE
+                true
+            } else if (actions.canFork) {
                 val forkText = args.trim()
                 text = ""
                 scope.launch {
@@ -1128,7 +1148,10 @@ internal fun Composer(
             } else {
                 false
             }
-            "side" -> if (actions.canSideChat && activeTurnId != null) {
+            "side" -> if (actions.canSideChat && activeTurnId != null && attached.isNotEmpty()) {
+                notice = FILES_STAY_HERE
+                true
+            } else if (actions.canSideChat && activeTurnId != null) {
                 val sideText = args.trim().ifEmpty { null }
                 text = ""
                 scope.launch {
@@ -1266,6 +1289,26 @@ internal fun Composer(
                     onDismiss = { qrDismissed = true },
                 )
             }
+            if (attached.isNotEmpty()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    attached.forEachIndexed { index, file ->
+                        AssistChip(
+                            onClick = { attached = attached.filterIndexed { i, _ -> i != index } },
+                            label = { Text(file.label, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 160.dp)) },
+                            trailingIcon = { Icon(AppIcons.Clear, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                            colors = chipColors,
+                            border = null,
+                            modifier = Modifier
+                                .heightIn(min = 48.dp)
+                                .semantics { contentDescription = "Remove attachment ${file.label}" }
+                                .testTag("composer_attachment_$index"),
+                        )
+                    }
+                }
+            }
             TextField(
                 value = text,
                 onValueChange = { text = it },
@@ -1288,6 +1331,13 @@ internal fun Composer(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (picker != null) {
+                        IconButton(
+                            onClick = { picker.open() },
+                            enabled = !busy && attached.size < Attachments.MAX_COUNT,
+                            modifier = Modifier.size(48.dp).testTag("composer_attach"),
+                        ) { Icon(AppIcons.Attach, contentDescription = "Attach files") }
+                    }
                     if (qrContext != null && !showQuickReplyBar) {
                         AssistChip(
                             onClick = {
@@ -1393,11 +1443,15 @@ internal fun Composer(
                     AssistChip(
                         onClick = {
                             val sending = text
+                            val files = attached
                             scope.launch {
                                 busy = true
-                                val result = actions.steer(sending, chosen, agentChosen)
+                                val result = actions.steer(sending, chosen, agentChosen, files)
                                 notice = InteractMessages.describe(result)
-                                if (InteractMessages.succeeded(result) && text == sending) text = ""
+                                if (InteractMessages.succeeded(result) && text == sending) {
+                                    text = ""
+                                    if (attached == files) attached = emptyList()
+                                }
                                 busy = false
                             }
                         },
@@ -1424,11 +1478,15 @@ internal fun Composer(
                                 onClick = {
                                     sendMenuOpen = false
                                     val sending = text
+                                    val files = attached
                                     scope.launch {
                                         busy = true
-                                        val result = actions.steer(sending, chosen, agentChosen)
+                                        val result = actions.steer(sending, chosen, agentChosen, files)
                                         notice = InteractMessages.describe(result)
-                                        if (InteractMessages.succeeded(result) && text == sending) text = ""
+                                        if (InteractMessages.succeeded(result) && text == sending) {
+                                            text = ""
+                                            if (attached == files) attached = emptyList()
+                                        }
                                         busy = false
                                     }
                                 },
@@ -1439,6 +1497,7 @@ internal fun Composer(
                                 onClick = {
                                     sendMenuOpen = false
                                     val sending = text
+                                    val files = attached
                                     scope.launch {
                                         busy = true
                                         val currentActive = activeSlashCommand
@@ -1447,9 +1506,12 @@ internal fun Composer(
                                 return@launch
                             }
                             val payload = if (currentActive != null && currentActive.arguments.isEmpty() && sending.endsWith(" ")) sending.trimEnd() else sending
-                            val result = actions.send(payload, chosen, agentChosen)
+                            val result = actions.send(payload, chosen, agentChosen, files)
                                         notice = InteractMessages.describe(result)
-                                        if (InteractMessages.succeeded(result) && text == sending) text = ""
+                                        if (InteractMessages.succeeded(result) && text == sending) {
+                                            text = ""
+                                            if (attached == files) attached = emptyList()
+                                        }
                                         busy = false
                                     }
                                 },
@@ -1460,11 +1522,15 @@ internal fun Composer(
                                 onClick = {
                                     sendMenuOpen = false
                                     val sending = text
+                                    val files = attached
                                     scope.launch {
                                         busy = true
-                                        val result = actions.stopAndSend(sending, chosen, agentChosen)
+                                        val result = actions.stopAndSend(sending, chosen, agentChosen, files)
                                         notice = InteractMessages.describe(result)
-                                        if (InteractMessages.succeeded(result) && text == sending) text = ""
+                                        if (InteractMessages.succeeded(result) && text == sending) {
+                                            text = ""
+                                            if (attached == files) attached = emptyList()
+                                        }
                                         busy = false
                                     }
                                 },
@@ -1473,6 +1539,7 @@ internal fun Composer(
                             if (actions.canSideChat && activeTurnId != null) {
                                 DropdownMenuItem(
                                     text = { Text("Ask in Side Chat") },
+                                    enabled = attached.isEmpty(),
                                     onClick = {
                                         sendMenuOpen = false
                                         val sending = text
@@ -1500,6 +1567,7 @@ internal fun Composer(
                 FilledIconButton(
                     onClick = {
                         val sending = text
+                        val files = attached
                         scope.launch {
                             busy = true
                             val currentActive = activeSlashCommand
@@ -1508,10 +1576,13 @@ internal fun Composer(
                                 return@launch
                             }
                             val payload = if (currentActive != null && currentActive.arguments.isEmpty() && sending.endsWith(" ")) sending.trimEnd() else sending
-                            val result = actions.send(payload, chosen, agentChosen)
+                            val result = actions.send(payload, chosen, agentChosen, files)
                             notice = InteractMessages.describe(result)
                             // Only a message the host has taken is cleared, and only if the box still holds what was sent.
-                            if (InteractMessages.succeeded(result) && text == sending) text = ""
+                            if (InteractMessages.succeeded(result) && text == sending) {
+                                text = ""
+                                if (attached == files) attached = emptyList()
+                            }
                             busy = false
                         }
                     },
