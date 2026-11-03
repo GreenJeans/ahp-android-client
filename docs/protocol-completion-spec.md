@@ -28,15 +28,15 @@ This specification audits the remaining surface of `com.microsoft.agenthostproto
 
 ## Execution status
 
-Checked 2026-11-02 on an API 36 emulator and the JVM suite. The boxes in each slice below are ticked only for what was run. Nothing here has been checked against a live host or a physical phone yet.
+Checked 2026-11-02 on an API 36 emulator and the JVM suite. The boxes in each slice below are ticked only for what was run. A first live run on a Pixel 10 against a VS Code dev tunnel host on 2026-11-02 is in `docs/verification/protocol-completion.md`: customizations, per-chat changesets and file diffs, and session folders load; the working-directory add was refused by the host; the risk and edit preview, the toggle write, canvas and annotations were not reached.
 
 | Slice | State | Not yet verified |
 |---|---|---|
-| P1 Risk assessment and edit preview | Built, JVM and UI tests | Live host payload; a real `customizationId` is shown as the server name, which may be an opaque id |
-| P2 Customization toggles and server tools | Built, JVM and UI tests | That a live host honours `session/customizationToggled` and echoes it |
-| P3 Per-chat changesets and terminal commands | Built, JVM and UI tests | Live terminal content with command parts |
+| P1 Risk assessment and edit preview | Built, JVM and UI tests | Live host payload: the host auto-approved the one edit tried, so no approval card appeared; a real `customizationId` is shown as the server name, which may be an opaque id (the host's MCP servers have readable names) |
+| P2 Customization toggles and server tools | Built, JVM and UI tests | That a live host honours `session/customizationToggled` and echoes it (the live host offered no switch on any customization) |
+| P3 Per-chat changesets and terminal commands | Built, JVM and UI tests | Live terminal content with command parts. Checked live: changeset kinds, the session changeset's file list and a file diff. The host's list count was one higher than the file's real line count (a trailing line break) |
 | P4 Canvas and annotations channels | Built, JVM and UI tests | Live channel subscribe; system back on the canvas screen has no automated test (no `AppRoot` harness with a host) |
-| P5 Working directories | Built, JVM and UI tests | That a live host applies set and remove |
+| P5 Working directories | Built, JVM and UI tests | That a live host applies set and remove. The VS Code host refused the add: "Session working-directory actions require an Editor Window client", so the success path cannot be tried against it |
 | iOS | Not compiled for P1 to P5 | Kotlin/Native needs a Mac; `commonUi` changes were only reviewed for JVM-only calls |
 
 ### Decisions taken in review
@@ -49,7 +49,7 @@ Checked 2026-11-02 on an API 36 emulator and the JVM suite. The boxes in each sl
 
 ### Next slice
 
-**N1: Land and prove P1 to P5.** Merge the branch, then run the unverified column above with `:core-ahp:probe` against a live host and on the Pixel 10, recording results in `docs/verification/protocol-completion.md`. Also: resolve the MCP contributor's `customizationId` to the server's display name through `SessionState.customizations`, and add an `AppRoot` back-navigation test for the canvas screen.
+**N1: Land and prove P1 to P5. Landed (PRs #33 and #34); the live run is partly done, see `docs/verification/protocol-completion.md`.** Still open: P1 (needs an action the host does not auto-approve), the P2 toggle (needs a host that offers a switch), P4 (no entry point found on the live host), the P5 success path (needs an Editor Window client or a host that accepts it) and the terminal command view. New open question from the run: new Copilot sessions started on `claude-sonnet-5.5` with no context tier and failed with `compaction_static_context_blocked`, while VS Code's sessions on the same model carry `contextTier: long_context` and a larger model (Opus 5.5) worked; whether the phone can ask for that tier is not yet known. Original text: merge the branch, then run the unverified column above with `:core-ahp:probe` against a live host and on the Pixel 10, recording results in `docs/verification/protocol-completion.md`. Also: resolve the MCP contributor's `customizationId` to the server's display name through `SessionState.customizations`, and add an `AppRoot` back-navigation test for the canvas screen.
 
 **N2: P6a, session config completions. Built, JVM and emulator tests pass; not yet checked against a live host.** Self-contained and MANAGE only:
 
