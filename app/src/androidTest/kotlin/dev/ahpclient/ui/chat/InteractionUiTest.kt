@@ -47,6 +47,13 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextReplacement
+import com.microsoft.agenthostprotocol.generated.CompletionItem
+import com.microsoft.agenthostprotocol.generated.MessageAttachmentKind
+import com.microsoft.agenthostprotocol.generated.MessageAttachmentSimple
+import com.microsoft.agenthostprotocol.generated.SimpleMessageAttachment
+import dev.ahpclient.state.Completions
+import dev.ahpclient.state.Suggestion
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.ahpclient.state.ActivityState
 import dev.ahpclient.state.AnswerValue
@@ -141,6 +148,7 @@ class InteractionUiTest {
         onOpenCustomizations: ((CustomizationCategory?, String) -> Unit)? = null,
         quickReplyMode: QuickReplyMode = QuickReplyMode.OFF,
         quickReplyProvider: QuickReplyProvider? = null,
+        suggest: suspend (String) -> List<Suggestion> = { emptyList() },
     ) = ChatActionsUi(
         running = running,
         send = { text, model, agent, files -> calls.sent += text; calls.sentFiles += files; calls.sentModels += model; calls.sentAgents += agent; calls.result },
@@ -174,6 +182,7 @@ class InteractionUiTest {
         onOpenCustomizations = onOpenCustomizations,
         quickReplyMode = quickReplyMode,
         quickReplyProvider = quickReplyProvider,
+        suggest = suggest,
     )
 
     private fun transcript(vararg items: TranscriptItem) = Transcript("Fix the build", ActivityState.IN_PROGRESS, null, items.toList(), hasOlder = false)
@@ -295,6 +304,67 @@ class InteractionUiTest {
 
         rule.onNodeWithTag("composer_notice").assertTextContains("archive.zip is not an image or a text file", substring = true)
         rule.onAllNodesWithTag("composer_attachment_0").assertCountEquals(0)
+    }
+
+    // ---- host completions ---------------------------------------------------------------------------------------
+
+    private val mention = CompletionItem(
+        insertText = "@notes.md",
+        rangeStart = 0,
+        rangeEnd = 2,
+        attachment = MessageAttachmentSimple(SimpleMessageAttachment(label = "notes.md", type = MessageAttachmentKind.SIMPLE)),
+    )
+
+    private fun hostOffers(vararg items: CompletionItem): suspend (String) -> List<Suggestion> = { text -> Completions.suggestions(items.toList(), text) }
+
+    @Test
+    fun aSuggestionTheHostOffersFillsTheMessageAndTheMentionGoesOutWithIt() {
+        val calls = Calls()
+        show(transcript(), actions(calls, suggest = hostOffers(mention)))
+
+        rule.onNodeWithTag("composer_input").performTextInput("@n")
+        rule.waitUntil(5_000) { rule.onAllNodesWithTag("host_suggestion_0").fetchSemanticsNodes().isNotEmpty() }
+        rule.onNodeWithTag("host_suggestion_0").performClick()
+        rule.waitForIdle()
+
+        rule.onAllNodesWithTag("host_suggestion_0").assertCountEquals(0)
+        rule.onNodeWithTag("composer_attachment_0").assertContentDescriptionEquals("Remove attachment notes.md")
+        rule.onNodeWithTag("composer_send").performClick()
+        rule.waitForIdle()
+
+        assertEquals(listOf("@notes.md"), calls.sent)
+        val sent = calls.sentFiles.single().single()
+        assertEquals("notes.md", sent.label)
+        assertTrue(sent.fromHost)
+    }
+
+    @Test
+    fun deletingTheMentionedWordsTakesTheMentionOffTheMessage() {
+        val calls = Calls()
+        show(transcript(), actions(calls, suggest = hostOffers(mention)))
+
+        rule.onNodeWithTag("composer_input").performTextInput("@n")
+        rule.waitUntil(5_000) { rule.onAllNodesWithTag("host_suggestion_0").fetchSemanticsNodes().isNotEmpty() }
+        rule.onNodeWithTag("host_suggestion_0").performClick()
+        rule.onNodeWithTag("composer_input").performTextReplacement("never mind")
+        rule.waitForIdle()
+
+        rule.onAllNodesWithTag("composer_attachment_0").assertCountEquals(0)
+        rule.onNodeWithTag("composer_send").performClick()
+        rule.waitForIdle()
+        assertEquals(listOf(emptyList<ComposerAttachment>()), calls.sentFiles.map { it.toList() })
+    }
+
+    @Test
+    fun nothingIsShownWhenTheHostHasNothingToSuggest() {
+        val calls = Calls()
+        show(transcript(), actions(calls))
+
+        rule.onNodeWithTag("composer_input").performTextInput("@n")
+        rule.mainClock.advanceTimeBy(1_000)
+        rule.waitForIdle()
+
+        rule.onAllNodesWithTag("host_suggestion_0").assertCountEquals(0)
     }
 
     @Test
