@@ -24,6 +24,7 @@ import com.microsoft.agenthostprotocol.generated.Message
 import com.microsoft.agenthostprotocol.generated.ReconnectResult
 import com.microsoft.agenthostprotocol.generated.ReconnectResultReplay
 import com.microsoft.agenthostprotocol.generated.ReconnectResultSnapshot
+import com.microsoft.agenthostprotocol.generated.CompletionsResult
 import com.microsoft.agenthostprotocol.generated.ResolveSessionConfigResult
 import com.microsoft.agenthostprotocol.generated.SessionConfigCompletionsResult
 import com.microsoft.agenthostprotocol.generated.ResourceReadResult
@@ -167,6 +168,14 @@ class HostSession(
 
     /** True only while the live connection's tier lets this client create and remove sessions and chats. Not a setting: it follows the connection. */
     val canManage: StateFlow<Boolean> = _canManage.asStateFlow()
+
+    private val _completionTriggers = MutableStateFlow<List<String>>(emptyList())
+
+    /**
+     * The characters the host asked to be offered completions for (`@`, `/`), as its last `initialize` said. Empty when the host
+     * named none, and then the composer never asks. A `reconnect` does not repeat them, so the last answer stands.
+     */
+    val completionTriggers: StateFlow<List<String>> = _completionTriggers.asStateFlow()
 
     private val _undecodableFrames = MutableStateFlow(0)
 
@@ -523,6 +532,9 @@ class HostSession(
         query: String?,
     ): SessionConfigCompletionsResult = live().sessionConfigCompletions(provider, workingDirectory, config, property, query)
 
+    /** What the host suggests for the message being written in [chatUri]; see [AhpConnection.completions]. @throws IOException when there is no connection. */
+    suspend fun completions(chatUri: String, text: String, offset: Int): CompletionsResult = live().completions(chatUri, text, offset)
+
     override suspend fun createChat(sessionUri: String, chatUri: String, source: ChatSource?, initialMessage: Message?) =
         live().createChat(sessionUri, chatUri, source, initialMessage)
 
@@ -714,7 +726,9 @@ class HostSession(
     }
 
     private suspend fun initialize(ahp: AhpConnection, open: List<String>) {
-        applySnapshots(ahp.initialize(clientInfo, listOf(ROOT_CHANNEL) + open).snapshots, ahp)
+        val result = ahp.initialize(clientInfo, listOf(ROOT_CHANNEL) + open)
+        _completionTriggers.value = result.completionTriggerCharacters.orEmpty().filter { it.isNotEmpty() }
+        applySnapshots(result.snapshots, ahp)
     }
 
     private fun applyReconnect(result: ReconnectResult, open: List<String>, ahp: AhpConnection) {
