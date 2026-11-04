@@ -12,7 +12,9 @@ import kotlin.io.encoding.ExperimentalEncodingApi
  * as an embedded resource (the bytes inside the message), which is the one attachment kind a phone can build from a file it was
  * handed: the others point at a path or a channel on the host, and the host supplies those, never the phone.
  */
-class ComposerAttachment(label: String, contentType: String, val bytes: ByteArray) {
+class ComposerAttachment private constructor(label: String, contentType: String, val bytes: ByteArray, internal val supplied: HostSupplied?) {
+    constructor(label: String, contentType: String, bytes: ByteArray) : this(label, contentType, bytes, null)
+
     /** What the person sees on the chip and the agent sees as the file's name. Bounded, and never blank. */
     val label: String = label.trim().take(Attachments.MAX_LABEL).ifBlank { "attachment" }
 
@@ -21,8 +23,12 @@ class ComposerAttachment(label: String, contentType: String, val bytes: ByteArra
 
     val isImage: Boolean get() = contentType.startsWith("image/")
 
+    /** True for a mention the host offered while the person typed (`@file`): the host built it and it is sent back as the host wrote it. */
+    val fromHost: Boolean get() = supplied != null
+
+    /** This attachment as it goes on the wire for a message that reads [text]; see [Completions.wires]. */
     @OptIn(ExperimentalEncodingApi::class)
-    internal fun toWire(): MessageAttachment = MessageAttachmentEmbeddedResource(
+    internal fun toWire(text: String): MessageAttachment = supplied?.wireFor(text) ?: MessageAttachmentEmbeddedResource(
         MessageEmbeddedResourceAttachment(
             label = label,
             displayKind = if (isImage) "image" else "document",
@@ -31,6 +37,11 @@ class ComposerAttachment(label: String, contentType: String, val bytes: ByteArra
             contentType = contentType,
         ),
     )
+
+    internal companion object {
+        /** A mention the host offered: [attachment] is kept whole, so whatever the host put in it (including `_meta`) goes back to it unchanged. */
+        fun supplied(label: String, supplied: HostSupplied) = ComposerAttachment(label, "", ByteArray(0), supplied)
+    }
 }
 
 /** Why a set of attachments cannot be sent. Nothing is sent while there is one. */
@@ -72,7 +83,9 @@ object Attachments {
      * The first reason [attachments] cannot go, or null when they can. [vision] is whether the model in use sees images: false
      * (the host says so) refuses images, and null (the host did not say) lets them through.
      */
-    fun problem(attachments: List<ComposerAttachment>, vision: Boolean?): AttachmentProblem? {
+    fun problem(all: List<ComposerAttachment>, vision: Boolean?): AttachmentProblem? {
+        // The limits are for files the phone holds; a mention is only a pointer the host made, so it is the host's to refuse.
+        val attachments = all.filterNot { it.fromHost }
         if (attachments.size > MAX_COUNT) return AttachmentProblem.TooMany(MAX_COUNT)
         for (file in attachments) {
             if (!accepts(file.contentType)) return AttachmentProblem.Unsupported(file.label)
