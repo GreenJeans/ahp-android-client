@@ -105,13 +105,15 @@ Kept as they are: the order (attach, then the controls that change what the mess
 
 **Proposal.** The main chat is the session; other chats are reached from one control (for example "3 other chats") that opens a switcher. The switcher groups chats by how they came about (forks of a turn, side chats, chats the agent started), shows them as a tree under the turn they came from, and puts any that need you at the top. The transcript can also show a small link at the turn a fork or side chat came from. Chats that only the agent uses are collapsed by default.
 
-**Decision needed.** The shape of the switcher (a sheet, a drawer section or a dropdown) and which chats count as "not relevant to the person". Mock two options before building.
+**Decision needed.** The shape of the switcher (a sheet, a drawer section or a dropdown) and which chats count as "not relevant to the person". Mock two options before building. (Decided 2026-11-03: a bottom sheet, see Decisions.)
+
+**As built (2026-11-03).** The tab row is gone. Under the bar there is a chip with the main chat's title (tap it to go back to the main chat) and one control, "2 other chats", which opens a bottom sheet; with only the main chat neither is drawn. When another chat is on screen the control shows its title too ("Try plan B · 2 other chats"). `ChatSwitcher` (core, JVM-tested) builds the sheet from the host's chat list: the main chat first, then groups in this order: Waiting on you, Forks, Side chats, Started by you, Other chats, Chats the agent uses. The relation comes from `ChatSummary.origin` (`fork`, `sideChat`, `tool`, `user`); a chat with no origin, or one of a kind this app does not know, goes under "Other chats" with no relation line. Any chat waiting on the person goes in the first group whatever its relation, so nothing that needs them is folded away. "Chats the agent uses" holds chats a tool call started (origin `tool`, for example a sub-agent) and chats the host marks `read-only` or `hidden` (`ChatSummary.interactivity`); it starts folded, and its heading still says how many chats it holds and how many are unread. Within a group a chat sits under the chat it came from, one step further in (a fork of a fork). The relation line says "Fork of turn 3" only when the app holds every turn of the chat it came from (the one on screen or one of the few kept warm, with no older turns left to load); otherwise it names the chat ("Fork of the main chat", "Fork of Try plan B"). Dots: a chat waiting on you gets the strong dot, as the tabs did; an unread chat (the host has not marked it read) that is not on screen gets a quieter dot, which the tabs never showed. The control carries a dot when any other chat has one, and its spoken description says why ("3 other chats, 1 waiting on you, 1 unread"). Archived chats stay hidden unless "Show archived chats" is on, as before. Not built: the link in the transcript at the turn a fork or side chat came from.
 
 **Acceptance criteria**
 
-- [ ] **AC-U5.1** A session with many chats shows one control instead of a tab per chat; the main chat stays one tap away.
-- [ ] **AC-U5.2** The switcher shows each chat's relation (fork of turn N, side chat, started by the agent) and puts chats waiting on the person first.
-- [ ] **AC-U5.3** Unread and needs-input signals are not lost compared with today's tab dots.
+- [ ] **AC-U5.1** A session with many chats shows one control instead of a tab per chat; the main chat stays one tap away. (Built; UI tests written in `SessionScreensTest` and `AccessibilityTest`, not yet run on a device.)
+- [ ] **AC-U5.2** The switcher shows each chat's relation (fork of turn N, side chat, started by the agent) and puts chats waiting on the person first. (Half checked: the grouping, order, tree and wording are covered by JVM tests in `ChatSwitcherTest`; the sheet's UI tests are written, not run. The turn number shows only when the parent chat's turns are all held.)
+- [ ] **AC-U5.3** Unread and needs-input signals are not lost compared with today's tab dots. (Half checked: the counts and marks are covered by JVM tests, including a folded group; the dots on screen are in UI tests written, not run.)
 
 ## U6 — Word wrap on or off
 
@@ -201,3 +203,4 @@ The P5, first-model and N3b decisions belong to [`protocol-completion-spec.md`](
 | Date | Entry |
 |---|---|
 | 2026-11-03 | Drafted from a round of user feedback. Nothing built. |
+| 2026-11-03 | U5 built: the chat switcher (a main chat chip and one "N other chats" control opening a grouped sheet) replaces the tab row. JVM tests pass; UI tests written, not run on a device. |

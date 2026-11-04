@@ -1099,30 +1099,124 @@ class SessionScreensTest {
         showDetail(detailState())
 
         rule.onNodeWithTag("chat_body").assertTextEquals("chat body: $mainChatUri")
-        rule.onAllNodesWithTag("chat_tabs").assertCountEquals(0)
+        // Only the main chat: there is nothing to switch to, so neither the main chat button nor the other-chats control is drawn.
+        rule.onAllNodesWithTag("chat_switcher").assertCountEquals(0)
+        rule.onAllNodesWithTag("chat_switcher_open").assertCountEquals(0)
     }
 
     @Test
-    fun aSessionWithSeveralChatsHasATabForEachWithTheMainChatFirst() {
+    fun aSessionWithSeveralChatsShowsTheMainChatAndOneControlForTheRest() {
         showDetail(detailState(chats = twoChats, defaultChat = mainChatUri))
 
-        val tabs = rule.onAllNodesWithTag("chat_tab")
-        tabs.assertCountEquals(2)
-        tabs[0].assertContentDescriptionEquals("Main chat").assertTouchTargetAtLeast(48.dp)
-        tabs[1].assertContentDescriptionEquals("Side chat, Needs you").assertTouchTargetAtLeast(48.dp)
-        rule.onAllNodesWithTag("chat_tab_dot", useUnmergedTree = true).assertCountEquals(1)
+        rule.onNodeWithTag("chat_switcher_main").assertContentDescriptionEquals("Main chat, Main chat, Shown").assertTouchTargetAtLeast(48.dp)
+        rule.onNodeWithTag("chat_switcher_open")
+            .assertContentDescriptionEquals("1 other chat, 1 waiting on you")
+            .assertTouchTargetAtLeast(48.dp)
+            .assertHasClickAction()
+        rule.onNodeWithText("1 other chat", useUnmergedTree = true).assertIsDisplayed()
+        // The side chat is waiting on the person: the control carries the dot the tab used to.
+        rule.onAllNodesWithTag("chat_switcher_dot", useUnmergedTree = true).assertCountEquals(1)
+        rule.onAllNodesWithTag("chat_switcher_main_dot", useUnmergedTree = true).assertCountEquals(0)
+        rule.onAllNodesWithTag("chat_switcher_sheet").assertCountEquals(0)
     }
 
     @Test
-    fun tappingATabAsksForThatChatAndTheChatBeneathFollows() {
+    fun pickingAChatInTheSwitcherAsksForThatChatAndTheChatBeneathFollows() {
         val asked = mutableListOf<String>()
         showDetail(detailState(chats = twoChats, defaultChat = mainChatUri), onSelectChat = { asked += it })
 
-        rule.onAllNodesWithTag("chat_tab")[1].performClick()
+        rule.onNodeWithTag("chat_switcher_open").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag("chat_switcher_sheet").assertIsDisplayed()
+        rule.onAllNodesWithTag("chat_switcher_row").filter(hasContentDescriptionContaining("Side chat")).onFirst().performClick()
         rule.waitForIdle()
 
         assertEquals(listOf(sideChatUri), asked)
         rule.onNodeWithTag("chat_body").assertTextEquals("chat body: $sideChatUri")
+        rule.onAllNodesWithTag("chat_switcher_sheet").assertCountEquals(0)
+        // With a side chat shown, the control names it, and the main chat is one tap away.
+        rule.onNodeWithTag("chat_switcher_open").assertContentDescriptionEquals("1 other chat, 1 waiting on you, showing Side chat")
+        rule.onNodeWithTag("chat_switcher_main").performClick()
+        rule.waitForIdle()
+        assertEquals(listOf(sideChatUri, mainChatUri), asked)
+        rule.onNodeWithTag("chat_body").assertTextEquals("chat body: $mainChatUri")
+    }
+
+    private val mainMarker = """"resource":"$mainChatUri","title":"Main chat","status":33,"modifiedAt":"2026-10-26T10:29:00.000Z""""
+    private fun relatedChat(id: String, title: String, status: Int = 33, extra: String = "") =
+        """{"resource":"ahp-chat://default/$id","title":"$title","status":$status,"modifiedAt":"2026-10-26T10:20:00.000Z"$extra}"""
+
+    /** A session with a chat of each relation: a fork and its own fork, a side chat, two sub-agent chats (one unread), and one waiting. */
+    private val relatedChats = listOf(
+        "{$mainMarker}",
+        relatedChat("f1", "Try plan B", extra = ""","origin":{"kind":"fork","chat":"$mainChatUri","turnId":"t2"}"""),
+        relatedChat("f2", "Plan B, smaller", extra = ""","origin":{"kind":"fork","chat":"ahp-chat://default/f1","turnId":"t5"}"""),
+        relatedChat("s1", "What is this regex", extra = ""","origin":{"kind":"sideChat","chat":"$mainChatUri","turnId":"t3"}"""),
+        relatedChat("a1", "Explore the repo", status = 1, extra = ""","origin":{"kind":"tool","chat":"$mainChatUri","toolCallId":"c1"},"interactivity":"read-only""""),
+        relatedChat("a2", "Run the tests", extra = ""","origin":{"kind":"tool","chat":"$mainChatUri","toolCallId":"c2"}"""),
+        relatedChat("w1", "Needs an answer", status = 56, extra = ""","origin":{"kind":"sideChat","chat":"$mainChatUri","turnId":"t4"}"""),
+    ).joinToString(",", "[", "]")
+
+    @Test
+    fun theSwitcherGroupsChatsByRelationWithWaitingFirstAndTheAgentsChatsFolded() {
+        showDetail(detailState(chats = relatedChats, defaultChat = mainChatUri))
+
+        rule.onNodeWithTag("chat_switcher_open").assertContentDescriptionEquals("6 other chats, 1 waiting on you, 1 unread")
+        rule.onNodeWithTag("chat_switcher_open").performClick()
+        rule.waitForIdle()
+
+        rule.onAllNodesWithTag("chat_switcher_group", useUnmergedTree = true).let { headings ->
+            headings.assertCountEquals(4)
+            headings[0].assertTextEquals("Waiting on you")
+            headings[1].assertTextEquals("Forks")
+            headings[2].assertTextEquals("Side chats")
+            headings[3].assertTextEquals("Chats the agent uses")
+        }
+        // The main chat, the waiting one, both forks and the side chat; the agent's two are folded away until asked for.
+        val rows = rule.onAllNodesWithTag("chat_switcher_row")
+        rows.assertCountEquals(5)
+        rows[0].assertContentDescriptionEquals("Main chat, Main chat, Shown")
+        rows[1].assertContentDescriptionEquals("Needs an answer, Side chat from the main chat, Needs you")
+        rows[2].assertContentDescriptionEquals("Try plan B, Fork of the main chat")
+        rows[3].assertContentDescriptionEquals("Plan B, smaller, Fork of Try plan B")
+        rows[4].assertContentDescriptionEquals("What is this regex, Side chat from the main chat")
+        rows[1].assertTouchTargetAtLeast(48.dp)
+        rule.onAllNodesWithTag("chat_switcher_row_dot", useUnmergedTree = true).assertCountEquals(1)
+
+        val toggle = rule.onNodeWithTag("chat_switcher_group_toggle")
+        toggle.assertContentDescriptionEquals("Chats the agent uses, 2 chats, 1 unread").assertTouchTargetAtLeast(48.dp)
+        toggle.assert(SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.StateDescription, "Folded"))
+        toggle.performScrollTo().performClick()
+        rule.waitForIdle()
+
+        toggle.assert(SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.StateDescription, "Shown"))
+        rule.onAllNodesWithTag("chat_switcher_row").assertCountEquals(7)
+        rule.onAllNodesWithTag("chat_switcher_row")[5].assertContentDescriptionEquals("Explore the repo, Started by the agent, watch only, Unread")
+        rule.onAllNodesWithTag("chat_switcher_row")[6].assertContentDescriptionEquals("Run the tests, Started by the agent")
+    }
+
+    @Test
+    fun aForkSitsIndentedUnderTheChatItCameFrom() {
+        showDetail(detailState(chats = relatedChats, defaultChat = mainChatUri))
+        rule.onNodeWithTag("chat_switcher_open").performClick()
+        rule.waitForIdle()
+
+        val parent = rule.onAllNodesWithTag("chat_switcher_row").filter(hasContentDescriptionContaining("Try plan B,")).onFirst().fetchSemanticsNode()
+        val child = rule.onAllNodesWithTag("chat_switcher_row").filter(hasContentDescriptionContaining("Plan B, smaller")).onFirst().fetchSemanticsNode()
+        val parentTitle = rule.onNodeWithText("Try plan B", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val childTitle = rule.onNodeWithText("Plan B, smaller", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+
+        assertTrue("the fork of a fork comes right after it", child.boundsInRoot.top >= parent.boundsInRoot.bottom - 0.5f)
+        assertTrue("and is indented under it", childTitle.left > parentTitle.left)
+    }
+
+    @Test
+    fun anUnreadChatThatIsNotShownMarksTheControlEvenWhenNothingWaits() {
+        val chats = listOf("{$mainMarker}", relatedChat("u1", "Fresh output", status = 1)).joinToString(",", "[", "]")
+        showDetail(detailState(chats = chats, defaultChat = mainChatUri))
+
+        rule.onNodeWithTag("chat_switcher_open").assertContentDescriptionEquals("1 other chat, 1 unread")
+        rule.onAllNodesWithTag("chat_switcher_dot", useUnmergedTree = true).assertCountEquals(1)
     }
 
     @Test

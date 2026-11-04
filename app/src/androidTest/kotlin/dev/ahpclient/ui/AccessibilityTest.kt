@@ -403,7 +403,7 @@ class AccessibilityTest {
     }
 
     @Test
-    fun sessionScreenWithTabsAndAChat() {
+    fun sessionScreenWithTheChatSwitcherAndAChat() {
         val chat = Transcript(
             "Fix the build",
             ActivityState.IN_PROGRESS,
@@ -437,6 +437,30 @@ class AccessibilityTest {
         rule.onNodeWithTag("session_menu").performClick()
         rule.waitForIdle()
 
+        check()
+    }
+
+    private val relatedChatSession: SessionState = Ahp.json.decodeFromString(
+        SessionState.serializer(),
+        """{"provider":"copilotcli","title":"Fix the build","status":56,"lifecycle":"ready","activeClients":[],"defaultChat":"ahp-chat://default/x",
+            "chats":[{"resource":"ahp-chat://default/x","title":"Main chat","status":33,"modifiedAt":"2026-10-26T10:29:00.000Z"},
+                     {"resource":"ahp-chat://default/f","title":"Try plan B","status":1,"modifiedAt":"2026-10-26T10:28:00.000Z","origin":{"kind":"fork","chat":"ahp-chat://default/x","turnId":"t1"}},
+                     {"resource":"ahp-chat://default/w","title":"Side chat waiting","status":56,"modifiedAt":"2026-10-26T10:28:00.000Z","origin":{"kind":"sideChat","chat":"ahp-chat://default/x","turnId":"t2"}},
+                     {"resource":"ahp-chat://default/a","title":"Explore the repo","status":33,"modifiedAt":"2026-10-26T10:28:00.000Z","origin":{"kind":"tool","chat":"ahp-chat://default/x","toolCallId":"c1"}}]}""",
+    )
+
+    @Test
+    fun theChatSwitcherAndItsSheetAreAccessible() {
+        rule.setContent { AhpTheme { SessionScreen(relatedChatSession, null, ConnState.Online, now, {}, shownChat = "ahp-chat://default/f") {} } }
+        check()
+
+        rule.onNodeWithTag("chat_switcher_open").performClick()
+        rule.waitForIdle()
+        check()
+
+        // The agent's chats, folded at first, are checked unfolded too.
+        rule.onNodeWithTag("chat_switcher_group_toggle").performClick()
+        rule.waitForIdle()
         check()
     }
 

@@ -37,6 +37,7 @@ import dev.ahpclient.state.ChangeStats
 import dev.ahpclient.state.ChangesetEntry
 import dev.ahpclient.state.ChatConfig
 import dev.ahpclient.state.ChatInteractor
+import dev.ahpclient.state.ChatSwitcher
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.CustomAgents
 import dev.ahpclient.state.CustomizationCategory
@@ -593,6 +594,11 @@ private fun SessionPage(
             },
             onOpenSubagent = controller::openSubagentChat,
             onOpenTerminal = controller::openTerminal,
+            // Only chats this app holds can have their turns counted: the one on screen and the few kept warm behind it.
+            chatTurnNumber = { chatUri, turnId ->
+                (listOfNotNull(chat) + open.warm).firstOrNull { it.uri == chatUri }?.store?.state?.value
+                    ?.let { ChatSwitcher.turnNumberIn(it, turnId) }
+            },
         ) {
             if (chat != null) {
                 OpenChatView(
