@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
@@ -82,7 +83,9 @@ import dev.ahpclient.state.ConfigKind
 import dev.ahpclient.state.AgentChoice
 import dev.ahpclient.state.AgentPick
 import dev.ahpclient.state.Attachments
+import dev.ahpclient.state.Completions
 import dev.ahpclient.state.ComposerAttachment
+import dev.ahpclient.state.Suggestion
 import dev.ahpclient.state.CustomAgents
 import dev.ahpclient.state.ApprovalChoice
 import dev.ahpclient.state.FormCheck
@@ -102,7 +105,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.withStyle
 import dev.ahpclient.state.ActiveSlashCommand
 import dev.ahpclient.state.AgentMentionQuery
@@ -187,6 +192,8 @@ class ChatActionsUi(
     val openSideChat: suspend (turnId: String, initialText: String?, model: ModelChoice?, agent: AgentPick) -> ManageResult = { _, _, _, _ -> ManageResult.NotAllowed },
     /** User-invokable slash commands (installed skills, prompts, and built-in commands) for `/` autocomplete in the composer. */
     val slashCommands: List<SlashCommand> = emptyList(),
+    /** What the host suggests for the word being typed (`@file`); empty when it names none, cannot answer or has nothing. Never fails. */
+    val suggest: suspend (text: String) -> List<Suggestion> = { emptyList() },
     /** Full environment customizations summary for the Customizations sheet. */
     val customizations: CustomizationsView = CustomizationsView.EMPTY,
     /** Opens the environment Customizations sheet, optionally filtered to a category or search query. */
@@ -748,6 +755,58 @@ private fun ActiveSlashCommandBar(
     }
 }
 
+/** What the host offered for the word being typed; choosing one puts its text in the message and attaches its mention. */
+@Composable
+private fun HostSuggestionPopup(
+    suggestions: List<Suggestion>,
+    onSelect: (Suggestion) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        shape = RoundedCornerShape(16.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp, vertical = 4.dp)
+            .testTag("composer_host_suggestions"),
+    ) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 200.dp)
+                .padding(vertical = 4.dp),
+        ) {
+            itemsIndexed(suggestions) { index, suggestion ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .clickable { onSelect(suggestion) }
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                        .testTag("host_suggestion_$index"),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        imageVector = AppIcons.Attach,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Text(
+                        text = suggestion.label,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun AgentMentionPopup(
     mention: AgentMentionQuery,
@@ -1002,12 +1061,14 @@ internal fun Composer(
     var busy by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<String?>(null) }
     // Held in memory only: picked files can be large, so they are not saved across a rotation the way the draft text is.
-    var attached by remember { mutableStateOf<List<ComposerAttachment>>(emptyList()) }
+    var attachedAll by remember { mutableStateOf<List<ComposerAttachment>>(emptyList()) }
+    // What is shown and sent: the files, and the host's mentions whose words are still in the message.
+    val attached = remember(text, attachedAll) { Completions.live(text, attachedAll) }
     val picker = rememberAttachmentPicker(
         onPicked = { files ->
             val all = attached + files
             val problem = Attachments.problem(all, vision = null)
-            if (problem == null) attached = all
+            if (problem == null) attachedAll = all
             notice = problem?.let(Attachments::describe)
         },
         onUnreadable = { notice = it },
@@ -1029,6 +1090,20 @@ internal fun Composer(
     val agentMention = remember(text, actions.agents) {
         SlashCommands.matchAgentMention(text, actions.agents)
     }
+    // What the host suggests for the word being typed, with the text it was asked for: a list for older text is never shown.
+    var hostSuggestions by remember { mutableStateOf("" to emptyList<Suggestion>()) }
+    // The text a suggestion was just accepted into: the host is not asked about it again, or the list would come straight back.
+    var acceptedText by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(text, slashMatches.isEmpty(), agentMention == null) {
+        if (slashMatches.isNotEmpty() || agentMention != null || text.isBlank() || text == acceptedText) {
+            hostSuggestions = "" to emptyList()
+            return@LaunchedEffect
+        }
+        // Wait for a pause in typing; a new keystroke cancels this and starts over. The host is asked nothing unless the word qualifies.
+        delay(Completions.DEBOUNCE_MILLIS)
+        hostSuggestions = text to actions.suggest(text)
+    }
+    val suggestionsNow = hostSuggestions.second.takeIf { hostSuggestions.first == text }.orEmpty()
     val executeBuiltInCommand: (SlashCommand, String) -> Boolean = { cmd, args ->
         when (cmd.name.lowercase()) {
             "customizations" -> {
@@ -1233,6 +1308,18 @@ internal fun Composer(
                         text = SlashCommands.stripAgentMention(text, agentMention)
                     },
                 )
+            } else if (suggestionsNow.isNotEmpty()) {
+                HostSuggestionPopup(
+                    suggestions = suggestionsNow,
+                    onSelect = { suggestion ->
+                        val accepted = Completions.accept(text, suggestion)
+                        if (accepted != null) {
+                            acceptedText = accepted.text
+                            text = accepted.text
+                            attachedAll = Completions.plus(attachedAll, accepted.attachment)
+                        }
+                    },
+                )
             }
             if (showSlashPicker) {
                 SlashCommandPickerSheet(
@@ -1296,7 +1383,7 @@ internal fun Composer(
                 ) {
                     attached.forEachIndexed { index, file ->
                         AssistChip(
-                            onClick = { attached = attached.filterIndexed { i, _ -> i != index } },
+                            onClick = { attachedAll = attachedAll.filterNot { it === file } },
                             label = { Text(file.label, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 160.dp)) },
                             trailingIcon = { Icon(AppIcons.Clear, contentDescription = null, modifier = Modifier.size(16.dp)) },
                             colors = chipColors,
@@ -1309,9 +1396,13 @@ internal fun Composer(
                     }
                 }
             }
+            // The field keeps its own cursor. When the text is set from outside (a suggestion accepted, a slash command picked, a
+            // draft loaded) the cursor goes to the end, where the person carries on typing; the plain-text field would leave it where it was.
+            var field by remember { mutableStateOf(TextFieldValue(text, TextRange(text.length))) }
+            if (field.text != text) field = TextFieldValue(text, TextRange(text.length))
             TextField(
-                value = text,
-                onValueChange = { text = it },
+                value = field,
+                onValueChange = { field = it; text = it.text },
                 placeholder = { Text("Message") },
                 // In the field rather than the chip row, so it does not compete with the chips for width.
                 trailingIcon = if (qrContext != null && !showQuickReplyBar) {
@@ -1355,7 +1446,7 @@ internal fun Composer(
                     if (picker != null) {
                         IconButton(
                             onClick = { picker.open() },
-                            enabled = !busy && attached.size < Attachments.MAX_COUNT,
+                            enabled = !busy && attached.count { !it.fromHost } < Attachments.MAX_COUNT,
                             modifier = Modifier.size(48.dp).testTag("composer_attach"),
                         ) { Icon(AppIcons.Attach, contentDescription = "Attach files") }
                     }
@@ -1446,7 +1537,7 @@ internal fun Composer(
                                 notice = InteractMessages.describe(result)
                                 if (InteractMessages.succeeded(result) && text == sending) {
                                     text = ""
-                                    if (attached == files) attached = emptyList()
+                                    attachedAll = attachedAll.filterNot { f -> f.fromHost || files.any { it === f } }
                                 }
                                 busy = false
                             }
@@ -1481,7 +1572,7 @@ internal fun Composer(
                                         notice = InteractMessages.describe(result)
                                         if (InteractMessages.succeeded(result) && text == sending) {
                                             text = ""
-                                            if (attached == files) attached = emptyList()
+                                            attachedAll = attachedAll.filterNot { f -> f.fromHost || files.any { it === f } }
                                         }
                                         busy = false
                                     }
@@ -1506,7 +1597,7 @@ internal fun Composer(
                                         notice = InteractMessages.describe(result)
                                         if (InteractMessages.succeeded(result) && text == sending) {
                                             text = ""
-                                            if (attached == files) attached = emptyList()
+                                            attachedAll = attachedAll.filterNot { f -> f.fromHost || files.any { it === f } }
                                         }
                                         busy = false
                                     }
@@ -1525,7 +1616,7 @@ internal fun Composer(
                                         notice = InteractMessages.describe(result)
                                         if (InteractMessages.succeeded(result) && text == sending) {
                                             text = ""
-                                            if (attached == files) attached = emptyList()
+                                            attachedAll = attachedAll.filterNot { f -> f.fromHost || files.any { it === f } }
                                         }
                                         busy = false
                                     }
@@ -1577,7 +1668,7 @@ internal fun Composer(
                             // Only a message the host has taken is cleared, and only if the box still holds what was sent.
                             if (InteractMessages.succeeded(result) && text == sending) {
                                 text = ""
-                                if (attached == files) attached = emptyList()
+                                attachedAll = attachedAll.filterNot { f -> f.fromHost || files.any { it === f } }
                             }
                             busy = false
                         }

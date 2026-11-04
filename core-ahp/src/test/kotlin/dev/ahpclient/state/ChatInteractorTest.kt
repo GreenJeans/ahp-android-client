@@ -3,6 +3,7 @@ package dev.ahpclient.state
 import dev.ahpclient.ahp.CapabilityDeniedException
 import com.microsoft.agenthostprotocol.Ahp
 import com.microsoft.agenthostprotocol.generated.ChatState
+import com.microsoft.agenthostprotocol.generated.CompletionsResult
 import com.microsoft.agenthostprotocol.generated.StateAction
 import java.io.IOException
 import java.time.Instant
@@ -50,6 +51,10 @@ class ChatInteractorTest {
         var outcome: DispatchOutcome = DispatchOutcome.Accepted
         var dispatchFails: Exception? = null
         var onGate: () -> Unit = {}
+        var triggers: List<String> = listOf("@", "/")
+        var completionsAnswer: CompletionsResult? = CompletionsResult(emptyList())
+        var completionsFails: Exception? = null
+        val asked = mutableListOf<Triple<String, String, Int>>()
         val sent = mutableListOf<Pair<String, StateAction>>()
         val prompts = mutableListOf<ApprovalRequest>()
         val order = mutableListOf<String>()
@@ -77,6 +82,12 @@ class ChatInteractorTest {
             models = { models },
             agents = { agents },
             config = { config },
+            completionTriggers = { triggers },
+            completions = { chatUri, text, offset ->
+                asked += Triple(chatUri, text, offset)
+                completionsFails?.let { throw it }
+                completionsAnswer
+            },
         )
 
         fun types() = sent.map { (_, action) -> Ahp.json.encodeToJsonElement(StateAction.serializer(), action).jsonObject["type"]!!.jsonPrimitive.content }
@@ -384,6 +395,90 @@ class ChatInteractorTest {
         val kept = rig.attachmentsOf(1)!!.single().jsonObject
         assertEquals("a.png", kept["label"]!!.jsonPrimitive.content)
         assertEquals("AQID", kept["data"]!!.jsonPrimitive.content)
+    }
+
+    // ---- completions -------------------------------------------------------------------------------------------
+
+    private fun answer(vararg items: String): CompletionsResult =
+        Ahp.json.decodeFromString(CompletionsResult.serializer(), """{"items":[${items.joinToString(",")}]}""")
+
+    private fun fileItem(range: String = """"rangeStart":0,"rangeEnd":2,""", extra: String = "") =
+        """{"insertText":"@a.kt",$range"attachment":{"type":"resource","label":"a.kt","uri":"file:///a.kt"$extra}}"""
+
+    @Test
+    fun `a word that starts with a trigger is put to the host with the chat, the whole text and the end as the offset`() = runTest {
+        val rig = rig().apply { completionsAnswer = answer(fileItem()) }
+
+        val suggestions = rig.interactor.suggest("look at @a.")
+
+        assertEquals(listOf(Triple(uri, "look at @a.", 11)), rig.asked)
+        assertEquals(listOf("a.kt"), suggestions.map { it.label })
+    }
+
+    @Test
+    fun `nothing is asked unless the text ends in a word that starts with a trigger, the host named one and the chat can be written to`() = runTest {
+        val rig = rig().apply { completionsAnswer = answer(fileItem()) }
+        assertEquals(emptyList(), rig.interactor.suggest("no trigger here"))
+        assertEquals(emptyList(), rig.interactor.suggest("mail me at a@b.c"))
+        assertEquals(emptyList(), rig.interactor.suggest("@done "))
+        rig.triggers = emptyList()
+        assertEquals(emptyList(), rig.interactor.suggest("@a"))
+        rig.triggers = listOf("@")
+        rig.canInteract = false
+        assertEquals(emptyList(), rig.interactor.suggest("@a"))
+        assertEquals(emptyList(), rig.asked)
+    }
+
+    @Test
+    fun `a host that cannot answer leaves the person typing, with no suggestions and no error`() = runTest {
+        val rig = rig()
+        listOf(IOException("gone"), CapabilityDeniedException("completions", null), IllegalStateException("bad frame")).forEach {
+            rig.completionsFails = it
+            assertEquals(emptyList(), rig.interactor.suggest("@a"), it.toString())
+        }
+        rig.completionsFails = null
+        rig.completionsAnswer = null
+        assertEquals(emptyList(), rig.interactor.suggest("@a"))
+    }
+
+    @Test
+    fun `an accepted mention goes out as the host wrote it, with its _meta, and a deleted one does not`() = runTest {
+        val item = fileItem(extra = ""","_meta":{"vscode.kind":"file","n":3}""")
+        val rig = rig().apply { completionsAnswer = answer(item) }
+        val text = "@a"
+        val accepted = Completions.accept(text, rig.interactor.suggest(text).single())!!
+        assertEquals("@a.kt", accepted.text)
+
+        rig.interactor.send(accepted.text + " explain", attachments = listOf(accepted.attachment))
+        val sentFile = rig.attachmentsOf()!!.single().jsonObject
+        assertEquals("""{"vscode.kind":"file","n":3}""", sentFile["_meta"].toString())
+        assertEquals("file:///a.kt", sentFile["uri"]!!.jsonPrimitive.content)
+
+        rig.interactor.send("explain it", attachments = listOf(accepted.attachment))
+        assertNull(rig.attachmentsOf(1))
+    }
+
+    @Test
+    fun `a mention the host made of a kind this app does not know is sent back untouched`() = runTest {
+        val unknown = """{"type":"future","label":"thing","_meta":{"a":[1,2]},"extra":true}"""
+        val rig = rig().apply { completionsAnswer = answer("""{"insertText":"@thing","rangeStart":0,"rangeEnd":1,"attachment":$unknown}""") }
+        val accepted = Completions.accept("@", rig.interactor.suggest("@").single())!!
+        assertEquals("@thing", accepted.text)
+
+        rig.interactor.send("@thing now", attachments = listOf(accepted.attachment))
+
+        assertEquals(Ahp.json.parseToJsonElement(unknown), rig.attachmentsOf()!!.single())
+    }
+
+    @Test
+    fun `a mention goes with files the person picked, and the files' limits do not count mentions`() = runTest {
+        val rig = rig().apply { completionsAnswer = answer(fileItem()) }
+        val accepted = Completions.accept("@a", rig.interactor.suggest("@a").single())!!
+        val files = List(Attachments.MAX_COUNT) { ComposerAttachment("f$it.txt", "text/plain", byteArrayOf(1)) }
+
+        assertTrue(rig.interactor.send("@a.kt see", attachments = files + accepted.attachment) is InteractResult.Sent)
+
+        assertEquals(Attachments.MAX_COUNT + 1, rig.attachmentsOf()!!.size)
     }
 
     @Test
