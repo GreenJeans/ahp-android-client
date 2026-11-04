@@ -766,6 +766,8 @@ private fun OpenChatView(
     }
     val onOpenLink = { link: String -> if (!platformUi.openLink(link)) platformUi.showToast("Nothing can open this link") }
     val onShareLink = { link: String -> if (!platformUi.shareLink(link)) platformUi.showToast("Nothing can share this link") }
+    // Read only: a running tool call's block watches its terminal through this for the end of the output as it arrives (U7).
+    val liveTerminal = remember(controller) { { uri: String -> controller.watchTerminal(uri) } }
     if (screen) {
         ChatScreen(
             transcript = transcript,
@@ -786,6 +788,7 @@ private fun OpenChatView(
             onRetry = chat.store::retry,
             backLabel = "Back to chat",
             fromCache = fromCache,
+            liveTerminal = liveTerminal,
             textScale = textScale,
             onTextScale = ui::setTextScale,
             onReadResource = session::readResource,
@@ -814,6 +817,7 @@ private fun OpenChatView(
             onOpenTerminal = controller::openTerminal,
             onRetry = chat.store::retry,
             fromCache = fromCache,
+            liveTerminal = liveTerminal,
             textScale = textScale,
             onTextScale = ui::setTextScale,
             onReadResource = session::readResource,

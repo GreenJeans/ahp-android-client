@@ -78,6 +78,7 @@ import dev.ahpclient.state.ChatNotLoadedException
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.HostFileTarget
 import dev.ahpclient.state.LinkTarget
+import dev.ahpclient.state.LiveTerminal
 import dev.ahpclient.state.QuickReplies
 import dev.ahpclient.state.QuickReplyMode
 import dev.ahpclient.state.Transcript
@@ -134,6 +135,7 @@ fun ChatScreen(
     onReadResource: (suspend (String) -> ResourceReadResult)? = null,
     workingDirectories: List<String> = emptyList(),
     fromCache: Boolean = false,
+    liveTerminal: ((String) -> LiveTerminal?)? = null,
 ) {
     ScreenScaffold(
         title = transcript?.title ?: "Chat",
@@ -176,6 +178,7 @@ fun ChatScreen(
             onReadResource = onReadResource,
             workingDirectories = workingDirectories,
             fromCache = fromCache,
+            liveTerminal = liveTerminal,
         )
     }
 }
@@ -212,6 +215,8 @@ fun ChatPane(
     workingDirectories: List<String> = emptyList(),
     /** What is shown is the copy kept from the last visit, not yet replaced by the host's snapshot (U1). */
     fromCache: Boolean = false,
+    /** Watches a terminal, read only, so a running tool call's block can show the end of its output as it arrives (U7). */
+    liveTerminal: ((String) -> LiveTerminal?)? = null,
 ) {
     // Kept as the text it came from: that survives the app being recreated, and a target is made from it again.
     var pendingRaw by rememberSaveable { mutableStateOf<String?>(null) }
@@ -280,6 +285,7 @@ fun ChatPane(
                             allowHostFiles = onReadResource != null,
                             onOpenRich = { req -> activeRichRequest = req },
                             modifier = Modifier.weight(1f),
+                            liveTerminal = liveTerminal,
                         )
                     }
                     error != null -> ErrorText("Could not load this chat (${error::class.simpleName}).", Modifier.padding(horizontal = 16.dp).testTag("chat_error"))
@@ -369,6 +375,7 @@ private fun TranscriptList(
     allowHostFiles: Boolean,
     onOpenRich: ((RichModalRequest) -> Unit)?,
     modifier: Modifier = Modifier,
+    liveTerminal: ((String) -> LiveTerminal?)? = null,
 ) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -450,6 +457,7 @@ private fun TranscriptList(
                         composerDraft = draft
                         scope.launch { listState.scrollToItem(0) }
                     },
+                    liveTerminal = liveTerminal,
                 )
             }
             if (loadingOlder || olderError != null || transcript.hasOlder) {

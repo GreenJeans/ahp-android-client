@@ -30,6 +30,7 @@ import dev.ahpclient.state.QuestionTarget
 import dev.ahpclient.state.ChatInteractor
 import dev.ahpclient.state.DispatchOutcome
 import dev.ahpclient.state.InteractResult
+import dev.ahpclient.state.LiveTerminal
 import dev.ahpclient.state.ModelChoice
 import dev.ahpclient.state.ManageResult
 import dev.ahpclient.state.ConfigOffer
@@ -61,6 +62,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertNotSame
 import kotlin.test.assertNull
 import kotlin.test.assertSame
@@ -2163,6 +2165,72 @@ class AppControllerTest {
             controller.closeTerminal()
             runCurrent()
 
+            val methods = connectors.single().sockets.flatMap { it.sent }.mapNotNull { it["method"]?.jsonPrimitive?.content }.toSet()
+            assertEquals(emptySet(), methods - setOf("initialize", "reconnect", "ping", "subscribe", "unsubscribe", "listSessions", "fetchTurns"))
+        }
+    }
+
+    // ---- the live tail in a running tool call's block (U7) -------------------------------------------------------
+
+    @Test
+    fun `a watched terminal is subscribed while watched, follows its output, and is let go of on close`() = runTest {
+        withRig(script = { terminalScript() }) {
+            connectToFirstHost()
+            openTerminalChat(this)
+
+            val live = assertNotNull(controller.watchTerminal(TERMINAL_REAL))
+            runCurrent()
+            assertEquals(1, subscribesTo(TERMINAL_REAL))
+            assertEquals(listOf("hello"), LiveTerminal.tail(live.state.value!!))
+
+            connectors.single().sockets.single().serverSends(actionFrame(TERMINAL_REAL, """{"type":"terminal/data","data":"more\r\n"}""", SNAPSHOT_SEQ + 1))
+            advanceTimeBy(100)
+            runCurrent()
+            assertEquals(listOf("hello", "more"), LiveTerminal.tail(live.state.value!!))
+
+            live.close()
+            live.close()
+            runCurrent()
+            assertEquals(listOf(TERMINAL_REAL), unsubscribed(), "closed once, however often close is called")
+            assertNull(assertIs<AppState.Connected>(state).open!!.terminal, "watching never opens the terminal screen")
+        }
+    }
+
+    @Test
+    fun `a watched terminal shares its subscription with the terminal screen, and neither drops the other's`() = runTest {
+        withRig(script = { terminalScript() }) {
+            connectToFirstHost()
+            openTerminalChat(this)
+
+            val live = assertNotNull(controller.watchTerminal(TERMINAL_REAL))
+            controller.openTerminal(TERMINAL_REAL)
+            runCurrent()
+            assertEquals(1, subscribesTo(TERMINAL_REAL), "one subscription for both")
+
+            live.close()
+            runCurrent()
+            assertEquals(emptyList(), unsubscribed(), "the terminal screen still holds it")
+
+            controller.closeTerminal()
+            runCurrent()
+            assertEquals(listOf(TERMINAL_REAL), unsubscribed())
+        }
+    }
+
+    @Test
+    fun `only a terminal a tool result in the open chat names is watched, and nothing is sent outside the read tier`() = runTest {
+        withRig(script = { terminalScript() }, interaction = InteractionConsent(FakeInteractionSettings(saved = true))) {
+            connectToFirstHost()
+            assertNull(controller.watchTerminal(TERMINAL_REAL), "no chat is open")
+            openTerminalChat(this)
+
+            listOf("ahp-terminal:/not-named", "agenthost-terminal://shell/other", "https://evil.example/x", CHAT_B, "").forEach {
+                assertNull(controller.watchTerminal(it), it)
+            }
+            assertEquals(emptyList(), channelsSent("subscribe").filter { it.contains("terminal") })
+
+            assertNotNull(controller.watchTerminal(TERMINAL_REAL)).close()
+            runCurrent()
             val methods = connectors.single().sockets.flatMap { it.sent }.mapNotNull { it["method"]?.jsonPrimitive?.content }.toSet()
             assertEquals(emptySet(), methods - setOf("initialize", "reconnect", "ping", "subscribe", "unsubscribe", "listSessions", "fetchTurns"))
         }

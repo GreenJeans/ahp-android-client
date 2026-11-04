@@ -46,6 +46,7 @@ import dev.ahpclient.state.ChatStore
 import dev.ahpclient.state.ExpansionState
 import dev.ahpclient.state.HostSession
 import dev.ahpclient.state.InteractResult
+import dev.ahpclient.state.LiveTerminal
 import dev.ahpclient.state.ManageResult
 import dev.ahpclient.state.ManagementCommands
 import dev.ahpclient.state.ModelOption
@@ -1256,6 +1257,22 @@ class AppController(
         if (uri !in TerminalLinks.referencedBy(shown)) return
         val store = current.session.openTerminal(uri)
         if (!_state.compareAndSet(current, current.copy(open = open.copy(terminal = OpenTerminal(uri, store))))) current.session.closeChannel(uri)
+    }
+
+    /**
+     * Watches the terminal at [uri] for the live tail in a running tool call's block in the open chat (U7), alongside the terminal
+     * screen if that is open too: the subscription is shared and counted. The same rules as [openTerminal] apply, so only an
+     * address a tool result in the open chat names is watched, and only to read. Null when there is no such chat or address.
+     * Pair every result with [LiveTerminal.close].
+     */
+    @Synchronized
+    fun watchTerminal(uri: String): LiveTerminal? {
+        val current = _state.value as? AppState.Connected ?: return null
+        val shown = current.open?.chat?.store?.state?.value ?: return null
+        if (uri !in TerminalLinks.referencedBy(shown)) return null
+        val session = current.session
+        val store = session.openTerminal(uri)
+        return LiveTerminal(store.state) { session.closeChannel(uri) }
     }
 
     /** Leaves the terminal and returns to the chat it was opened from. */
