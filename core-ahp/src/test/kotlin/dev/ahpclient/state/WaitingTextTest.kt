@@ -70,13 +70,13 @@ class WaitingTextTest {
     @Test
     fun `the Quick Settings tile is inactive when monitoring is off and counts unarchived waiting sessions when online`() {
         assertEquals(
-            MonitorTileState(active = false, label = "AHP Monitor", subtitle = "Monitoring off"),
+            MonitorTileState(active = false, label = "Hostline", subtitle = "Monitoring off"),
             MonitorTileState.from(null, emptyList(), online = false),
         )
 
         val reconnecting = MonitorStatus("Monitoring host", "Connection lost. Reconnecting…")
         assertEquals(
-            MonitorTileState(active = true, label = "AHP Monitor", subtitle = "Connection lost. Reconnecting…"),
+            MonitorTileState(active = true, label = "Hostline", subtitle = "Connection lost. Reconnecting…"),
             MonitorTileState.from(reconnecting, emptyList(), online = false),
         )
 
@@ -89,11 +89,11 @@ class WaitingTextTest {
         )
         val onlineStatus = MonitorStatus("Monitoring host", "2 active sessions · 2 need input")
         assertEquals(
-            MonitorTileState(active = true, label = "AHP Monitor", subtitle = "2 waiting"),
+            MonitorTileState(active = true, label = "Hostline", subtitle = "2 waiting"),
             MonitorTileState.from(onlineStatus, listOf(waiting1, waiting2, archivedWaiting), online = true),
         )
         assertEquals(
-            MonitorTileState(active = true, label = "AHP Monitor", subtitle = "No sessions waiting"),
+            MonitorTileState(active = true, label = "Hostline", subtitle = "No sessions waiting"),
             MonitorTileState.from(onlineStatus, listOf(archivedWaiting), online = true),
         )
     }

@@ -8,8 +8,8 @@ package dev.ahpclient.app
  */
 object AppName {
     /** The app's own name: the launcher, the sign-in screen, About. */
-    const val NAME = "AHP Client"
+    const val NAME = "Hostline"
 
     /** The Quick Settings tile. */
-    const val MONITOR = "AHP Monitor"
+    const val MONITOR = "Hostline"
 }
