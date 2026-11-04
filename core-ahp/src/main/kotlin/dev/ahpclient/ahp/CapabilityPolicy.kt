@@ -70,6 +70,12 @@ class CapabilityPolicy private constructor(
 
         val READ = CapabilityPolicy(name = "READ", methods = READ_METHODS, actionTypes = emptySet())
 
+        /**
+         * What the host suggests for the message being written (`@` and `/` mentions). It changes nothing on the host and
+         * the answer only fills the composer, so anyone who may write in a chat may ask; READ never writes, so never asks.
+         */
+        val COMPOSER_QUERIES = setOf("completions")
+
         private val INTERACT_ACTIONS = setOf(
             "chat/turnStarted",
             "chat/pendingMessageSet",
@@ -93,7 +99,7 @@ class CapabilityPolicy private constructor(
          */
         val INTERACT = CapabilityPolicy(
             name = "INTERACT",
-            methods = READ_METHODS + DISPATCH_ACTION,
+            methods = READ_METHODS + DISPATCH_ACTION + COMPOSER_QUERIES,
             actionTypes = INTERACT_ACTIONS,
         )
 
@@ -132,7 +138,7 @@ class CapabilityPolicy private constructor(
          */
         val MANAGE = CapabilityPolicy(
             name = "MANAGE",
-            methods = READ_METHODS + DISPATCH_ACTION + MANAGE_COMMANDS + MANAGE_QUERIES,
+            methods = READ_METHODS + DISPATCH_ACTION + COMPOSER_QUERIES + MANAGE_COMMANDS + MANAGE_QUERIES,
             actionTypes = INTERACT_ACTIONS + MANAGE_ACTIONS,
         )
     }

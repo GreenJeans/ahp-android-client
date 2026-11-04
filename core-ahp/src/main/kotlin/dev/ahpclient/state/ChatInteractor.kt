@@ -3,6 +3,7 @@ package dev.ahpclient.state
 import com.microsoft.agenthostprotocol.generated.ChatInputRequest
 import com.microsoft.agenthostprotocol.generated.ChatInteractivity
 import com.microsoft.agenthostprotocol.generated.ChatState
+import com.microsoft.agenthostprotocol.generated.CompletionsResult
 import com.microsoft.agenthostprotocol.generated.ConfirmationOptionKind
 import com.microsoft.agenthostprotocol.generated.Message
 import com.microsoft.agenthostprotocol.generated.ResponsePartError
@@ -186,7 +187,29 @@ class ChatInteractor(
     private val config: () -> ChatConfigView = { ChatConfigView.NONE },
     /** The model id the host reports for this chat's session (E6), used when the chat itself has not named a model yet. */
     private val sessionModel: () -> String? = { null },
+    /** The characters the host wants completions for (`@`, `/`), as it said in `initialize`. None means the composer never asks. */
+    private val completionTriggers: () -> List<String> = { emptyList() },
+    /** Asks the host what it suggests for [text] with the cursor at [offset] in this chat's message box. */
+    private val completions: suspend (chatUri: String, text: String, offset: Int) -> CompletionsResult? = { _, _, _ -> null },
 ) {
+    /**
+     * What the host suggests for the word at the end of [text], or nothing. Asked only when the chat can be written to and [text]
+     * ends in a word that starts with one of the host's trigger characters. Typing never waits on this and never fails because of
+     * it: a host that does not answer, refuses, or sends something that does not fit the text gives an empty list.
+     */
+    suspend fun suggest(text: String): List<Suggestion> {
+        usable() ?: return emptyList()
+        Completions.wordStart(text, completionTriggers()) ?: return emptyList()
+        val answer = try {
+            completions(chatUri, text, text.length)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        } ?: return emptyList()
+        return Completions.suggestions(answer.items, text)
+    }
+
     /** [model] as it goes on the wire: with the host's own defaults for the settings the person left alone (see [ModelOptions.prepare]). */
     private fun wire(model: ModelChoice?): ModelChoice? = model?.let { ModelOptions.prepare(models(), it) }
 
@@ -239,7 +262,7 @@ class ChatInteractor(
         if (model != null && !ModelOptions.isOffered(models(), model)) return InteractResult.InvalidModel
         val resolved = resolveAgent(agent, state) ?: return InteractResult.InvalidAgent
         attachmentProblem(attachments, model)?.let { return InteractResult.InvalidAttachments(it) }
-        val files = attachments.map { it.toWire() }
+        val files = Completions.wires(text, attachments)
         // A turn already running cannot take a second one: the message waits in the queue and starts when it ends.
         val action = if (state.activeTurn == null) {
             ChatActions.startTurn(newId(), now(), text, model = wire(model), agent = resolved.uri, attachments = files)
@@ -297,7 +320,7 @@ class ChatInteractor(
         if (model != null && !ModelOptions.isOffered(models(), model)) return InteractResult.InvalidModel
         val resolved = resolveAgent(agent, state) ?: return InteractResult.InvalidAgent
         attachmentProblem(attachments, model)?.let { return InteractResult.InvalidAttachments(it) }
-        return deliver(ChatActions.steerTurn(newId(), text, wire(model), resolved.uri, attachments.map { it.toWire() }))
+        return deliver(ChatActions.steerTurn(newId(), text, wire(model), resolved.uri, Completions.wires(text, attachments)))
     }
 
     /** Explicitly queues a user message to run after the active turn (or starts a turn if the chat is already idle). */
@@ -317,7 +340,7 @@ class ChatInteractor(
             val stopped = deliver(ChatActions.cancelTurn(active.id))
             if (!InteractMessages.succeeded(stopped)) return stopped
         }
-        return deliver(ChatActions.startTurn(newId(), now(), text, model = wire(model), agent = resolved.uri, attachments = attachments.map { it.toWire() }))
+        return deliver(ChatActions.startTurn(newId(), now(), text, model = wire(model), agent = resolved.uri, attachments = Completions.wires(text, attachments)))
     }
 
     /**
