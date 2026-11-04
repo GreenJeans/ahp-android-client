@@ -35,6 +35,7 @@ import dev.ahpclient.state.ModelChoice
 import dev.ahpclient.state.ModelOption
 import dev.ahpclient.state.ModelSetting
 import dev.ahpclient.state.ModelSettingValue
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.performScrollTo
@@ -375,6 +376,29 @@ class InteractionUiTest {
         rule.onNodeWithTag("model_button").performClick()
 
         rule.onNodeWithTag("model_default").assertIsDisplayed().assertIsSelected()
+    }
+
+    @Test
+    fun onANarrowPhoneTheChipsScrollSidewaysAndSendStaysInView() {
+        val longAgent = AgentChoice("file:///a/.github/agents/release-coordinator.agent.md", "Release coordinator for the mobile apps", null)
+        val longModel = ModelOption("long", "Claude Sonnet 5.5 Extended Context Preview", sonnet.settings)
+        rule.setContent {
+            AhpTheme {
+                androidx.compose.foundation.layout.Box(Modifier.size(320.dp, 640.dp)) {
+                    ChatScreen(
+                        transcript(), null, false, null, ConnState.Online, {}, {}, {},
+                        actions = actions(Calls(), models = listOf(longModel), modelInUse = ModelChoice("long", mapOf("thinking" to "high")), agents = listOf(longAgent), agentInUse = longAgent.uri, slashCommands = listOf(SlashCommand("help", kind = SlashCommandKind.BUILT_IN))),
+                    )
+                }
+            }
+        }
+
+        val range = rule.onNodeWithTag("composer_chip_row").fetchSemanticsNode().config.getOrNull(SemanticsProperties.HorizontalScrollAxisRange)
+        assertTrue("the chip row scrolls sideways", range != null && range.maxValue() > 0f)
+        rule.onNodeWithTag("composer_send").assertIsDisplayed()
+        // The model is cut on screen but spoken whole.
+        rule.onNodeWithTag("model_button").assertContentDescriptionEquals("Model: Claude Sonnet 5.5 Extended Context Preview · Thorough")
+        rule.onNodeWithTag("model_button").performScrollTo().assertIsDisplayed()
     }
 
     private fun showInWindowOfHeight(heightDp: Int, agents: List<AgentChoice> = emptyList(), agentInUse: String? = null) = rule.setContent {
@@ -1412,9 +1436,14 @@ class InteractionUiTest {
         )
 
         rule.onNodeWithTag("quick_reply_bar").assertDoesNotExist()
+        // An icon in the text field, out of the chip row (U3), with its spoken label and a full-size touch target.
+        rule.onNode(hasTestTag("quick_reply_suggest_button") and hasAnyAncestor(hasTestTag("composer_input"))).assertExists()
+        rule.onNode(hasTestTag("quick_reply_suggest_button") and hasAnyAncestor(hasTestTag("composer_chip_row"))).assertDoesNotExist()
+        rule.onNodeWithTag("quick_reply_suggest_button").assertContentDescriptionEquals("Suggest quick replies").assertHeightIsAtLeast(48.dp)
         rule.onNodeWithTag("quick_reply_suggest_button").assertIsDisplayed().performClick()
 
         rule.onNodeWithTag("quick_reply_bar").assertIsDisplayed()
+        rule.onNodeWithTag("quick_reply_suggest_button").assertDoesNotExist()
         rule.onNodeWithTag("quick_reply_summary").assertTextContains("AI proposed options", substring = true)
         rule.onNodeWithTag("quick_reply_chip_0").assertTextContains("Run unit tests", substring = true).performClick()
         rule.waitUntil(5_000) { textInBox("Please run the unit tests now.") }

@@ -163,7 +163,7 @@ internal class HostScript(
         return JsonObject(snapshot + ("state" to JsonObject(state + ("terminals" to Json.parseToJsonElement(terminals)))))
     }
 
-    private fun subscribeReply(id: Long?, channel: String): String? = when {
+    internal fun subscribeReply(id: Long?, channel: String): String? = when {
         channel.startsWith("ahp-terminal:/") || channel.startsWith("agenthost-terminal://") -> when {
             onTerminalSubscribe != null -> onTerminalSubscribe.invoke(id, channel)
             channel in missingSessions -> error(id, -32008, "no such terminal")

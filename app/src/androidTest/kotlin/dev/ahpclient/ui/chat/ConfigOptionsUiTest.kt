@@ -174,7 +174,8 @@ class ConfigOptionsUiTest {
     fun withOnlyTheSettingsOfferedTheAgentChipIsThereAndTheDialogHasNoAgentList() {
         show(actions(Calls()))
 
-        rule.onNodeWithTag("agent_button").assertTextContains("Default agent")
+        // With no agents to pick, the chip only opens mode and approvals, so it is named for that, not "Default agent".
+        rule.onNodeWithTag("agent_button").assertTextContains("Chat options").assertContentDescriptionEquals("Chat options")
         open()
 
         rule.onNodeWithTag("options_dialog").assertIsDisplayed()

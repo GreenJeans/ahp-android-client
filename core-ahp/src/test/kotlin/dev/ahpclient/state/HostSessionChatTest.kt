@@ -25,6 +25,9 @@ import kotlinx.serialization.json.longOrNull
 /** How many latest turns the app asks the host for when it subscribes to a chat. */
 private const val CHAT_TURNS_ASKED = 10L
 
+/** How many chats let go of keep their last state for the next visit. */
+private const val CHATS_KEPT = 6
+
 /** Chats through [HostSession]: opening, subscribing, routing, closing and surviving a reconnect, like sessions do. */
 @OptIn(ExperimentalCoroutinesApi::class)
 class HostSessionChatTest {
@@ -125,6 +128,104 @@ class HostSessionChatTest {
         runCurrent()
 
         assertEquals(CHAT_TURNS_ASKED, rig.askedTurns(CHAT_A))
+    }
+
+    // ---- the chat cache (U1) ------------------------------------------------------------------------------------
+
+    /** A host whose chat subscribes go unanswered while [Silence.on], as a slow host's would. */
+    private class Silence {
+        var on = false
+        lateinit var script: HostScript
+
+        /** The chat subscribes left unanswered, to answer late with [answer]. */
+        val held = mutableListOf<Pair<Long?, String>>()
+
+        fun answer(): List<String> = held.mapNotNull { (id, channel) -> script.subscribeReply(id, channel) }.also { held.clear() }
+    }
+
+    private fun silentWhen(silence: Silence, missing: Set<String> = emptySet()): HostScript =
+        HostScript(missingSessions = missing, onChatSubscribe = { id, params ->
+            val channel = params["channel"]!!.jsonPrimitive.content
+            if (silence.on) null.also { silence.held += id to channel } else silence.script.subscribeReply(id, channel)
+        }).also { silence.script = it }
+
+    @Test
+    fun `a chat opened again shows what it last showed, as a copy, until the host's snapshot replaces it`() = runTest {
+        val silence = Silence()
+        val rig = rig(silentWhen(silence)).start()
+        val first = rig.host.openChat(CHAT_A)
+        runCurrent()
+        rig.socket.serverSends(actionFrame(CHAT_A, TURN_STARTED, SNAPSHOT_SEQ + 1))
+        rig.socket.serverSends(actionFrame(CHAT_A, MARKDOWN_PART, SNAPSHOT_SEQ + 2))
+        rig.socket.serverSends(actionFrame(CHAT_A, deltaJson("seen before"), SNAPSHOT_SEQ + 3))
+        runCurrent()
+        settle()
+        assertFalse(first.cached.value)
+        rig.host.closeChat(CHAT_A)
+
+        silence.on = true
+        val again = rig.host.openChat(CHAT_A)
+        runCurrent()
+        assertTrue(again.cached.value, "shown as a copy while the host has not answered")
+        assertEquals("seen before", again.state.value!!.markdownText())
+
+        // An action that arrives meanwhile is not folded into the copy; it waits for the snapshot like any early action.
+        rig.socket.serverSends(actionFrame(CHAT_A, deltaJson(" and more"), SNAPSHOT_SEQ + 4))
+        runCurrent()
+        settle()
+        assertEquals("seen before", again.state.value!!.markdownText())
+
+        // The slow host answers at last.
+        silence.answer().forEach(rig.socket::serverSends)
+        runCurrent()
+        settle()
+        assertFalse(again.cached.value, "the snapshot replaced the copy")
+        assertNull(again.state.value!!.activeTurn, "what is shown is the host's snapshot, not the copy")
+    }
+
+    @Test
+    fun `only the latest chats are kept, and the oldest is dropped`() = runTest {
+        val silence = Silence()
+        val rig = rig(silentWhen(silence)).start()
+        val uris = (0..CHATS_KEPT).map { "ahp-chat:/00000000-0000-4000-8000-0000000000${10 + it}" }
+        uris.forEach { uri ->
+            rig.host.openChat(uri)
+            runCurrent()
+            rig.host.closeChat(uri)
+        }
+
+        silence.on = true
+        val oldest = rig.host.openChat(uris.first())
+        val newest = rig.host.openChat(uris.last())
+        runCurrent()
+
+        assertNull(oldest.state.value, "the oldest of ${uris.size} chats was not kept")
+        assertFalse(oldest.cached.value)
+        assertTrue(newest.cached.value)
+    }
+
+    @Test
+    fun `nothing is kept once the session stops, nor for a chat the host says is gone`() = runTest {
+        val silence = Silence()
+        val rig = rig(silentWhen(silence, missing = setOf(CHAT_B))).start()
+        rig.host.openChat(CHAT_A)
+        rig.host.openChat(CHAT_B)
+        runCurrent()
+        assertIs<ChatGoneException>(rig.host.openChat(CHAT_B).error.value)
+        rig.host.closeChat(CHAT_B)
+        rig.host.closeChat(CHAT_B)
+        rig.host.closeChat(CHAT_A)
+
+        silence.on = true
+        val gone = rig.host.openChat(CHAT_B)
+        runCurrent()
+        assertFalse(gone.cached.value, "a chat the host removed is not shown from the cache")
+        rig.host.closeChat(CHAT_B)
+
+        rig.host.stop()
+        val afterStop = rig.host.openChat(CHAT_A)
+        assertNull(afterStop.state.value)
+        assertFalse(afterStop.cached.value)
     }
 
     @Test

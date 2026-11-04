@@ -89,12 +89,16 @@ internal fun TranscriptRow(
     allowHostFiles: Boolean = false,
     onOpenRich: ((RichModalRequest) -> Unit)? = null,
     hasOlder: Boolean = false,
+    /** Opens the reply of the turn with this id in reader view; only offered on turns in [readableTurns]. */
+    onRead: ((String) -> Unit)? = null,
+    readableTurns: Set<String> = emptySet(),
     onLoadDraft: (String) -> Unit = {},
 ) {
     when (row) {
         is TranscriptRowModel.Single -> ItemRow(
             row.item, onOpenLink, modifier, row.item.key in expanded, { onToggle(row.item.key) },
             actions, onOpenSubagent, onOpenTerminal, allowHostFiles, onOpenRich, hasOlder, onLoadDraft,
+            onRead = onRead?.takeIf { (row.item as? TranscriptItem.TurnEnd)?.turnId in readableTurns },
         )
         is TranscriptRowModel.Steps -> StepsRow(
             row, onOpenLink, modifier, expanded, onToggle,
@@ -117,6 +121,7 @@ private fun ItemRow(
     onOpenRich: ((RichModalRequest) -> Unit)?,
     hasOlder: Boolean = false,
     onLoadDraft: (String) -> Unit = {},
+    onRead: ((String) -> Unit)? = null,
 ) {
     when (item) {
         is TranscriptItem.User -> UserRow(item, actions, hasOlder, onLoadDraft, modifier)
@@ -124,7 +129,7 @@ private fun ItemRow(
         is TranscriptItem.Reasoning -> ReasoningBlock(item, expanded, onToggle, onOpenLink, modifier, allowHostFiles, onOpenRich)
         is TranscriptItem.Tool -> ToolCallBlock(item, expanded, onToggle, actions, onOpenSubagent, onOpenTerminal, onOpenRich, modifier)
         is TranscriptItem.Notice -> NoticeRow(item, modifier)
-        is TranscriptItem.TurnEnd -> TurnEndRow(item, actions, modifier)
+        is TranscriptItem.TurnEnd -> TurnEndRow(item, actions, modifier, onRead)
         is TranscriptItem.Question -> {
             val form = item.form
             if (actions != null && form != null && !item.answered) {
@@ -492,7 +497,7 @@ private fun AgentBubble(
 
 /** The line that ends a turn: that the agent has stopped, how it ended, how long it worked, and actions to retry, fork, or open a side chat. */
 @Composable
-private fun TurnEndRow(item: TranscriptItem.TurnEnd, actions: ChatActionsUi?, modifier: Modifier) {
+private fun TurnEndRow(item: TranscriptItem.TurnEnd, actions: ChatActionsUi?, modifier: Modifier, onRead: ((String) -> Unit)? = null) {
     val colors = MaterialTheme.colorScheme
     val (glyph, word) = when (item.outcome) {
         TurnOutcome.DONE -> Glyph.DONE to "Done"
@@ -510,17 +515,37 @@ private fun TurnEndRow(item: TranscriptItem.TurnEnd, actions: ChatActionsUi?, mo
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}.testTag("row_turn_end"),
+            modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            GlyphIcon(glyph, Modifier.size(14.dp))
-            Text(
-                text,
-                style = MaterialTheme.typography.labelMedium,
-                color = if (item.outcome == TurnOutcome.FAILED) colors.error else colors.onSurfaceVariant,
-                modifier = Modifier.padding(start = 6.dp).testTag("turn_end_text"),
-            )
+            Row(
+                modifier = Modifier.semantics(mergeDescendants = true) {}.testTag("row_turn_end"),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                GlyphIcon(glyph, Modifier.size(14.dp))
+                Text(
+                    text,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (item.outcome == TurnOutcome.FAILED) colors.error else colors.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 6.dp).testTag("turn_end_text"),
+                )
+            }
+            // Beside the duration, on every turn that wrote something: opens the reply full screen, to read without the chat around it.
+            if (onRead != null) {
+                TextButton(
+                    onClick = { onRead(item.turnId) },
+                    modifier = Modifier
+                        .padding(start = 4.dp)
+                        .heightIn(min = 48.dp)
+                        .semantics { contentDescription = "Read this reply full screen" }
+                        .testTag("turn_read_${item.turnId}"),
+                ) {
+                    Icon(AppIcons.BookOpen, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Read", style = MaterialTheme.typography.labelMedium)
+                }
+            }
         }
         if (actions != null && item.turnId.isNotBlank()) {
             val retryLabel = when {

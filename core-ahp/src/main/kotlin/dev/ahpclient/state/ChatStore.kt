@@ -29,6 +29,9 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 
+/** What a chat showed when it was last let go of, kept so that opening it again is not a blank wait (see [ChatStore.prime]). */
+internal class CachedChat(val state: ChatState, val ownConfig: Map<String, JsonElement>)
+
 /** The host reported that this chat no longer exists. */
 class ChatGoneException(val uri: String) : Exception("Chat $uri is gone")
 
@@ -75,6 +78,14 @@ class ChatStore internal constructor(
      */
     val ownConfig: StateFlow<Map<String, JsonElement>> = _ownConfig.asStateFlow()
 
+    private val _cached = MutableStateFlow(false)
+
+    /**
+     * True while [state] is the copy kept from the last time this chat was open (see [HostSession]), shown so the screen is not
+     * blank while the host's snapshot is on its way. Nothing may act on it: it can be out of date. The snapshot replaces it.
+     */
+    val cached: StateFlow<Boolean> = _cached.asStateFlow()
+
     private val _loadingOlder = MutableStateFlow(false)
     val loadingOlder: StateFlow<Boolean> = _loadingOlder.asStateFlow()
 
@@ -116,10 +127,31 @@ class ChatStore internal constructor(
     /** Connections lost, one after another, while this chat's subscription was waiting for its snapshot. A snapshot clears it. */
     private var interrupted = 0
 
+    /**
+     * Shows [copy], kept from an earlier visit, until the first snapshot arrives. Only for a store that has had no snapshot yet. The
+     * copy is not folded into: actions are held for the snapshot as before, and no older turns are asked for from it.
+     */
+    internal fun prime(copy: CachedChat) {
+        platformSynchronized(lock) {
+            if (latest != null) return
+            _state.value = copy.state
+            _ownConfig.value = copy.ownConfig
+            _cached.value = true
+        }
+    }
+
+    /** What this chat showed last, to keep for its next visit; null when there is nothing worth keeping. */
+    internal fun keepable(): CachedChat? = platformSynchronized(lock) {
+        val shown = _state.value ?: return@platformSynchronized null
+        if (_error.value is ChatGoneException) return@platformSynchronized null
+        CachedChat(shown, _ownConfig.value)
+    }
+
     /** @return false when [snapshot] holds no chat state, so nothing was seeded. */
     internal fun seed(snapshot: Snapshot, facts: ConfigFacts? = null): Boolean {
         val chat = (snapshot.state as? SnapshotState.Chat)?.value ?: return false
         platformSynchronized(lock) {
+            _cached.value = false
             latest = chat
             _error.value = null
             interrupted = 0
