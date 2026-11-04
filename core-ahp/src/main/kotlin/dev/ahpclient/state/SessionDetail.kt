@@ -135,12 +135,11 @@ data class SessionDetail(
     /** The chats in the order of the tabs: the main chat first, then the others as the host lists them. */
     val tabs: List<ChatRow> get() = mainChat?.let { main -> listOf(main) + chats.filter { it.uri != main.uri } }.orEmpty()
 
-    /** How many non-main chats in this session are archived. */
-    val archivedChatCount: Int get() = chats.count { it.isArchived && !it.isMain }
-
-    /** The tabs to show on screen: archived non-main chats are hidden unless [showArchived] is true. */
-    fun visibleTabs(showArchived: Boolean = false): List<ChatRow> =
-        tabs.filter { showArchived || !it.isArchived || it.isMain }
+    /**
+     * How many non-main chats in this session are archived and so left out until archived chats are shown. One waiting on the
+     * person is always shown (see [ChatSwitcher.of]), so it is not counted.
+     */
+    val archivedChatCount: Int get() = chats.count { it.isArchived && !it.isMain && it.state != ActivityState.NEEDS_INPUT }
 
     companion object {
         /** The hint every pending request carries: answering happens in VS Code, never here. */

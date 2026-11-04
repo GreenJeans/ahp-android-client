@@ -1161,7 +1161,7 @@ class SessionScreensTest {
     fun theSwitcherGroupsChatsByRelationWithWaitingFirstAndTheAgentsChatsFolded() {
         showDetail(detailState(chats = relatedChats, defaultChat = mainChatUri))
 
-        rule.onNodeWithTag("chat_switcher_open").assertContentDescriptionEquals("6 other chats, 1 waiting on you, 1 unread")
+        rule.onNodeWithTag("chat_switcher_open").assertContentDescriptionEquals("6 other chats, 1 waiting on you")
         rule.onNodeWithTag("chat_switcher_open").performClick()
         rule.waitForIdle()
 
@@ -1211,12 +1211,110 @@ class SessionScreensTest {
     }
 
     @Test
-    fun anUnreadChatThatIsNotShownMarksTheControlEvenWhenNothingWaits() {
+    fun anUnreadChatAloneDoesNotMarkTheControlButStillMarksItsRow() {
         val chats = listOf("{$mainMarker}", relatedChat("u1", "Fresh output", status = 1)).joinToString(",", "[", "]")
         showDetail(detailState(chats = chats, defaultChat = mainChatUri))
 
-        rule.onNodeWithTag("chat_switcher_open").assertContentDescriptionEquals("1 other chat, 1 unread")
+        // The control's dot is kept for chats waiting on the person; unread alone leaves it, and its description, quiet.
+        rule.onNodeWithTag("chat_switcher_open").assertContentDescriptionEquals("1 other chat")
+        rule.onAllNodesWithTag("chat_switcher_dot", useUnmergedTree = true).assertCountEquals(0)
+
+        rule.onNodeWithTag("chat_switcher_open").performClick()
+        rule.waitForIdle()
+        rule.onAllNodesWithTag("chat_switcher_row").filter(hasContentDescriptionContaining("Fresh output")).onFirst()
+            .assertContentDescriptionEquals("Fresh output, Unread")
+        rule.onAllNodesWithTag("chat_switcher_row_dot", useUnmergedTree = true).assertCountEquals(1)
+    }
+
+    /** A fork, a hidden chat, a hidden one started by a tool, and a hidden one waiting on the person. */
+    private val hiddenChats = listOf(
+        "{$mainMarker}",
+        relatedChat("f1", "Try plan B", extra = ""","origin":{"kind":"fork","chat":"$mainChatUri","turnId":"t2"}"""),
+        relatedChat("h1", "Index the repo", extra = ""","interactivity":"hidden""""),
+        relatedChat("h2", "Summarise the logs", extra = ""","origin":{"kind":"tool","chat":"$mainChatUri","toolCallId":"c1"},"interactivity":"hidden""""),
+        relatedChat("h3", "Allow the index", status = 56, extra = ""","interactivity":"hidden""""),
+    ).joinToString(",", "[", "]")
+
+    @Test
+    fun hiddenChatsAreLeftOutUntilAskedForAndAWaitingOneStillShows() {
+        showDetail(detailState(chats = hiddenChats, defaultChat = mainChatUri))
+
+        // The hidden chats are not counted on the control, except the one waiting on the person, which also lights its dot.
+        rule.onNodeWithTag("chat_switcher_open").assertContentDescriptionEquals("2 other chats, 1 waiting on you")
         rule.onAllNodesWithTag("chat_switcher_dot", useUnmergedTree = true).assertCountEquals(1)
+        rule.onNodeWithTag("chat_switcher_open").performClick()
+        rule.waitForIdle()
+
+        rule.onAllNodesWithTag("chat_switcher_group", useUnmergedTree = true).let { headings ->
+            headings.assertCountEquals(2)
+            headings[0].assertTextEquals("Waiting on you")
+            headings[1].assertTextEquals("Forks")
+        }
+        rule.onAllNodesWithTag("chat_switcher_row").let { rows ->
+            rows.assertCountEquals(3)
+            rows[1].assertContentDescriptionEquals("Allow the index, Internal to the agent, Needs you")
+            rows[2].assertContentDescriptionEquals("Try plan B, Fork of the main chat")
+        }
+        val toggle = rule.onNodeWithTag("chat_switcher_show_hidden")
+        toggle.performScrollTo().assertTextEquals("Show hidden chats (2)").assertTouchTargetAtLeast(48.dp)
+        toggle.assert(SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.StateDescription, "Off"))
+        toggle.performClick()
+        rule.waitForIdle()
+
+        rule.onAllNodesWithTag("chat_switcher_group", useUnmergedTree = true).let { headings ->
+            headings.assertCountEquals(3)
+            headings[2].assertTextEquals("Hidden chats")
+        }
+        rule.onAllNodesWithTag("chat_switcher_row").let { rows ->
+            rows.assertCountEquals(5)
+            rows[3].assertContentDescriptionEquals("Index the repo, Internal to the agent")
+            rows[4].assertContentDescriptionEquals("Summarise the logs, Started by the agent, internal to the agent")
+        }
+        rule.onNodeWithTag("chat_switcher_show_hidden").performScrollTo().assertTextEquals("Show hidden chats")
+            .assert(SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.StateDescription, "On"))
+        rule.onNodeWithTag("chat_switcher_open").assertContentDescriptionEquals("4 other chats, 1 waiting on you")
+    }
+
+    @Test
+    fun aSessionWhoseOnlyOtherChatsAreHiddenStillOffersTheControl() {
+        val chats = listOf("{$mainMarker}", relatedChat("h1", "Index the repo", extra = ""","interactivity":"hidden"""")).joinToString(",", "[", "]")
+        showDetail(detailState(chats = chats, defaultChat = mainChatUri))
+
+        rule.onNodeWithTag("chat_switcher_open").assertContentDescriptionEquals("1 hidden chat").assertTouchTargetAtLeast(48.dp)
+        rule.onAllNodesWithTag("chat_switcher_dot", useUnmergedTree = true).assertCountEquals(0)
+        rule.onNodeWithTag("chat_switcher_open").performClick()
+        rule.waitForIdle()
+
+        rule.onAllNodesWithTag("chat_switcher_row").assertCountEquals(1)
+        rule.onNodeWithTag("chat_switcher_show_hidden").assertTextEquals("Show hidden chats (1)").performClick()
+        rule.waitForIdle()
+        rule.onAllNodesWithTag("chat_switcher_row").assertCountEquals(2)
+        rule.onAllNodesWithTag("chat_switcher_row")[1].assertContentDescriptionEquals("Index the repo, Internal to the agent")
+    }
+
+    @Test
+    fun anArchivedChatWaitingOnThePersonShowsWithArchivedChatsOffAndCanBeOpened() {
+        val asked = mutableListOf<String>()
+        val chats = listOf(
+            "{$mainMarker}",
+            relatedChat("o1", "Old idea", status = 97, extra = ""","origin":{"kind":"fork","chat":"$mainChatUri","turnId":"t2"}"""),
+            relatedChat("o2", "Old question", status = 120, extra = ""","origin":{"kind":"fork","chat":"$mainChatUri","turnId":"t3"}"""),
+        ).joinToString(",", "[", "]")
+        showDetail(detailState(chats = chats, defaultChat = mainChatUri), onSelectChat = { asked += it })
+
+        rule.onNodeWithTag("chat_switcher_open").assertContentDescriptionEquals("1 other chat, 1 waiting on you")
+        rule.onNodeWithTag("chat_switcher_open").performClick()
+        rule.waitForIdle()
+
+        rule.onAllNodesWithTag("chat_switcher_row").let { rows ->
+            rows.assertCountEquals(2)
+            rows[1].assertContentDescriptionEquals("Old question, Fork of the main chat, Needs you, Archived")
+            rows[1].performClick()
+        }
+        rule.waitForIdle()
+        // Archived chats are still off, yet the waiting one stays on screen rather than falling back to the main chat.
+        assertEquals(listOf("ahp-chat://default/o2"), asked)
+        rule.onNodeWithTag("chat_body").assertTextEquals("chat body: ahp-chat://default/o2")
     }
 
     @Test

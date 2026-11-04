@@ -48,13 +48,15 @@ import dev.ahpclient.state.SwitcherRow
 /**
  * The way between a session's chats: the main chat, one tap away, and a single control for every other chat ("2 other
  * chats") that opens [ChatSwitcherSheet]. When one of the others is on screen the control carries its title, so it is clear
- * which chat is shown. A session with only its main chat needs neither, so nothing is drawn. A dot marks a chat that is
- * waiting on the person or unread, and each control's spoken description says which, so colour is never the only cue.
+ * which chat is shown. A session with only its main chat needs neither, so nothing is drawn; one whose other chats are all
+ * hidden still gets the control ("1 hidden chat"), so they can be reached. The main chat's chip carries a dot when it is
+ * waiting on the person or unread; the other-chats control carries one only when some other chat is waiting on the person
+ * (unread shows on the rows of the sheet). Each spoken description says what its dot means, so colour is never the only cue.
  */
 @Composable
 internal fun ChatSwitcherBar(switcher: ChatSwitcher, onSelect: (String) -> Unit, onOpen: () -> Unit) {
     val main = switcher.main ?: return
-    if (switcher.otherCount == 0) return
+    if (!switcher.hasOthers) return
     val shownOther = switcher.others.firstOrNull { it.shown }
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).testTag("chat_switcher"),
@@ -77,7 +79,7 @@ internal fun ChatSwitcherBar(switcher: ChatSwitcher, onSelect: (String) -> Unit,
             onClick = onOpen,
             label = {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    if (switcher.marked) Dot(switcher.needsYouCount > 0, "chat_switcher_dot")
+                    if (switcher.marked) Dot(needsYou = true, "chat_switcher_dot")
                     if (shownOther != null) {
                         Text(shownOther.title, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                         Text("· ${switcher.label}", maxLines = 1)
@@ -99,11 +101,19 @@ internal fun ChatSwitcherBar(switcher: ChatSwitcher, onSelect: (String) -> Unit,
 /**
  * Every chat of the session, from the bottom of the screen: the main chat first, then the groups of [ChatSwitcher]. A chat
  * sits under the one it came from; the agent's own chats start folded, and their heading still says how many there are and
- * how many are unread. Tapping a chat shows it, the same as the tabs did.
+ * how many are unread. Tapping a chat shows it, the same as the tabs did. When the host marks some chats hidden, a toggle at
+ * the end ("Show hidden chats (2)") lists them in a group of their own; [showHidden] is held by the caller, which builds
+ * [switcher] with it.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun ChatSwitcherSheet(switcher: ChatSwitcher, onSelect: (String) -> Unit, onDismiss: () -> Unit) {
+internal fun ChatSwitcherSheet(
+    switcher: ChatSwitcher,
+    onSelect: (String) -> Unit,
+    onDismiss: () -> Unit,
+    showHidden: Boolean = false,
+    onToggleHidden: () -> Unit = {},
+) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -118,8 +128,25 @@ internal fun ChatSwitcherSheet(switcher: ChatSwitcher, onSelect: (String) -> Uni
             Text("Chats", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 24.dp).semantics { heading() })
             switcher.main?.let { SwitcherRowItem(it, onSelect) }
             switcher.groups.forEach { group -> SwitcherGroupItems(group, onSelect) }
+            if (switcher.hiddenCount > 0) ShowHiddenToggle(switcher.hiddenCount, showHidden, onToggleHidden)
         }
     }
+}
+
+/** Lists or leaves out the chats the host marks hidden. Its name says how many are left out while off; its state says on or off. */
+@Composable
+private fun ShowHiddenToggle(count: Int, on: Boolean, onToggle: () -> Unit) {
+    FilterChip(
+        selected = on,
+        onClick = onToggle,
+        label = { Text(if (on) "Show hidden chats" else "Show hidden chats ($count)") },
+        leadingIcon = if (on) ({ Icon(AppIcons.Check, contentDescription = null, modifier = Modifier.size(18.dp)) }) else null,
+        modifier = Modifier
+            .padding(horizontal = 24.dp, vertical = 8.dp)
+            .heightIn(min = 48.dp)
+            .semantics { stateDescription = if (on) "On" else "Off" }
+            .testTag("chat_switcher_show_hidden"),
+    )
 }
 
 @Composable

@@ -158,12 +158,14 @@ fun SessionScreen(
     }
 
     var showArchivedChats by rememberSaveable { mutableStateOf(false) }
-    val visibleTabs = remember(detail, showArchivedChats) { detail?.visibleTabs(showArchivedChats).orEmpty() }
-    val tabUris = visibleTabs.map { it.uri }
+    var showHiddenChats by rememberSaveable { mutableStateOf(false) }
     // The other chats are reached through one control and a sheet (U5), not a tab each: most of them do not need the person.
-    val switcher = remember(detail, shownChat, showArchivedChats, chatTurnNumber) {
-        detail?.let { ChatSwitcher.of(it.chats, shownChat, showArchivedChats, chatTurnNumber) } ?: ChatSwitcher.EMPTY
+    val switcher = remember(detail, shownChat, showArchivedChats, showHiddenChats, chatTurnNumber) {
+        detail?.let { ChatSwitcher.of(it.chats, shownChat, showArchived = showArchivedChats, showHidden = showHiddenChats, turnNumber = chatTurnNumber) }
+            ?: ChatSwitcher.EMPTY
     }
+    // A chat can be on screen only while the switcher lists it: an archived or hidden one goes back to the main chat when left out.
+    val tabUris = switcher.reachable
     var showSwitcher by rememberSaveable { mutableStateOf(false) }
     val canShowChat = detail != null && detail.phase != SessionPhase.FAILED
     LaunchedEffect(tabUris, shownChat, canShowChat) {
@@ -239,7 +241,7 @@ fun SessionScreen(
             }
         }
     }
-    if (showSwitcher && switcher.otherCount > 0) {
+    if (showSwitcher && switcher.hasOthers) {
         ChatSwitcherSheet(
             switcher = switcher,
             onSelect = { uri ->
@@ -247,6 +249,8 @@ fun SessionScreen(
                 onSelectChat(uri)
             },
             onDismiss = { showSwitcher = false },
+            showHidden = showHiddenChats,
+            onToggleHidden = { showHiddenChats = !showHiddenChats },
         )
     }
     if (showDetails && detail != null) {

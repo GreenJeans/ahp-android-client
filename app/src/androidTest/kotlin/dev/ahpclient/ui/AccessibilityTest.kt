@@ -15,6 +15,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.tryPerformAccessibilityChecks
 import androidx.compose.ui.unit.dp
@@ -446,7 +447,8 @@ class AccessibilityTest {
             "chats":[{"resource":"ahp-chat://default/x","title":"Main chat","status":33,"modifiedAt":"2026-10-26T10:29:00.000Z"},
                      {"resource":"ahp-chat://default/f","title":"Try plan B","status":1,"modifiedAt":"2026-10-26T10:28:00.000Z","origin":{"kind":"fork","chat":"ahp-chat://default/x","turnId":"t1"}},
                      {"resource":"ahp-chat://default/w","title":"Side chat waiting","status":56,"modifiedAt":"2026-10-26T10:28:00.000Z","origin":{"kind":"sideChat","chat":"ahp-chat://default/x","turnId":"t2"}},
-                     {"resource":"ahp-chat://default/a","title":"Explore the repo","status":33,"modifiedAt":"2026-10-26T10:28:00.000Z","origin":{"kind":"tool","chat":"ahp-chat://default/x","toolCallId":"c1"}}]}""",
+                     {"resource":"ahp-chat://default/a","title":"Explore the repo","status":33,"modifiedAt":"2026-10-26T10:28:00.000Z","origin":{"kind":"tool","chat":"ahp-chat://default/x","toolCallId":"c1"}},
+                     {"resource":"ahp-chat://default/h","title":"Index the repo","status":33,"modifiedAt":"2026-10-26T10:28:00.000Z","interactivity":"hidden"}]}""",
     )
 
     @Test
@@ -460,6 +462,11 @@ class AccessibilityTest {
 
         // The agent's chats, folded at first, are checked unfolded too.
         rule.onNodeWithTag("chat_switcher_group_toggle").performClick()
+        rule.waitForIdle()
+        check()
+
+        // And with the hidden chats shown, the toggle on and their group listed.
+        rule.onNodeWithTag("chat_switcher_show_hidden").performScrollTo().performClick()
         rule.waitForIdle()
         check()
     }

@@ -103,22 +103,82 @@ class ChatSwitcherTest {
         // The relation is still said on a waiting row, so it is clear where it came from.
         assertEquals("Started by the agent", switcher.groups.first().rows[0].relation)
         assertEquals(2, switcher.needsYouCount)
+        assertTrue(switcher.marked, "a chat waiting on the person lights the control")
         assertEquals("3 other chats, 2 waiting on you", switcher.spoken)
     }
 
     @Test
-    fun `watch-only and internal chats count as the agent's own, whatever their origin`() {
+    fun `watch-only chats count as the agent's own, whatever their origin`() {
         val switcher = ChatSwitcher.of(
             listOf(
                 mainChat,
                 chat("ahp-chat:/worker", relation = ChatRelation.Fork(main, "t1"), interactivity = ChatInteractivity.READ_ONLY),
-                chat("ahp-chat:/hidden", interactivity = ChatInteractivity.HIDDEN),
+                chat("ahp-chat:/tool", relation = ChatRelation.ByAgent(main)),
             ),
             shownChat = main,
         )
 
         assertEquals(listOf(SwitcherGroupKind.AGENT), switcher.kinds())
-        assertEquals(listOf("Fork of the main chat, watch only", "Internal to the agent"), switcher.others.map { it.relation })
+        assertEquals(listOf("Fork of the main chat, watch only", "Started by the agent"), switcher.others.map { it.relation })
+        assertEquals(0, switcher.hiddenCount)
+    }
+
+    private val withHidden = listOf(
+        mainChat,
+        fork("ahp-chat:/fork"),
+        chat("ahp-chat:/hidden", interactivity = ChatInteractivity.HIDDEN),
+        chat("ahp-chat:/hidden-tool", relation = ChatRelation.ByAgent(main), interactivity = ChatInteractivity.HIDDEN, isRead = false),
+    )
+
+    @Test
+    fun `chats the host marks hidden are left out by default, but counted`() {
+        val switcher = ChatSwitcher.of(withHidden, shownChat = main)
+
+        assertEquals(listOf(SwitcherGroupKind.FORKS), switcher.kinds())
+        assertEquals(listOf("ahp-chat:/fork"), switcher.others.map { it.uri })
+        assertEquals(2, switcher.hiddenCount)
+        assertEquals("1 other chat", switcher.label, "the label counts the chats the sheet lists")
+        assertEquals(listOf(main, "ahp-chat:/fork"), switcher.reachable)
+        assertFalse(switcher.marked, "an unread hidden chat does not light the control")
+    }
+
+    @Test
+    fun `asked for, the hidden chats are their own group, last, whatever their origin`() {
+        val switcher = ChatSwitcher.of(withHidden, shownChat = main, showHidden = true)
+
+        assertEquals(listOf(SwitcherGroupKind.FORKS, SwitcherGroupKind.HIDDEN), switcher.kinds())
+        assertEquals("Hidden chats", switcher.groups.last().title)
+        assertFalse(switcher.groups.last().collapsedByDefault, "asking for them is what shows them, so they are not folded as well")
+        assertEquals(listOf("ahp-chat:/hidden", "ahp-chat:/hidden-tool"), switcher.uris(SwitcherGroupKind.HIDDEN))
+        assertEquals(listOf("Internal to the agent", "Started by the agent, internal to the agent"), switcher.groups.last().rows.map { it.relation })
+        assertEquals(2, switcher.hiddenCount, "still counted, so the toggle can stay on screen to turn them off")
+        assertEquals("3 other chats", switcher.label)
+        assertEquals(listOf(main, "ahp-chat:/fork", "ahp-chat:/hidden", "ahp-chat:/hidden-tool"), switcher.reachable)
+    }
+
+    @Test
+    fun `a hidden chat waiting on the person is listed under waiting on you, hidden chats shown or not`() {
+        val chats = withHidden + chat("ahp-chat:/hidden-asking", interactivity = ChatInteractivity.HIDDEN, state = ActivityState.NEEDS_INPUT)
+
+        for (showHidden in listOf(false, true)) {
+            val switcher = ChatSwitcher.of(chats, shownChat = main, showHidden = showHidden)
+            assertEquals(listOf("ahp-chat:/hidden-asking"), switcher.uris(SwitcherGroupKind.NEEDS_YOU), "showHidden=$showHidden")
+            assertEquals("Internal to the agent", switcher.groups.first().rows.single().relation)
+            assertEquals(2, switcher.hiddenCount, "the waiting one is listed, so it is not among the hidden count")
+            assertTrue(switcher.marked)
+        }
+        assertEquals("2 other chats, 1 waiting on you", ChatSwitcher.of(chats, shownChat = main).spoken)
+    }
+
+    @Test
+    fun `a session whose only other chats are hidden still offers the control, named for them`() {
+        val switcher = ChatSwitcher.of(listOf(mainChat, chat("ahp-chat:/hidden", interactivity = ChatInteractivity.HIDDEN)), shownChat = main)
+
+        assertEquals(0, switcher.otherCount)
+        assertTrue(switcher.hasOthers)
+        assertEquals("1 hidden chat", switcher.label)
+        assertEquals("1 hidden chat", switcher.spoken)
+        assertFalse(ChatSwitcher.of(listOf(mainChat), shownChat = main).hasOthers)
     }
 
     @Test
@@ -228,7 +288,7 @@ class ChatSwitcherTest {
     }
 
     @Test
-    fun `unread chats are counted and marked, but not the one on screen, and a folded group still says how many`() {
+    fun `unread chats are marked on their rows, not on the control, but not the one on screen, and a folded group still says how many`() {
         val switcher = ChatSwitcher.of(
             listOf(
                 chat(main, "Main", isRead = false),
@@ -241,13 +301,14 @@ class ChatSwitcherTest {
             shownChat = "ahp-chat:/open",
         )
 
-        assertEquals(2, switcher.unreadCount)
-        assertTrue(switcher.marked)
+        assertEquals(2, switcher.others.count { it.unread })
+        assertFalse(switcher.marked, "unread alone does not light the control: only a chat waiting on the person does")
         assertTrue(switcher.main!!.unread, "the main chat is not on screen, so it shows as unread")
         assertEquals(listOf(false, true, false), switcher.groups.first { it.kind == SwitcherGroupKind.FORKS }.rows.map { it.unread })
+        assertEquals(listOf(false, true, false), switcher.groups.first { it.kind == SwitcherGroupKind.FORKS }.rows.map { it.marked })
         assertTrue(switcher.others.single { it.uri == "ahp-chat:/open" }.shown)
         assertEquals("2 chats, 1 unread", switcher.groups.first { it.kind == SwitcherGroupKind.AGENT }.summary)
-        assertEquals("5 other chats, 2 unread", switcher.spoken)
+        assertEquals("5 other chats", switcher.spoken, "the control says nothing of unread, matching its dot")
     }
 
     @Test
@@ -270,6 +331,26 @@ class ChatSwitcherTest {
         val all = ChatSwitcher.of(chats, shownChat = main, showArchived = true)
         assertEquals(listOf("ahp-chat:/live", "ahp-chat:/old"), all.others.map { it.uri })
         assertEquals("old, Fork of the main chat, Archived", all.others[1].spoken)
+    }
+
+    @Test
+    fun `an archived chat waiting on the person is always listed, under waiting on you`() {
+        val chats = listOf(
+            mainChat,
+            chat("ahp-chat:/old", relation = ChatRelation.Fork(main, "t1"), isArchived = true),
+            chat("ahp-chat:/old-asking", relation = ChatRelation.Fork(main, "t1"), state = ActivityState.NEEDS_INPUT, isArchived = true),
+        )
+
+        val default = ChatSwitcher.of(chats, shownChat = main)
+        assertEquals(listOf(SwitcherGroupKind.NEEDS_YOU), default.kinds())
+        assertEquals(listOf("ahp-chat:/old-asking"), default.others.map { it.uri })
+        assertEquals("old-asking, Fork of the main chat, Needs you, Archived", default.others.single().spoken)
+        assertTrue(default.marked)
+        assertEquals(listOf(main, "ahp-chat:/old-asking"), default.reachable)
+
+        val all = ChatSwitcher.of(chats, shownChat = main, showArchived = true)
+        assertEquals(listOf("ahp-chat:/old-asking"), all.uris(SwitcherGroupKind.NEEDS_YOU))
+        assertEquals(listOf("ahp-chat:/old"), all.uris(SwitcherGroupKind.FORKS))
     }
 
     @Test

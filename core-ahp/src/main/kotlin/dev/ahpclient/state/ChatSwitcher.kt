@@ -34,17 +34,26 @@ sealed interface ChatRelation {
     }
 }
 
-/** The groups of the chat switcher, in the order the sheet shows them. Only the agent's own chats start folded away. */
+/**
+ * The groups of the chat switcher, in the order the sheet shows them. Only the agent's own chats start folded away; the hidden
+ * chats are left out altogether until the person asks for them.
+ */
 enum class SwitcherGroupKind(val title: String, val collapsedByDefault: Boolean) {
-    /** Any chat but the main one that is waiting on the person, whatever its relation, so nothing that needs them is folded or buried. */
+    /**
+     * Any chat but the main one that is waiting on the person, whatever its relation, and even when it is archived or hidden,
+     * so nothing that needs them is folded, buried or left out.
+     */
     NEEDS_YOU("Waiting on you", false),
     FORKS("Forks", false),
     SIDE_CHATS("Side chats", false),
     BY_YOU("Started by you", false),
     OTHER("Other chats", false),
 
-    /** Chats a tool call started, and chats the host marks as watch-only or internal: the person rarely needs them. */
+    /** Chats a tool call started, and chats the host marks as watch-only: the person rarely needs them. */
     AGENT("Chats the agent uses", true),
+
+    /** Chats the host marks hidden (internal to the agent). Listed only when the person asks to see them. */
+    HIDDEN("Hidden chats", false),
 }
 
 /** One chat in the switcher. [depth] is how far it sits under the chat it came from, when that chat is in the same group. */
@@ -95,26 +104,35 @@ data class SwitcherGroup(val kind: SwitcherGroupKind, val rows: List<SwitcherRow
  * What the session screen shows of a session's chats: the main chat on its own, one tap away, and every other chat behind a
  * single control ("2 other chats") that opens a sheet of [groups]. Chats waiting on the person come first; the rest are
  * grouped by how they came about, each shown under the chat it came from when that chat is in the same group; the agent's own
- * chats are folded away. A chat is unread when the host has not marked it read and it is not the one on screen.
+ * chats are folded away, and the ones the host marks hidden are left out unless asked for. A chat is unread when the host has
+ * not marked it read and it is not the one on screen; that shows on its row, not on the control.
+ *
+ * [hiddenCount] is how many chats the host marks hidden, other than those waiting on the person (which are always listed):
+ * left out of [groups] unless they were asked for, when they make up the [SwitcherGroupKind.HIDDEN] group.
  */
-data class ChatSwitcher(val main: SwitcherRow?, val groups: List<SwitcherGroup>) {
+data class ChatSwitcher(val main: SwitcherRow?, val groups: List<SwitcherGroup>, val hiddenCount: Int = 0) {
     val others: List<SwitcherRow> get() = groups.flatMap { it.rows }
     val otherCount: Int get() = others.size
     val needsYouCount: Int get() = others.count { it.needsYou }
-    val unreadCount: Int get() = others.count { it.unread }
 
-    /** Whether the control carries a dot: some other chat needs the person or is unread. */
-    val marked: Boolean get() = needsYouCount > 0 || unreadCount > 0
+    /** Whether there is any other chat to reach, listed or hidden, so whether the control and its sheet are offered. */
+    val hasOthers: Boolean get() = otherCount > 0 || hiddenCount > 0
 
-    /** The control's text. */
-    val label: String get() = countOf(otherCount, "other chat", "other chats")
+    /** Every chat the switcher lets the person reach: the main chat and the listed others. */
+    val reachable: List<String> get() = listOfNotNull(main?.uri) + others.map { it.uri }
+
+    /** Whether the control carries a dot: only when some other chat is waiting on the person. Unread alone does not light it. */
+    val marked: Boolean get() = needsYouCount > 0
+
+    /** The control's text: the chats the sheet lists, or the hidden ones when those are all there is. */
+    val label: String
+        get() = if (otherCount == 0 && hiddenCount > 0) countOf(hiddenCount, "hidden chat", "hidden chats") else countOf(otherCount, "other chat", "other chats")
 
     /** The control's spoken description, carrying what the dot means. */
     val spoken: String
         get() = buildList {
             add(label)
             if (needsYouCount > 0) add("$needsYouCount waiting on you")
-            if (unreadCount > 0) add("$unreadCount unread")
         }.joinToString(", ")
 
     companion object {
@@ -125,13 +143,15 @@ data class ChatSwitcher(val main: SwitcherRow?, val groups: List<SwitcherGroup>)
 
         /**
          * Builds the switcher from the session's chats as [SessionDetail.chats] lists them. Archived chats other than the main
-         * one are left out unless [showArchived], as the tabs did. [turnNumber] says which turn of a chat a turn id is, when
+         * one are left out unless [showArchived], as the tabs did, and chats the host marks hidden unless [showHidden]; a chat
+         * waiting on the person is never left out, whichever it is. [turnNumber] says which turn of a chat a turn id is, when
          * this app holds enough of that chat to count; a relation without one names the chat instead.
          */
         fun of(
             chats: List<ChatRow>,
             shownChat: String?,
             showArchived: Boolean = false,
+            showHidden: Boolean = false,
             turnNumber: (chatUri: String, turnId: String) -> Int? = { _, _ -> null },
         ): ChatSwitcher {
             val mainChat = chats.firstOrNull { it.isMain } ?: chats.firstOrNull() ?: return EMPTY
@@ -148,16 +168,18 @@ data class ChatSwitcher(val main: SwitcherRow?, val groups: List<SwitcherGroup>)
                 whenText = chat.whenText,
             )
             val others = chats
-                .filter { it.uri != mainChat.uri && (showArchived || !it.isArchived) }
+                .filter { it.uri != mainChat.uri && (showArchived || !it.isArchived || it.state == ActivityState.NEEDS_INPUT) }
                 .distinctBy { it.uri }
             val byKind = others.groupBy(::kindOf)
+            val hiddenCount = byKind[SwitcherGroupKind.HIDDEN]?.size ?: 0
             val groups = SwitcherGroupKind.entries.mapNotNull { kind ->
+                if (kind == SwitcherGroupKind.HIDDEN && !showHidden) return@mapNotNull null
                 val members = byKind[kind] ?: return@mapNotNull null
                 // Waiting chats are listed flat, in the host's order: under a tree one could sit below another and be missed.
                 val ordered = if (kind == SwitcherGroupKind.NEEDS_YOU) members.map { it to 0 } else treeOrder(members)
                 SwitcherGroup(kind, ordered.map { (chat, depth) -> row(chat, depth) })
             }
-            return ChatSwitcher(row(mainChat, 0), groups)
+            return ChatSwitcher(row(mainChat, 0), groups, hiddenCount)
         }
 
         /**
@@ -174,10 +196,11 @@ data class ChatSwitcher(val main: SwitcherRow?, val groups: List<SwitcherGroup>)
             }
         }
 
-        private fun agentOnly(chat: ChatRow): Boolean = chat.relation is ChatRelation.ByAgent || chat.interactivity != ChatInteractivity.FULL
+        private fun agentOnly(chat: ChatRow): Boolean = chat.relation is ChatRelation.ByAgent || chat.interactivity == ChatInteractivity.READ_ONLY
 
         private fun kindOf(chat: ChatRow): SwitcherGroupKind = when {
             chat.state == ActivityState.NEEDS_INPUT -> SwitcherGroupKind.NEEDS_YOU
+            chat.interactivity == ChatInteractivity.HIDDEN -> SwitcherGroupKind.HIDDEN
             agentOnly(chat) -> SwitcherGroupKind.AGENT
             else -> when (chat.relation) {
                 is ChatRelation.Fork -> SwitcherGroupKind.FORKS
