@@ -22,7 +22,7 @@ class UiSettingsLineWrapTest {
     }
 
     @Test
-    fun `code, tool output and files keep lines whole at first, the terminal and diffs wrap`() {
+    fun `code, tool output and files keep lines whole at first, the terminal and diffs wrap, tables keep their column widths`() {
         val wrap = UiSettings(MemoryStore()).lineWrap.value
 
         assertEquals(WrapView.entries.toSet(), wrap.keys)
@@ -31,6 +31,26 @@ class UiSettingsLineWrapTest {
         assertFalse(wrap.getValue(WrapView.FILE))
         assertTrue(wrap.getValue(WrapView.TERMINAL))
         assertTrue(wrap.getValue(WrapView.DIFF))
+        assertFalse(wrap.getValue(WrapView.TABLE))
+    }
+
+    @Test
+    fun `fitting table columns to the width is kept on its own, under its own name, and is there when the app is opened again`() {
+        val store = MemoryStore()
+        val first = UiSettings(store)
+
+        first.setLineWrap(WrapView.TABLE, true)
+
+        assertTrue(first.lineWrap.value.getValue(WrapView.TABLE))
+        // Fitting tables does not wrap code: the two are separate choices.
+        assertFalse(first.lineWrap.value.getValue(WrapView.CODE))
+        assertEquals(setOf("wrap_table"), store.values.keys)
+
+        val again = UiSettings(store)
+        assertTrue(again.lineWrap.value.getValue(WrapView.TABLE))
+
+        again.setLineWrap(WrapView.TABLE, false)
+        assertFalse(UiSettings(store).lineWrap.value.getValue(WrapView.TABLE))
     }
 
     @Test

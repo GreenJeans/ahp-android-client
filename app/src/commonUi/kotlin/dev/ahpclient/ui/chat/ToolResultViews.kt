@@ -119,7 +119,7 @@ internal fun ToolDetailBody(
 private fun InputLineView(line: InputLine) {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(line.name, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        MonoBlock(line.value)
+        MonoBlock(line.value, isOutput = false)
     }
 }
 
@@ -259,17 +259,18 @@ private fun FileEditResult(
 
 /**
  * Text as the tool printed it: monospace and, unless the person chose to wrap tool output, not wrapped but scrolling sideways,
- * because output is data and its layout matters. The wrap button is offered only when a line does not fit, so a short value
- * carries no control it has no use for. When part of it was left out, the block says how much, so nobody mistakes a cut for
- * the whole.
+ * because output is data and its layout matters. On output ([isOutput], the default) the wrap button is always under the
+ * block, whether or not a line runs past the edge, so it is in the same place on every result. On a tool's input values and a
+ * text preview it is offered only when a line does not fit, so a short value carries no control it has no use for. When part
+ * of it was left out, the block says how much, so nobody mistakes a cut for the whole.
  */
 @Composable
-internal fun MonoBlock(text: Clipped, modifier: Modifier = Modifier) {
+internal fun MonoBlock(text: Clipped, modifier: Modifier = Modifier, isOutput: Boolean = true) {
     val wrap = rememberLineWrap(WrapView.TOOL_OUTPUT)
     val sideways = rememberScrollState()
     // Known only once laid out: kept whole, a line is too long when there is something to scroll to; wrapped, when it took more rows than it has lines.
     var wrappedRows by remember(text.text) { mutableStateOf(false) }
-    val tooLong = if (wrap.on) wrappedRows else sideways.maxValue > 0
+    val offerWrap = isOutput || (if (wrap.on) wrappedRows else sideways.maxValue > 0)
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Surface(color = MaterialTheme.colorScheme.surfaceVariant, contentColor = MaterialTheme.colorScheme.onSurfaceVariant, shape = MaterialTheme.shapes.small) {
             Text(
@@ -277,11 +278,11 @@ internal fun MonoBlock(text: Clipped, modifier: Modifier = Modifier) {
                 style = MaterialTheme.typography.bodySmall,
                 fontFamily = FontFamily.Monospace,
                 softWrap = wrap.on,
-                onTextLayout = { layout -> if (wrap.on) wrappedRows = layout.lineCount > text.text.count { it == '\n' } + 1 },
+                onTextLayout = { layout -> if (wrap.on && !isOutput) wrappedRows = layout.lineCount > text.text.count { it == '\n' } + 1 },
                 modifier = Modifier.fillMaxWidth().sidewaysUnless(wrap.on, sideways).padding(8.dp).testTag("mono_text"),
             )
         }
-        if (text.isClipped || tooLong) {
+        if (text.isClipped || offerWrap) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(modifier = Modifier.weight(1f)) {
                     if (text.isClipped) {
@@ -293,7 +294,7 @@ internal fun MonoBlock(text: Clipped, modifier: Modifier = Modifier) {
                         )
                     }
                 }
-                if (tooLong) WrapToggle(wrap, WrapView.TOOL_OUTPUT)
+                if (offerWrap) WrapToggle(wrap, WrapView.TOOL_OUTPUT)
             }
         }
     }

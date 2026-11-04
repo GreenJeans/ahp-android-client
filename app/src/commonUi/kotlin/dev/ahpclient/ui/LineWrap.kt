@@ -60,6 +60,22 @@ fun WrapToggle(wrap: LineWrap, view: WrapView, modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * The button on a markdown table's card that fits its columns to the width of the screen, or gives them back their own widths.
+ * Kept with the wrap choices ([WrapView.TABLE]), so fitting one table fits every table and holds after a restart. Like
+ * [WrapToggle], its label says what a tap does and the icon is tinted while the columns are fitted.
+ */
+@Composable
+fun FitColumnsToggle(fit: LineWrap, modifier: Modifier = Modifier) {
+    IconButton(onClick = { fit.set(!fit.on) }, modifier = modifier.size(48.dp).testTag("fit_columns_toggle")) {
+        Icon(
+            AppIcons.FitColumns,
+            contentDescription = if (fit.on) "Keep column widths" else "Fit columns to width",
+            tint = if (fit.on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
 /** Scrolls sideways with [state] unless [wrap] is on, when the text is laid out to the width it has instead. */
 fun Modifier.sidewaysUnless(wrap: Boolean, state: ScrollState): Modifier = if (wrap) this else horizontalScroll(state)
 

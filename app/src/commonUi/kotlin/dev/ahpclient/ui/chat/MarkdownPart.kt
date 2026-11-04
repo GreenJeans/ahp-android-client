@@ -54,6 +54,7 @@ import dev.ahpclient.state.HostFileTarget
 import dev.ahpclient.state.MarkdownLinks
 import dev.ahpclient.state.TableData
 import dev.ahpclient.state.WrapView
+import dev.ahpclient.ui.FitColumnsToggle
 import dev.ahpclient.ui.WrapToggle
 import dev.ahpclient.ui.rememberLineWrap
 import dev.ahpclient.ui.rememberPlatformUiActions
@@ -140,6 +141,7 @@ private fun MarkdownTableBlock(
     val platformActions = rememberPlatformUiActions()
     val hints = remember(table) { table.columnCharHints() }
     val borderColor = MaterialTheme.colorScheme.outlineVariant
+    val fit = rememberLineWrap(WrapView.TABLE)
 
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -165,6 +167,7 @@ private fun MarkdownTableBlock(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f),
                 )
+                FitColumnsToggle(fit)
                 TextButton(
                     onClick = { platformActions.copyToClipboard("Table Markdown", table.toMarkdown()) },
                     modifier = Modifier
@@ -187,13 +190,15 @@ private fun MarkdownTableBlock(
                 }
             }
             HorizontalDivider(color = borderColor)
+            // Fitted, the columns share the card's width and their cells wrap; otherwise each column keeps its own width and the table scrolls sideways.
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(8.dp),
+                    .sidewaysUnless(fit.on, rememberScrollState())
+                    .padding(8.dp)
+                    .testTag("markdown_table_grid"),
             ) {
-                DataTableGrid(table = table, columnHints = hints, scale = 1f)
+                DataTableGrid(table = table, columnHints = hints, scale = 1f, fitWidth = fit.on)
             }
         }
     }

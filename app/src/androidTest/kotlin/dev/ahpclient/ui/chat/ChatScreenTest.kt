@@ -5,6 +5,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsNotDisplayed
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertWidthIsAtLeast
@@ -1331,5 +1332,73 @@ class ChatScreenTest {
 
         assertFalse(scrollsSideways("rich_viewer_code_content"))
         rule.onNodeWithTag("wrap_toggle_file").assertContentDescriptionEquals("Keep lines whole")
+    }
+
+    // ---- fitting table columns to the width (U6) ---------------------------------------------------------------
+
+    /** Six columns, each with enough text to ask for a wide column: far wider than any phone, so it scrolls sideways unless fitted. */
+    private fun wideTable(tag: String) = listOf("A", "B", "C", "D", "E", "F").let { cols ->
+        "| ${cols.joinToString(" | ") { "Column $it $tag" }} |\n" +
+            "| ${cols.joinToString(" | ") { ":---" }} |\n" +
+            "| ${cols.joinToString(" | ") { "a value long enough to need room $it" }} |"
+    }
+
+    @Test
+    fun aWideTableScrollsSidewaysUntilItsColumnsAreFittedToTheWidth_andCanGoBack() {
+        show(transcript(listOf(TranscriptItem.Markdown("m1", "${wideTable("one")}\n\nafter"))))
+        awaitText("after")
+
+        assertTrue("columns keep their widths at first, so the table scrolls sideways", scrollsSideways("markdown_table_grid"))
+        rule.onNodeWithText("Column F one").assertIsNotDisplayed()
+        rule.onNodeWithTag("fit_columns_toggle")
+            .assertContentDescriptionEquals("Fit columns to width")
+            .assertHeightIsAtLeast(48.dp)
+            .assertWidthIsAtLeast(48.dp)
+            .performClick()
+        rule.waitForIdle()
+
+        assertFalse("fitted, the table no longer scrolls sideways", scrollsSideways("markdown_table_grid"))
+        rule.onNodeWithText("Column F one").assertIsDisplayed()
+        rule.onNodeWithText("a value long enough to need room F").assertIsDisplayed()
+        rule.onNodeWithTag("fit_columns_toggle").assertContentDescriptionEquals("Keep column widths").performClick()
+        rule.waitForIdle()
+
+        assertTrue("back to its own widths, it scrolls sideways again", scrollsSideways("markdown_table_grid"))
+    }
+
+    @Test
+    fun theFitColumnsChoiceHoldsForEveryTableAndIsThereWhenTheAppIsOpenedAgain() {
+        val prefs = InstrumentationRegistry.getInstrumentation().targetContext.getSharedPreferences("ahp_ui_fit_columns_test", android.content.Context.MODE_PRIVATE)
+        prefs.edit(commit = true) { clear() }
+        try {
+            var settings by mutableStateOf(UiSettings(prefs))
+            val md = "${wideTable("one")}\n\nbetween\n\n${wideTable("two")}\n\nlast words"
+            rule.setContent {
+                CompositionLocalProvider(LocalLineWrap provides settings) {
+                    AhpTheme { ChatScreen(transcript(listOf(TranscriptItem.Markdown("m1", md))), null, false, null, ConnState.Online, {}, {}, {}) }
+                }
+            }
+            awaitText("last words")
+            assertTrue(scrollsSideways("markdown_table_grid", 0))
+            assertTrue(scrollsSideways("markdown_table_grid", 1))
+
+            rule.onAllNodesWithTag("fit_columns_toggle")[0].performClick()
+            rule.waitForIdle()
+
+            assertFalse("the table tapped is fitted", scrollsSideways("markdown_table_grid", 0))
+            assertFalse("and so is every other table", scrollsSideways("markdown_table_grid", 1))
+            val saved = UiSettings(prefs).lineWrap.value
+            assertTrue("the choice is in the device's settings", saved.getValue(WrapView.TABLE))
+            assertFalse("fitting tables does not wrap code", saved.getValue(WrapView.CODE))
+
+            // Settings read afresh from the same preferences: the app opened again.
+            settings = UiSettings(prefs)
+            rule.waitForIdle()
+
+            assertFalse(scrollsSideways("markdown_table_grid", 0))
+            rule.onAllNodesWithTag("fit_columns_toggle")[0].assertContentDescriptionEquals("Keep column widths")
+        } finally {
+            prefs.edit(commit = true) { clear() }
+        }
     }
 }

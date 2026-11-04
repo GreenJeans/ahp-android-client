@@ -307,6 +307,20 @@ object AppIcons {
             .build()
     }
 
+    /** A table's frame with two arrows pointing in from its sides: columns brought in to fit the width. Line-drawn like [WrapText]. */
+    val FitColumns: ImageVector by lazy {
+        ImageVector.Builder(name = "FitColumns", defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = Size, viewportHeight = Size)
+            .addPath(
+                pathData = PathParser().parsePathString("M40,56H216V200H40ZM128,56V200M60,128H104M88,112L104,128L88,144M196,128H152M168,112L152,128L168,144").toNodes(),
+                name = "FitColumns",
+                stroke = SolidColor(Color.Black),
+                strokeLineWidth = 16f,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round,
+            )
+            .build()
+    }
+
     val Sparkle: ImageVector by lazy {
         icon(
             "Sparkle",

@@ -26,7 +26,8 @@ object TextScale {
  * The kinds of view that show text as written, line for line, and so can either wrap a long line or keep it whole and scroll
  * sideways. The person's choice is kept per kind, so wrapping one code block wraps them all. [key] is what the choice is saved
  * under, so renaming an entry does not lose it. Code, tool output and files keep lines whole unless asked, because their layout
- * is often the point; the terminal and diffs wrap, as they always have.
+ * is often the point; the terminal and diffs wrap, as they always have. A markdown table "wraps" when its columns are fitted to
+ * the width of the screen, so its cells wrap instead of the table scrolling sideways; it keeps its column widths unless asked.
  */
 enum class WrapView(val key: String, val wrapsByDefault: Boolean) {
     CODE("code", false),
@@ -34,6 +35,7 @@ enum class WrapView(val key: String, val wrapsByDefault: Boolean) {
     FILE("file", false),
     TERMINAL("terminal", true),
     DIFF("diff", true),
+    TABLE("table", false),
 }
 
 /** Which colours the app uses: those of the system's light or dark setting, or one of them always. */

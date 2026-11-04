@@ -413,12 +413,18 @@ private fun FullScreenTableViewer(table: TableData) {
     }
 }
 
+/**
+ * A table drawn as a grid. Each column is as wide as its text asks for (up to 320 dp), so a wide table is wider than the screen
+ * and its caller scrolls it sideways. With [fitWidth] the grid is as wide as it is given instead and the columns share that
+ * width in the same proportions, so their cells wrap and nothing needs scrolling.
+ */
 @Composable
 internal fun DataTableGrid(
     table: TableData,
     columnHints: List<Int>,
     scale: Float = 1f,
     modifier: Modifier = Modifier,
+    fitWidth: Boolean = false,
 ) {
     val borderColor = MaterialTheme.colorScheme.outlineVariant
     val headerBg = MaterialTheme.colorScheme.surfaceContainerHighest
@@ -432,7 +438,7 @@ internal fun DataTableGrid(
         shape = RoundedCornerShape(8.dp),
         modifier = modifier.border(1.dp, borderColor, RoundedCornerShape(8.dp)),
     ) {
-        Column(modifier = Modifier.width(IntrinsicSize.Max)) {
+        Column(modifier = if (fitWidth) Modifier.fillMaxWidth() else Modifier.width(IntrinsicSize.Max)) {
             // Header row
             Row(
                 modifier = Modifier
@@ -452,7 +458,7 @@ internal fun DataTableGrid(
                     val colWidth = columnWidthDp(columnHints.getOrElse(col) { 12 }, scale)
                     Box(
                         modifier = Modifier
-                            .width(colWidth)
+                            .then(if (fitWidth) Modifier.weight(colWidth.value) else Modifier.width(colWidth))
                             .fillMaxHeight()
                             .padding(horizontal = (10 * scale).dp, vertical = (8 * scale).dp),
                         contentAlignment = cellBoxAlignment(align),
@@ -490,7 +496,7 @@ internal fun DataTableGrid(
                         val colWidth = columnWidthDp(columnHints.getOrElse(col) { 12 }, scale)
                         Box(
                             modifier = Modifier
-                                .width(colWidth)
+                                .then(if (fitWidth) Modifier.weight(colWidth.value) else Modifier.width(colWidth))
                                 .fillMaxHeight()
                                 .padding(horizontal = (10 * scale).dp, vertical = (8 * scale).dp),
                             contentAlignment = cellBoxAlignment(align),
@@ -1425,7 +1431,7 @@ fun InlineResourcePreview(
                 }
             }
             embeddedPayload is RichPayload.TextContent -> {
-                MonoBlock(Clipped.of(embeddedPayload.text.text, 600), Modifier.testTag("attachment_text_preview"))
+                MonoBlock(Clipped.of(embeddedPayload.text.text, 600), Modifier.testTag("attachment_text_preview"), isOutput = false)
             }
         }
         if (onOpenRich != null) {
