@@ -51,10 +51,22 @@ import dev.ahpclient.state.TurnUsage
 import dev.ahpclient.ui.theme.AhpTheme
 import java.io.IOException
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.core.content.edit
+import androidx.test.platform.app.InstrumentationRegistry
+import com.microsoft.agenthostprotocol.generated.ContentEncoding
+import com.microsoft.agenthostprotocol.generated.ResourceReadResult
+import dev.ahpclient.data.UiSettings
+import dev.ahpclient.state.HostFileTarget
+import dev.ahpclient.state.WrapView
+import dev.ahpclient.ui.LocalLineWrap
 
 /** The transcript screen as a pure function of what the store reported, and how it behaves as rows arrive and links are tapped. */
 @RunWith(AndroidJUnit4::class)
@@ -1209,5 +1221,115 @@ class ChatScreenTest {
         rule.waitForIdle()
 
         rule.onNodeWithTag("composer_input").assertIsDisplayed()
+    }
+
+    // ---- word wrap (U6) ----------------------------------------------------------------------------------------
+
+    private val longLine = "call(argument, other) + ".repeat(20) + "end"
+    private val longCode = "before\n\n```kotlin\n$longLine\n```\n\nafter"
+
+    /** Whether the [index]th node tagged [tag] has somewhere to scroll to sideways; a wrapped text has no sideways scroll at all. */
+    private fun scrollsSideways(tag: String, index: Int = 0): Boolean =
+        rule.onAllNodesWithTag(tag)[index].fetchSemanticsNode().config.getOrNull(SemanticsProperties.HorizontalScrollAxisRange)?.let { it.maxValue() > 0f } == true
+
+    private fun lineCountOf(tag: String): Int {
+        val layouts = mutableListOf<TextLayoutResult>()
+        rule.onNodeWithTag(tag).fetchSemanticsNode().config[SemanticsActions.GetTextLayoutResult].action!!.invoke(layouts)
+        return layouts.first().lineCount
+    }
+
+    @Test
+    fun aCodeBlockWrapsItsLongLinesOnRequestAndKeepsThemWholeAgain() {
+        show(transcript(listOf(TranscriptItem.Markdown("m1", longCode))))
+        awaitText("after")
+
+        assertTrue("a long line is kept whole at first", scrollsSideways("markdown_code_text"))
+        assertEquals(1, lineCountOf("markdown_code_text"))
+        rule.onNodeWithTag("wrap_toggle_code")
+            .assertContentDescriptionEquals("Wrap long lines")
+            .assertHeightIsAtLeast(48.dp)
+            .assertWidthIsAtLeast(48.dp)
+            .performClick()
+        rule.waitForIdle()
+
+        assertFalse("wrapped, the block no longer scrolls sideways", scrollsSideways("markdown_code_text"))
+        assertTrue("the line is laid out over several rows", lineCountOf("markdown_code_text") > 1)
+        rule.onNodeWithTag("wrap_toggle_code").assertContentDescriptionEquals("Keep lines whole").performClick()
+        rule.waitForIdle()
+
+        assertTrue("kept whole again, it scrolls sideways", scrollsSideways("markdown_code_text"))
+        assertEquals(1, lineCountOf("markdown_code_text"))
+    }
+
+    @Test
+    fun theCodeWrapChoiceHoldsForEveryCodeBlockAndIsThereWhenTheAppIsOpenedAgain() {
+        val prefs = InstrumentationRegistry.getInstrumentation().targetContext.getSharedPreferences("ahp_ui_wrap_test", android.content.Context.MODE_PRIVATE)
+        prefs.edit(commit = true) { clear() }
+        try {
+            var settings by mutableStateOf(UiSettings(prefs))
+            val md = "$longCode\n\n```\n${"second(block) ".repeat(30)}\n```\n\nlast words"
+            rule.setContent {
+                CompositionLocalProvider(LocalLineWrap provides settings) {
+                    AhpTheme { ChatScreen(transcript(listOf(TranscriptItem.Markdown("m1", md))), null, false, null, ConnState.Online, {}, {}, {}) }
+                }
+            }
+            awaitText("last words")
+            assertTrue(scrollsSideways("markdown_code_text", 0))
+            assertTrue(scrollsSideways("markdown_code_text", 1))
+
+            rule.onAllNodesWithTag("wrap_toggle_code")[0].performClick()
+            rule.waitForIdle()
+
+            assertFalse("the block tapped wraps", scrollsSideways("markdown_code_text", 0))
+            assertFalse("and so does every other code block", scrollsSideways("markdown_code_text", 1))
+            assertTrue("the choice is in the device's settings", UiSettings(prefs).lineWrap.value.getValue(WrapView.CODE))
+
+            // Settings read afresh from the same preferences: the app opened again.
+            settings = UiSettings(prefs)
+            rule.waitForIdle()
+
+            assertFalse(scrollsSideways("markdown_code_text", 0))
+            rule.onAllNodesWithTag("wrap_toggle_code")[0].assertContentDescriptionEquals("Keep lines whole")
+        } finally {
+            prefs.edit(commit = true) { clear() }
+        }
+    }
+
+    @Test
+    fun anExpandedCodeBlockOffersTheWrapChoiceToo() {
+        show(transcript(listOf(TranscriptItem.Markdown("m1", longCode))))
+        awaitText("after")
+        rule.onNodeWithTag("code_expand").performClick()
+        rule.waitForIdle()
+        assertTrue(scrollsSideways("rich_viewer_code_content"))
+
+        rule.onNode(hasTestTag("wrap_toggle_code") and hasAnyAncestor(hasTestTag("rich_viewer")))
+            .assertContentDescriptionEquals("Wrap long lines")
+            .performClick()
+        rule.waitForIdle()
+
+        assertFalse(scrollsSideways("rich_viewer_code_content"))
+    }
+
+    @Test
+    fun theFileViewerWrapsLongLinesOnRequest() {
+        rule.setContent {
+            AhpTheme {
+                RichViewerModal(
+                    RichModalRequest.HostFile(HostFileTarget(rawPath = "/repo/Long.kt", displayPath = "Long.kt")),
+                    ConnState.Online,
+                    onDismiss = {},
+                    onReadResource = { ResourceReadResult(encoding = ContentEncoding.UTF8, data = "package demo\n$longLine\n") },
+                )
+            }
+        }
+        rule.waitUntil(timeoutMillis = 10_000) { rule.onAllNodesWithTag("rich_viewer_code_content").fetchSemanticsNodes().isNotEmpty() }
+        assertTrue("a file keeps its lines whole at first", scrollsSideways("rich_viewer_code_content"))
+
+        rule.onNodeWithTag("wrap_toggle_file").assertContentDescriptionEquals("Wrap long lines").assertHeightIsAtLeast(48.dp).performClick()
+        rule.waitForIdle()
+
+        assertFalse(scrollsSideways("rich_viewer_code_content"))
+        rule.onNodeWithTag("wrap_toggle_file").assertContentDescriptionEquals("Keep lines whole")
     }
 }

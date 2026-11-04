@@ -121,10 +121,12 @@ Kept as they are: the order (attach, then the controls that change what the mess
 
 **Proposal.** A wrap toggle on each of those views, remembered per kind of view (code, tool output, file, terminal, diff) on the device. Prose always wraps.
 
+**As built (2026-11-03).** One icon button, 48 dp, labelled by what a tap does: "Wrap long lines" while lines are kept whole, "Keep lines whole" while they wrap (tinted then); test tags `wrap_toggle_code`, `_tool_output`, `_file`, `_terminal`, `_diff`. Where it is: in the header of each code block (and of a diagram's card while its source is shown), in the action bar of the full-screen code and file viewer (an expanded code block counts as code, a host file or text attachment as file, a diagram's source as code), in the top bar of the terminal screen and the file diff once there are lines to show, and under a block of tool output, only when one of its lines does not fit. Wrapping removes the sideways scroll; keeping lines whole brings it back. On the terminal and diff, lines kept whole make the whole list as wide as its widest line (measured from the 20 longest), so it scrolls sideways as one block and rows stay lined up. The choice is kept per kind of view in `UiSettings` (`lineWrap`, saved as `wrap_<kind>` in the same preferences as text size and theme) and provided to every screen from `AppRoot`, so wrapping one code block wraps every code block, and it survives a restart. Defaults keep today's behaviour: code, tool output and files keep lines whole, the terminal and diff wrap. Markdown tables are left as they were: their cells already wrap inside columns up to 320 dp, and the sideways scroll there comes from the number of columns, not from long lines. Checked: JVM tests (`UiSettingsLineWrapTest`, 3) and the app and its UI tests compile. The UI tests are written but not yet run on a device: `ChatScreenTest` (code block, shared choice and restart through the settings, expanded code, file viewer), `CollapsibleBlocksTest` (tool output), `TerminalUiTest`, `DiffUiTest`, `UiSettingsInstrumentedTest`.
+
 **Acceptance criteria**
 
-- [ ] **AC-U6.1** Code blocks, tool output and the file viewer offer a wrap toggle that removes the sideways scroll; the terminal screen and the file diff offer the opposite (keep lines whole and scroll sideways).
-- [ ] **AC-U6.2** The choice is remembered per kind of view across restarts.
+- [ ] **AC-U6.1** Code blocks, tool output and the file viewer offer a wrap toggle that removes the sideways scroll; the terminal screen and the file diff offer the opposite (keep lines whole and scroll sideways). (Built; UI tests written, not yet run.)
+- [ ] **AC-U6.2** The choice is remembered per kind of view across restarts. (Checked in JVM tests against the settings store; the UI test through real preferences is written, not yet run.)
 
 ## U7 — Live terminals and host output
 
