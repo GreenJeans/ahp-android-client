@@ -2,6 +2,7 @@ package dev.ahpclient.ui
 
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -19,6 +20,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import dev.ahpclient.data.UiSettings
 import dev.ahpclient.state.WrapView
 
@@ -49,7 +51,7 @@ fun rememberLineWrap(view: WrapView): LineWrap {
  */
 @Composable
 fun WrapToggle(wrap: LineWrap, view: WrapView, modifier: Modifier = Modifier) {
-    IconButton(onClick = { wrap.set(!wrap.on) }, modifier = modifier.testTag("wrap_toggle_${view.key}")) {
+    IconButton(onClick = { wrap.set(!wrap.on) }, modifier = modifier.size(48.dp).testTag("wrap_toggle_${view.key}")) {
         Icon(
             AppIcons.WrapText,
             contentDescription = if (wrap.on) "Keep lines whole" else "Wrap long lines",
