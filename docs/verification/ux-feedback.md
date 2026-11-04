@@ -50,8 +50,8 @@ Runs of the U items in `docs/ux-feedback-spec.md` against a real host. Boxes in 
 
 **Findings**
 
-- The main chat's row in the U5 sheet does not say it is working. Minor.
-- A chat that is working moves under the finger as rows arrive, which made "Side chat" hard to hit: the first two taps landed on other rows. Not new; worth a look with U2's follow mode.
+- The main chat's row in the U5 sheet does not say it is working. Minor. Fixed the same day: a working chat's row reads "… · Working", and so does what TalkBack says for it.
+- A chat that is working moves under the finger as rows arrive, which made "Side chat" hard to hit: the first two taps landed on other rows. Not new, and not a small fix: while a turn runs the list is held by its newest row (the working line, then the reply as it grows), so every new or growing row pushes the rows above it up. Holding still under a finger means holding by the touched row instead, which changes how U2's follow mode works. Left for a design decision.
 
 **Not run**
 

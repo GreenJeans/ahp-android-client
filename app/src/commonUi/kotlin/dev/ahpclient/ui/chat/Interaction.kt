@@ -75,6 +75,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.platform.LocalDensity
 import dev.ahpclient.state.AnswerValue
 import dev.ahpclient.state.ChatConfigPrompt
 import dev.ahpclient.state.ChatConfigView
@@ -216,6 +219,10 @@ class ChatActionsUi(
 
 /** The host's own words on a button or a field are untrusted display text: shown as plain text and cut to a sane length. */
 private const val MAX_LABEL = 80
+
+/** The widest a chip's label may be in the scrolling row (the chips were capped at 150 and 200 dp, padding included). */
+private val AGENT_LABEL_MAX = 126.dp
+private val MODEL_LABEL_MAX = 176.dp
 private const val MAX_QUESTION_TEXT = 4_000
 private const val MAX_OPTION_TEXT = 1_000
 
@@ -236,6 +243,34 @@ private fun modelLabel(models: List<ModelOption>, choice: ModelChoice?): String 
     val model = choice?.let { c -> models.firstOrNull { it.id == c.id } } ?: return "Default model"
     val settings = model.settings.mapNotNull { s -> choice.config[s.id]?.let { v -> s.values.firstOrNull { it.value == v }?.label } }
     return (listOf(model.name) + settings).joinToString(" · ")
+}
+
+/**
+ * A chip's label that fits [maxWidth] by leaving whole words out from the end, marked with an ellipsis, rather than cutting a
+ * word in the middle (U4): "Claude Opus 5.5 · 1M · High" becomes "Claude Opus 5.5 · 1M…". Only a first word that is wider by
+ * itself is still cut. The chip's spoken description carries the whole label either way.
+ */
+@Composable
+private fun WholeWordsLabel(full: String, maxWidth: Dp) {
+    val style = MaterialTheme.typography.labelMedium
+    val measurer = rememberTextMeasurer()
+    val widthPx = with(LocalDensity.current) { maxWidth.roundToPx() }
+    val shown = remember(full, widthPx, style, measurer) { ChipLabels.fit(full) { measurer.measure(it, style, maxLines = 1).size.width <= widthPx } }
+    Text(shown, style = style, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = maxWidth))
+}
+
+/** Shortening a chip's label to whole words, apart from measuring, so it can be tested without a screen. */
+internal object ChipLabels {
+    /** [full] if it [fits], else the most leading words that fit with an ellipsis after them, a trailing " ·" dropped; the first word alone when none fit. */
+    fun fit(full: String, fits: (String) -> Boolean): String {
+        if (fits(full)) return full
+        val words = full.split(' ').filter { it.isNotEmpty() }
+        for (count in words.size - 1 downTo 1) {
+            val candidate = words.take(count).joinToString(" ").trimEnd(' ', '·') + "…"
+            if (fits(candidate)) return candidate
+        }
+        return words.firstOrNull() ?: full
+    }
 }
 
 @Composable
@@ -1476,11 +1511,11 @@ internal fun Composer(
                         val agentText = if (optionsOnly) "Chat options" else agentLabel(actions.agents, agentUri)
                         AssistChip(
                             onClick = { choosingAgent = true },
-                            label = { Text(agentText, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            // Capped, so a long name cannot push the model far out of view; words past the cap are left out whole.
+                            label = { WholeWordsLabel(agentText, AGENT_LABEL_MAX) },
                             colors = chipColors,
                             border = null,
-                            // Capped, so a long name cannot push the model far out of view.
-                            modifier = Modifier.widthIn(max = 150.dp).semantics { contentDescription = if (optionsOnly) agentText else "Agent: $agentText" }.testTag("agent_button"),
+                            modifier = Modifier.semantics { contentDescription = if (optionsOnly) agentText else "Agent: $agentText" }.testTag("agent_button"),
                         )
                         if (choosingAgent) {
                             ChatOptionsDialog(
@@ -1516,11 +1551,12 @@ internal fun Composer(
                     if (actions.models.isNotEmpty()) {
                         AssistChip(
                             onClick = { choosing = true },
-                            label = { Text(modelLabel(actions.models, chosen), style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            // A row that scrolls has no width to share out, so the model gets a cap of its own. Words past it are left
+                            // out whole rather than cut mid-word; the whole label is still spoken.
+                            label = { WholeWordsLabel(modelLabel(actions.models, chosen), MODEL_LABEL_MAX) },
                             colors = chipColors,
                             border = null,
-                            // A row that scrolls has no width to share out, so the model gets a cap of its own; the whole label is still spoken.
-                            modifier = Modifier.widthIn(max = 200.dp).semantics { contentDescription = "Model: ${modelLabel(actions.models, chosen)}" }.testTag("model_button"),
+                            modifier = Modifier.semantics { contentDescription = "Model: ${modelLabel(actions.models, chosen)}" }.testTag("model_button"),
                         )
                         if (choosing) ModelPickerDialog(actions.models, chosen, showDefault = actions.modelInUse == null, onDismiss = { choosing = false }, onPick = { pick = it; choosing = false })
                     }

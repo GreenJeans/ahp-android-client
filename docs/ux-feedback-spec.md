@@ -86,14 +86,14 @@ Nine items from using the app day to day. Most are about keeping context in a lo
 | Suggest | Text field, trailing icon, only while quick replies can be asked for | Sparkle icon | "Suggest quick replies" | Was a "Suggest" chip in the row (U3) |
 | Slash commands | Scrolling row | `/` | "Slash commands" | None |
 | Agent and chat options | Scrolling row | The agent's name; "Chat options" when the host offers no agents but does offer mode or approvals | "Agent: …" or "Chat options" | Was "Default agent" even when the host had no agents to pick from |
-| Model | Scrolling row, last | Model name and any settings ("Claude Sonnet 5.5 · Thorough"), cut at about 200 dp | "Model: " and the whole label | Was squeezed into the width left over |
+| Model | Scrolling row, last | Model name and any settings ("Claude Sonnet 5.5 · Thorough"); past about 200 dp the last words are left out whole and an ellipsis added | "Model: " and the whole label | Was squeezed into the width left over |
 | Steer now, send options, send | Fixed, right | As today | As today | None |
 
 Kept as they are: the order (attach, then the controls that change what the message is sent with), and mode and approvals inside the agent sheet. A chip of their own is left for later, once it is clear how often they are changed per message.
 
 **Acceptance criteria**
 
-- [ ] **AC-U4.1** The chip row scrolls sideways when it is wider than the screen; no chip is cut off mid-word. (Half done: the row scrolls; a model label longer than about 200 dp still ends in an ellipsis on screen, though it is spoken whole.)
+- [x] **AC-U4.1** The chip row scrolls sideways when it is wider than the screen; no chip is cut off mid-word. (The row scrolls; the model and agent chips keep their caps but leave whole words out from the end, with an ellipsis, rather than cutting one (2026-11-04). Only a single word wider than the cap is still cut. Both are spoken whole. UI tests in `InteractionUiTest`.)
 - [x] **AC-U4.2** Each chip's text follows the table from the design pass, and its spoken description names what it is ("Model: …", "Agent: …").
 - [x] **AC-U4.3** The design pass is recorded in this spec before the code changes.
 
@@ -118,10 +118,10 @@ Kept as they are: the order (attach, then the controls that change what the mess
 
 **Acceptance criteria**
 
-- [ ] **AC-U5.1** A session with many chats shows one control instead of a tab per chat; the main chat stays one tap away. (Built; UI tests written in `SessionScreensTest` and `AccessibilityTest`, not yet run on a device.)
-- [ ] **AC-U5.2** The switcher shows each chat's relation (fork of turn N, side chat, started by the agent) and puts chats waiting on the person first. (Half checked: the grouping, order, tree and wording are covered by JVM tests in `ChatSwitcherTest`; the sheet's UI tests are written, not run. The turn number shows only when the parent chat's turns are all held.)
-- [ ] **AC-U5.3** Unread and needs-input signals are not lost compared with today's tab dots. (Half checked: the counts and marks are covered by JVM tests, including a folded group; the dots on screen are in UI tests written, not run. Unread now shows on rows only, by decision; a waiting chat is never left out by the archived or hidden filters, also JVM-tested.)
-- [ ] **AC-U5.4** Chats the host marks hidden are left out until "Show hidden chats (N)" is turned on, then listed in their own group; a hidden or archived chat waiting on the person is always listed under "Waiting on you". (Half checked: JVM tests in `ChatSwitcherTest`; the toggle's UI tests in `SessionScreensTest` and `AccessibilityTest` are written, not run.)
+- [x] **AC-U5.1** A session with many chats shows one control instead of a tab per chat; the main chat stays one tap away. (UI tests in `SessionScreensTest`, `AccessibilityTest` and `ManageUiTest` pass on the emulator, 181/181 at `1af4dc0`; checked live on a Pixel 10 on 2026-11-04, see `docs/verification/ux-feedback.md`.)
+- [x] **AC-U5.2** The switcher shows each chat's relation (fork of turn N, side chat, started by the agent) and puts chats waiting on the person first. (JVM tests in `ChatSwitcherTest`, UI tests on the emulator, and live on a Pixel 10: a side chat was listed as "Side chat from turn 7" under "Side chats". The turn number shows only when the parent chat's turns are all held.)
+- [x] **AC-U5.3** Unread and needs-input signals are not lost compared with today's tab dots. (JVM tests, including a folded group, and the dots on screen in UI tests on the emulator. Live, the control had no dot while the main chat only worked. Unread now shows on rows only, by decision; a waiting chat is never left out by the archived or hidden filters, also JVM-tested.)
+- [x] **AC-U5.4** Chats the host marks hidden are left out until "Show hidden chats (N)" is turned on, then listed in their own group; a hidden or archived chat waiting on the person is always listed under "Waiting on you". (JVM tests in `ChatSwitcherTest`; the toggle's UI tests in `SessionScreensTest` and `AccessibilityTest` pass on the emulator. Not seen live: no session on the test host had a hidden chat.)
 
 ## U6 — Word wrap on or off
 
@@ -135,10 +135,10 @@ Kept as they are: the order (attach, then the controls that change what the mess
 
 **Acceptance criteria**
 
-- [ ] **AC-U6.1** Code blocks, tool output and the file viewer offer a wrap toggle that removes the sideways scroll; the terminal screen and the file diff offer the opposite (keep lines whole and scroll sideways). (Built; UI tests written, not yet run.)
-- [ ] **AC-U6.2** The choice is remembered per kind of view across restarts. (Checked in JVM tests against the settings store; the UI test through real preferences is written, not yet run.)
-- [ ] **AC-U6.3** A markdown table's card offers "Fit columns to width": on, the columns share the width and cells wrap with no sideways scroll; off, today's column widths and sideways scroll. The choice holds for every table and across restarts. (Built; JVM-tested in the settings store; UI tests written, not yet run.)
-- [ ] **AC-U6.4** Every block of tool output shows the wrap button, including output that fits. (Built; UI test written, not yet run.)
+- [x] **AC-U6.1** Code blocks, tool output and the file viewer offer a wrap toggle that removes the sideways scroll; the terminal screen and the file diff offer the opposite (keep lines whole and scroll sideways). (UI tests pass on the emulator, 174/174 at `766cfb3`; live on a Pixel 10, a tool's long input wrapped and unwrapped.)
+- [x] **AC-U6.2** The choice is remembered per kind of view across restarts. (JVM tests against the settings store, and `UiSettingsInstrumentedTest` through real preferences on the emulator.)
+- [x] **AC-U6.3** A markdown table's card offers "Fit columns to width": on, the columns share the width and cells wrap with no sideways scroll; off, today's column widths and sideways scroll. The choice holds for every table and across restarts. (JVM-tested in the settings store; the UI tests pass on the emulator after a fix: fitted columns now share the width as fractions, where a 6-column table had made a row screens tall. Not seen live: no chat on the test host had a wide table.)
+- [x] **AC-U6.4** Every block of tool output shows the wrap button, including output that fits. (UI test passes on the emulator. Live, a tool's input that overflowed showed it; input values that fit show none, by design, as only output blocks always show it.)
 
 ## U7 — Live terminals and host output
 
@@ -155,7 +155,7 @@ Kept as they are: the order (attach, then the controls that change what the mess
 **Acceptance criteria**
 
 - [ ] **AC-U7.1** The live check is recorded in `docs/verification/`, naming for each place whether output streams, and why not if it does not. (Not done: the finding above is from reading the code. Still to do on a phone with a real host: a long-running command in the terminal screen, in the tool call's block, and in the session's output, noting for each whether output arrives as it is printed.)
-- [ ] **AC-U7.2** Output that the host sends as a stream appears on the phone within about a second, in the terminal screen and in the chat. (Built for the chat's tool call block; not yet run on a device.)
+- [ ] **AC-U7.2** Output that the host sends as a stream appears on the phone within about a second, in the terminal screen and in the chat. (Built for the chat's tool call block; `LiveTerminalTailTest` passes on the emulator. Not seen live: no tool result on the test host named a terminal.)
 
 ## U8 — AI quick replies behind Pro
 
@@ -190,7 +190,7 @@ Kept as they are: the order (attach, then the controls that change what the mess
 
 **Prepared (2026-11-03).** Every name the app shows now comes from `AppName` in `core-ahp` (sign-in screen, About, the Pro dialog, the Quick Settings tile) or `app/src/main/res/values/strings.xml` (the launcher and tile labels, which the manifest now reads), so a rename is a change to those two files on Android and to `PRODUCT_NAME` and `CFBundleDisplayName` on iOS. The store text in `play-store-listing.md` is separate. Checked: the built APK's label still reads "AHP Client".
 
-- [ ] **AC-U9.1** The new name appears on the launcher, in the app, on iOS and in the store listing; no "AHP Client" or "AHP Monitor" remains on screen.
+- [ ] **AC-U9.1** The new name appears on the launcher, in the app, on iOS and in the store listing; no "AHP Client" or "AHP Monitor" remains on screen. (Android checked: the APK's label is "Hostline", the phone's own face check was headed "Hostline", the store listing says "Hostline: AHP Client", and no screen text has the old names. iOS sets `CFBundleDisplayName` to Hostline but has not been built or run, which needs a Mac; its `PRODUCT_NAME`, the app file's name, is still "AHP Client" and is not shown.)
 - [x] **AC-U9.2** The application id and bundle id are unchanged, so an update installs over the existing app.
 
 ## Order of work

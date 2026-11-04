@@ -123,7 +123,7 @@ Today, `ToolDetail.from` in [`ToolDetail.kt`](../core-ahp/src/main/kotlin/dev/ah
 - [x] **AC-P1.1** A `ToolCallStatePendingConfirmation` with `ToolCallRiskAssessmentLoading` or `ToolCallRiskAssessmentComplete` populates `ToolDetail.riskAssessment` with bounded plain text and renders `tool_risk_assessment` in the expanded tool block.
 - [x] **AC-P1.2** A `ToolCallStatePendingConfirmation` with `edits: FileEditCollection` surfaces each proposed file edit as a `ToolResultView.FileEdit` with `before`/`after` diff preview before approval.
 - [x] **AC-P1.3** `ToolCallContributorMcp` populates `mcpServerName` on `ToolDetail` and `TranscriptItem.Tool` when `_meta` does not already set one.
-- [ ] **AC-P1.4** Unit tests in `ToolDetailTest` and Compose UI tests in `CollapsibleBlocksTest` / `ChatScreenTest` pass on JVM and Pixel 10.
+- [ ] **AC-P1.4** Unit tests in `ToolDetailTest` and Compose UI tests in `CollapsibleBlocksTest` / `ChatScreenTest` pass on JVM and Pixel 10. (JVM and the emulator pass, 2026-11-04; the UI tests have not been run on the Pixel 10 itself.)
 
 ---
 
@@ -302,5 +302,5 @@ Today, `ahp-android-client` detects whether a session was spawned by an automati
 
 ### Acceptance Criteria
 
-- [ ] **AC-P8.1** (built, JVM tests pass; the UI tests in `HostTerminalsUiTest` are not yet run on a device and no live host has been tried) `RootState.terminals` can be opened read-only in `TerminalScreen` without enabling `terminal/input`.
+- [ ] **AC-P8.1** (built, JVM tests pass; the UI tests in `HostTerminalsUiTest` pass on the emulator, 48/48 with `TerminalUiTest` and `AccessibilityTest`; not checked live, as the test host lists no terminals in its root state) `RootState.terminals` can be opened read-only in `TerminalScreen` without enabling `terminal/input`.
 - [x] **AC-P8.2** `terminal/input`, `authenticate`, `session/activeClientSet`, and `resourceWrite|Delete|Move|Copy` remain blocked in `CapabilityPolicyTest` across `READ`, `INTERACT`, and `MANAGE`. (JVM only; the same test also refuses `createTerminal`, `disposeTerminal`, `terminal/resized`, `terminal/cleared` and `terminal/claimed` on every tier.)

@@ -44,6 +44,22 @@ class ChatSwitcherTest {
     }
 
     @Test
+    fun `a chat at work says so on its row and to a screen reader, without a dot`() {
+        val working = ChatSwitcher.of(listOf(chat(main, "Main", state = ActivityState.IN_PROGRESS), fork("ahp-chat:/f", state = ActivityState.IN_PROGRESS)), shownChat = main)
+
+        assertEquals("Main chat · Working", working.main!!.detail)
+        assertTrue(working.main!!.spoken.contains("Working"))
+        val fork = working.others.single()
+        assertTrue(fork.detail.contains("Working"), fork.detail)
+        assertFalse(fork.marked, "working is not waiting on the person")
+        assertFalse(working.marked)
+
+        val idle = ChatSwitcher.of(listOf(mainChat, fork("ahp-chat:/f")), shownChat = main)
+        assertEquals("Main chat", idle.main!!.detail)
+        assertFalse(idle.others.single().detail.contains("Working"))
+    }
+
+    @Test
     fun `a session with no chats has neither a main chat nor groups`() {
         assertEquals(ChatSwitcher.EMPTY, ChatSwitcher.of(emptyList(), shownChat = null))
     }

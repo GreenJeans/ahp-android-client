@@ -468,9 +468,24 @@ class InteractionUiTest {
         val range = rule.onNodeWithTag("composer_chip_row").fetchSemanticsNode().config.getOrNull(SemanticsProperties.HorizontalScrollAxisRange)
         assertTrue("the chip row scrolls sideways", range != null && range.maxValue() > 0f)
         rule.onNodeWithTag("composer_send").assertIsDisplayed()
-        // The model is cut on screen but spoken whole.
+        // The model is shortened on screen, to whole words, but spoken whole.
         rule.onNodeWithTag("model_button").assertContentDescriptionEquals("Model: Claude Sonnet 5.5 Extended Context Preview · Thorough")
         rule.onNodeWithTag("model_button").performScrollTo().assertIsDisplayed()
+        val full = "Claude Sonnet 5.5 Extended Context Preview · Thorough"
+        val shown = rule.onAllNodes(hasAnyAncestor(hasTestTag("model_button")) and hasText("Claude", substring = true), useUnmergedTree = true)
+            .fetchSemanticsNodes().single().config[SemanticsProperties.Text].single().text
+        assertTrue("\"$shown\" is the leading whole words of the label, marked as shortened", shown.endsWith("…") && full.startsWith(shown.removeSuffix("…")) && full.getOrNull(shown.length - 1) == ' ')
+        rule.onNodeWithTag("agent_button").assertContentDescriptionEquals("Agent: Release coordinator for the mobile apps")
+    }
+
+    @Test
+    fun aChipLabelIsShortenedToWholeWords() {
+        val label = "Claude Opus 5.5 · 1M · High"
+        assertEquals(label, ChipLabels.fit(label) { true })
+        assertEquals("Claude Opus 5.5 · 1M…", ChipLabels.fit(label) { it.length <= 21 })
+        assertEquals("Claude Opus 5.5…", ChipLabels.fit(label) { it.length <= 17 })
+        assertEquals("Claude", ChipLabels.fit(label) { false })
+        assertEquals("Supercalifragilistic", ChipLabels.fit("Supercalifragilistic") { false })
     }
 
     private fun showInWindowOfHeight(heightDp: Int, agents: List<AgentChoice> = emptyList(), agentInUse: String? = null) = rule.setContent {
