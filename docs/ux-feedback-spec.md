@@ -30,7 +30,7 @@ Nine items from using the app day to day. Most are about keeping context in a lo
 
 **Acceptance criteria**
 
-- [ ] **AC-U1.1** Going back to any of the last N opened chats shows its turns with no blank wait, then updates to the host's snapshot without the scroll position jumping. (Half checked: shown at once and replaced, in JVM tests and live on a Pixel 10 at the newest row, see `docs/verification/ux-feedback.md`; a chat left scrolled up is not checked.)
+- [x] **AC-U1.1** Going back to any of the last N opened chats shows its turns with no blank wait, then updates to the host's snapshot without the scroll position jumping. A chat left scrolled up opens where it was left (decided 2026-11-04), found by the row at the bottom of the screen; if that row is gone it opens at the newest row. (Checked in JVM and UI tests and live on a Pixel 10, at the newest row on 2026-11-03 and scrolled up on 2026-11-04, see `docs/verification/ux-feedback.md`.)
 - [x] **AC-U1.2** A cached chat is shown as possibly out of date until the snapshot arrives, and a chat the host removed is not shown from the cache.
 - [x] **AC-U1.3** The cache has a fixed bound and is cleared on sign-out and on switching host.
 

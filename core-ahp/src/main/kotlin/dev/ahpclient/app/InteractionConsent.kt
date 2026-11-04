@@ -69,10 +69,18 @@ class InteractionConsent(
         _managementAllowed.value = _allowed.value && read(managementSettings)
     }
 
-    /** Clears active write/management permissions in memory and on disk when Pro entitlement is revoked. */
-    suspend fun revokeEntitlement() {
-        set(false)
+    /**
+     * Turns the write and management permissions off at once when the Pro entitlement goes. The saved choices are kept: losing
+     * Pro is not the user taking their consent back, so [restoreEntitlement] brings them back when Pro returns. While Pro is
+     * locked they grant nothing, because [policy] and [load] both read as off without the entitlement.
+     */
+    fun revokeEntitlement() {
+        _allowed.value = false
+        _managementAllowed.value = false
     }
+
+    /** Reads the saved choices again once the Pro entitlement is back, so a "yes" given before Pro lapsed holds again. */
+    suspend fun restoreEntitlement() = load()
 
     private suspend fun read(from: InteractionSettings): Boolean = try {
         from.enabled.first()

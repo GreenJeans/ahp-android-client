@@ -405,13 +405,19 @@ class AppController(
     }
 
     /**
-     * Grants or revokes the Pro entitlement. When revoked (on == false), active write/management permissions are cleared,
+     * Grants or revokes the Pro entitlement. When revoked (on == false), active write/management permissions are turned off,
      * any extra background hosts in [connectedHosts] are disconnected so at most one host stays connected, and the remaining
-     * session reconnects on the read-only tier.
+     * session reconnects on the read-only tier. The user's saved choices are kept, so when Pro comes back the permissions they
+     * had given hold again and the live sessions reconnect under them.
      */
     suspend fun setProUnlocked(on: Boolean): Boolean {
         val saved = pro.setUnlocked(on)
-        if (!pro.unlocked.value) {
+        if (pro.unlocked.value) {
+            val consents = listOf(interaction) + platformSynchronized(directConsents) { directConsents.values.toList() }
+            val before = consents.map { it.policy() }
+            consents.forEach { it.restoreEntitlement() }
+            if (consents.map { it.policy() } != before) allLiveSessions().forEach { it.restart() }
+        } else {
             val hadWrite = interaction.allowed.value || platformSynchronized(directConsents) { directConsents.values.any { it.allowed.value } }
             interaction.revokeEntitlement()
             val directs = platformSynchronized(directConsents) { directConsents.values.toList() }

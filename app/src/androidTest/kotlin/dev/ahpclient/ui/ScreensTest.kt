@@ -6,6 +6,7 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -360,6 +361,36 @@ class ScreensTest {
 
         rule.onNodeWithTag("quick_reply_download_nano").performScrollTo().assertIsDisplayed().assertTouchTargetAtLeast(48.dp).performClick()
         assertEquals(1, downloads)
+    }
+
+    @Test
+    fun withoutProQuickRepliesSayTheyNeedProAndOfferNoAiChoice_andTheUnlockTextNamesTheAiFeatures() {
+        val picked = mutableListOf<QuickReplyMode>()
+        rule.setContent {
+            AhpTheme {
+                SettingsScreen(
+                    onBack = {},
+                    quickReplyMode = QuickReplyMode.AUTO,
+                    onQuickReplyMode = { picked += it },
+                    nanoStatus = NanoStatus.DOWNLOADABLE,
+                    onDownloadNano = {},
+                    googleAiConfig = GoogleAiConfig(),
+                    onSaveGoogleAiConfig = { _, _, _, _, _ -> true },
+                    proUnlocked = false,
+                )
+            }
+        }
+
+        rule.onNodeWithTag("quick_reply_row").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithTag("quick_reply_hint").assertTextContains("Requires Pro.", substring = true)
+        rule.onNodeWithTag("quick_reply_on_demand").assertIsNotEnabled()
+        rule.onAllNodesWithTag("quick_reply_provider_onboard").assertCountEquals(0)
+        rule.onAllNodesWithTag("quick_reply_download_nano").assertCountEquals(0)
+        assertEquals(emptyList<QuickReplyMode>(), picked)
+
+        rule.onNodeWithTag("pro_description").performScrollTo()
+            .assertTextContains("AI quick replies", substring = true)
+            .assertTextContains("the host's suggestions as you type", substring = true)
     }
 
     @Test

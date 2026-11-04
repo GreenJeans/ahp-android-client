@@ -1,4 +1,4 @@
-# UX feedback: live verification (U1 to U4)
+# UX feedback: live verification (U1 to U9)
 
 Runs of the U items in `docs/ux-feedback-spec.md` against a real host. Boxes in the spec stay unticked until a run below covers them.
 
@@ -26,5 +26,34 @@ Runs of the U items in `docs/ux-feedback-spec.md` against a real host. Boxes in 
 
 **Not run**
 
-- U1 with the chat left scrolled up before closing it (whether the place holds when the snapshot arrives).
+- U1 with the chat left scrolled up before closing it (whether the place holds when the snapshot arrives). Run on 2026-11-04, below.
 - TalkBack and the largest font size (AC-U2.4).
+
+## 2026-11-04: Pixel 10, `main` after U5 to U9, then the fixes on `claude/live-eval-fixes`
+
+**Setup.** Debug build of `main` at `0672b02` (all of U5 to U9, P5 and P8 merged), installed over the existing app over USB adb, sign-in kept, Pro on through the debug switch. Mostly read only. On the host: one empty side chat was made in "Idea 9" for U5 and removed afterwards (the removal asked for the phone's face check, which the owner's face answered), and one "Add folder" was tried, which the host refused. Text typed into message boxes was deleted unsent. Then the build of `claude/live-eval-fixes` was installed the same way and the three fixes were checked.
+
+| Check | Result | Notes |
+|---|---|---|
+| U5: the switcher shows only with a second chat | Pass | Seven sessions with one chat each showed no switcher. After "Side chat" on turn 7 of "Idea 9" the bar showed the main chat chip and "Unti… · 1 other chat" |
+| U5: what TalkBack hears on the bar | Pass (read from the tree) | "Idea 9: remote mesh board spec, Main chat" and "1 other chat, showing Untitled session"; after switching back, "…, Main chat, Shown" and "1 other chat" |
+| U5: the sheet | Pass | "Chats", the main chat with "Main chat · 3m", then a "Side chats" group with "Untitled session, Side chat from turn 7 · 3m" and a check on the one shown; tapping the main chat went back to it |
+| U5: the dot means waiting only | Pass | No dot while the main chat was working and nothing waited on the person |
+| U6: wrap on a tool's input | Pass | A 409-character command showed the wrap button; tapping it wrapped the value, and the button then read "Keep lines whole" (52 dp target) |
+| U8: Free | Pass | With Pro off the chat had no message box, so no quick reply and no host suggestion can be asked for |
+| U8: Pro | Pass | `#` brought the host's files (TOUR.md, CONTRIBUTING.md, package.json…); AI quick replies showed as "Quick replies · Gemini Nano". (`@` shows the app's own agent list, not the host's, as recorded for N3b) |
+| U9: the name | Pass | The phone's own face check for removing a chat was headed "Hostline" |
+| U2: pinned bar and Read | Pass | Seen in every chat opened |
+| U1: a chat left scrolled up | **Fail on `main`, fixed** | On `main` it came back at the newest row and stayed there (no jump, but the place was lost). With the fix, left four swipes up, another session opened, then back: the screen 6 seconds later, after the snapshot, was identical to the one at leaving (same screenshot hash) |
+| Pro off then on | **Fail on `main`, fixed** | On `main` turning Pro off also turned "Act for me" off for good, and turning Pro on left it off. With the fix it reads "Requires Pro. Watch only." while Pro is off and is on again, without asking, once Pro is back |
+| Settings without Pro | **Fail on `main`, fixed** | On `main` the quick-reply tile still said "Gemini Nano ready on-device" and offered the AI source. With the fix it says "Requires Pro.", offers no AI choice, and the Unlock Pro text names AI quick replies and the host's suggestions |
+
+**Findings**
+
+- The main chat's row in the U5 sheet does not say it is working. Minor.
+- A chat that is working moves under the finger as rows arrive, which made "Side chat" hard to hit: the first two taps landed on other rows. Not new; worth a look with U2's follow mode.
+
+**Not run**
+
+- TalkBack itself, and the largest font size on a device (AC-U2.4).
+- U7's live terminal tail and P8's host terminals: no tool result on this host named a terminal, and the host lists no terminals of its own (see `protocol-completion.md`).

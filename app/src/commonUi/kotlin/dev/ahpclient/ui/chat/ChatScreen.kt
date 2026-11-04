@@ -33,7 +33,6 @@ import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilledTonalIconButton
@@ -74,6 +73,7 @@ import com.microsoft.agenthostprotocol.generated.ResourceReadResult
 import dev.ahpclient.state.BackgroundWorkView
 import dev.ahpclient.state.CanvasView
 import dev.ahpclient.state.ChatGoneException
+import dev.ahpclient.state.ChatPlace
 import dev.ahpclient.state.ChatNotLoadedException
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.HostFileTarget
@@ -136,6 +136,7 @@ fun ChatScreen(
     workingDirectories: List<String> = emptyList(),
     fromCache: Boolean = false,
     liveTerminal: ((String) -> LiveTerminal?)? = null,
+    place: ChatPlaceKeeper? = null,
 ) {
     ScreenScaffold(
         title = transcript?.title ?: "Chat",
@@ -179,6 +180,7 @@ fun ChatScreen(
             workingDirectories = workingDirectories,
             fromCache = fromCache,
             liveTerminal = liveTerminal,
+            place = place,
         )
     }
 }
@@ -217,6 +219,8 @@ fun ChatPane(
     fromCache: Boolean = false,
     /** Watches a terminal, read only, so a running tool call's block can show the end of its output as it arrives (U7). */
     liveTerminal: ((String) -> LiveTerminal?)? = null,
+    /** Where this chat was left scrolled to, and where to keep it as it moves (U1). */
+    place: ChatPlaceKeeper? = null,
 ) {
     // Kept as the text it came from: that survives the app being recreated, and a target is made from it again.
     var pendingRaw by rememberSaveable { mutableStateOf<String?>(null) }
@@ -286,6 +290,7 @@ fun ChatPane(
                             onOpenRich = { req -> activeRichRequest = req },
                             modifier = Modifier.weight(1f),
                             liveTerminal = liveTerminal,
+                            place = place,
                         )
                     }
                     error != null -> ErrorText("Could not load this chat (${error::class.simpleName}).", Modifier.padding(horizontal = 16.dp).testTag("chat_error"))
@@ -356,9 +361,16 @@ private fun LoadingChat(modifier: Modifier = Modifier) {
 }
 
 /**
+ * Where a chat was left scrolled to, for opening it there again (U1). [chatKey] names the chat, so a pane that moves to another
+ * chat starts that one at its own place; [initial] is the place to open at (null: the newest row); [save] is told each time it moves.
+ */
+class ChatPlaceKeeper(val chatKey: Any, val initial: ChatPlace?, val save: (ChatPlace?) -> Unit)
+
+/**
  * The rows, newest first in a reversed list, so a chat opens at its latest message however long it is, and older turns arriving
  * at the far end never move what is on screen. While the user is at the bottom, new rows keep it there; once they scroll up,
- * their place is held by row key and a button offers the way back.
+ * their place is held by row key and a button offers the way back. With a [place], a chat left scrolled up opens where it was
+ * left, as long as that row is still in it; otherwise it opens at the newest row.
  */
 @Composable
 private fun TranscriptList(
@@ -376,22 +388,47 @@ private fun TranscriptList(
     onOpenRich: ((RichModalRequest) -> Unit)?,
     modifier: Modifier = Modifier,
     liveTerminal: ((String) -> LiveTerminal?)? = null,
+    place: ChatPlaceKeeper? = null,
 ) {
-    val listState = rememberLazyListState()
+    val listState = rememberSaveable(place?.chatKey, saver = LazyListState.Saver) { LazyListState() }
     val scope = rememberCoroutineScope()
     var composerDraft by rememberSaveable { mutableStateOf<String?>(null) }
     val newestFirst = remember(transcript.items) { TranscriptRowModel.from(transcript.items).asReversed() }
+    val rowOffset = if (transcript.running) 1 else 0
 
     // Whether the user is at the newest row. It changes only when the position moves while the rows stay the same: a row arriving
     // shifts the position by itself (and changes the row count in the same layout), and must not be mistaken for the user scrolling
     // away. Watching the position, not the scroll gesture, also catches instant scrolls such as TalkBack's scroll actions.
-    var following by remember { mutableStateOf(true) }
+    var following by remember(place?.chatKey) { mutableStateOf(place?.initial == null) }
+    // A chat left scrolled up opens where it was, found by the row's key; a row that has gone sends it to the newest row instead.
+    LaunchedEffect(place?.chatKey) {
+        val wanted = place?.initial ?: return@LaunchedEffect
+        val index = newestFirst.indexOfFirst { it.key == wanted.rowKey }
+        if (index >= 0) {
+            listState.scrollToItem(index + rowOffset, wanted.offset)
+        } else {
+            following = true
+            listState.scrollToItem(0)
+        }
+    }
     LaunchedEffect(listState) {
         var knownCount = -1
         snapshotFlow { listState.atNewest() to listState.layoutInfo.totalItemsCount }.collect { (atNewest, count) ->
             if (count == knownCount) following = atNewest
             knownCount = count
         }
+    }
+    // Kept as it moves, so it is current whenever the chat is let go of: that happens before this list leaves the screen.
+    val currentPlace by rememberUpdatedState(place)
+    LaunchedEffect(listState) {
+        snapshotFlow {
+            if (listState.atNewest()) {
+                null
+            } else {
+                val first = listState.layoutInfo.visibleItemsInfo.firstOrNull()
+                (first?.key as? String)?.takeIf { it != WORKING_KEY && it != OLDER_KEY }?.let { ChatPlace(it, listState.firstVisibleItemScrollOffset) }
+            }
+        }.distinctUntilChanged().collect { currentPlace?.save?.invoke(it) }
     }
     val newestKey = newestFirst.firstOrNull()?.key
     LaunchedEffect(newestKey) {
@@ -411,7 +448,6 @@ private fun TranscriptList(
     // The person's latest message and the start of the reply to it, as list positions (the working row, when shown, comes first).
     val landmarks = remember(newestFirst) { TranscriptLandmarks.of(newestFirst) }
     val readableTurns = remember(transcript.items) { TranscriptLandmarks.readableTurns(transcript.items) }
-    val rowOffset = if (transcript.running) 1 else 0
     val lastUserTopShown by remember(landmarks, rowOffset) { derivedStateOf { landmarks.lastUser?.let { listState.topShown(it + rowOffset) } ?: true } }
     // Shown only once there is a reply: a message still waiting for one is the newest row, and needs no reminder.
     val barShown = landmarks.lastUserText != null && landmarks.replyStart != null && !lastUserTopShown

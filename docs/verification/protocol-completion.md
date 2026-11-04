@@ -89,3 +89,14 @@ Runs of the P1 to P5 work against a real host. Boxes in `docs/protocol-completio
 | Typing after accepting | **Fail, fixed** | The cursor stayed after the `#`, so typing on landed inside the mention. The message box now moves the cursor to the end when its text is set from outside (`b7091bd`); rechecked live: `#validate-packs.mjs` then typing gave `#validate-packs.mjszz` |
 
 **Not checked.** What the host's attachment for a file mention holds (it was not sent), the space trigger after a slash command, and a message sent with a mention.
+
+## 2026-11-04: Pixel 10, `main` after P5 and P8
+
+**Setup.** Debug build of `main` at `0672b02`, then of `claude/live-eval-fixes`, installed over the existing app over USB adb, sign-in kept. One "Add folder" was tried on "Idea 9"; nothing else was changed on the host.
+
+| Check | Result | Notes |
+|---|---|---|
+| P5: Add folder and Remove offered before any refusal | Pass | "Nexus Home phase 2" (two folders) showed "Remove" on the second and "Add folder" |
+| P5: a refused add hides Add folder for this host | Pass | Choosing a temporary folder from "Add a recent folder" was refused; the button was replaced by "This host does not let this app add folders. It said: Session working-directory actions require an Editor Window client." |
+| P5: a refused remove | Not tried | The host's words cover all "working-directory actions", so a remove is very likely refused too, but trying it on a live session risks removing a folder the person uses |
+| P8: host terminals | Not checked | This host lists no terminals in its root state, so the app offers none |
