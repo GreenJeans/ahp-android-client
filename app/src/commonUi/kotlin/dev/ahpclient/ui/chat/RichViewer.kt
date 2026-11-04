@@ -72,6 +72,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
 import com.microsoft.agenthostprotocol.generated.ResourceReadResult
 import dev.ahpclient.app.DiffLoad
@@ -146,6 +147,9 @@ sealed interface RichModalRequest {
     }
 
     data class Resource(override val title: String, val ref: ResourceRef) : RichModalRequest
+
+    /** One reply of the agent's, opened to read on its own (reader view, U2). */
+    data class Reply(override val title: String, val markdown: String) : RichModalRequest
 }
 
 /**
@@ -159,6 +163,8 @@ fun RichViewerModal(
     modifier: Modifier = Modifier,
     onReadResource: (suspend (String) -> ResourceReadResult)? = null,
     workingDirectories: List<String> = emptyList(),
+    /** Where a link tapped in a reply goes; the caller confirms it before anything opens. */
+    onOpenLink: (String) -> Unit = {},
 ) {
     PlatformBackHandler(onBack = onDismiss)
 
@@ -191,6 +197,7 @@ fun RichViewerModal(
         is RichModalRequest.HostFile -> "Host file"
         is RichModalRequest.Resource -> request.ref.contentType ?: "Resource"
         is RichModalRequest.InlineFileEdit -> null
+        is RichModalRequest.Reply -> "Reader view"
     }
 
     Surface(modifier = modifier.fillMaxSize().testTag("rich_viewer"), color = MaterialTheme.colorScheme.background) {
@@ -226,10 +233,42 @@ fun RichViewerModal(
                     onReadResource = onReadResource,
                 )
                 is RichModalRequest.InlineFileEdit -> Unit
+                is RichModalRequest.Reply -> FullScreenReader(request.markdown, onOpenLink, allowHostFiles = onReadResource != null)
             }
         }
     }
 }
+
+/**
+ * A reply set out for reading: a little larger and with more room between lines than in the chat, at a comfortable line length
+ * on a wide screen, and nothing else on the page. The same safe markdown as the chat.
+ */
+@Composable
+private fun FullScreenReader(markdown: String, onOpenLink: (String) -> Unit, allowHostFiles: Boolean) {
+    val type = MaterialTheme.typography
+    val reading = remember(type) {
+        // A size the theme leaves unspecified cannot be multiplied, so it is left alone.
+        fun TextStyle.roomier() = copy(
+            fontSize = if (fontSize.isSpecified) fontSize * READER_TEXT_SCALE else fontSize,
+            lineHeight = if (lineHeight.isSpecified) lineHeight * READER_LINE_SCALE else lineHeight,
+        )
+        type.copy(bodyLarge = type.bodyLarge.roomier(), bodyMedium = type.bodyMedium.roomier(), bodySmall = type.bodySmall.roomier())
+    }
+    Box(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).testTag("reader_view"), contentAlignment = Alignment.TopCenter) {
+        MaterialTheme(typography = reading) {
+            MarkdownPart(
+                markdown,
+                onOpenLink = onOpenLink,
+                allowHostFiles = allowHostFiles,
+                modifier = Modifier.widthIn(max = READER_MAX_WIDTH).fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp),
+            )
+        }
+    }
+}
+
+private const val READER_TEXT_SCALE = 1.12f
+private const val READER_LINE_SCALE = 1.25f
+private val READER_MAX_WIDTH = 640.dp
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable

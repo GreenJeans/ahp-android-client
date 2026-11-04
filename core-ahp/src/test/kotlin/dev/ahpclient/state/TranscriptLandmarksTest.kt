@@ -38,6 +38,34 @@ class TranscriptLandmarksTest {
         assertEquals(TranscriptLandmarks.NONE, TranscriptLandmarks.of(emptyList()))
     }
 
+    // ---- reader view -------------------------------------------------------------------------------------------
+
+    private fun md(key: String, text: String) = TranscriptItem.Markdown(key, text)
+
+    @Test
+    fun `a reply is the turn's text parts in order, without its steps`() {
+        val items = listOf(user("t1"), md("t1/a", "First part."), tool("t1", 1), md("t1/b", "Second part."), end("t1"))
+        assertEquals("First part.\n\nSecond part.", TranscriptLandmarks.replyText(items, "t1"))
+    }
+
+    @Test
+    fun `one turn's reply never runs into another's, even when a message is hidden`() {
+        // t2's message is hidden from the transcript, so only t1's end separates the two replies.
+        val items = listOf(user("t1"), md("t1/a", "Reply one."), end("t1"), md("t2/a", "Reply two."), end("t2"))
+        assertEquals("Reply one.", TranscriptLandmarks.replyText(items, "t1"))
+        assertEquals("Reply two.", TranscriptLandmarks.replyText(items, "t2"))
+    }
+
+    @Test
+    fun `a turn that only ran tools, or has not ended, has nothing to read`() {
+        val items = listOf(user("t1"), tool("t1", 1), md("t1/a", "  "), end("t1"), user("t2"), md("t2/a", "Still writing"))
+        assertEquals(null, TranscriptLandmarks.replyText(items, "t1"))
+        assertEquals(null, TranscriptLandmarks.replyText(items, "t2"))
+        assertEquals(null, TranscriptLandmarks.replyText(items, "missing"))
+        assertEquals(emptySet(), TranscriptLandmarks.readableTurns(items))
+        assertEquals(setOf("t1"), TranscriptLandmarks.readableTurns(listOf(user("t1"), md("t1/a", "Yes."), end("t1"))))
+    }
+
     @Test
     fun `a blank message keeps its place but gives the bar nothing to show`() {
         val marks = of(user("t1", "   "), reply("t1"))

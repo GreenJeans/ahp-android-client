@@ -15,6 +15,8 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -923,6 +925,62 @@ class ChatScreenTest {
         rule.onNodeWithText("second reply 1").assertIsDisplayed()
         val bar = rule.onAllNodesWithTag("pinned_user_message").fetchSemanticsNodes().singleOrNull()
         if (bar != null) assertTrue("the first line is under the bar", rule.onNodeWithText("second reply 1").fetchSemanticsNode().boundsInRoot.top >= bar.boundsInRoot.bottom - 1f)
+    }
+
+    // ---- reader view (U2 part 3) ---------------------------------------------------------------------------------
+
+    private fun turnEnd(turn: String) = TranscriptItem.TurnEnd("$turn/end", TurnOutcome.DONE, 1_200L)
+
+    @Test
+    fun readOpensTheReplyFullScreenAndBackReturnsToTheSamePlace() {
+        val items = listOf<TranscriptItem>(
+            TranscriptItem.User("t1/user", "First question"),
+            TranscriptItem.Markdown("t1/a", "The first answer, worth reading slowly."),
+            TranscriptItem.Markdown("t1/b", "And its second paragraph."),
+            turnEnd("t1"),
+        ) + askedAndAnswered(60, question = "Second question").map {
+            when (it) {
+                is TranscriptItem.User -> it.copy(key = "t2/user")
+                is TranscriptItem.Markdown -> it.copy(key = it.key.replace("t1/", "t2/"))
+                else -> it
+            }
+        } + turnEnd("t2")
+        show(transcript(items))
+
+        rule.onNodeWithTag("transcript").performScrollToNode(hasTestTag("turn_read_t1"))
+        rule.waitForIdle()
+        val before = rule.onNodeWithTag("turn_read_t1").fetchSemanticsNode().positionInRoot.y
+        rule.onNodeWithTag("turn_read_t1").assertContentDescriptionEquals("Read this reply full screen").assertHeightIsAtLeast(48.dp).performClick()
+        rule.waitForIdle()
+
+        rule.onNodeWithTag("reader_view").assertIsDisplayed()
+        rule.onNodeWithTag("rich_viewer_title").assertTextContains("Reply")
+        rule.onNodeWithText("The first answer, worth reading slowly.").assertIsDisplayed()
+        rule.onNodeWithText("And its second paragraph.").assertIsDisplayed()
+        // Only that turn's reply: nothing from the next one.
+        rule.onAllNodesWithText("reply line 1").assertCountEquals(0)
+
+        rule.onNodeWithContentDescription("Back to chat").performClick()
+        rule.waitForIdle()
+
+        rule.onAllNodesWithTag("reader_view").assertCountEquals(0)
+        assertEquals("the chat moved while the reply was open", before, rule.onNodeWithTag("turn_read_t1").fetchSemanticsNode().positionInRoot.y, 1f)
+    }
+
+    @Test
+    fun aTurnThatOnlyRanToolsOffersNothingToRead() {
+        val items = listOf(
+            TranscriptItem.User("t1/user", "Run the tests"),
+            TranscriptItem.Tool("t1/tool", "run_tests", null, ToolState.DONE),
+            turnEnd("t1"),
+            TranscriptItem.User("t2/user", "And now?"),
+            TranscriptItem.Markdown("t2/a", "All green."),
+            turnEnd("t2"),
+        )
+        show(transcript(items))
+
+        rule.onAllNodesWithTag("turn_read_t1").assertCountEquals(0)
+        rule.onNodeWithTag("turn_read_t2").assertIsDisplayed()
     }
 
     @Test

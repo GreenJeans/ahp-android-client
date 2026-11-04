@@ -18,6 +18,7 @@ import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -227,51 +228,60 @@ fun ChatPane(
     Box(modifier = modifier.fillMaxSize().let { if (onTextScale != null) it.pinchToScale(shown, { s -> live = s }, { s -> live = s; onTextScale(s) }) else it }) {
         CompositionLocalProvider(LocalDensity provides scaled) {
             val openRich = activeRichRequest
-            if (openRich != null) {
-                RichViewerModal(
-                    request = openRich,
-                    connection = connection,
-                    onDismiss = { activeRichRequest = null },
-                    onReadResource = onReadResource,
-                    workingDirectories = workingDirectories,
-                )
-            } else {
-                Column(modifier = Modifier.fillMaxSize()) {
-                    if (connection != ConnState.Online) ConnectionLine(connection, Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
-                    if (transcript?.running == true && !transcript.waitingOnYou) WorkingBar()
-                    when {
-                        error is ChatGoneException -> ErrorText("This chat is no longer on the host.", Modifier.padding(horizontal = 16.dp).testTag("chat_gone"))
-                        notLoaded != null && transcript == null ->
-                            NotLoaded(notLoaded, onRetry, stale = false, Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
-                        transcript != null -> {
-                            if (notLoaded != null) NotLoaded(notLoaded, onRetry, stale = true, Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
-                            TranscriptList(
-                                transcript = transcript,
-                                loadingOlder = loadingOlder,
-                                olderError = olderError,
-                                onLoadOlder = onLoadOlder,
-                                onOpenLink = { link ->
-                                    val hostTarget = HostFileTarget.fromInternalUri(link)
-                                    if (hostTarget != null && onReadResource != null) {
-                                        activeRichRequest = RichModalRequest.HostFile(hostTarget)
-                                    } else if (LinkTarget.of(link) != null) {
-                                        pendingRaw = link
-                                    }
-                                },
-                                expanded = expanded,
-                                onToggle = onToggle,
-                                actions = actions,
-                                onOpenSubagent = onOpenSubagent,
-                                onOpenTerminal = onOpenTerminal,
-                                allowHostFiles = onReadResource != null,
-                                onOpenRich = { req -> activeRichRequest = req },
-                                modifier = Modifier.weight(1f),
-                            )
-                        }
-                        error != null -> ErrorText("Could not load this chat (${error::class.simpleName}).", Modifier.padding(horizontal = 16.dp).testTag("chat_error"))
-                        else -> LoadingChat(Modifier.padding(horizontal = 16.dp))
-                    }
+            val openLink: (String) -> Unit = { link ->
+                val hostTarget = HostFileTarget.fromInternalUri(link)
+                if (hostTarget != null && onReadResource != null) {
+                    activeRichRequest = RichModalRequest.HostFile(hostTarget)
+                } else if (LinkTarget.of(link) != null) {
+                    // The confirmation is shown over the chat, so a link from a full-screen view closes that view first.
+                    activeRichRequest = null
+                    pendingRaw = link
                 }
+            }
+            // The chat stays composed under a full-screen view, so closing the view finds it exactly where it was (rows laid out
+            // afresh grow a frame later and would move it) and the message box keeps its draft. While covered it is hidden from
+            // screen readers and tests, and the view's surface takes every touch.
+            Column(modifier = Modifier.fillMaxSize().then(if (openRich != null) Modifier.clearAndSetSemantics {} else Modifier)) {
+                if (connection != ConnState.Online) ConnectionLine(connection, Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                if (transcript?.running == true && !transcript.waitingOnYou) WorkingBar()
+                when {
+                    error is ChatGoneException -> ErrorText("This chat is no longer on the host.", Modifier.padding(horizontal = 16.dp).testTag("chat_gone"))
+                    notLoaded != null && transcript == null ->
+                        NotLoaded(notLoaded, onRetry, stale = false, Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                    transcript != null -> {
+                        if (notLoaded != null) NotLoaded(notLoaded, onRetry, stale = true, Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                        TranscriptList(
+                            transcript = transcript,
+                            loadingOlder = loadingOlder,
+                            olderError = olderError,
+                            onLoadOlder = onLoadOlder,
+                            onOpenLink = openLink,
+                            expanded = expanded,
+                            onToggle = onToggle,
+                            actions = actions,
+                            onOpenSubagent = onOpenSubagent,
+                            onOpenTerminal = onOpenTerminal,
+                            allowHostFiles = onReadResource != null,
+                            onOpenRich = { req -> activeRichRequest = req },
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    error != null -> ErrorText("Could not load this chat (${error::class.simpleName}).", Modifier.padding(horizontal = 16.dp).testTag("chat_error"))
+                    else -> LoadingChat(Modifier.padding(horizontal = 16.dp))
+                }
+            }
+            if (openRich != null) {
+                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                    RichViewerModal(
+                        request = openRich,
+                        connection = connection,
+                        onDismiss = { activeRichRequest = null },
+                        onReadResource = onReadResource,
+                        workingDirectories = workingDirectories,
+                        onOpenLink = openLink,
+                    )
+                }
+            } else {
                 pendingLink?.let { target ->
                     LinkConfirmDialog(
                         target = target,
@@ -377,6 +387,7 @@ private fun TranscriptList(
     val away by remember { derivedStateOf { !listState.atNewest() } }
     // The person's latest message and the start of the reply to it, as list positions (the working row, when shown, comes first).
     val landmarks = remember(newestFirst) { TranscriptLandmarks.of(newestFirst) }
+    val readableTurns = remember(transcript.items) { TranscriptLandmarks.readableTurns(transcript.items) }
     val rowOffset = if (transcript.running) 1 else 0
     val lastUserTopShown by remember(landmarks, rowOffset) { derivedStateOf { landmarks.lastUser?.let { listState.topShown(it + rowOffset) } ?: true } }
     // Shown only once there is a reply: a message still waiting for one is the newest row, and needs no reminder.
@@ -415,6 +426,10 @@ private fun TranscriptList(
                     allowHostFiles = allowHostFiles,
                     onOpenRich = onOpenRich,
                     hasOlder = transcript.hasOlder,
+                    onRead = onOpenRich?.let { open ->
+                        { turnId: String -> TranscriptLandmarks.replyText(transcript.items, turnId)?.let { open(RichModalRequest.Reply("Reply", it)) } }
+                    },
+                    readableTurns = readableTurns,
                     onLoadDraft = { draft ->
                         composerDraft = draft
                         scope.launch { listState.scrollToItem(0) }
