@@ -21,7 +21,7 @@ Runs of the U items in `docs/ux-feedback-spec.md` against a real host. Boxes in 
 **Findings to decide on**
 
 - Reader view showed every text part of the turn, so the agent's progress notes ("Reading the rest of the workflow…") came before its final answer, which a long turn left at the bottom. Decided the same day: the answer first, the notes folded under it.
-- When the snapshot replaced the copy, the quick-reply bar that had been dismissed came back, because the message box is made afresh. Minor.
+- The quick-reply bar that had been dismissed was back after leaving the session and opening the chat again. That is not the cache: a dismissal is kept only while the chat stays open, not across visits. Minor.
 - The jump button sits at the right of the row with Regenerate, Fork and Side chat when the turn's end is on screen. It did not cover a button here, but it is close on a narrow screen.
 
 **Not run**

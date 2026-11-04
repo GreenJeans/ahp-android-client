@@ -38,7 +38,11 @@ import dev.ahpclient.ui.theme.AhpTheme
 import com.microsoft.agenthostprotocol.Ahp
 import com.microsoft.agenthostprotocol.generated.ToolCallState
 import kotlinx.serialization.json.JsonPrimitive
+import androidx.compose.ui.test.assertContentDescriptionEquals
+import androidx.compose.ui.test.assertHeightIsAtLeast
+import androidx.compose.ui.test.assertWidthIsAtLeast
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -285,6 +289,71 @@ class CollapsibleBlocksTest {
 
         rule.onNodeWithTag("result_text").assertExists()
         rule.onNodeWithTag("show_all").assertDoesNotExist()
+    }
+
+    // ---- word wrap (U6) ----------------------------------------------------------------------------------------
+
+    private fun scrollsSideways(tag: String): Boolean =
+        rule.onNodeWithTag(tag).fetchSemanticsNode().config.getOrNull(SemanticsProperties.HorizontalScrollAxisRange)?.let { it.maxValue() > 0f } == true
+
+    @Test
+    fun outputWithALineTooLongToFitOffersToWrapIt_andWrappingEndsTheSidewaysScroll() {
+        val long = "column_one column_two ".repeat(30)
+        show(transcript(tool("t1", completed("""{"type":"text","text":${JsonPrimitive(long)}}"""))), expanded = setOf("t1"))
+        rule.waitForIdle()
+
+        assertTrue("kept whole at first", scrollsSideways("mono_text"))
+        rule.onNodeWithTag("wrap_toggle_tool_output").performScrollTo()
+            .assertContentDescriptionEquals("Wrap long lines")
+            .assertHeightIsAtLeast(48.dp)
+            .performClick()
+        rule.waitForIdle()
+
+        assertFalse("wrapped, it no longer scrolls sideways", scrollsSideways("mono_text"))
+        // Still offered, so the person can go back.
+        rule.onNodeWithTag("wrap_toggle_tool_output").assertContentDescriptionEquals("Keep lines whole").performClick()
+        rule.waitForIdle()
+        assertTrue(scrollsSideways("mono_text"))
+    }
+
+    // Changed on purpose (U6 decision, 2026-11-04): this was outputThatFitsHasNoWrapButton. The button is now always under tool
+    // output, so it is in the same place on every result, even when nothing runs past the edge.
+    @Test
+    fun outputThatFitsStillOffersTheWrapButton() {
+        show(transcript(tool("t1", completed("""{"type":"text","text":"short"}"""))), expanded = setOf("t1"))
+        rule.waitForIdle()
+
+        assertFalse("nothing to scroll to", scrollsSideways("mono_text"))
+        rule.onNodeWithTag("wrap_toggle_tool_output").performScrollTo()
+            .assertContentDescriptionEquals("Wrap long lines")
+            .assertHeightIsAtLeast(48.dp)
+            .assertWidthIsAtLeast(48.dp)
+            .performClick()
+        rule.waitForIdle()
+
+        rule.onNodeWithTag("wrap_toggle_tool_output").assertContentDescriptionEquals("Keep lines whole")
+        rule.onNodeWithText("short").assertIsDisplayed()
+    }
+
+    @Test
+    fun aShortInputValueHasNoWrapButtonOfItsOwn_onlyTheOutputDoes() {
+        show(transcript(tool("t1", completed("""{"type":"text","text":"short"}""", input = """{"command":"ls"}"""))), expanded = setOf("t1"))
+        rule.waitForIdle()
+
+        rule.onNodeWithText("ls").assertIsDisplayed()
+        rule.onAllNodesWithTag("mono_text").assertCountEquals(2)
+        // One button, under the output; the input value fits, so it carries none.
+        rule.onAllNodesWithTag("wrap_toggle_tool_output").assertCountEquals(1)
+    }
+
+    @Test
+    fun anInputValueTooLongToFitOffersToWrapIt() {
+        val long = "--flag value ".repeat(30)
+        show(transcript(tool("t1", completed("""{"type":"text","text":"short"}""", input = """{"command":${JsonPrimitive(long)}}"""))), expanded = setOf("t1"))
+        rule.waitForIdle()
+
+        // One under the long input, one under the output.
+        rule.onAllNodesWithTag("wrap_toggle_tool_output").assertCountEquals(2)
     }
 
     // ---- subagents ---------------------------------------------------------------------------------------------

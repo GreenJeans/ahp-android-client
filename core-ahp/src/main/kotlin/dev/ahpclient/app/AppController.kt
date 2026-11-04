@@ -46,6 +46,7 @@ import dev.ahpclient.state.ChatStore
 import dev.ahpclient.state.ExpansionState
 import dev.ahpclient.state.HostSession
 import dev.ahpclient.state.InteractResult
+import dev.ahpclient.state.LiveTerminal
 import dev.ahpclient.state.ManageResult
 import dev.ahpclient.state.ManagementCommands
 import dev.ahpclient.state.ModelOption
@@ -251,6 +252,7 @@ class AppController(
             override suspend fun disposeChat(uri: String) = liveSession().disposeChat(uri)
         },
         gate = approvalGate,
+        refusals = { connectedSession()?.refusals },
     )
 
     /** Creates a [SessionManager] bound to [session], so multi-host dialogs can query or start sessions on any connected host. */
@@ -278,6 +280,7 @@ class AppController(
             override suspend fun disposeChat(uri: String) = session.disposeChat(uri)
         },
         gate = approvalGate,
+        refusals = { session.refusals },
     )
 
     /**
@@ -1084,7 +1087,8 @@ class AppController(
             ChatConfig.view(open?.store?.state?.value, uri, open?.store?.chatMutableKeys?.value.orEmpty(), store.ownConfig.value)
         },
         sessionModel = { sessionModelFor(session) },
-        completionTriggers = { session.completionTriggers.value },
+        // The host's @ and / suggestions are a Pro feature (U8): without Pro no trigger is offered, so the host is never asked.
+        completionTriggers = { if (pro.unlocked.value) session.completionTriggers.value else emptyList() },
         completions = session::completions,
     )
 
@@ -1274,6 +1278,22 @@ class AppController(
         if (uri !in TerminalLinks.listedBy(current.session.root.root.value)) return
         val store = current.session.openTerminal(uri)
         if (!_state.compareAndSet(current, current.copy(terminal = OpenTerminal(uri, store)))) current.session.closeChannel(uri)
+    }
+
+    /**
+     * Watches the terminal at [uri] for the live tail in a running tool call's block in the open chat (U7), alongside the terminal
+     * screen if that is open too: the subscription is shared and counted. The same rules as [openTerminal] apply, so only an
+     * address a tool result in the open chat names is watched, and only to read. Null when there is no such chat or address.
+     * Pair every result with [LiveTerminal.close].
+     */
+    @Synchronized
+    fun watchTerminal(uri: String): LiveTerminal? {
+        val current = _state.value as? AppState.Connected ?: return null
+        val shown = current.open?.chat?.store?.state?.value ?: return null
+        if (uri !in TerminalLinks.referencedBy(shown)) return null
+        val session = current.session
+        val store = session.openTerminal(uri)
+        return LiveTerminal(store.state) { session.closeChannel(uri) }
     }
 
     /** Leaves the terminal and returns to where it was opened from: the host's own one first, else the one over the chat. */

@@ -312,6 +312,16 @@ class ChatInteractorTest {
         assertEquals("""{"id":"sized","config":{"contextSize":200000}}""", chosen.modelOf())
     }
 
+    @Test
+    fun `the first message of a new chat with no model picked names the host's first model, with its defaults`() = runTest {
+        val rig = rig().apply { models = listOf(sized, sonnet) }
+
+        // What the message box sends when nothing was picked: the model in use.
+        rig.interactor.send("hi", rig.interactor.modelInUse())
+
+        assertEquals("""{"id":"sized","config":{"contextSize":936000}}""", rig.modelOf())
+    }
+
     // ---- attachments -------------------------------------------------------------------------------------------
 
     private val note = ComposerAttachment("notes.txt", "text/plain", "hi".encodeToByteArray())

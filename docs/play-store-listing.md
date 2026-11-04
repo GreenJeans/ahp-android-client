@@ -1,6 +1,6 @@
 # Google Play Console & Release Packaging Guide (`P1`, `P3`, `M4`)
 
-This guide contains the exact copy, questionnaire answers, and build commands needed to publish **AHP Client** (`com.greenjeans.ahpclient`) to Google Play Internal / Closed Testing and Production.
+This guide contains the exact copy, questionnaire answers, and build commands needed to publish **Hostline** (`com.greenjeans.ahpclient`) to Google Play Internal / Closed Testing and Production.
 
 ---
 
@@ -34,12 +34,12 @@ $env:AHP_KEY_PASSWORD = "<key-password>"
 
 ## 2. Store Listing Copy
 
-- **App name (<= 30 chars):** `AHP Client`
+- **App name (<= 30 chars):** `Hostline: AHP Client`
 - **Short description (<= 80 chars):**
   `Monitor, review diffs, and steer your coding-agent sessions from your phone.`
 - **Full description (<= 4000 chars):**
   ```text
-  AHP Client connects your Android phone directly to coding-agent hosts running the Agent Host Protocol (AHP) — either through Microsoft Dev Tunnels (VS Code Remote Tunnel Access) or directly to an ahpd WebSocket server over your LAN or Tailscale tailnet.
+  Hostline connects your Android phone directly to coding-agent hosts running the Agent Host Protocol (AHP) — either through Microsoft Dev Tunnels (VS Code Remote Tunnel Access) or directly to an ahpd WebSocket server over your LAN or Tailscale tailnet.
 
   FREE TIER (READ-ONLY MONITOR)
   • Connect to your VS Code Remote Tunnel or direct ahpd host
@@ -56,7 +56,7 @@ $env:AHP_KEY_PASSWORD = "<key-password>"
   • Concurrent multi-host connections across multiple machines
 
   DISCLAIMER
-  AHP Client is an independent third-party client for the open Agent Host Protocol and is not affiliated with, endorsed by, or sponsored by Microsoft Corporation or GitHub, Inc. Visual Studio Code and GitHub are trademarks of their respective owners. VS Code tunnel connections rely on Microsoft's Visual Studio Tunnel Service and your own GitHub/VS Code account; direct ahpd WebSocket hosts connect independently.
+  Hostline is an independent third-party client for the open Agent Host Protocol and is not affiliated with, endorsed by, or sponsored by Microsoft Corporation or GitHub, Inc. Visual Studio Code and GitHub are trademarks of their respective owners. VS Code tunnel connections rely on Microsoft's Visual Studio Tunnel Service and your own GitHub/VS Code account; direct ahpd WebSocket hosts connect independently.
   ```
 
 ---
@@ -66,7 +66,7 @@ $env:AHP_KEY_PASSWORD = "<key-password>"
 In **Play Console -> Monetize with Play -> Products -> In-app products -> Create product**:
 
 - **Product ID:** `ahp_pro_unlock` *(must match [`BillingGateway.PRODUCT_ID`](../core-ahp/src/main/kotlin/dev/ahpclient/app/ProEntitlement.kt))*
-- **Name:** `AHP Client Pro Unlock`
+- **Name:** `Hostline Pro Unlock`
 - **Description:** `One-time unlock for sending prompts, biometric tool approvals, session management, background notifications, and multi-host connections.`
 - **Status:** Active
 - **Price:** One-time non-consumable (recommended **\$4.99 – \$9.99 USD**).
@@ -85,12 +85,12 @@ In **Play Console -> Policy and programs -> App content -> Foreground service pe
   `Live connection to the user's own coding-agent host, to alert when a session needs them`
 - **Use-case explanation (copy-paste into Play Console):**
   ```text
-  AHP Client connects directly to the user's own self-hosted coding-agent workstation (via WebSocket over Microsoft Dev Tunnels or a local/VPN ahpd server) using the Agent Host Protocol. Because the user's self-hosted development workstation does not have a cloud push-notification server (FCM), the app can only detect when a long-running coding agent pauses for user approval/input or finishes its task by keeping the user-initiated WebSocket connection open while the user switches to another app or locks their phone.
+  Hostline connects directly to the user's own self-hosted coding-agent workstation (via WebSocket over Microsoft Dev Tunnels or a local/VPN ahpd server) using the Agent Host Protocol. Because the user's self-hosted development workstation does not have a cloud push-notification server (FCM), the app can only detect when a long-running coding agent pauses for user approval/input or finishes its task by keeping the user-initiated WebSocket connection open while the user switches to another app or locks their phone.
 
   The foreground service (MonitorService) runs ONLY when the user explicitly turns on the "Monitor in background" switch in Settings (or via the app's Quick Settings tile), displays an ongoing notification showing the connected host and status, and stops immediately when the user turns the switch off or disconnects.
   ```
 - **Video link requirement:** Record a 20–30 second screen recording showing:
-  1. Opening AHP Client connected to a host.
+  1. Opening Hostline connected to a host.
   2. Opening **Settings** and toggling **Monitor in background** ON.
   3. Pulling down the Android notification shade to show the ongoing `"Monitoring <host>"` foreground service notification and an `"Input needed"` or `"Session finished"` alert.
   4. Toggling **Monitor in background** OFF and showing the ongoing notification disappearing immediately.
@@ -112,5 +112,5 @@ In **Play Console -> Policy and programs -> App content -> Data safety**:
      - A read-only demo `wss://` direct host address + bearer token running a sample session during review.
    - Note for reviewers regarding GitHub Sign-In:
      ```text
-     AHP Client is an independent client for the open Agent Host Protocol (https://github.com/microsoft/agent-host-protocol). Users can either connect directly to an ahpd WebSocket host by address ("Connect to a host directly" — no GitHub account required) or sign in with GitHub via OAuth Device Flow to discover their own VS Code Remote Tunnel Access hosts, which requests authorization for Microsoft's "Visual Studio Tunnel Service" GitHub app used by VS Code Remote Tunnel Access.
+     Hostline is an independent client for the open Agent Host Protocol (https://github.com/microsoft/agent-host-protocol). Users can either connect directly to an ahpd WebSocket host by address ("Connect to a host directly" — no GitHub account required) or sign in with GitHub via OAuth Device Flow to discover their own VS Code Remote Tunnel Access hosts, which requests authorization for Microsoft's "Visual Studio Tunnel Service" GitHub app used by VS Code Remote Tunnel Access.
      ```

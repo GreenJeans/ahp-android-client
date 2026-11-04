@@ -1,5 +1,6 @@
 package dev.ahpclient.ui
 
+import dev.ahpclient.app.AppName
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -326,7 +327,7 @@ private fun ProUpgradeDialog(
     AlertDialog(
         onDismissRequest = { if (!busy) onDismiss() },
         modifier = Modifier.testTag("pro_upgrade_dialog"),
-        title = { Text("AHP Client Pro") },
+        title = { Text("${AppName.NAME} Pro") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(

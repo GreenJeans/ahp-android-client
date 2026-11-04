@@ -12,10 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.AlertDialog
@@ -25,9 +22,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.PrimaryScrollableTabRow
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -43,17 +38,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
-import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import dev.ahpclient.state.ActivityState
 import dev.ahpclient.state.ChangeStats
 import dev.ahpclient.state.ChangesetEntry
-import dev.ahpclient.state.ChatRow
+import dev.ahpclient.state.ChatSwitcher
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.LinkTarget
 import dev.ahpclient.state.PullRequest
@@ -70,6 +63,7 @@ import dev.ahpclient.state.BackgroundWorkView
 import dev.ahpclient.state.CanvasView
 import dev.ahpclient.ui.chat.BackgroundWorkBar
 import dev.ahpclient.ui.chat.BackgroundWorkChip
+import dev.ahpclient.state.DispatchOutcome
 import dev.ahpclient.state.ManageMessages
 import dev.ahpclient.state.ManageResult
 import dev.ahpclient.state.RecentFolders
@@ -82,13 +76,14 @@ import com.microsoft.agenthostprotocol.generated.AnnotationsState
 import dev.ahpclient.platform.Instant
 
 /**
- * One session: its chats as tabs under a top bar, and the chat that is selected filling the rest of the screen. What used to
+ * One session: the way to its chats under a top bar (the main chat and one control for the others, see [ChatSwitcherBar]),
+ * and the chat that is selected filling the rest of the screen. What used to
  * be a page of buttons is behind the bar's menu (looking after the session) and its Details item (the facts, what waits on
  * the user, and the changes). [state] is null until the host's snapshot arrives; [error] says why it may never come.
  *
  * The chat itself is [chat], supplied by the caller, which owns what is open; [shownChat] says which one that is. This
  * screen asks for the session's main chat, through [onSelectChat], whenever none is shown or the one shown has left the
- * session, and for a tab the user taps or a chat they have just started.
+ * session, and for a chat the user picks or has just started.
  */
 @Composable
 fun SessionScreen(
@@ -136,6 +131,8 @@ fun SessionScreen(
     onRemoveAnnotationEntry: suspend (annotationId: String, entryId: String) -> ManageResult = { _, _ -> ManageResult.NotAllowed },
     onOpenSubagent: ((String) -> Unit)? = null,
     onOpenTerminal: ((String) -> Unit)? = null,
+    /** Which turn of a chat a turn id is, counting from 1, when the app holds enough of that chat to tell; names a fork's turn in the switcher. */
+    chatTurnNumber: (chatUri: String, turnId: String) -> Int? = { _, _ -> null },
     chat: @Composable () -> Unit = {},
 ) {
     val detail = remember(state, now, summary) { state?.let { SessionDetail.from(it, now, summary) } }
@@ -162,8 +159,15 @@ fun SessionScreen(
     }
 
     var showArchivedChats by rememberSaveable { mutableStateOf(false) }
-    val visibleTabs = remember(detail, showArchivedChats) { detail?.visibleTabs(showArchivedChats).orEmpty() }
-    val tabUris = visibleTabs.map { it.uri }
+    var showHiddenChats by rememberSaveable { mutableStateOf(false) }
+    // The other chats are reached through one control and a sheet (U5), not a tab each: most of them do not need the person.
+    val switcher = remember(detail, shownChat, showArchivedChats, showHiddenChats, chatTurnNumber) {
+        detail?.let { ChatSwitcher.of(it.chats, shownChat, showArchived = showArchivedChats, showHidden = showHiddenChats, turnNumber = chatTurnNumber) }
+            ?: ChatSwitcher.EMPTY
+    }
+    // A chat can be on screen only while the switcher lists it: an archived or hidden one goes back to the main chat when left out.
+    val tabUris = switcher.reachable
+    var showSwitcher by rememberSaveable { mutableStateOf(false) }
     val canShowChat = detail != null && detail.phase != SessionPhase.FAILED
     LaunchedEffect(tabUris, shownChat, canShowChat) {
         if (canShowChat && (shownChat == null || shownChat !in tabUris)) detail.mainChat?.let { onSelectChat(it.uri) }
@@ -223,7 +227,7 @@ fun SessionScreen(
                 error is SessionGoneException -> ErrorText("This session is no longer on the host.", Modifier.padding(24.dp).testTag("session_gone"))
                 detail != null -> {
                     SessionBanners(detail, notice)
-                    ChatTabs(visibleTabs, shownChat, onSelectChat)
+                    ChatSwitcherBar(switcher, onSelectChat, onOpen = { showSwitcher = true })
                     Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                         when {
                             detail.phase == SessionPhase.FAILED -> Unit
@@ -237,6 +241,18 @@ fun SessionScreen(
                 else -> Busy("Loading session…", Modifier.padding(24.dp).testTag("detail_loading"))
             }
         }
+    }
+    if (showSwitcher && switcher.hasOthers) {
+        ChatSwitcherSheet(
+            switcher = switcher,
+            onSelect = { uri ->
+                showSwitcher = false
+                onSelectChat(uri)
+            },
+            onDismiss = { showSwitcher = false },
+            showHidden = showHiddenChats,
+            onToggleHidden = { showHiddenChats = !showHiddenChats },
+        )
     }
     if (showDetails && detail != null) {
         DetailsSheet(
@@ -355,46 +371,6 @@ private fun SessionBanners(detail: SessionDetail, notice: String?) {
             SessionPhase.READY, SessionPhase.OTHER -> Unit
         }
         ManageNotice(notice, "manage_notice")
-    }
-}
-
-/**
- * One tab per chat, the main chat first. A single chat needs no tabs, so none are drawn. A chat that is waiting on the user
- * carries a dot, and its tab's spoken description says so, so colour is never the only cue.
- */
-@Composable
-private fun ChatTabs(chats: List<ChatRow>, shownChat: String?, onSelect: (String) -> Unit) {
-    if (chats.size < 2) return
-    val selected = chats.indexOfFirst { it.uri == shownChat }.coerceAtLeast(0)
-    PrimaryScrollableTabRow(selectedTabIndex = selected, edgePadding = 8.dp, modifier = Modifier.testTag("chat_tabs")) {
-        chats.forEachIndexed { index, chat ->
-            Tab(
-                selected = index == selected,
-                onClick = { onSelect(chat.uri) },
-                modifier = Modifier
-                    .heightIn(min = 48.dp)
-                    .semantics {
-                        contentDescription = buildList {
-                            add(chat.title)
-                            if (chat.state == ActivityState.NEEDS_INPUT) add(chat.state.label)
-                            if (chat.isArchived) add("Archived")
-                        }.joinToString(", ")
-                    }
-                    .testTag("chat_tab"),
-                text = {
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        if (chat.state == ActivityState.NEEDS_INPUT) {
-                            Surface(
-                                color = MaterialTheme.colorScheme.tertiary,
-                                shape = CircleShape,
-                                modifier = Modifier.size(8.dp).testTag("chat_tab_dot").clearAndSetSemantics {},
-                            ) {}
-                        }
-                        Text(if (chat.isArchived) "${chat.title} (archived)" else chat.title, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 180.dp))
-                    }
-                },
-            )
-        }
     }
 }
 
@@ -545,6 +521,12 @@ private fun Facts(
 ) {
     var chooseFolder by remember { mutableStateOf(false) }
     var folderNotice by remember { mutableStateOf<String?>(null) }
+    // A refusal seen here, in case the host's refusal is not yet (or never) reported back through [ManageActionsUi.addFolderRefusal].
+    var refusedHere by remember { mutableStateOf<String?>(null) }
+    val addRefusal = manage?.addFolderRefusal ?: refusedHere
+    // The same for removing, kept apart: a refused add leaves "Remove" offered until the host refuses a remove itself.
+    var removeRefusedHere by remember { mutableStateOf<String?>(null) }
+    val removeRefusal = manage?.removeFolderRefusal ?: removeRefusedHere
     val folderScope = rememberCoroutineScope()
     val addableFolders = manage?.folders.orEmpty().filterNot { offered -> detail.workingDirectories.any { it == displayPath(offered) } }
     val facts = buildList {
@@ -575,26 +557,54 @@ private fun Facts(
         detail.workingDirectories.forEachIndexed { index, folder ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text(folder.take(500), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f).testTag("session_working_directory_$index"))
-                if (manage != null && sessionUri != null && index > 0) TextButton(
-                    onClick = { folderScope.launch { folderNotice = ManageMessages.describe(manage.removeWorkingDirectory(sessionUri, folder)) } },
+                if (manage != null && sessionUri != null && index > 0 && removeRefusal == null) TextButton(
+                    onClick = {
+                        folderScope.launch {
+                            val result = manage.removeWorkingDirectory(sessionUri, folder)
+                            val refused = ((result as? ManageResult.Unconfirmed)?.outcome as? DispatchOutcome.Rejected)?.reason
+                            // The host's refusal replaces the buttons rather than showing twice.
+                            if (refused != null) removeRefusedHere = refused
+                            folderNotice = if (refused != null) null else ManageMessages.describe(result)
+                        }
+                    },
                     modifier = Modifier.testTag("folder_remove_$index"),
                 ) { Text("Remove") }
             }
         }
+        // Once the host refuses a remove, its reason stands once under the folders in place of their "Remove" buttons, for as long as this connection lasts.
+        if (manage != null && sessionUri != null && removeRefusal != null && detail.workingDirectories.size > 1) {
+            Text(ManageMessages.removeFolderRefused(removeRefusal), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("folder_remove_refused"))
+        }
         if (manage != null && sessionUri != null) {
-            if (addableFolders.isNotEmpty()) OutlinedButton(
-                onClick = { chooseFolder = true },
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("folder_add"),
-            ) { Text("Add folder") }
+            // Offered until the host refuses it once; after that its reason stands where the button was, for as long as this connection lasts.
+            if (addableFolders.isNotEmpty()) {
+                if (addRefusal != null) {
+                    Text(ManageMessages.addFolderRefused(addRefusal), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("folder_add_refused"))
+                } else {
+                    OutlinedButton(
+                        onClick = { chooseFolder = true },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("folder_add"),
+                    ) { Text("Add folder") }
+                }
+            }
             folderNotice?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("folder_notice")) }
-            if (chooseFolder) AlertDialog(
+            if (chooseFolder && addRefusal == null) AlertDialog(
                 onDismissRequest = { chooseFolder = false },
                 title = { Text("Add a recent folder") },
                 text = {
                     Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         addableFolders.take(RecentFolders.SHOWN).forEachIndexed { index, folder ->
                             TextButton(
-                                onClick = { chooseFolder = false; folderScope.launch { folderNotice = ManageMessages.describe(manage.addWorkingDirectory(sessionUri, folder)) } },
+                                onClick = {
+                                    chooseFolder = false
+                                    folderScope.launch {
+                                        val result = manage.addWorkingDirectory(sessionUri, folder)
+                                        val refused = ((result as? ManageResult.Unconfirmed)?.outcome as? DispatchOutcome.Rejected)?.reason
+                                        // The host's refusal replaces the button rather than showing twice.
+                                        if (refused != null) refusedHere = refused
+                                        folderNotice = if (refused != null) null else ManageMessages.describe(result)
+                                    }
+                                },
                                 modifier = Modifier.fillMaxWidth().testTag("folder_choice_$index"),
                             ) { Text(displayPath(folder).take(500), maxLines = 2, overflow = TextOverflow.Ellipsis) }
                         }

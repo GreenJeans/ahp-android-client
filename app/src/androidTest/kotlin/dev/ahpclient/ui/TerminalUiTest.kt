@@ -6,8 +6,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertHeightIsAtLeast
+import androidx.compose.ui.test.assertWidthIsAtLeast
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertTextEquals
@@ -28,6 +34,7 @@ import com.microsoft.agenthostprotocol.Ahp
 import com.microsoft.agenthostprotocol.generated.TerminalState
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -212,5 +219,46 @@ class TerminalUiTest {
 
         rule.onNode(hasText("line 300")).assertIsDisplayed()
         rule.onNodeWithTag("terminal_latest").assertDoesNotExist()
+    }
+
+    // ---- word wrap (U6) ----------------------------------------------------------------------------------------
+
+    private fun scrollsSideways(tag: String): Boolean =
+        rule.onNodeWithTag(tag).fetchSemanticsNode().config.getOrNull(SemanticsProperties.HorizontalScrollAxisRange)?.let { it.maxValue() > 0f } == true
+
+    private fun rowsOf(line: Int): Int {
+        val layouts = mutableListOf<TextLayoutResult>()
+        rule.onAllNodesWithTag("terminal_line")[line].fetchSemanticsNode().config[SemanticsActions.GetTextLayoutResult].action!!.invoke(layouts)
+        return layouts.first().lineCount
+    }
+
+    @Test
+    fun longLinesWrapAtFirst_andCanBeKeptWholeToScrollSideways() {
+        show(state("short\n" + "make[2]: Entering directory /work/build/".repeat(8) + "\n"))
+        rule.waitForIdle()
+
+        assertFalse("wrapped at first, as before", scrollsSideways("terminal_list"))
+        assertTrue(rowsOf(1) > 1)
+        rule.onNodeWithTag("wrap_toggle_terminal")
+            .assertContentDescriptionEquals("Keep lines whole")
+            .assertHeightIsAtLeast(48.dp)
+            .assertWidthIsAtLeast(48.dp)
+            .performClick()
+        rule.waitForIdle()
+
+        assertTrue("kept whole, the output scrolls sideways", scrollsSideways("terminal_list"))
+        assertEquals(1, rowsOf(1))
+        rule.onNodeWithTag("wrap_toggle_terminal").assertContentDescriptionEquals("Wrap long lines").performClick()
+        rule.waitForIdle()
+
+        assertFalse(scrollsSideways("terminal_list"))
+    }
+
+    @Test
+    fun aTerminalWithNoOutputHasNoWrapButton() {
+        show(state(""))
+
+        rule.onNodeWithTag("terminal_empty").assertIsDisplayed()
+        rule.onNodeWithTag("wrap_toggle_terminal").assertDoesNotExist()
     }
 }

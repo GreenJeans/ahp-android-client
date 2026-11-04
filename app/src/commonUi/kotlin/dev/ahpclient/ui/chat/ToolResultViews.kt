@@ -1,8 +1,8 @@
 package dev.ahpclient.ui.chat
 
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,6 +16,10 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -28,10 +32,15 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.ahpclient.state.Clipped
 import dev.ahpclient.state.InputLine
+import dev.ahpclient.state.LiveTerminal
 import dev.ahpclient.state.ToolDetail
 import dev.ahpclient.state.RiskLevelView
 import dev.ahpclient.state.ToolResultView
+import dev.ahpclient.state.WrapView
 import dev.ahpclient.platform.formatInteger
+import dev.ahpclient.ui.WrapToggle
+import dev.ahpclient.ui.rememberLineWrap
+import dev.ahpclient.ui.sidewaysUnless
 import kotlin.math.roundToInt
 
 /**
@@ -39,6 +48,7 @@ import kotlin.math.roundToInt
  * to decide it are on screen, so the block does not send the person elsewhere. [onShowAll] is set when something was left
  * out for length and the person may ask for more. [onOpenSubagent] opens a subagent's own transcript, [onOpenTerminal] the live
  * output of a terminal a command ran in, and [onOpenRich] opens inline file edits or attachments in the full-screen viewer.
+ * [liveTerminal], set only while the call runs, watches a terminal so the end of its output shows here as it arrives.
  * The text can be selected and copied.
  */
 @Composable
@@ -49,6 +59,7 @@ internal fun ToolDetailBody(
     onOpenSubagent: ((String) -> Unit)? = null,
     onOpenTerminal: ((String) -> Unit)? = null,
     onOpenRich: ((RichModalRequest) -> Unit)? = null,
+    liveTerminal: ((String) -> LiveTerminal?)? = null,
 ) {
     SelectionContainer {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -97,7 +108,7 @@ internal fun ToolDetailBody(
                     }
                 }
             }
-            detail.results.forEach { result -> ToolResultRow(result, onOpenSubagent, onOpenTerminal, onOpenRich) }
+            detail.results.forEach { result -> ToolResultRow(result, onOpenSubagent, onOpenTerminal, onOpenRich, liveTerminal) }
             detail.error?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("tool_error")) }
             if (detail.isEmpty) Text("No further details.", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("tool_nothing"))
             if (onShowAll != null) {
@@ -111,7 +122,7 @@ internal fun ToolDetailBody(
 private fun InputLineView(line: InputLine) {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(line.name, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        MonoBlock(line.value)
+        MonoBlock(line.value, isOutput = false)
     }
 }
 
@@ -121,10 +132,11 @@ internal fun ToolResultRow(
     onOpenSubagent: ((String) -> Unit)? = null,
     onOpenTerminal: ((String) -> Unit)? = null,
     onOpenRich: ((RichModalRequest) -> Unit)? = null,
+    liveTerminal: ((String) -> LiveTerminal?)? = null,
 ) {
     when (result) {
         is ToolResultView.Text -> MonoBlock(result.body, Modifier.testTag("result_text"))
-        is ToolResultView.Terminal -> TerminalResult(result, onOpenTerminal)
+        is ToolResultView.Terminal -> TerminalResult(result, onOpenTerminal, liveTerminal)
         is ToolResultView.FileEdit -> FileEditResult(result, onOpenRich)
         is ToolResultView.Subagent -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             val chatUri = result.chatUri
@@ -157,7 +169,8 @@ internal fun ToolResultRow(
 }
 
 @Composable
-private fun TerminalResult(result: ToolResultView.Terminal, onOpenTerminal: ((String) -> Unit)?) {
+private fun TerminalResult(result: ToolResultView.Terminal, onOpenTerminal: ((String) -> Unit)?, liveTerminal: ((String) -> LiveTerminal?)? = null) {
+    val terminalUri = result.terminalUri
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Column(modifier = Modifier.semantics(mergeDescendants = true) {}.testTag("result_terminal"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -165,15 +178,15 @@ private fun TerminalResult(result: ToolResultView.Terminal, onOpenTerminal: ((St
                 ExitBadge(result.exitCode)
             }
             val output = result.output
-            if (output != null) {
-                MonoBlock(output)
-            } else {
-                Text(if (result.exitCode == null) "No output yet." else "No output.", style = MaterialTheme.typography.bodyMedium)
+            when {
+                output != null -> MonoBlock(output)
+                // Until the command ends the result has no output of its own, but its terminal streams: show the end of that (U7).
+                result.exitCode == null && terminalUri != null && liveTerminal != null -> LiveTerminalTail(terminalUri, liveTerminal)
+                else -> Text(if (result.exitCode == null) "No output yet." else "No output.", style = MaterialTheme.typography.bodyMedium)
             }
             if (result.clippedByHost) Text("The host cut this output short.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         // The button is a control of its own, outside the merged words above.
-        val terminalUri = result.terminalUri
         if (terminalUri != null && onOpenTerminal != null) {
             OutlinedButton(onClick = { onOpenTerminal(terminalUri) }, modifier = Modifier.heightIn(min = 48.dp).testTag("terminal_open")) { Text("Open live output") }
         }
@@ -250,28 +263,44 @@ private fun FileEditResult(
 }
 
 /**
- * Text as the tool printed it: monospace, not wrapped, scrolling sideways, because output is data and its layout matters.
- * When part of it was left out, the block says how much, so nobody mistakes a cut for the whole.
+ * Text as the tool printed it: monospace and, unless the person chose to wrap tool output, not wrapped but scrolling sideways,
+ * because output is data and its layout matters. On output ([isOutput], the default) the wrap button is always under the
+ * block, whether or not a line runs past the edge, so it is in the same place on every result. On a tool's input values and a
+ * text preview it is offered only when a line does not fit, so a short value carries no control it has no use for. When part
+ * of it was left out, the block says how much, so nobody mistakes a cut for the whole.
  */
 @Composable
-internal fun MonoBlock(text: Clipped, modifier: Modifier = Modifier) {
+internal fun MonoBlock(text: Clipped, modifier: Modifier = Modifier, isOutput: Boolean = true) {
+    val wrap = rememberLineWrap(WrapView.TOOL_OUTPUT)
+    val sideways = rememberScrollState()
+    // Known only once laid out: kept whole, a line is too long when there is something to scroll to; wrapped, when it took more rows than it has lines.
+    var wrappedRows by remember(text.text) { mutableStateOf(false) }
+    val offerWrap = isOutput || (if (wrap.on) wrappedRows else sideways.maxValue > 0)
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Surface(color = MaterialTheme.colorScheme.surfaceVariant, contentColor = MaterialTheme.colorScheme.onSurfaceVariant, shape = MaterialTheme.shapes.small) {
             Text(
                 text.text,
                 style = MaterialTheme.typography.bodySmall,
                 fontFamily = FontFamily.Monospace,
-                softWrap = false,
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(8.dp),
+                softWrap = wrap.on,
+                onTextLayout = { layout -> if (wrap.on && !isOutput) wrappedRows = layout.lineCount > text.text.count { it == '\n' } + 1 },
+                modifier = Modifier.fillMaxWidth().sidewaysUnless(wrap.on, sideways).padding(8.dp).testTag("mono_text"),
             )
         }
-        if (text.isClipped) {
-            Text(
-                "Showing the first ${formatInteger(text.text.length.toLong())} of ${formatInteger(text.fullLength.toLong())} characters.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.testTag("clipped_note"),
-            )
+        if (text.isClipped || offerWrap) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(modifier = Modifier.weight(1f)) {
+                    if (text.isClipped) {
+                        Text(
+                            "Showing the first ${formatInteger(text.text.length.toLong())} of ${formatInteger(text.fullLength.toLong())} characters.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("clipped_note"),
+                        )
+                    }
+                }
+                if (offerWrap) WrapToggle(wrap, WrapView.TOOL_OUTPUT)
+            }
         }
     }
 }

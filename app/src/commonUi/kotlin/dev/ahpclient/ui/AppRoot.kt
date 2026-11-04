@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -37,6 +38,7 @@ import dev.ahpclient.state.ChangeStats
 import dev.ahpclient.state.ChangesetEntry
 import dev.ahpclient.state.ChatConfig
 import dev.ahpclient.state.ChatInteractor
+import dev.ahpclient.state.ChatSwitcher
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.CustomAgents
 import dev.ahpclient.state.CustomizationCategory
@@ -49,7 +51,6 @@ import dev.ahpclient.state.HostTerminalEntry
 import dev.ahpclient.state.Inbox
 import dev.ahpclient.state.InboxReader
 import dev.ahpclient.state.ManageResult
-import dev.ahpclient.state.ModelOptions
 import dev.ahpclient.state.SlashCommands
 import dev.ahpclient.state.Transcript
 import dev.ahpclient.ui.chat.ChatActionsUi
@@ -79,14 +80,17 @@ fun AppRoot(
     val catalog by controller.hosts.collectAsStateWithLifecycle()
     val theme by ui.theme.collectAsStateWithLifecycle()
     PlatformBackHandler(enabled = (state as? AppState.SignedOut)?.step is SignInStep.AwaitingApproval || catalog.signInStep is SignInStep.AwaitingApproval) { controller.cancelSignIn() }
-    AhpTheme(theme) {
-        // Every screen but the loading one brings its own bar and applies the system-bar insets itself.
-        Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-            when (val current = state) {
-                AppState.Restoring -> Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars).testTag("restoring"), contentAlignment = Alignment.Center) { Busy("Loading…") }
-                is AppState.SignedOut -> SignInScreen(current, controller::signIn, controller::cancelSignIn, onOpenGitHub, onCopyCode, onUseDirect = controller::useDirectHosts)
-                // One call for both, so that going from the host list to a host (and back) keeps the menu, and the sheet over it, as they are.
-                AppState.Hosts, is AppState.Connected -> Shell(controller, ui, catalog, current as? AppState.Connected, monitorEnabled, notificationsAllowed, onMonitorChange, alerts, sessionRequests, quickReplyProvider, onOpenGitHub, onCopyCode)
+    // The wrap choices are read where the text is drawn, deep in the chat and the viewers, so they are provided once here.
+    CompositionLocalProvider(LocalLineWrap provides ui) {
+        AhpTheme(theme) {
+            // Every screen but the loading one brings its own bar and applies the system-bar insets itself.
+            Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                when (val current = state) {
+                    AppState.Restoring -> Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars).testTag("restoring"), contentAlignment = Alignment.Center) { Busy("Loading…") }
+                    is AppState.SignedOut -> SignInScreen(current, controller::signIn, controller::cancelSignIn, onOpenGitHub, onCopyCode, onUseDirect = controller::useDirectHosts)
+                    // One call for both, so that going from the host list to a host (and back) keeps the menu, and the sheet over it, as they are.
+                    AppState.Hosts, is AppState.Connected -> Shell(controller, ui, catalog, current as? AppState.Connected, monitorEnabled, notificationsAllowed, onMonitorChange, alerts, sessionRequests, quickReplyProvider, onOpenGitHub, onCopyCode)
+                }
             }
         }
     }
@@ -236,12 +240,16 @@ private fun Shell(
     val listed: List<SessionSummary> = connected?.let { it.session.root.sessions.collectAsStateWithLifecycle().value }.orEmpty()
     // The list is only what was saved last time until the host sends its own: to look at, with nothing in it to act on.
     val stale = connected?.let { it.session.root.stale.collectAsStateWithLifecycle().value } == true
+    // Once this host has refused to add a folder on this connection, "Add folder" is not offered again for it.
+    val addFolderRefusal = connected?.let { it.session.refusals.addFolder.collectAsStateWithLifecycle().value }
+    // The same for removing a folder, kept apart: each is hidden only after its own refusal.
+    val removeFolderRefusal = connected?.let { it.session.refusals.removeFolder.collectAsStateWithLifecycle().value }
     val now by rememberNow()
     // Where the person is needed, across all connected hosts: what waits on them, and what finished unread.
     val inbox = remember(multiHostEntries, now) { Inbox.fromEntries(multiHostEntries, now) }
     // Nothing to look after sessions with unless the connection is on the manage tier: no controls, not disabled ones. Nor from a stale list.
     val manageActions = if (canManage && !stale) {
-        remember(controller.manager, rootState, listed, orderedManageTargets) {
+        remember(controller.manager, rootState, listed, orderedManageTargets, addFolderRefusal, removeFolderRefusal) {
             ManageActionsUi(
                 agents = controller.manager.offeredAgents().map { AgentOption(it.provider, it.displayName) },
                 folders = controller.manager.offeredFolders(),
@@ -261,6 +269,8 @@ private fun Shell(
                 toggleCustomization = controller.manager::toggleCustomization,
                 addWorkingDirectory = controller.manager::addWorkingDirectory,
                 removeWorkingDirectory = controller.manager::removeWorkingDirectory,
+                addFolderRefusal = addFolderRefusal,
+                removeFolderRefusal = removeFolderRefusal,
             )
         }
     } else {
@@ -424,7 +434,8 @@ private fun Shell(
                 SessionPage(
                     controller, ui, connected, open, connection, rootState, canManage, canInteract, manageActions, listed, changesetTitle,
                     onChangesetTitle = { changesetTitle = it }, onMenu = menu::open, alerts = alerts,
-                    quickReplyProvider = quickReplyProvider,
+                    // AI suggestions are a Pro feature (U8); without Pro the bar offers the plain, heuristic replies only.
+                    quickReplyProvider = quickReplyProvider.takeIf { proUnlocked },
                 )
             } else {
                 // The menu is the page here, held open over this strip of background; there is nothing to say behind it.
@@ -607,6 +618,11 @@ private fun SessionPage(
             },
             onOpenSubagent = controller::openSubagentChat,
             onOpenTerminal = controller::openTerminal,
+            // Only chats this app holds can have their turns counted: the one on screen and the few kept warm behind it.
+            chatTurnNumber = { chatUri, turnId ->
+                (listOfNotNull(chat) + open.warm).firstOrNull { it.uri == chatUri }?.store?.state?.value
+                    ?.let { ChatSwitcher.turnNumberIn(it, turnId) }
+            },
         ) {
             if (chat != null) {
                 OpenChatView(
@@ -679,7 +695,9 @@ private fun OpenChatView(
     // The screen stays on while an agent works, when the person asked for that, and never otherwise.
     KeepScreenAwakeEffect(keepAwake && running)
     val models = remember(chat.interactor, rootState) { chat.interactor.modelOptions() }
-    val inUse = ModelOptions.inUse(chatState, models)
+    // The same answer the interactor gives, with the session's model (E6): a new chat starts on that one, or on the host's first model.
+    val listedSessions by session.root.sessions.collectAsStateWithLifecycle()
+    val inUse = remember(chatState, models, sessionState, listedSessions, fromCache) { chat.interactor.modelInUse() }
     val rootTyped = rootState as? RootState
     val agents = remember(sessionState, rootTyped) { CustomAgents.of(sessionState, rootTyped) }
     var localRichRequest by remember { mutableStateOf<RichModalRequest?>(null) }
@@ -769,6 +787,8 @@ private fun OpenChatView(
     }
     val onOpenLink = { link: String -> if (!platformUi.openLink(link)) platformUi.showToast("Nothing can open this link") }
     val onShareLink = { link: String -> if (!platformUi.shareLink(link)) platformUi.showToast("Nothing can share this link") }
+    // Read only: a running tool call's block watches its terminal through this for the end of the output as it arrives (U7).
+    val liveTerminal = remember(controller) { { uri: String -> controller.watchTerminal(uri) } }
     if (screen) {
         ChatScreen(
             transcript = transcript,
@@ -789,6 +809,7 @@ private fun OpenChatView(
             onRetry = chat.store::retry,
             backLabel = "Back to chat",
             fromCache = fromCache,
+            liveTerminal = liveTerminal,
             textScale = textScale,
             onTextScale = ui::setTextScale,
             onReadResource = session::readResource,
@@ -817,6 +838,7 @@ private fun OpenChatView(
             onOpenTerminal = controller::openTerminal,
             onRetry = chat.store::retry,
             fromCache = fromCache,
+            liveTerminal = liveTerminal,
             textScale = textScale,
             onTextScale = ui::setTextScale,
             onReadResource = session::readResource,

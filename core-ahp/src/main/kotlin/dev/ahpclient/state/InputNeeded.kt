@@ -1,5 +1,6 @@
 package dev.ahpclient.state
 
+import dev.ahpclient.app.AppName
 import com.microsoft.agenthostprotocol.generated.ChatInputQuestionText
 import com.microsoft.agenthostprotocol.generated.ConfirmationOptionKind
 import com.microsoft.agenthostprotocol.generated.SessionInputRequestChatInput
@@ -247,7 +248,7 @@ data class MonitorStatus(val title: String, val text: String) {
 /** What the Quick Settings tile shows: active while monitoring runs, with the inbox's waiting count when online. */
 data class MonitorTileState(val active: Boolean, val label: String, val subtitle: String) {
     companion object {
-        const val LABEL = "AHP Monitor"
+        const val LABEL = AppName.MONITOR
         const val OFF_SUBTITLE = "Monitoring off"
 
         fun from(status: MonitorStatus?, sessions: List<SessionSummary>, online: Boolean): MonitorTileState {

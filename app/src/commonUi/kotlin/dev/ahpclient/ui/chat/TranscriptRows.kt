@@ -57,6 +57,7 @@ import androidx.compose.ui.unit.dp
 import dev.ahpclient.state.AgentPick
 import dev.ahpclient.state.InteractMessages
 import dev.ahpclient.state.ManageMessages
+import dev.ahpclient.state.LiveTerminal
 import dev.ahpclient.state.ManageResult
 import dev.ahpclient.state.PendingApproval
 import dev.ahpclient.state.SessionDetail
@@ -93,16 +94,20 @@ internal fun TranscriptRow(
     onRead: ((String) -> Unit)? = null,
     readableTurns: Set<String> = emptySet(),
     onLoadDraft: (String) -> Unit = {},
+    /** Watches a terminal, read only, for the live tail of a running tool call's command (U7). */
+    liveTerminal: ((String) -> LiveTerminal?)? = null,
 ) {
     when (row) {
         is TranscriptRowModel.Single -> ItemRow(
             row.item, onOpenLink, modifier, row.item.key in expanded, { onToggle(row.item.key) },
             actions, onOpenSubagent, onOpenTerminal, allowHostFiles, onOpenRich, hasOlder, onLoadDraft,
             onRead = onRead?.takeIf { (row.item as? TranscriptItem.TurnEnd)?.turnId in readableTurns },
+            liveTerminal = liveTerminal,
         )
         is TranscriptRowModel.Steps -> StepsRow(
             row, onOpenLink, modifier, expanded, onToggle,
             actions, onOpenSubagent, onOpenTerminal, allowHostFiles, onOpenRich,
+            liveTerminal = liveTerminal,
         )
     }
 }
@@ -122,12 +127,13 @@ private fun ItemRow(
     hasOlder: Boolean = false,
     onLoadDraft: (String) -> Unit = {},
     onRead: ((String) -> Unit)? = null,
+    liveTerminal: ((String) -> LiveTerminal?)? = null,
 ) {
     when (item) {
         is TranscriptItem.User -> UserRow(item, actions, hasOlder, onLoadDraft, modifier)
         is TranscriptItem.Markdown -> AgentBubble(item, onOpenLink, modifier, allowHostFiles, onOpenRich)
         is TranscriptItem.Reasoning -> ReasoningBlock(item, expanded, onToggle, onOpenLink, modifier, allowHostFiles, onOpenRich)
-        is TranscriptItem.Tool -> ToolCallBlock(item, expanded, onToggle, actions, onOpenSubagent, onOpenTerminal, onOpenRich, modifier)
+        is TranscriptItem.Tool -> ToolCallBlock(item, expanded, onToggle, actions, onOpenSubagent, onOpenTerminal, onOpenRich, modifier, liveTerminal)
         is TranscriptItem.Notice -> NoticeRow(item, modifier)
         is TranscriptItem.TurnEnd -> TurnEndRow(item, actions, modifier, onRead)
         is TranscriptItem.Question -> {
@@ -681,6 +687,7 @@ private fun StepsRow(
     onOpenTerminal: ((String) -> Unit)?,
     allowHostFiles: Boolean,
     onOpenRich: ((RichModalRequest) -> Unit)?,
+    liveTerminal: ((String) -> LiveTerminal?)? = null,
 ) {
     val open = model.needsYou || model.key in expanded
     val colors = MaterialTheme.colorScheme
@@ -739,6 +746,7 @@ private fun StepsRow(
                         ItemRow(
                             item, onOpenLink, Modifier, item.key in expanded, { onToggle(item.key) },
                             actions, onOpenSubagent, onOpenTerminal, allowHostFiles, onOpenRich,
+                            liveTerminal = liveTerminal,
                         )
                     }
                 }
@@ -805,6 +813,7 @@ private fun ToolCallBlock(
     onOpenTerminal: ((String) -> Unit)?,
     onOpenRich: ((RichModalRequest) -> Unit)?,
     modifier: Modifier,
+    liveTerminal: ((String) -> LiveTerminal?)? = null,
 ) {
     val source = item.source
     if (source == null) {
@@ -834,6 +843,8 @@ private fun ToolCallBlock(
                 onOpenSubagent = onOpenSubagent,
                 onOpenTerminal = onOpenTerminal,
                 onOpenRich = onOpenRich,
+                // Only a call still running has a command whose output is still coming; a finished one shows its result.
+                liveTerminal = liveTerminal?.takeIf { item.state == ToolState.RUNNING },
             )
         }
         if (actions != null && waiting != null) ApprovalButtons(waiting.choices, waiting.toolCallId, waiting.forResult, actions)

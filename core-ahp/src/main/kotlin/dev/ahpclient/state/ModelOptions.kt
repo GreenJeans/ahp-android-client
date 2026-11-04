@@ -108,9 +108,13 @@ object ModelOptions {
 
     /**
      * The model a chat is using now, so the message box can show it and send it: the one its running or latest turn was sent
-     * with, else the one that turn reports having used, else the one in the draft. Null when none of these is a model the host
-     * offers, which is a chat that has not had a turn: it will use the host's default. A setting the host no longer lists for the
-     * model is dropped; the model is kept.
+     * with, else the one that turn reports having used, else the one in the draft, else the session's model. A chat that has had
+     * no turn, on a session the host names no model for, starts on the host's first listed model with that model's default
+     * settings (an empty [ModelChoice.config]; [prepare] adds the host's defaults when the message is built), so its first message
+     * always names a model: a message with none leaves the host to pick, and the VS Code host's own pick can fail on a large
+     * context (`compaction_static_context_blocked`). Null when the host offers no models, when [chat] is not known yet, and when a
+     * turn or the session names a model the host does not offer: that chat is on a model the host knows, and sending none keeps
+     * it. A setting the host no longer lists for the model is dropped; the model is kept.
      *
      * A message sent with no model leaves the chat on the model it has (the host changes it only when asked), but the screen shows
      * and sends this one anyway, so what is on it is always what is used.
@@ -122,7 +126,13 @@ object ModelOptions {
             val reported = turn.second?.model?.takeIf { it.isNotBlank() }
             resolveByName(reported, options)?.let { return it }
         }
-        return choiceOf(chat.draft?.model, options) ?: resolveByName(sessionModel, options)
+        return choiceOf(chat.draft?.model, options) ?: resolveByName(sessionModel, options) ?: firstForNewChat(chat, options, sessionModel)
+    }
+
+    /** The host's first listed model, for a chat that has had no turn (none running, none kept, none older to load) on a session that names no model. */
+    private fun firstForNewChat(chat: ChatState, options: List<ModelOption>, sessionModel: String?): ModelChoice? {
+        if (chat.activeTurn != null || chat.turns.isNotEmpty() || chat.turnsNextCursor != null || !sessionModel.isNullOrBlank()) return null
+        return options.firstOrNull()?.let { ModelChoice(it.id) }
     }
 
     private fun resolveByName(raw: String?, options: List<ModelOption>): ModelChoice? {

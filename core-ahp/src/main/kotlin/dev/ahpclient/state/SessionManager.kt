@@ -47,7 +47,7 @@ sealed interface ManageResult {
     /** An action was sent but the host did not confirm it: refused, no answer in time, or the connection dropped first. */
     data class Unconfirmed(val outcome: DispatchOutcome) : ManageResult
 
-    /** This connection cannot do it: the tier is too low, or there is no connection. */
+    /** This connection cannot do it: the tier is too low, there is no connection, or the host already refused it on this connection. */
     data object NotAllowed : ManageResult
 
     /** The session or chat is not (or is no longer) there, or is not ready for this. */
@@ -88,7 +88,15 @@ class SessionManager(
     private val commands: ManagementCommands,
     private val gate: ApprovalGate,
     private val newId: () -> String = { randomUuid() },
+    /** What the host this manager acts on has refused on its current connection ([HostSession.refusals]); null keeps nothing. */
+    private val refusals: () -> HostRefusals? = { null },
 ) {
+    /** The host's words when it has refused to add a folder on this connection; while set, adding a folder is not offered or sent. */
+    fun addFolderRefusal(): String? = refusals()?.addFolder?.value
+
+    /** The host's words when it has refused to remove a folder on this connection; while set, removing a folder is not offered or sent. */
+    fun removeFolderRefusal(): String? = refusals()?.removeFolder?.value
+
     /** The agents the host lists, in its order. */
     fun offeredAgents(): List<AgentInfo> = agents()
 
@@ -147,23 +155,41 @@ class SessionManager(
         return action(sessionUri, SessionActions.setTitle(trimmed))
     }
 
-    /** Adds a working directory the host has offered from its recent session history. */
+    /**
+     * Adds a working directory the host has offered from its recent session history. Once the host has refused this on the current
+     * connection it is not sent again ([ManageResult.NotAllowed]): the refusal is remembered for the host, and only the host's own
+     * refusal counts, not a send that failed, no echo in time, or this app's policy saying no.
+     */
     suspend fun addWorkingDirectory(sessionUri: String, directory: String): ManageResult {
         if (!allowed()) return ManageResult.NotAllowed
+        // Taken now, so a refusal is noted for the host it was sent to, even if another host is focused by the time it comes back.
+        val memory = refusals()
+        if (memory?.addFolder?.value != null) return ManageResult.NotAllowed
         val state = sessionState(sessionUri) ?: return ManageResult.NoSuchTarget
         val offered = directory.trim()
         if (offered.isEmpty() || offered !in offeredFolders() || state.workingDirectories.orEmpty().any { displayPath(it) == displayPath(offered) }) return ManageResult.InvalidChoice
-        return action(sessionUri, SessionActions.setWorkingDirectory(offered))
+        val result = action(sessionUri, SessionActions.setWorkingDirectory(offered))
+        ((result as? ManageResult.Unconfirmed)?.outcome as? DispatchOutcome.Rejected)?.let { memory?.refuseAddFolder(it.reason) }
+        return result
     }
 
-    /** Removes an existing secondary folder while preserving the first working directory as the session's primary folder. */
+    /**
+     * Removes an existing secondary folder while preserving the first working directory as the session's primary folder. Like
+     * [addWorkingDirectory], once the host has refused a remove on the current connection it is not sent again
+     * ([ManageResult.NotAllowed]); a refused add does not stop a remove.
+     */
     suspend fun removeWorkingDirectory(sessionUri: String, directory: String): ManageResult {
         if (!allowed()) return ManageResult.NotAllowed
+        // Taken now, so a refusal is noted for the host it was sent to, even if another host is focused by the time it comes back.
+        val memory = refusals()
+        if (memory?.removeFolder?.value != null) return ManageResult.NotAllowed
         val state = sessionState(sessionUri) ?: return ManageResult.NoSuchTarget
         val directories = state.workingDirectories.orEmpty()
         val actual = directories.firstOrNull { it == directory || displayPath(it) == directory } ?: return ManageResult.InvalidChoice
         if (directories.size < 2 || directories.first() == actual) return ManageResult.InvalidChoice
-        return action(sessionUri, SessionActions.removeWorkingDirectory(actual))
+        val result = action(sessionUri, SessionActions.removeWorkingDirectory(actual))
+        ((result as? ManageResult.Unconfirmed)?.outcome as? DispatchOutcome.Rejected)?.let { memory?.refuseRemoveFolder(it.reason) }
+        return result
     }
 
     /** Starts a new, empty chat in a session that is ready. */
@@ -437,4 +463,10 @@ object ManageMessages {
     }
 
     fun succeeded(result: ManageResult): Boolean = result is ManageResult.Done
+
+    /** What is shown in place of "Add folder" once the host has refused it on this connection, with [reason], the host's own words. */
+    fun addFolderRefused(reason: String): String = "This host does not let this app add folders. It said: ${reason.take(MAX_HOST_TEXT)}"
+
+    /** What is shown in place of the "Remove" buttons once the host has refused a remove on this connection, with [reason], the host's own words. */
+    fun removeFolderRefused(reason: String): String = "This host does not let this app remove folders. It said: ${reason.take(MAX_HOST_TEXT)}"
 }
