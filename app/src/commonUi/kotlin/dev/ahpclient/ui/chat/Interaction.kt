@@ -249,7 +249,7 @@ private fun PickRow(label: String, selected: Boolean, tag: String, onClick: () -
 
 /**
  * Picks the model for the next messages: one the host lists for this agent, and for it, one of each setting's listed values.
- * "Default" (offered only for a chat that has not used a model yet) sends no model at all. The names and labels are the host's words, shown as plain text.
+ * "Default" (offered only when the app cannot tell which model the chat is on, such as one the host no longer lists; a new chat starts on the host's first model instead) sends no model at all. The names and labels are the host's words, shown as plain text.
  */
 @Composable
 private fun ModelPickerDialog(models: List<ModelOption>, current: ModelChoice?, showDefault: Boolean, onDismiss: () -> Unit, onPick: (ModelChoice?) -> Unit) {

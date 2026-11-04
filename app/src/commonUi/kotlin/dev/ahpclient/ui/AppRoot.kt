@@ -48,7 +48,6 @@ import dev.ahpclient.state.HostSessionEntry
 import dev.ahpclient.state.Inbox
 import dev.ahpclient.state.InboxReader
 import dev.ahpclient.state.ManageResult
-import dev.ahpclient.state.ModelOptions
 import dev.ahpclient.state.SlashCommands
 import dev.ahpclient.state.Transcript
 import dev.ahpclient.ui.chat.ChatActionsUi
@@ -668,7 +667,9 @@ private fun OpenChatView(
     // The screen stays on while an agent works, when the person asked for that, and never otherwise.
     KeepScreenAwakeEffect(keepAwake && running)
     val models = remember(chat.interactor, rootState) { chat.interactor.modelOptions() }
-    val inUse = ModelOptions.inUse(chatState, models)
+    // The same answer the interactor gives, with the session's model (E6): a new chat starts on that one, or on the host's first model.
+    val listedSessions by session.root.sessions.collectAsStateWithLifecycle()
+    val inUse = remember(chatState, models, sessionState, listedSessions, fromCache) { chat.interactor.modelInUse() }
     val rootTyped = rootState as? RootState
     val agents = remember(sessionState, rootTyped) { CustomAgents.of(sessionState, rootTyped) }
     var localRichRequest by remember { mutableStateOf<RichModalRequest?>(null) }

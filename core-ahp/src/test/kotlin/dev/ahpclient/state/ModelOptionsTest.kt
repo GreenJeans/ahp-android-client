@@ -244,10 +244,52 @@ class ModelOptionsTest {
     }
 
     @Test
-    fun `a chat with no turns uses the model in its draft, and with no draft none is known`() {
-        assertEquals(ModelChoice("auto"), ModelOptions.inUse(chatWith(draft = """{"text":"","origin":{"kind":"user"},"model":{"id":"auto"}}"""), offered))
-        assertNull(ModelOptions.inUse(chatWith(), offered))
-        assertNull(ModelOptions.inUse(null, offered))
+    fun `a chat with no turns uses the model in its draft, and with no draft the host's first model`() {
+        assertEquals(ModelChoice("sonnet"), ModelOptions.inUse(chatWith(draft = """{"text":"","origin":{"kind":"user"},"model":{"id":"sonnet"}}"""), offered))
+        assertEquals(ModelChoice("auto"), ModelOptions.inUse(chatWith(), offered))
+        assertNull(ModelOptions.inUse(null, offered), "a chat not loaded yet is not known")
+    }
+
+    // ---- a first message always names a model ---------------------------------------------------------------
+
+    @Test
+    fun `a new chat starts on the host's first listed model, with no setting picked, and goes out with that model's defaults`() {
+        val options = ModelOptions.of(agent(model("big", "Big", schema = schema(thinking, contextSize)), autoJson))
+
+        val start = ModelOptions.inUse(chatWith(), options)
+
+        assertEquals(ModelChoice("big"), start)
+        assertTrue(ModelOptions.isOffered(options, start!!))
+        assertEquals(ModelChoice("big", mapOf("thinking" to "low", "contextSize" to "936000"), setOf("contextSize")), ModelOptions.prepare(options, start))
+    }
+
+    @Test
+    fun `a new chat whose draft names a model the host no longer lists still starts on the first model`() {
+        assertEquals(ModelChoice("auto"), ModelOptions.inUse(chatWith(draft = """{"text":"","origin":{"kind":"user"},"model":{"id":"retired"}}"""), offered))
+    }
+
+    @Test
+    fun `with no models offered nothing is in use, so nothing is made up`() {
+        assertNull(ModelOptions.inUse(chatWith(), emptyList()))
+        assertNull(ModelOptions.inUse(chatWith(), ModelOptions.of(agent())))
+    }
+
+    @Test
+    fun `a chat that has had a turn, or has older turns to load, is not moved to the first model`() {
+        val running = """{"id":"t1","startedAt":"2026-10-22T10:05:00.000Z","message":{"text":"x","origin":{"kind":"user"}},"responseParts":[]}"""
+        assertNull(ModelOptions.inUse(chatWith(active = running), offered), "a turn running with no model named keeps the host's")
+        assertNull(ModelOptions.inUse(chatWith(turn("t1")), offered), "a finished turn with no model named keeps the host's")
+        val paged = Ahp.json.decodeFromString(
+            com.microsoft.agenthostprotocol.generated.ChatState.serializer(),
+            """{"resource":"ahp-chat:/c","title":"t","status":1,"modifiedAt":"2026-10-22T10:00:00.000Z","turns":[],"turnsNextCursor":"older"}""",
+        )
+        assertNull(ModelOptions.inUse(paged, offered), "an empty window over older turns is not a new chat")
+    }
+
+    @Test
+    fun `a session that names a model the host does not list is left on it, not moved to the first model`() {
+        assertNull(ModelOptions.inUse(chatWith(), offered, sessionModel = "unlisted"))
+        assertEquals(ModelChoice("auto"), ModelOptions.inUse(chatWith(), offered, sessionModel = " "), "a blank name is no name")
     }
 
     @Test
@@ -302,6 +344,9 @@ class ModelOptionsTest {
 
         currentChat = chatWith()
         currentSessionModel = null
+        assertEquals(ModelChoice("auto"), interactor.modelInUse(), "a new chat on a session with no model starts on the host's first model")
+
+        currentChat = null
         assertNull(interactor.modelInUse())
     }
 }
