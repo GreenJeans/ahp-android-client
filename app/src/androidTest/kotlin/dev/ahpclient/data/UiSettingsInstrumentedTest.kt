@@ -6,9 +6,11 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.ahpclient.state.GoogleAiConfig
 import dev.ahpclient.state.QuickReplyMode
+import dev.ahpclient.state.WrapView
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -47,6 +49,22 @@ class UiSettingsInstrumentedTest {
 
         val second = UiSettings(prefs)
         assertEquals(QuickReplyMode.ON_DEMAND, second.quickReplyMode.value)
+    }
+
+    @Test
+    fun wrapChoicesStartAsBeforeAndEachKindIsKeptOnItsOwn() {
+        val first = UiSettings(prefs)
+        assertFalse(first.lineWrap.value.getValue(WrapView.CODE))
+        assertTrue(first.lineWrap.value.getValue(WrapView.TERMINAL))
+
+        first.setLineWrap(WrapView.CODE, true)
+        first.setLineWrap(WrapView.DIFF, false)
+
+        val second = UiSettings(prefs).lineWrap.value
+        assertTrue(second.getValue(WrapView.CODE))
+        assertFalse(second.getValue(WrapView.DIFF))
+        assertFalse(second.getValue(WrapView.FILE))
+        assertTrue(second.getValue(WrapView.TERMINAL))
     }
 
     @Test

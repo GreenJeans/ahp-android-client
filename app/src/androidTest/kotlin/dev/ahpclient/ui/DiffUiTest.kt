@@ -1,8 +1,13 @@
 package dev.ahpclient.ui
 
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertHeightIsAtLeast
+import androidx.compose.ui.test.assertWidthIsAtLeast
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertTextEquals
@@ -25,6 +30,8 @@ import dev.ahpclient.state.DiffResult
 import dev.ahpclient.state.FileDiff
 import dev.ahpclient.ui.theme.AhpTheme
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -201,5 +208,41 @@ class DiffUiTest {
         rule.onNodeWithTag("diff_op_confirm_text").assertTextContains("Revert this file?", substring = true)
         rule.onNodeWithTag("diff_op_confirm").performClick()
         rule.waitUntil(5_000) { invoked == listOf("stage-file", "revert-file") }
+    }
+
+    // ---- word wrap (U6) ----------------------------------------------------------------------------------------
+
+    private fun scrollsSideways(tag: String): Boolean =
+        rule.onNodeWithTag(tag).fetchSemanticsNode().config.getOrNull(SemanticsProperties.HorizontalScrollAxisRange)?.let { it.maxValue() > 0f } == true
+
+    @Test
+    fun longLinesWrapAtFirst_andCanBeKeptWholeToScrollSideways() {
+        val long = "val result = compute(first, second, third) ".repeat(10)
+        show(ready(FileDiff(listOf(DiffHunk(listOf(DiffLine(context, 1, 1, "short"), DiffLine(added, null, 2, long)))), 1, 0, 0)))
+        rule.waitForIdle()
+
+        assertFalse("wrapped at first, as before", scrollsSideways("diff_list"))
+        rule.onNodeWithTag("wrap_toggle_diff")
+            .assertContentDescriptionEquals("Keep lines whole")
+            .assertHeightIsAtLeast(48.dp)
+            .assertWidthIsAtLeast(48.dp)
+            .performClick()
+        rule.waitForIdle()
+
+        assertTrue("kept whole, the diff scrolls sideways", scrollsSideways("diff_list"))
+        // Still read whole by a screen reader.
+        rule.onAllNodesWithTag("diff_line")[1].assertContentDescriptionEquals("Added, line 2: $long")
+        rule.onNodeWithTag("wrap_toggle_diff").assertContentDescriptionEquals("Wrap long lines").performClick()
+        rule.waitForIdle()
+
+        assertFalse(scrollsSideways("diff_list"))
+    }
+
+    @Test
+    fun thereIsNoWrapButtonUntilThereAreLinesToShow() {
+        show(DiffLoad.Loading)
+
+        rule.onNodeWithTag("diff_loading").assertIsDisplayed()
+        rule.onNodeWithTag("wrap_toggle_diff").assertDoesNotExist()
     }
 }
