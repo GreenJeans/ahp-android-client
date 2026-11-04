@@ -410,7 +410,8 @@ private fun Shell(
                 SessionPage(
                     controller, ui, connected, open, connection, rootState, canManage, canInteract, manageActions, listed, changesetTitle,
                     onChangesetTitle = { changesetTitle = it }, onMenu = menu::open, alerts = alerts,
-                    quickReplyProvider = quickReplyProvider,
+                    // AI suggestions are a Pro feature (U8); without Pro the bar offers the plain, heuristic replies only.
+                    quickReplyProvider = quickReplyProvider.takeIf { proUnlocked },
                 )
             } else {
                 // The menu is the page here, held open over this strip of background; there is nothing to say behind it.

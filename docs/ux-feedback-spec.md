@@ -151,8 +151,10 @@ Kept as they are: the order (attach, then the controls that change what the mess
 
 **Acceptance criteria**
 
-- [ ] **AC-U8.1** With Pro off, no AI suggestion and no host `completions` request is made or shown; with Pro on, both work as today.
-- [ ] **AC-U8.2** The Free and Pro table lists AI quick replies and host completions.
+**As built (2026-11-03).** Without Pro the connection is held to the READ tier, which has no message box and refuses `completions` (`CapabilityPolicy`), so Free never reached either feature. Two explicit gates now say so in code, so it stays true if Free ever gains a message box: the AI provider is passed to a chat only with Pro (`AppRoot`), and a chat is given the host's trigger characters only with Pro (`AppController.interactorFor`), so without them the host is never asked. The AI settings in Settings stay visible either way.
+
+- [x] **AC-U8.1** With Pro off, no AI suggestion and no host `completions` request is made or shown; with Pro on, both work as today. (By the READ tier, which is tested; the two new gates have no test of their own, because no state reaches them without Pro.)
+- [x] **AC-U8.2** The Free and Pro table lists AI quick replies and host completions.
 
 ## U9 — A new name
 
