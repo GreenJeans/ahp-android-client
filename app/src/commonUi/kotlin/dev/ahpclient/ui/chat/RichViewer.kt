@@ -92,10 +92,15 @@ import dev.ahpclient.state.RichReadResult
 import dev.ahpclient.state.TableAlignment
 import dev.ahpclient.state.TableData
 import dev.ahpclient.state.ToolResultView
+import dev.ahpclient.state.WrapView
 import dev.ahpclient.ui.Busy
 import dev.ahpclient.ui.ErrorText
 import dev.ahpclient.ui.FileDiffScreen
+import dev.ahpclient.ui.LineWrap
 import dev.ahpclient.ui.ScreenScaffold
+import dev.ahpclient.ui.WrapToggle
+import dev.ahpclient.ui.rememberLineWrap
+import dev.ahpclient.ui.sidewaysUnless
 import dev.ahpclient.platform.base64Encode
 import dev.ahpclient.ui.PlatformBackHandler
 import dev.ahpclient.ui.decodeImageBitmap
@@ -218,6 +223,7 @@ fun RichViewerModal(
                     language = request.language,
                     startLine = request.startLine,
                     endLine = request.endLine,
+                    view = WrapView.CODE,
                 )
                 is RichModalRequest.Diagram -> FullScreenDiagramViewer(
                     diagram = request.diagram,
@@ -301,12 +307,16 @@ private fun ViewerActionBar(
     toggleLabel: String? = null,
     onToggle: (() -> Unit)? = null,
     onShare: (() -> Unit)? = null,
+    /** Set where the text can wrap: the button for it, for that kind of view. */
+    wrap: LineWrap? = null,
+    wrapView: WrapView? = null,
 ) {
     FlowRow(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
+        if (wrap != null && wrapView != null) WrapToggle(wrap, wrapView)
         if (primaryCopyLabel != null && onPrimaryCopy != null) {
             OutlinedButton(
                 onClick = onPrimaryCopy,
@@ -403,12 +413,18 @@ private fun FullScreenTableViewer(table: TableData) {
     }
 }
 
+/**
+ * A table drawn as a grid. Each column is as wide as its text asks for (up to 320 dp), so a wide table is wider than the screen
+ * and its caller scrolls it sideways. With [fitWidth] the grid is as wide as it is given instead and the columns share that
+ * width in the same proportions, so their cells wrap and nothing needs scrolling.
+ */
 @Composable
 internal fun DataTableGrid(
     table: TableData,
     columnHints: List<Int>,
     scale: Float = 1f,
     modifier: Modifier = Modifier,
+    fitWidth: Boolean = false,
 ) {
     val borderColor = MaterialTheme.colorScheme.outlineVariant
     val headerBg = MaterialTheme.colorScheme.surfaceContainerHighest
@@ -417,12 +433,18 @@ internal fun DataTableGrid(
     val linkColor = MaterialTheme.colorScheme.primary
     val codeBg = MaterialTheme.colorScheme.surfaceContainerHighest
     val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+    // Fitted, each column's weight is its share of the whole, not its width in dp. A row works out its height (IntrinsicSize.Min)
+    // from whole pixels per unit of weight, so weights in the hundreds round that to 0 px and every cell is measured as if it
+    // had no width: one character per line, and a row many screens tall.
+    val totalWidth = remember(table.columnCount, columnHints, scale) {
+        (0 until table.columnCount).sumOf { columnWidthDp(columnHints.getOrElse(it) { 12 }, scale).value.toDouble() }.toFloat()
+    }
 
     Surface(
         shape = RoundedCornerShape(8.dp),
         modifier = modifier.border(1.dp, borderColor, RoundedCornerShape(8.dp)),
     ) {
-        Column(modifier = Modifier.width(IntrinsicSize.Max)) {
+        Column(modifier = if (fitWidth) Modifier.fillMaxWidth() else Modifier.width(IntrinsicSize.Max)) {
             // Header row
             Row(
                 modifier = Modifier
@@ -442,7 +464,7 @@ internal fun DataTableGrid(
                     val colWidth = columnWidthDp(columnHints.getOrElse(col) { 12 }, scale)
                     Box(
                         modifier = Modifier
-                            .width(colWidth)
+                            .then(if (fitWidth) Modifier.weight(colWidth.value / totalWidth) else Modifier.width(colWidth))
                             .fillMaxHeight()
                             .padding(horizontal = (10 * scale).dp, vertical = (8 * scale).dp),
                         contentAlignment = cellBoxAlignment(align),
@@ -480,7 +502,7 @@ internal fun DataTableGrid(
                         val colWidth = columnWidthDp(columnHints.getOrElse(col) { 12 }, scale)
                         Box(
                             modifier = Modifier
-                                .width(colWidth)
+                                .then(if (fitWidth) Modifier.weight(colWidth.value / totalWidth) else Modifier.width(colWidth))
                                 .fillMaxHeight()
                                 .padding(horizontal = (10 * scale).dp, vertical = (8 * scale).dp),
                             contentAlignment = cellBoxAlignment(align),
@@ -519,16 +541,19 @@ internal fun cellBoxAlignment(alignment: TableAlignment): Alignment = when (alig
     TableAlignment.END -> Alignment.TopEnd
 }
 
+/** Text shown line by line with numbers: an expanded code block ([view] is code) or a file or text attachment ([view] is file). */
 @Composable
 private fun FullScreenCodeViewer(
     code: String,
     language: String?,
     startLine: Int? = null,
     endLine: Int? = null,
+    view: WrapView = WrapView.FILE,
 ) {
     val platformUi = rememberPlatformUiActions()
     var scale by remember { mutableFloatStateOf(1f) }
     val lines = remember(code) { code.replace("\r\n", "\n").replace('\r', '\n').split('\n') }
+    val wrap = rememberLineWrap(view)
 
     Column(modifier = Modifier.fillMaxSize()) {
         ViewerActionBar(
@@ -539,6 +564,8 @@ private fun FullScreenCodeViewer(
             primaryCopyLabel = "Copy code",
             onPrimaryCopy = { platformUi.copyToClipboard(language ?: "Code", code) },
             onShare = { platformUi.shareText(code, language ?: "Code") },
+            wrap = wrap,
+            wrapView = view,
         )
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         val hScroll = rememberScrollState()
@@ -551,7 +578,7 @@ private fun FullScreenCodeViewer(
                         scale = (scale * zoom).coerceIn(0.5f, 3f)
                     }
                 }
-                .horizontalScroll(hScroll)
+                .sidewaysUnless(wrap.on, hScroll)
                 .verticalScroll(vScroll)
                 .padding(12.dp)
                 .testTag("rich_viewer_code_content"),
@@ -585,8 +612,10 @@ private fun FullScreenCodeViewer(
                                     fontSize = (13f * scale).sp,
                                     lineHeight = (18f * scale).sp,
                                 ),
-                                softWrap = false,
+                                softWrap = wrap.on,
                                 color = MaterialTheme.colorScheme.onSurface,
+                                // Wrapped, the line takes the room left beside its number; kept whole, it takes what it needs.
+                                modifier = if (wrap.on) Modifier.weight(1f) else Modifier,
                             )
                         }
                     }
@@ -606,6 +635,7 @@ private fun FullScreenDiagramViewer(
     var showSource by remember { mutableStateOf(false) }
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
+    val wrap = rememberLineWrap(WrapView.CODE)
 
     Column(modifier = Modifier.fillMaxSize()) {
         ViewerActionBar(
@@ -621,6 +651,9 @@ private fun FullScreenDiagramViewer(
             toggleLabel = if (showSource) "Show diagram" else "Show source",
             onToggle = { showSource = !showSource },
             onShare = { platformUi.shareText(sourceCode, "Diagram ($language)") },
+            // Only the source has lines to wrap; the drawing pans instead.
+            wrap = wrap.takeIf { showSource },
+            wrapView = WrapView.CODE,
         )
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         if (showSource) {
@@ -634,10 +667,10 @@ private fun FullScreenDiagramViewer(
                         fontSize = (13f * scale).sp,
                         lineHeight = (19f * scale).sp,
                     ),
-                    softWrap = false,
+                    softWrap = wrap.on,
                     modifier = Modifier
                         .fillMaxSize()
-                        .horizontalScroll(hScroll)
+                        .sidewaysUnless(wrap.on, hScroll)
                         .verticalScroll(vScroll)
                         .padding(16.dp)
                         .testTag("rich_viewer_diagram_source"),
@@ -1404,7 +1437,7 @@ fun InlineResourcePreview(
                 }
             }
             embeddedPayload is RichPayload.TextContent -> {
-                MonoBlock(Clipped.of(embeddedPayload.text.text, 600), Modifier.testTag("attachment_text_preview"))
+                MonoBlock(Clipped.of(embeddedPayload.text.text, 600), Modifier.testTag("attachment_text_preview"), isOutput = false)
             }
         }
         if (onOpenRich != null) {

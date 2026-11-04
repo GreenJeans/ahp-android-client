@@ -53,7 +53,12 @@ import dev.ahpclient.state.DiagramModel
 import dev.ahpclient.state.HostFileTarget
 import dev.ahpclient.state.MarkdownLinks
 import dev.ahpclient.state.TableData
+import dev.ahpclient.state.WrapView
+import dev.ahpclient.ui.FitColumnsToggle
+import dev.ahpclient.ui.WrapToggle
+import dev.ahpclient.ui.rememberLineWrap
 import dev.ahpclient.ui.rememberPlatformUiActions
+import dev.ahpclient.ui.sidewaysUnless
 
 /**
  * Agent output as formatted text. The text is untrusted, so this renders safely: no external image loader is installed,
@@ -136,6 +141,7 @@ private fun MarkdownTableBlock(
     val platformActions = rememberPlatformUiActions()
     val hints = remember(table) { table.columnCharHints() }
     val borderColor = MaterialTheme.colorScheme.outlineVariant
+    val fit = rememberLineWrap(WrapView.TABLE)
 
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -161,6 +167,7 @@ private fun MarkdownTableBlock(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f),
                 )
+                FitColumnsToggle(fit)
                 TextButton(
                     onClick = { platformActions.copyToClipboard("Table Markdown", table.toMarkdown()) },
                     modifier = Modifier
@@ -183,13 +190,15 @@ private fun MarkdownTableBlock(
                 }
             }
             HorizontalDivider(color = borderColor)
+            // Fitted, the columns share the card's width and their cells wrap; otherwise each column keeps its own width and the table scrolls sideways.
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(8.dp),
+                    .sidewaysUnless(fit.on, rememberScrollState())
+                    .padding(8.dp)
+                    .testTag("markdown_table_grid"),
             ) {
-                DataTableGrid(table = table, columnHints = hints, scale = 1f)
+                DataTableGrid(table = table, columnHints = hints, scale = 1f, fitWidth = fit.on)
             }
         }
     }
@@ -234,6 +243,9 @@ private fun MarkdownDiagramCard(
     val platformActions = rememberPlatformUiActions()
     var showCode by remember { mutableStateOf(false) }
     val borderColor = MaterialTheme.colorScheme.outlineVariant
+    // A diagram's source is code, so it follows the choice made for code blocks.
+    val wrap = rememberLineWrap(WrapView.CODE)
+    val sourceSideways = rememberScrollState()
 
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -259,6 +271,7 @@ private fun MarkdownDiagramCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f),
                 )
+                if (showCode) WrapToggle(wrap, WrapView.CODE)
                 TextButton(
                     onClick = { showCode = !showCode },
                     modifier = Modifier
@@ -295,10 +308,10 @@ private fun MarkdownDiagramCard(
                     text = sourceCode,
                     style = MaterialTheme.typography.bodySmall,
                     fontFamily = FontFamily.Monospace,
-                    softWrap = false,
+                    softWrap = wrap.on,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
+                        .sidewaysUnless(wrap.on, sourceSideways)
                         .padding(10.dp)
                         .testTag("diagram_source_text"),
                 )
@@ -326,6 +339,8 @@ private fun MarkdownCodeCard(
     val platformActions = rememberPlatformUiActions()
     val borderColor = MaterialTheme.colorScheme.outlineVariant
     val label = language?.takeIf { it.isNotBlank() } ?: "code"
+    val wrap = rememberLineWrap(WrapView.CODE)
+    val sideways = rememberScrollState()
 
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -352,6 +367,7 @@ private fun MarkdownCodeCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f),
                 )
+                WrapToggle(wrap, WrapView.CODE)
                 TextButton(
                     onClick = { platformActions.copyToClipboard(label, code) },
                     modifier = Modifier
@@ -378,11 +394,12 @@ private fun MarkdownCodeCard(
                 text = code,
                 style = MaterialTheme.typography.bodySmall,
                 fontFamily = FontFamily.Monospace,
-                softWrap = false,
+                softWrap = wrap.on,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(10.dp),
+                    .sidewaysUnless(wrap.on, sideways)
+                    .padding(10.dp)
+                    .testTag("markdown_code_text"),
             )
         }
     }

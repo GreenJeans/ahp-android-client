@@ -1,6 +1,7 @@
 package dev.ahpclient.state
 import dev.ahpclient.platform.*
 
+import com.microsoft.agenthostprotocol.generated.ChatInteractivity
 import com.microsoft.agenthostprotocol.generated.ChatInputOption
 import com.microsoft.agenthostprotocol.generated.ChatInputQuestion
 import com.microsoft.agenthostprotocol.generated.ChatInputQuestionBoolean
@@ -74,6 +75,10 @@ data class ChatRow(
     val isMain: Boolean = false,
     val isArchived: Boolean = false,
     val isRead: Boolean = false,
+    /** How the chat came about, from the host's `origin`; [ChatRelation.Unknown] when the host does not say. */
+    val relation: ChatRelation = ChatRelation.Unknown,
+    /** Whether the person can write in it, watch it only, or the host keeps it for the agent's own use. Absent means full. */
+    val interactivity: ChatInteractivity = ChatInteractivity.FULL,
 )
 
 /** A working directory as a person reads it: a `file:` URI becomes its decoded path, anything else is shown unchanged. */
@@ -130,12 +135,11 @@ data class SessionDetail(
     /** The chats in the order of the tabs: the main chat first, then the others as the host lists them. */
     val tabs: List<ChatRow> get() = mainChat?.let { main -> listOf(main) + chats.filter { it.uri != main.uri } }.orEmpty()
 
-    /** How many non-main chats in this session are archived. */
-    val archivedChatCount: Int get() = chats.count { it.isArchived && !it.isMain }
-
-    /** The tabs to show on screen: archived non-main chats are hidden unless [showArchived] is true. */
-    fun visibleTabs(showArchived: Boolean = false): List<ChatRow> =
-        tabs.filter { showArchived || !it.isArchived || it.isMain }
+    /**
+     * How many non-main chats in this session are archived and so left out until archived chats are shown. One waiting on the
+     * person is always shown (see [ChatSwitcher.of]), so it is not counted.
+     */
+    val archivedChatCount: Int get() = chats.count { it.isArchived && !it.isMain && it.state != ActivityState.NEEDS_INPUT }
 
     companion object {
         /** The hint every pending request carries: answering happens in VS Code, never here. */
@@ -177,6 +181,8 @@ data class SessionDetail(
                         isMain = chat.resource == state.defaultChat,
                         isArchived = chat.status.isArchived || summary?.chats?.firstOrNull { it.resource == chat.resource }?.status?.isArchived == true,
                         isRead = chat.status.isRead,
+                        relation = ChatRelation.of(chat.origin),
+                        interactivity = chat.interactivity ?: ChatInteractivity.FULL,
                     )
                 },
                 inputNeeded = state.inputNeeded.orEmpty().map(::describe),

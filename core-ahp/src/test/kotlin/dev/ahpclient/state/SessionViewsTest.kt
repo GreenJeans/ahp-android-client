@@ -269,7 +269,7 @@ class SessionDetailTest {
     }
 
     @Test
-    fun `archived chats are counted and hidden from visibleTabs unless requested`() {
+    fun `archived chats are counted, except one waiting on the person, which is never left out`() {
         val multi = Ahp.json.decodeFromString(
             SessionState.serializer(),
             """{"provider":"copilotcli","title":"Multi","status":1,"lifecycle":"ready","activeClients":[],
@@ -277,16 +277,16 @@ class SessionDetailTest {
                 "chats":[
                     {"resource":"ahp-chat:/c1","title":"Main","status":33,"modifiedAt":"2026-10-26T10:29:00.000Z"},
                     {"resource":"ahp-chat:/c2","title":"Side 1","status":65,"modifiedAt":"2026-10-26T10:28:00.000Z"},
-                    {"resource":"ahp-chat:/c3","title":"Side 2","status":1,"modifiedAt":"2026-10-26T10:27:00.000Z"}
+                    {"resource":"ahp-chat:/c3","title":"Side 2","status":1,"modifiedAt":"2026-10-26T10:27:00.000Z"},
+                    {"resource":"ahp-chat:/c4","title":"Asking","status":88,"modifiedAt":"2026-10-26T10:26:00.000Z"}
                 ]}""",
         )
         val detail = SessionDetail.from(multi, now)
 
         assertEquals(1, detail.archivedChatCount)
-        assertEquals(listOf(false, true, false), detail.chats.map { it.isArchived })
-        assertEquals(listOf(true, false, false), detail.chats.map { it.isRead })
-        assertEquals(listOf("ahp-chat:/c1", "ahp-chat:/c3"), detail.visibleTabs(showArchived = false).map { it.uri })
-        assertEquals(listOf("ahp-chat:/c1", "ahp-chat:/c2", "ahp-chat:/c3"), detail.visibleTabs(showArchived = true).map { it.uri })
+        assertEquals(listOf(false, true, false, true), detail.chats.map { it.isArchived })
+        assertEquals(listOf(true, false, false, false), detail.chats.map { it.isRead })
+        assertEquals(ActivityState.NEEDS_INPUT, detail.chats[3].state)
     }
 
     @Test

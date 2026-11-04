@@ -1072,7 +1072,8 @@ class AppController(
             ChatConfig.view(open?.store?.state?.value, uri, open?.store?.chatMutableKeys?.value.orEmpty(), store.ownConfig.value)
         },
         sessionModel = { sessionModelFor(session) },
-        completionTriggers = { session.completionTriggers.value },
+        // The host's @ and / suggestions are a Pro feature (U8): without Pro no trigger is offered, so the host is never asked.
+        completionTriggers = { if (pro.unlocked.value) session.completionTriggers.value else emptyList() },
         completions = session::completions,
     )
 

@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -37,6 +38,7 @@ import dev.ahpclient.state.ChangeStats
 import dev.ahpclient.state.ChangesetEntry
 import dev.ahpclient.state.ChatConfig
 import dev.ahpclient.state.ChatInteractor
+import dev.ahpclient.state.ChatSwitcher
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.CustomAgents
 import dev.ahpclient.state.CustomizationCategory
@@ -78,14 +80,17 @@ fun AppRoot(
     val catalog by controller.hosts.collectAsStateWithLifecycle()
     val theme by ui.theme.collectAsStateWithLifecycle()
     PlatformBackHandler(enabled = (state as? AppState.SignedOut)?.step is SignInStep.AwaitingApproval || catalog.signInStep is SignInStep.AwaitingApproval) { controller.cancelSignIn() }
-    AhpTheme(theme) {
-        // Every screen but the loading one brings its own bar and applies the system-bar insets itself.
-        Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-            when (val current = state) {
-                AppState.Restoring -> Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars).testTag("restoring"), contentAlignment = Alignment.Center) { Busy("Loading…") }
-                is AppState.SignedOut -> SignInScreen(current, controller::signIn, controller::cancelSignIn, onOpenGitHub, onCopyCode, onUseDirect = controller::useDirectHosts)
-                // One call for both, so that going from the host list to a host (and back) keeps the menu, and the sheet over it, as they are.
-                AppState.Hosts, is AppState.Connected -> Shell(controller, ui, catalog, current as? AppState.Connected, monitorEnabled, notificationsAllowed, onMonitorChange, alerts, sessionRequests, quickReplyProvider, onOpenGitHub, onCopyCode)
+    // The wrap choices are read where the text is drawn, deep in the chat and the viewers, so they are provided once here.
+    CompositionLocalProvider(LocalLineWrap provides ui) {
+        AhpTheme(theme) {
+            // Every screen but the loading one brings its own bar and applies the system-bar insets itself.
+            Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                when (val current = state) {
+                    AppState.Restoring -> Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars).testTag("restoring"), contentAlignment = Alignment.Center) { Busy("Loading…") }
+                    is AppState.SignedOut -> SignInScreen(current, controller::signIn, controller::cancelSignIn, onOpenGitHub, onCopyCode, onUseDirect = controller::useDirectHosts)
+                    // One call for both, so that going from the host list to a host (and back) keeps the menu, and the sheet over it, as they are.
+                    AppState.Hosts, is AppState.Connected -> Shell(controller, ui, catalog, current as? AppState.Connected, monitorEnabled, notificationsAllowed, onMonitorChange, alerts, sessionRequests, quickReplyProvider, onOpenGitHub, onCopyCode)
+                }
             }
         }
     }
@@ -410,7 +415,8 @@ private fun Shell(
                 SessionPage(
                     controller, ui, connected, open, connection, rootState, canManage, canInteract, manageActions, listed, changesetTitle,
                     onChangesetTitle = { changesetTitle = it }, onMenu = menu::open, alerts = alerts,
-                    quickReplyProvider = quickReplyProvider,
+                    // AI suggestions are a Pro feature (U8); without Pro the bar offers the plain, heuristic replies only.
+                    quickReplyProvider = quickReplyProvider.takeIf { proUnlocked },
                 )
             } else {
                 // The menu is the page here, held open over this strip of background; there is nothing to say behind it.
@@ -593,6 +599,11 @@ private fun SessionPage(
             },
             onOpenSubagent = controller::openSubagentChat,
             onOpenTerminal = controller::openTerminal,
+            // Only chats this app holds can have their turns counted: the one on screen and the few kept warm behind it.
+            chatTurnNumber = { chatUri, turnId ->
+                (listOfNotNull(chat) + open.warm).firstOrNull { it.uri == chatUri }?.store?.state?.value
+                    ?.let { ChatSwitcher.turnNumberIn(it, turnId) }
+            },
         ) {
             if (chat != null) {
                 OpenChatView(
