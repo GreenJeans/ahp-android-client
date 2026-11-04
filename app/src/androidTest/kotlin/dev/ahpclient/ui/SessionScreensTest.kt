@@ -1151,7 +1151,8 @@ class SessionScreensTest {
         rule.onNodeWithTag("folder_remove_1").performClick()
         rule.waitForIdle()
 
-        assertEquals(listOf("file:///work/secondary"), removed)
+        // The screen passes the folder as shown; SessionManager maps it back to the host's file: URI before sending.
+        assertEquals(listOf("/work/secondary"), removed)
         rule.onNodeWithTag("folder_remove_1").assertDoesNotExist()
         rule.onNodeWithTag("folder_remove_refused").assertExists().assertTextContains(editorOnly, substring = true)
         // Said once, in place of the buttons, not again as an error under them.
