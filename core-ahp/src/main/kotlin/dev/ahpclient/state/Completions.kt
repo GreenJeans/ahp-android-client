@@ -51,12 +51,18 @@ object Completions {
      * Where the word being typed at the end of [text] starts, when it begins with one of the host's [triggers]; otherwise null, and
      * then nothing is asked. A word starts after a space or line break, so `name@host` is not a mention. The cursor is taken to be at
      * the end of the text, which is where a phone keyboard leaves it as the person types.
+     *
+     * A host that names a space as a trigger (VS Code does) wants to be asked about what follows a command. That is honoured only
+     * in a message that starts with a slash command and has gone past its name, so the host is asked about the command's arguments
+     * and not after every word of an ordinary message.
      */
     fun wordStart(text: String, triggers: List<String>): Int? {
         if (triggers.isEmpty()) return null
         val start = text.indexOfLast { it.isWhitespace() } + 1
         val word = text.substring(start)
-        return start.takeIf { triggers.any { it.isNotEmpty() && word.startsWith(it) } }
+        if (triggers.any { it.isNotEmpty() && !it.isBlank() && word.startsWith(it) }) return start
+        val afterCommand = text.startsWith("/") && text.any { it.isWhitespace() }
+        return start.takeIf { afterCommand && triggers.any { it.isNotEmpty() && it.isBlank() } }
     }
 
     /** The host's items as [Suggestion]s for [text]: in the host's order, at most [MAX_SUGGESTIONS], and without any whose range does not fit the text. */

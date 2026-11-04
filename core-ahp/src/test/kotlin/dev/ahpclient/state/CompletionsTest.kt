@@ -37,6 +37,18 @@ class CompletionsTest {
     }
 
     @Test
+    fun `a space trigger asks about a slash command's arguments and nothing else`() {
+        val vscode = listOf("@", "#", "/", " ")
+        assertEquals(10, Completions.wordStart("/pr-watch ", vscode), "just past the command's name")
+        assertEquals(10, Completions.wordStart("/pr-watch 886", vscode), "while an argument is typed")
+        assertEquals(0, Completions.wordStart("/pr-wa", vscode), "the command itself goes by the / trigger")
+        assertNull(Completions.wordStart("please check ", vscode), "an ordinary message is not asked about after every word")
+        assertNull(Completions.wordStart("please check this", vscode))
+        assertEquals(13, Completions.wordStart("please check @fi", vscode), "a mention still works")
+        assertNull(Completions.wordStart("/pr-watch 886", listOf("@", "/")), "without a space trigger there is nothing to ask after a command")
+    }
+
+    @Test
     fun `a trigger may be more than one character, and an empty one never matches`() {
         assertEquals(0, Completions.wordStart("##x", listOf("##")))
         assertNull(Completions.wordStart("#x", listOf("##")))
