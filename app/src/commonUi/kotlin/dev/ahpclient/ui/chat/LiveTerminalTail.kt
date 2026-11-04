@@ -38,16 +38,8 @@ internal fun LiveTerminalTail(uri: String, watch: (String) -> LiveTerminal?, mod
     }
     val state = live?.state?.collectAsState()?.value
     val lines = remember(state) { state?.let { LiveTerminal.tail(it) }.orEmpty() }
+    // No label and no live region: the tail is plain text that changes in place, so a screen reader stays quiet as it updates.
     Column(modifier = modifier.testTag("terminal_live"), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        // Said only once the terminal's state is here: an address that was refused, or a host not yet answering, is not live.
-        if (state != null) {
-            Text(
-                "Live",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.testTag("terminal_live_label"),
-            )
-        }
         if (lines.isEmpty()) {
             Text("No output yet.", style = MaterialTheme.typography.bodyMedium)
         } else {

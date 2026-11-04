@@ -3,6 +3,9 @@ package dev.ahpclient.ui.chat
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
@@ -89,6 +92,9 @@ class LiveTerminalTailTest {
 
     private fun tail() = rule.onNodeWithTag("terminal_live_tail", useUnmergedTree = true)
 
+    /** The live block itself or anything inside it. */
+    private val inTail = hasTestTag("terminal_live") or hasAnyAncestor(hasTestTag("terminal_live"))
+
     /** The tail's text, which sits in a child of the tagged block, inside the result's merged words. */
     private fun tailText(text: String) = rule.onNode(hasAnyAncestor(hasTestTag("terminal_live_tail")) and hasText(text, substring = true), useUnmergedTree = true)
 
@@ -98,8 +104,10 @@ class LiveTerminalTailTest {
         val opened = mutableListOf<String>()
         show(watcher, transcriptOf(running(), ToolState.RUNNING), opened)
 
-        rule.onNodeWithTag("terminal_live_label", useUnmergedTree = true).assertTextContains("Live")
         tailText("hello").assertExists()
+        // Decided: no "Live" label over the tail, and no live region in it, so TalkBack stays quiet as lines arrive.
+        rule.onNode(hasText("Live"), useUnmergedTree = true).assertDoesNotExist()
+        rule.onAllNodes(inTail and SemanticsMatcher.keyIsDefined(SemanticsProperties.LiveRegion), useUnmergedTree = true).assertCountEquals(0)
         assertEquals(listOf(uri), watcher.watched)
 
         watcher.flow.value = terminal("hello\nmore output\n")
@@ -164,11 +172,11 @@ class LiveTerminalTailTest {
     }
 
     @Test
-    fun aTerminalThatCannotBeWatchedSaysThereIsNoOutputYet_andIsNotCalledLive() {
+    fun aTerminalThatCannotBeWatchedSaysThereIsNoOutputYet() {
         val watcher = FakeWatcher(null, refuse = true)
         show(watcher, transcriptOf(running(), ToolState.RUNNING))
 
-        rule.onNodeWithTag("terminal_live_label", useUnmergedTree = true).assertDoesNotExist()
+        tail().assertDoesNotExist()
         rule.onNodeWithTag("result_terminal").assertTextContains("No output yet.", substring = true)
     }
 
