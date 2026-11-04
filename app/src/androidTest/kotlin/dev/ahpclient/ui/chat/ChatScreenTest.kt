@@ -6,6 +6,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHeightIsAtLeast
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertWidthIsAtLeast
 import androidx.compose.ui.test.assertTextContains
@@ -1015,6 +1018,31 @@ class ChatScreenTest {
 
         rule.onAllNodesWithTag("pinned_user_message").assertCountEquals(0)
         rule.onNodeWithText("Why did the build break on main?").assertIsDisplayed()
+    }
+
+    @Test
+    fun atTheLargestFontSizeTheBarStaysShortAndTheControlsStayUsable() {
+        val long = "Why did the build break on main after the merge, and which of the three failing jobs should I look at first, given the logs?"
+        val items = askedAndAnswered(60, question = long) + TranscriptItem.TurnEnd("t1/end", TurnOutcome.DONE, 1_200L)
+        rule.setContent {
+            val base = LocalDensity.current
+            // Android's largest font size setting is twice the default.
+            CompositionLocalProvider(LocalDensity provides Density(base.density, fontScale = 2f)) {
+                AhpTheme { ChatScreen(transcript(items), null, false, null, ConnState.Online, {}, {}, {}) }
+            }
+        }
+
+        val root = rule.onRoot().fetchSemanticsNode().boundsInRoot
+        val bar = rule.onNodeWithTag("pinned_user_message").assertIsDisplayed().assertHeightIsAtLeast(48.dp)
+            .assertContentDescriptionEquals("Your last message: $long. Tap to go to it.")
+        // Two lines at most, cut with an ellipsis: the bar never takes over the screen, however large the text.
+        assertTrue("the bar grew to ${bar.fetchSemanticsNode().boundsInRoot.height} of ${root.height}", bar.fetchSemanticsNode().boundsInRoot.height < root.height / 4)
+        rule.onNodeWithTag("jump_reply_start").assertIsDisplayed().assertHeightIsAtLeast(48.dp).assertWidthIsAtLeast(48.dp)
+
+        rule.onNodeWithTag("turn_read_t1").assertHeightIsAtLeast(48.dp).assertContentDescriptionEquals("Read this reply full screen").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag("reader_view").assertIsDisplayed()
+        rule.onNodeWithText("reply line 60").assertIsDisplayed()
     }
 
     @Test
