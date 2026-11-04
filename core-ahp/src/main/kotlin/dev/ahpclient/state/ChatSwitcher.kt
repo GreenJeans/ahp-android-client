@@ -68,18 +68,22 @@ data class SwitcherRow(
     val archived: Boolean,
     val shown: Boolean,
     val whenText: String,
+    /** Whether the chat's agent is at work now. Said on the row; it carries no dot, as only waiting on the person does. */
+    val working: Boolean = false,
 ) {
     /** Whether the row carries a dot. */
     val marked: Boolean get() = needsYou || unread
 
     /** The line under the title. */
-    val detail: String get() = listOfNotNull(relation, whenText.takeIf { it.isNotBlank() }).joinToString(" · ")
+    val detail: String
+        get() = listOfNotNull(relation, ActivityState.IN_PROGRESS.label.takeIf { working }, whenText.takeIf { it.isNotBlank() }).joinToString(" · ")
 
     /** What a screen reader says for the row, so the dot and the indent are never the only cue. */
     val spoken: String
         get() = buildList {
             add(title)
             relation?.let(::add)
+            if (working) add(ActivityState.IN_PROGRESS.label)
             if (needsYou) add(ActivityState.NEEDS_INPUT.label)
             if (unread) add("Unread")
             if (archived) add("Archived")
@@ -166,6 +170,7 @@ data class ChatSwitcher(val main: SwitcherRow?, val groups: List<SwitcherGroup>,
                 archived = chat.isArchived,
                 shown = chat.uri == shownChat,
                 whenText = chat.whenText,
+                working = chat.state == ActivityState.IN_PROGRESS,
             )
             val others = chats
                 .filter { it.uri != mainChat.uri && (showArchived || !it.isArchived || it.state == ActivityState.NEEDS_INPUT) }
