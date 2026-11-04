@@ -134,4 +134,60 @@ class AppControllerMultiHostTest {
             assertEquals(emptyList(), controller.connectedHosts.value)
         }
     }
+
+    @Test
+    fun `a host's refusal to add a folder follows that host's connection, not the focused host, and a new connection starts fresh`() = runTest {
+        MockWebServer().use { server ->
+            server.start()
+            server.enqueue(MockResponse().setResponseCode(200).setBody(fixture("list-tunnels.json")).addHeader("Content-Type", "application/json"))
+            val vault = TokenVault(FakeBox(), FakeStore())
+            vault.save(savedToken)
+            val connector = { HostConnector { clientId, seq, scope: CoroutineScope -> ScriptedConnector(HostScript()).connect(clientId, seq, scope) } }
+            val controller = AppController(
+                auth = GitHubDeviceAuth(baseUrl = server.url("/").toString(), now = { Instant.parse("2026-10-22T12:00:00Z") }),
+                vault = vault,
+                devTunnels = DevTunnelsClient(serviceUrl = server.url("/").toString()),
+                lastHost = object : LastHostStore {
+                    override suspend fun get(): String? = null
+                    override suspend fun set(tunnelId: String) {}
+                },
+                sessions = HostSessionFactory { tunnel: TunnelInfo, _ -> HostSession(connector(), backgroundScope, clientInfo, Backoff(), clientId = "client-${tunnel.tunnelId}") },
+                scope = backgroundScope,
+                directStore = InMemoryDirectHostStore(),
+                directSessions = DirectSessionFactory { host: DirectHost, _, _ -> HostSession(connector(), backgroundScope, clientInfo, Backoff(), clientId = "client-${host.id}") },
+            )
+            controller.start()
+            controller.state.first { it is AppState.Hosts }
+            val loaded = controller.hosts.first { it.list is HostList.Loaded }.list as HostList.Loaded
+            val direct = HostRef.Direct(assertIs<AppController.AddHostResult.Added>(controller.addDirectHost("Lab Box", "192.168.1.50:8123", "")).host)
+            val tunnel = HostRef.Tunnel(loaded.hosts.first().tunnel)
+
+            controller.connectHost(tunnel)
+            runCurrent()
+            val tunnelSession = assertIs<AppState.Connected>(controller.state.value).session
+            controller.connectHost(direct)
+            runCurrent()
+            val directSession = controller.connectedHosts.value.first { it.host.id == direct.id }.session
+
+            // The tunnel host refused it (as the VS Code host does to a phone); the direct host, now in front, did not.
+            tunnelSession.refusals.refuseAddFolder("Session working-directory actions require an Editor Window client.")
+            assertEquals(direct.id, (controller.state.value as AppState.Connected).host.id)
+            assertEquals(null, controller.manager.addFolderRefusal())
+            assertEquals(null, controller.managerFor(directSession).addFolderRefusal())
+            assertEquals("Session working-directory actions require an Editor Window client.", controller.managerFor(tunnelSession).addFolderRefusal())
+
+            controller.showSession(SESSION_C, hostId = tunnel.id)
+            runCurrent()
+            assertEquals("Session working-directory actions require an Editor Window client.", controller.manager.addFolderRefusal(), "back in front, the tunnel host is still refused")
+
+            // Leaving every host and connecting again makes a new connection, which has refused nothing yet.
+            controller.disconnect()
+            runCurrent()
+            controller.connectHost(tunnel)
+            runCurrent()
+            val again = assertIs<AppState.Connected>(controller.state.value).session
+            assertEquals(false, again === tunnelSession)
+            assertEquals(null, controller.manager.addFolderRefusal())
+        }
+    }
 }

@@ -50,7 +50,6 @@ import dev.ahpclient.state.HostSessionEntry
 import dev.ahpclient.state.Inbox
 import dev.ahpclient.state.InboxReader
 import dev.ahpclient.state.ManageResult
-import dev.ahpclient.state.ModelOptions
 import dev.ahpclient.state.SlashCommands
 import dev.ahpclient.state.Transcript
 import dev.ahpclient.ui.chat.ChatActionsUi
@@ -236,12 +235,16 @@ private fun Shell(
     val listed: List<SessionSummary> = connected?.let { it.session.root.sessions.collectAsStateWithLifecycle().value }.orEmpty()
     // The list is only what was saved last time until the host sends its own: to look at, with nothing in it to act on.
     val stale = connected?.let { it.session.root.stale.collectAsStateWithLifecycle().value } == true
+    // Once this host has refused to add a folder on this connection, "Add folder" is not offered again for it.
+    val addFolderRefusal = connected?.let { it.session.refusals.addFolder.collectAsStateWithLifecycle().value }
+    // The same for removing a folder, kept apart: each is hidden only after its own refusal.
+    val removeFolderRefusal = connected?.let { it.session.refusals.removeFolder.collectAsStateWithLifecycle().value }
     val now by rememberNow()
     // Where the person is needed, across all connected hosts: what waits on them, and what finished unread.
     val inbox = remember(multiHostEntries, now) { Inbox.fromEntries(multiHostEntries, now) }
     // Nothing to look after sessions with unless the connection is on the manage tier: no controls, not disabled ones. Nor from a stale list.
     val manageActions = if (canManage && !stale) {
-        remember(controller.manager, rootState, listed, orderedManageTargets) {
+        remember(controller.manager, rootState, listed, orderedManageTargets, addFolderRefusal, removeFolderRefusal) {
             ManageActionsUi(
                 agents = controller.manager.offeredAgents().map { AgentOption(it.provider, it.displayName) },
                 folders = controller.manager.offeredFolders(),
@@ -261,6 +264,8 @@ private fun Shell(
                 toggleCustomization = controller.manager::toggleCustomization,
                 addWorkingDirectory = controller.manager::addWorkingDirectory,
                 removeWorkingDirectory = controller.manager::removeWorkingDirectory,
+                addFolderRefusal = addFolderRefusal,
+                removeFolderRefusal = removeFolderRefusal,
             )
         }
     } else {
@@ -676,7 +681,9 @@ private fun OpenChatView(
     // The screen stays on while an agent works, when the person asked for that, and never otherwise.
     KeepScreenAwakeEffect(keepAwake && running)
     val models = remember(chat.interactor, rootState) { chat.interactor.modelOptions() }
-    val inUse = ModelOptions.inUse(chatState, models)
+    // The same answer the interactor gives, with the session's model (E6): a new chat starts on that one, or on the host's first model.
+    val listedSessions by session.root.sessions.collectAsStateWithLifecycle()
+    val inUse = remember(chatState, models, sessionState, listedSessions, fromCache) { chat.interactor.modelInUse() }
     val rootTyped = rootState as? RootState
     val agents = remember(sessionState, rootTyped) { CustomAgents.of(sessionState, rootTyped) }
     var localRichRequest by remember { mutableStateOf<RichModalRequest?>(null) }

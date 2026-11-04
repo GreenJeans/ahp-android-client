@@ -252,6 +252,7 @@ class AppController(
             override suspend fun disposeChat(uri: String) = liveSession().disposeChat(uri)
         },
         gate = approvalGate,
+        refusals = { connectedSession()?.refusals },
     )
 
     /** Creates a [SessionManager] bound to [session], so multi-host dialogs can query or start sessions on any connected host. */
@@ -279,6 +280,7 @@ class AppController(
             override suspend fun disposeChat(uri: String) = session.disposeChat(uri)
         },
         gate = approvalGate,
+        refusals = { session.refusals },
     )
 
     /**

@@ -42,6 +42,7 @@ import dev.ahpclient.state.CustomizationsView
 import dev.ahpclient.state.ChangesetEntry
 import dev.ahpclient.state.McpServerControlAction
 import dev.ahpclient.state.ConnState
+import dev.ahpclient.state.DispatchOutcome
 import dev.ahpclient.state.ManageResult
 import dev.ahpclient.state.RelativeTime
 import dev.ahpclient.state.SessionGoneException
@@ -1070,6 +1071,118 @@ class SessionScreensTest {
 
         assertEquals(listOf("/work/secondary"), removed)
         assertEquals(listOf("file:///work/new"), added)
+    }
+
+    private val editorOnly = "Session working-directory actions require an Editor Window client."
+
+    private fun folderManage(
+        addFolderRefusal: String? = null,
+        removeFolderRefusal: String? = null,
+        remove: suspend (String) -> ManageResult = { ManageResult.Done() },
+        add: suspend (String) -> ManageResult = { ManageResult.Done() },
+    ) = ManageActionsUi(
+        agents = emptyList(), folders = listOf("file:///work/new"),
+        setRead = { _, _ -> ManageResult.Done() }, setArchived = { _, _ -> ManageResult.Done() },
+        newChat = { ManageResult.Done() }, newSession = { _, _, _ -> ManageResult.Done() },
+        disposeSession = { ManageResult.Done() }, disposeChat = { _, _ -> ManageResult.Done() },
+        addWorkingDirectory = { _, path -> add(path) },
+        removeWorkingDirectory = { _, path -> remove(path) },
+        addFolderRefusal = addFolderRefusal,
+        removeFolderRefusal = removeFolderRefusal,
+    )
+
+    private fun showFolders(manage: ManageActionsUi) {
+        rule.setContent {
+            AhpTheme {
+                SessionScreen(
+                    detailState().copy(workingDirectories = listOf("file:///work/repo", "file:///work/secondary")),
+                    null, ConnState.Online, now, {}, manage = manage, sessionUri = "ahp-session:/s1",
+                ) { androidx.compose.material3.Text("chat body") }
+            }
+        }
+        openDetails()
+    }
+
+    @Test
+    fun addFolderIsReplacedByTheHostsReasonOnceTheHostRefusesIt() {
+        val added = mutableListOf<String>()
+        showFolders(folderManage { path -> added += path; ManageResult.Unconfirmed(DispatchOutcome.Rejected(editorOnly)) })
+
+        rule.onNodeWithTag("folder_add").performClick()
+        rule.onNodeWithTag("folder_choice_0").performClick()
+        rule.waitForIdle()
+
+        assertEquals(listOf("file:///work/new"), added)
+        rule.onNodeWithTag("folder_add").assertDoesNotExist()
+        rule.onNodeWithTag("folder_add_refused").assertExists().assertTextContains(editorOnly, substring = true)
+        // Said once, where the button was, not again as an error under it.
+        rule.onNodeWithTag("folder_notice").assertDoesNotExist()
+        // Removing a folder is not part of the refusal.
+        rule.onNodeWithTag("folder_remove_1").assertExists()
+    }
+
+    @Test
+    fun aHostThatAlreadyRefusedAddingAFolderIsNotOfferedItAgain() {
+        showFolders(folderManage(addFolderRefusal = editorOnly) { error("not offered, so never sent") })
+
+        rule.onNodeWithTag("folder_add").assertDoesNotExist()
+        rule.onNodeWithTag("folder_add_refused").assertExists()
+            .assertTextEquals("This host does not let this app add folders. It said: $editorOnly")
+    }
+
+    @Test
+    fun aFailedSendIsNotARefusalAndAddFolderStaysOffered() {
+        showFolders(folderManage { ManageResult.NotSent(java.io.IOException("socket closed")) })
+
+        rule.onNodeWithTag("folder_add").performClick()
+        rule.onNodeWithTag("folder_choice_0").performClick()
+        rule.waitForIdle()
+
+        rule.onNodeWithTag("folder_notice").assertExists().assertTextEquals("Could not send. Check the connection and try again.")
+        rule.onNodeWithTag("folder_add").assertExists()
+        rule.onNodeWithTag("folder_add_refused").assertDoesNotExist()
+    }
+
+    @Test
+    fun removeIsReplacedByTheHostsReasonOnceTheHostRefusesIt_andAddFolderStaysOffered() {
+        val removed = mutableListOf<String>()
+        showFolders(folderManage(remove = { path -> removed += path; ManageResult.Unconfirmed(DispatchOutcome.Rejected(editorOnly)) }))
+
+        rule.onNodeWithTag("folder_remove_1").performClick()
+        rule.waitForIdle()
+
+        // The screen passes the folder as shown; SessionManager maps it back to the host's file: URI before sending.
+        assertEquals(listOf("/work/secondary"), removed)
+        rule.onNodeWithTag("folder_remove_1").assertDoesNotExist()
+        rule.onNodeWithTag("folder_remove_refused").assertExists().assertTextContains(editorOnly, substring = true)
+        // Said once, in place of the buttons, not again as an error under them.
+        rule.onNodeWithTag("folder_notice").assertDoesNotExist()
+        // Adding a folder is not part of this refusal.
+        rule.onNodeWithTag("folder_add").assertExists()
+        rule.onNodeWithTag("folder_add_refused").assertDoesNotExist()
+    }
+
+    @Test
+    fun aHostThatAlreadyRefusedRemovingAFolderIsNotOfferedItAgain() {
+        showFolders(folderManage(removeFolderRefusal = editorOnly, remove = { error("not offered, so never sent") }))
+
+        rule.onNodeWithTag("folder_remove_1").assertDoesNotExist()
+        rule.onNodeWithTag("folder_remove_refused").assertExists()
+            .assertTextEquals("This host does not let this app remove folders. It said: $editorOnly")
+        rule.onNodeWithTag("session_working_directory_1").assertExists()
+        rule.onNodeWithTag("folder_add").assertExists()
+    }
+
+    @Test
+    fun aFailedRemoveIsNotARefusalAndRemoveStaysOffered() {
+        showFolders(folderManage(remove = { ManageResult.NotSent(java.io.IOException("socket closed")) }))
+
+        rule.onNodeWithTag("folder_remove_1").performClick()
+        rule.waitForIdle()
+
+        rule.onNodeWithTag("folder_notice").assertExists().assertTextEquals("Could not send. Check the connection and try again.")
+        rule.onNodeWithTag("folder_remove_1").assertExists()
+        rule.onNodeWithTag("folder_remove_refused").assertDoesNotExist()
     }
 
     @Test

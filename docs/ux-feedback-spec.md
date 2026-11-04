@@ -216,15 +216,15 @@ The protocol slices still open (N3b live check, P7 automations, P8 host terminal
 | U5: archived chats waiting on the person (2026-11-04) | Always listed under "Waiting on you", even with "Show archived chats" off. Other archived chats stay hidden until it is on |
 | U7: a label over the live terminal tail, and what TalkBack says | No "Live" label (2026-11-04). The tail is not a live region, so TalkBack does not read each new line |
 | U8: what Pro covers | Both AI quick replies (Gemini Nano) and the host's `@` and `/` completions (N3b). Free keeps the plain, heuristic quick replies |
-| U9: the name | A shortlist of three, then the owner picks one; a trademark and store search comes before it is used. Shortlist: **Hostline** (a direct line to your agent host), **Agent Deck** (one place to run your agents from), **Steerwise** (steering agents from your phone). None of the three has been searched yet Chosen 2026-11-04: **Hostline**, with the store title "Hostline: AHP Client". |
-| P5: "Add folder" on a host that refuses it | Offered until the host refuses it once; then hidden for that host, with the reason shown where it was |
+| U9: the name | A shortlist of three, then the owner picks one; a trademark and store search comes before it is used. Shortlist: **Hostline** (a direct line to your agent host), **Agent Deck** (one place to run your agents from), **Steerwise** (steering agents from your phone). None of the three has been searched yet. Chosen 2026-11-04: **Hostline**, with the store title "Hostline: AHP Client". |
+| P5: "Add folder" and "Remove" on a host that refuses them | Each is offered until the host refuses that action once; then that one alone is hidden for that host, with the reason shown where it was. A refused add leaves Remove offered. Kept in memory per host connection |
 | A first message with no model chosen and none reported by the host | The model picker starts on the host's first listed model with its default settings, so a message always names a model |
 | N3b: the host's space trigger | Honoured only when the message starts with a slash command, so the host is asked about a command's arguments and not after every word |
 | P7: automations | Wait until a reachable host advertises `automations`, so it can be checked live |
 | U6: wrapping markdown tables (2026-11-04) | A "Fit columns to width" toggle on the table card, remembered on the device like the wrap choices: on, the columns share the screen width and cells wrap with no sideways scroll; off, today's behaviour |
 | U6: when the tool-output wrap button shows (2026-11-04) | Always, on every block of tool output, not only when a line runs past the edge. Tool input values and attachment previews still show it only when a line does not fit |
 
-The P5, first-model and N3b decisions belong to [`protocol-completion-spec.md`](protocol-completion-spec.md) and are recorded there when that work is picked up.
+The P5, first-model and N3b decisions belong to [`protocol-completion-spec.md`](protocol-completion-spec.md); P5 and first-model are recorded in its Slice 5 "As built" notes.
 
 ## Progress Log
 

@@ -36,7 +36,7 @@ Checked 2026-11-02 on an API 36 emulator and the JVM suite. The boxes in each sl
 | P2 Customization toggles and server tools | Built, JVM and UI tests | That a live host honours `session/customizationToggled` and echoes it (the live host offered no switch on any customization) |
 | P3 Per-chat changesets and terminal commands | Built, JVM and UI tests | Live terminal content with command parts. Checked live: changeset kinds, the session changeset's file list and a file diff. The host's list count was one higher than the file's real line count (a trailing line break) |
 | P4 Canvas and annotations channels | Built, JVM and UI tests | Live channel subscribe; system back on the canvas screen has no automated test (no `AppRoot` harness with a host) |
-| P5 Working directories | Built, JVM and UI tests | That a live host applies set and remove. The VS Code host refused the add: "Session working-directory actions require an Editor Window client", so the success path cannot be tried against it |
+| P5 Working directories | Built, JVM and UI tests | That a live host applies set and remove. The VS Code host refused the add: "Session working-directory actions require an Editor Window client", so the success path cannot be tried against it. Add and Remove are now each hidden after the host's own refusal (see Slice 5, As built) |
 | iOS | Not compiled for P1 to P5 | Kotlin/Native needs a Mac; `commonUi` changes were only reviewed for JVM-only calls |
 
 ### Decisions taken in review
@@ -49,7 +49,7 @@ Checked 2026-11-02 on an API 36 emulator and the JVM suite. The boxes in each sl
 
 ### Next slice
 
-**N1: Land and prove P1 to P5. Landed (PRs #33 and #34); the live run is partly done, see `docs/verification/protocol-completion.md`.** Still open: P1 (needs an action the host does not auto-approve), the P2 toggle (needs a host that offers a switch), P4 (no entry point found on the live host), the P5 success path (needs an Editor Window client or a host that accepts it) and the terminal command view. Client item from the run, done: new Copilot sessions on `claude-sonnet-5.5` failed with `compaction_static_context_blocked` because the phone dropped the host's numeric `contextSize` setting and sent none; the picker now offers number settings and a message sends the host's defaults (checked live, see the verification record). Still open: a first turn with no model chosen and none reported by the host sends no model. Original text: merge the branch, then run the unverified column above with `:core-ahp:probe` against a live host and on the Pixel 10, recording results in `docs/verification/protocol-completion.md`. Also: resolve the MCP contributor's `customizationId` to the server's display name through `SessionState.customizations`, and add an `AppRoot` back-navigation test for the canvas screen.
+**N1: Land and prove P1 to P5. Landed (PRs #33 and #34); the live run is partly done, see `docs/verification/protocol-completion.md`.** Still open: P1 (needs an action the host does not auto-approve), the P2 toggle (needs a host that offers a switch), P4 (no entry point found on the live host), the P5 success path (needs an Editor Window client or a host that accepts it) and the terminal command view. Client item from the run, done: new Copilot sessions on `claude-sonnet-5.5` failed with `compaction_static_context_blocked` because the phone dropped the host's numeric `contextSize` setting and sent none; the picker now offers number settings and a message sends the host's defaults (checked live, see the verification record). Done since: a first turn with no model chosen and none reported by the host now names the host's first listed model (see Slice 5, As built). Original text: merge the branch, then run the unverified column above with `:core-ahp:probe` against a live host and on the Pixel 10, recording results in `docs/verification/protocol-completion.md`. Also: resolve the MCP contributor's `customizationId` to the server's display name through `SessionState.customizations`, and add an `AppRoot` back-navigation test for the canvas screen.
 
 **N2: P6a, session config completions. Built, JVM and emulator tests pass; not yet checked against a live host.** Self-contained and MANAGE only:
 
@@ -220,6 +220,11 @@ PR #30 (`f56aef3`) surfaced `chat.canvases[]` (`CanvasReference`) in `Background
 
 - [x] **AC-P5.1** `ChatPane` and `DetailsSheet` include `chat.workingDirectories` alongside `session.workingDirectories`.
 - [x] **AC-P5.2** On the `MANAGE` tier, `SessionManager` can add a folder from `RecentFolders` (`session/workingDirectorySet`) or remove an existing secondary folder (`session/workingDirectoryRemoved`), refusing any path not offered by the host's session history.
+
+**As built (2026-11-04).** Decisions are in the Decisions table of [`ux-feedback-spec.md`](ux-feedback-spec.md#decisions-2026-11-03).
+
+- **Refusals.** "Add folder" and "Remove" are each offered until the host refuses that action itself (a `Rejected` outcome); then that one is hidden for every session of the host and the host's reason is shown in its place. A refused add leaves Remove offered, and the other way round. A failed send, no reply, or this app's own policy is not a refusal. Kept in memory per host connection (`HostRefusals` on `HostSession`): a new connection to the host starts with nothing refused. Tests: `SessionManagerTest`, `AppControllerMultiHostTest` (JVM); the folder cases in `SessionScreensTest` (on a device, not yet run).
+- **A new chat's model.** A chat with no turn starts on the session's model, else on the host's first listed model with its default settings, so its first message always names a model (`ModelOptions.inUse`). Tests: `ModelOptionsTest`, `ChatInteractorTest`.
 
 ---
 
