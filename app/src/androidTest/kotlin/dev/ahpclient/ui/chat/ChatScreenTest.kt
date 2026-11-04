@@ -927,6 +927,21 @@ class ChatScreenTest {
         if (bar != null) assertTrue("the first line is under the bar", rule.onNodeWithText("second reply 1").fetchSemanticsNode().boundsInRoot.top >= bar.boundsInRoot.bottom - 1f)
     }
 
+    // ---- the chat cache (U1) ------------------------------------------------------------------------------------
+
+    @Test
+    fun aChatShownFromItsSavedCopySaysSoUntilTheHostAnswers() {
+        var cached by mutableStateOf(true)
+        rule.setContent { AhpTheme { ChatScreen(transcript(askedAndAnswered(3)), null, false, null, ConnState.Online, {}, {}, {}, fromCache = cached) } }
+
+        rule.onNodeWithTag("chat_cached").assertIsDisplayed().assertTextContains("as you last saw it", substring = true)
+        rule.onNodeWithText("reply line 3").assertIsDisplayed()
+
+        rule.runOnIdle { cached = false }
+        rule.waitForIdle()
+        rule.onAllNodesWithTag("chat_cached").assertCountEquals(0)
+    }
+
     // ---- reader view (U2 part 3) ---------------------------------------------------------------------------------
 
     private fun turnEnd(turn: String) = TranscriptItem.TurnEnd("$turn/end", TurnOutcome.DONE, 1_200L)

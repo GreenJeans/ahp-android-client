@@ -130,6 +130,7 @@ fun ChatScreen(
     onTextScale: ((Float) -> Unit)? = null,
     onReadResource: (suspend (String) -> ResourceReadResult)? = null,
     workingDirectories: List<String> = emptyList(),
+    fromCache: Boolean = false,
 ) {
     ScreenScaffold(
         title = transcript?.title ?: "Chat",
@@ -171,6 +172,7 @@ fun ChatScreen(
             onExternalRichConsumed = onExternalRichConsumed,
             onReadResource = onReadResource,
             workingDirectories = workingDirectories,
+            fromCache = fromCache,
         )
     }
 }
@@ -205,6 +207,8 @@ fun ChatPane(
     onTextScale: ((Float) -> Unit)? = null,
     onReadResource: (suspend (String) -> ResourceReadResult)? = null,
     workingDirectories: List<String> = emptyList(),
+    /** What is shown is the copy kept from the last visit, not yet replaced by the host's snapshot (U1). */
+    fromCache: Boolean = false,
 ) {
     // Kept as the text it came from: that survives the app being recreated, and a target is made from it again.
     var pendingRaw by rememberSaveable { mutableStateOf<String?>(null) }
@@ -243,6 +247,15 @@ fun ChatPane(
             // screen readers and tests, and the view's surface takes every touch.
             Column(modifier = Modifier.fillMaxSize().then(if (openRich != null) Modifier.clearAndSetSemantics {} else Modifier)) {
                 if (connection != ConnState.Online) ConnectionLine(connection, Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                // Shown until the host's snapshot replaces the copy, and said plainly, so nobody takes an old reply for a new one.
+                if (fromCache && transcript != null && error == null) {
+                    Text(
+                        "Showing this chat as you last saw it. Updating…",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp).testTag("chat_cached"),
+                    )
+                }
                 if (transcript?.running == true && !transcript.waitingOnYou) WorkingBar()
                 when {
                     error is ChatGoneException -> ErrorText("This chat is no longer on the host.", Modifier.padding(horizontal = 16.dp).testTag("chat_gone"))

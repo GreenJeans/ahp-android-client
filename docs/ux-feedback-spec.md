@@ -26,11 +26,13 @@ Nine items from using the app day to day. Most are about keeping context in a lo
 
 **Proposal.** Keep the last known state of recently opened chats in memory, bounded by count and size, beyond the subscribed few. Opening a cached chat shows it at once, marked as not yet current, and the fresh snapshot replaces it when it arrives. Whether to also keep it on disk (so it survives the app being closed) is a later step: the session list cache in [`hardening-spec.md`](hardening-spec.md) is the model, and the same privacy rule applies (nothing that would not be shown on screen anyway).
 
+**As built (2026-11-03, memory only).** When a chat stops being subscribed, `HostSession` keeps what it showed (its turns and its own settings) for the last 6 such chats. Opening one of them again shows that copy at once; `ChatStore.cached` is true and the screen says "Showing this chat as you last saw it. Updating…" until the host's snapshot replaces it. Nothing is folded into the copy: actions that arrive meanwhile wait for the snapshot, as before, and no older turns are asked for from it. While it is a copy there is no message box and no approval buttons, and `ChatInteractor` treats the chat as not there, so a decision from a notification cannot act on it either. A chat the host said is gone is not kept, and stopping the session (switching host, signing out) empties the cache. Not built: keeping it on disk.
+
 **Acceptance criteria**
 
-- [ ] **AC-U1.1** Going back to any of the last N opened chats shows its turns with no blank wait, then updates to the host's snapshot without the scroll position jumping.
-- [ ] **AC-U1.2** A cached chat is shown as possibly out of date until the snapshot arrives, and a chat the host removed is not shown from the cache.
-- [ ] **AC-U1.3** The cache has a fixed bound and is cleared on sign-out and on switching host.
+- [ ] **AC-U1.1** Going back to any of the last N opened chats shows its turns with no blank wait, then updates to the host's snapshot without the scroll position jumping. (Half checked: shown at once and replaced, in JVM tests; the scroll position on replacement is not checked on a device.)
+- [x] **AC-U1.2** A cached chat is shown as possibly out of date until the snapshot arrives, and a chat the host removed is not shown from the cache.
+- [x] **AC-U1.3** The cache has a fixed bound and is cleared on sign-out and on switching host.
 
 **Risks.** A cached chat that is wrong (a turn the host has since truncated or restored) must never be acted on: the message box and approval buttons stay off until the snapshot arrives.
 
