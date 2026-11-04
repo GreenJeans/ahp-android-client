@@ -29,6 +29,9 @@ import com.microsoft.agenthostprotocol.generated.ListSessionsResult
 import com.microsoft.agenthostprotocol.generated.Message
 import com.microsoft.agenthostprotocol.generated.ReconnectParams
 import com.microsoft.agenthostprotocol.generated.ReconnectResult
+import com.microsoft.agenthostprotocol.generated.CompletionItemKind
+import com.microsoft.agenthostprotocol.generated.CompletionsParams
+import com.microsoft.agenthostprotocol.generated.CompletionsResult
 import com.microsoft.agenthostprotocol.generated.ResolveSessionConfigParams
 import com.microsoft.agenthostprotocol.generated.ResolveSessionConfigResult
 import com.microsoft.agenthostprotocol.generated.SessionConfigCompletionsParams
@@ -285,6 +288,19 @@ class AhpConnection(
     suspend fun disposeChat(uri: String) {
         requestRaw("disposeChat", json.encodeToJsonElement(DisposeChatParams.serializer(), DisposeChatParams(channel = uri)).jsonObject)
     }
+
+    /**
+     * What the host suggests for the message being written in the chat at [chatUri]: [text] is everything typed so far and [offset]
+     * is where the cursor is, in UTF-16 units as the protocol counts them. Changes nothing on the host. Refused with
+     * [CapabilityDeniedException] unless the tier lists `completions`.
+     */
+    suspend fun completions(chatUri: String, text: String, offset: Int): CompletionsResult =
+        request(
+            "completions",
+            CompletionsParams.serializer(),
+            CompletionsParams(channel = chatUri, kind = CompletionItemKind.USER_MESSAGE, text = text, offset = offset.toLong()),
+            CompletionsResult.serializer(),
+        )
 
     /** Invokes [operationId] on the changeset at [changesetUri]. Refused unless the tier lists `invokeChangesetOperation`. */
     suspend fun invokeChangesetOperation(
