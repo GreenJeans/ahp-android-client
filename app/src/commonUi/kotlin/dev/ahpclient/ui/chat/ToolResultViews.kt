@@ -28,6 +28,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.ahpclient.state.Clipped
 import dev.ahpclient.state.InputLine
+import dev.ahpclient.state.LiveTerminal
 import dev.ahpclient.state.ToolDetail
 import dev.ahpclient.state.RiskLevelView
 import dev.ahpclient.state.ToolResultView
@@ -39,6 +40,7 @@ import kotlin.math.roundToInt
  * to decide it are on screen, so the block does not send the person elsewhere. [onShowAll] is set when something was left
  * out for length and the person may ask for more. [onOpenSubagent] opens a subagent's own transcript, [onOpenTerminal] the live
  * output of a terminal a command ran in, and [onOpenRich] opens inline file edits or attachments in the full-screen viewer.
+ * [liveTerminal], set only while the call runs, watches a terminal so the end of its output shows here as it arrives.
  * The text can be selected and copied.
  */
 @Composable
@@ -49,6 +51,7 @@ internal fun ToolDetailBody(
     onOpenSubagent: ((String) -> Unit)? = null,
     onOpenTerminal: ((String) -> Unit)? = null,
     onOpenRich: ((RichModalRequest) -> Unit)? = null,
+    liveTerminal: ((String) -> LiveTerminal?)? = null,
 ) {
     SelectionContainer {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -97,7 +100,7 @@ internal fun ToolDetailBody(
                     }
                 }
             }
-            detail.results.forEach { result -> ToolResultRow(result, onOpenSubagent, onOpenTerminal, onOpenRich) }
+            detail.results.forEach { result -> ToolResultRow(result, onOpenSubagent, onOpenTerminal, onOpenRich, liveTerminal) }
             detail.error?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("tool_error")) }
             if (detail.isEmpty) Text("No further details.", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("tool_nothing"))
             if (onShowAll != null) {
@@ -121,10 +124,11 @@ internal fun ToolResultRow(
     onOpenSubagent: ((String) -> Unit)? = null,
     onOpenTerminal: ((String) -> Unit)? = null,
     onOpenRich: ((RichModalRequest) -> Unit)? = null,
+    liveTerminal: ((String) -> LiveTerminal?)? = null,
 ) {
     when (result) {
         is ToolResultView.Text -> MonoBlock(result.body, Modifier.testTag("result_text"))
-        is ToolResultView.Terminal -> TerminalResult(result, onOpenTerminal)
+        is ToolResultView.Terminal -> TerminalResult(result, onOpenTerminal, liveTerminal)
         is ToolResultView.FileEdit -> FileEditResult(result, onOpenRich)
         is ToolResultView.Subagent -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             val chatUri = result.chatUri
@@ -157,7 +161,8 @@ internal fun ToolResultRow(
 }
 
 @Composable
-private fun TerminalResult(result: ToolResultView.Terminal, onOpenTerminal: ((String) -> Unit)?) {
+private fun TerminalResult(result: ToolResultView.Terminal, onOpenTerminal: ((String) -> Unit)?, liveTerminal: ((String) -> LiveTerminal?)? = null) {
+    val terminalUri = result.terminalUri
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Column(modifier = Modifier.semantics(mergeDescendants = true) {}.testTag("result_terminal"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -165,15 +170,15 @@ private fun TerminalResult(result: ToolResultView.Terminal, onOpenTerminal: ((St
                 ExitBadge(result.exitCode)
             }
             val output = result.output
-            if (output != null) {
-                MonoBlock(output)
-            } else {
-                Text(if (result.exitCode == null) "No output yet." else "No output.", style = MaterialTheme.typography.bodyMedium)
+            when {
+                output != null -> MonoBlock(output)
+                // Until the command ends the result has no output of its own, but its terminal streams: show the end of that (U7).
+                result.exitCode == null && terminalUri != null && liveTerminal != null -> LiveTerminalTail(terminalUri, liveTerminal)
+                else -> Text(if (result.exitCode == null) "No output yet." else "No output.", style = MaterialTheme.typography.bodyMedium)
             }
             if (result.clippedByHost) Text("The host cut this output short.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         // The button is a control of its own, outside the merged words above.
-        val terminalUri = result.terminalUri
         if (terminalUri != null && onOpenTerminal != null) {
             OutlinedButton(onClick = { onOpenTerminal(terminalUri) }, modifier = Modifier.heightIn(min = 48.dp).testTag("terminal_open")) { Text("Open live output") }
         }
