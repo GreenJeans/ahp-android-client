@@ -433,6 +433,12 @@ internal fun DataTableGrid(
     val linkColor = MaterialTheme.colorScheme.primary
     val codeBg = MaterialTheme.colorScheme.surfaceContainerHighest
     val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+    // Fitted, each column's weight is its share of the whole, not its width in dp. A row works out its height (IntrinsicSize.Min)
+    // from whole pixels per unit of weight, so weights in the hundreds round that to 0 px and every cell is measured as if it
+    // had no width: one character per line, and a row many screens tall.
+    val totalWidth = remember(table.columnCount, columnHints, scale) {
+        (0 until table.columnCount).sumOf { columnWidthDp(columnHints.getOrElse(it) { 12 }, scale).value.toDouble() }.toFloat()
+    }
 
     Surface(
         shape = RoundedCornerShape(8.dp),
@@ -458,7 +464,7 @@ internal fun DataTableGrid(
                     val colWidth = columnWidthDp(columnHints.getOrElse(col) { 12 }, scale)
                     Box(
                         modifier = Modifier
-                            .then(if (fitWidth) Modifier.weight(colWidth.value) else Modifier.width(colWidth))
+                            .then(if (fitWidth) Modifier.weight(colWidth.value / totalWidth) else Modifier.width(colWidth))
                             .fillMaxHeight()
                             .padding(horizontal = (10 * scale).dp, vertical = (8 * scale).dp),
                         contentAlignment = cellBoxAlignment(align),
@@ -496,7 +502,7 @@ internal fun DataTableGrid(
                         val colWidth = columnWidthDp(columnHints.getOrElse(col) { 12 }, scale)
                         Box(
                             modifier = Modifier
-                                .then(if (fitWidth) Modifier.weight(colWidth.value) else Modifier.width(colWidth))
+                                .then(if (fitWidth) Modifier.weight(colWidth.value / totalWidth) else Modifier.width(colWidth))
                                 .fillMaxHeight()
                                 .padding(horizontal = (10 * scale).dp, vertical = (8 * scale).dp),
                             contentAlignment = cellBoxAlignment(align),
