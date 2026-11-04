@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -78,14 +79,17 @@ fun AppRoot(
     val catalog by controller.hosts.collectAsStateWithLifecycle()
     val theme by ui.theme.collectAsStateWithLifecycle()
     PlatformBackHandler(enabled = (state as? AppState.SignedOut)?.step is SignInStep.AwaitingApproval || catalog.signInStep is SignInStep.AwaitingApproval) { controller.cancelSignIn() }
-    AhpTheme(theme) {
-        // Every screen but the loading one brings its own bar and applies the system-bar insets itself.
-        Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-            when (val current = state) {
-                AppState.Restoring -> Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars).testTag("restoring"), contentAlignment = Alignment.Center) { Busy("Loading…") }
-                is AppState.SignedOut -> SignInScreen(current, controller::signIn, controller::cancelSignIn, onOpenGitHub, onCopyCode, onUseDirect = controller::useDirectHosts)
-                // One call for both, so that going from the host list to a host (and back) keeps the menu, and the sheet over it, as they are.
-                AppState.Hosts, is AppState.Connected -> Shell(controller, ui, catalog, current as? AppState.Connected, monitorEnabled, notificationsAllowed, onMonitorChange, alerts, sessionRequests, quickReplyProvider, onOpenGitHub, onCopyCode)
+    // The wrap choices are read where the text is drawn, deep in the chat and the viewers, so they are provided once here.
+    CompositionLocalProvider(LocalLineWrap provides ui) {
+        AhpTheme(theme) {
+            // Every screen but the loading one brings its own bar and applies the system-bar insets itself.
+            Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                when (val current = state) {
+                    AppState.Restoring -> Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars).testTag("restoring"), contentAlignment = Alignment.Center) { Busy("Loading…") }
+                    is AppState.SignedOut -> SignInScreen(current, controller::signIn, controller::cancelSignIn, onOpenGitHub, onCopyCode, onUseDirect = controller::useDirectHosts)
+                    // One call for both, so that going from the host list to a host (and back) keeps the menu, and the sheet over it, as they are.
+                    AppState.Hosts, is AppState.Connected -> Shell(controller, ui, catalog, current as? AppState.Connected, monitorEnabled, notificationsAllowed, onMonitorChange, alerts, sessionRequests, quickReplyProvider, onOpenGitHub, onCopyCode)
+                }
             }
         }
     }

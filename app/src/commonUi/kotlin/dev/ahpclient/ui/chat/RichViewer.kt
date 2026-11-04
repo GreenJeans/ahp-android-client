@@ -92,10 +92,15 @@ import dev.ahpclient.state.RichReadResult
 import dev.ahpclient.state.TableAlignment
 import dev.ahpclient.state.TableData
 import dev.ahpclient.state.ToolResultView
+import dev.ahpclient.state.WrapView
 import dev.ahpclient.ui.Busy
 import dev.ahpclient.ui.ErrorText
 import dev.ahpclient.ui.FileDiffScreen
+import dev.ahpclient.ui.LineWrap
 import dev.ahpclient.ui.ScreenScaffold
+import dev.ahpclient.ui.WrapToggle
+import dev.ahpclient.ui.rememberLineWrap
+import dev.ahpclient.ui.sidewaysUnless
 import dev.ahpclient.platform.base64Encode
 import dev.ahpclient.ui.PlatformBackHandler
 import dev.ahpclient.ui.decodeImageBitmap
@@ -218,6 +223,7 @@ fun RichViewerModal(
                     language = request.language,
                     startLine = request.startLine,
                     endLine = request.endLine,
+                    view = WrapView.CODE,
                 )
                 is RichModalRequest.Diagram -> FullScreenDiagramViewer(
                     diagram = request.diagram,
@@ -301,12 +307,16 @@ private fun ViewerActionBar(
     toggleLabel: String? = null,
     onToggle: (() -> Unit)? = null,
     onShare: (() -> Unit)? = null,
+    /** Set where the text can wrap: the button for it, for that kind of view. */
+    wrap: LineWrap? = null,
+    wrapView: WrapView? = null,
 ) {
     FlowRow(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
+        if (wrap != null && wrapView != null) WrapToggle(wrap, wrapView)
         if (primaryCopyLabel != null && onPrimaryCopy != null) {
             OutlinedButton(
                 onClick = onPrimaryCopy,
@@ -519,16 +529,19 @@ internal fun cellBoxAlignment(alignment: TableAlignment): Alignment = when (alig
     TableAlignment.END -> Alignment.TopEnd
 }
 
+/** Text shown line by line with numbers: an expanded code block ([view] is code) or a file or text attachment ([view] is file). */
 @Composable
 private fun FullScreenCodeViewer(
     code: String,
     language: String?,
     startLine: Int? = null,
     endLine: Int? = null,
+    view: WrapView = WrapView.FILE,
 ) {
     val platformUi = rememberPlatformUiActions()
     var scale by remember { mutableFloatStateOf(1f) }
     val lines = remember(code) { code.replace("\r\n", "\n").replace('\r', '\n').split('\n') }
+    val wrap = rememberLineWrap(view)
 
     Column(modifier = Modifier.fillMaxSize()) {
         ViewerActionBar(
@@ -539,6 +552,8 @@ private fun FullScreenCodeViewer(
             primaryCopyLabel = "Copy code",
             onPrimaryCopy = { platformUi.copyToClipboard(language ?: "Code", code) },
             onShare = { platformUi.shareText(code, language ?: "Code") },
+            wrap = wrap,
+            wrapView = view,
         )
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         val hScroll = rememberScrollState()
@@ -551,7 +566,7 @@ private fun FullScreenCodeViewer(
                         scale = (scale * zoom).coerceIn(0.5f, 3f)
                     }
                 }
-                .horizontalScroll(hScroll)
+                .sidewaysUnless(wrap.on, hScroll)
                 .verticalScroll(vScroll)
                 .padding(12.dp)
                 .testTag("rich_viewer_code_content"),
@@ -585,8 +600,10 @@ private fun FullScreenCodeViewer(
                                     fontSize = (13f * scale).sp,
                                     lineHeight = (18f * scale).sp,
                                 ),
-                                softWrap = false,
+                                softWrap = wrap.on,
                                 color = MaterialTheme.colorScheme.onSurface,
+                                // Wrapped, the line takes the room left beside its number; kept whole, it takes what it needs.
+                                modifier = if (wrap.on) Modifier.weight(1f) else Modifier,
                             )
                         }
                     }
@@ -606,6 +623,7 @@ private fun FullScreenDiagramViewer(
     var showSource by remember { mutableStateOf(false) }
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
+    val wrap = rememberLineWrap(WrapView.CODE)
 
     Column(modifier = Modifier.fillMaxSize()) {
         ViewerActionBar(
@@ -621,6 +639,9 @@ private fun FullScreenDiagramViewer(
             toggleLabel = if (showSource) "Show diagram" else "Show source",
             onToggle = { showSource = !showSource },
             onShare = { platformUi.shareText(sourceCode, "Diagram ($language)") },
+            // Only the source has lines to wrap; the drawing pans instead.
+            wrap = wrap.takeIf { showSource },
+            wrapView = WrapView.CODE,
         )
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         if (showSource) {
@@ -634,10 +655,10 @@ private fun FullScreenDiagramViewer(
                         fontSize = (13f * scale).sp,
                         lineHeight = (19f * scale).sp,
                     ),
-                    softWrap = false,
+                    softWrap = wrap.on,
                     modifier = Modifier
                         .fillMaxSize()
-                        .horizontalScroll(hScroll)
+                        .sidewaysUnless(wrap.on, hScroll)
                         .verticalScroll(vScroll)
                         .padding(16.dp)
                         .testTag("rich_viewer_diagram_source"),

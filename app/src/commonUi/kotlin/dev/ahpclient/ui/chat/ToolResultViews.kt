@@ -1,8 +1,8 @@
 package dev.ahpclient.ui.chat
 
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,6 +16,10 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -31,7 +35,11 @@ import dev.ahpclient.state.InputLine
 import dev.ahpclient.state.ToolDetail
 import dev.ahpclient.state.RiskLevelView
 import dev.ahpclient.state.ToolResultView
+import dev.ahpclient.state.WrapView
 import dev.ahpclient.platform.formatInteger
+import dev.ahpclient.ui.WrapToggle
+import dev.ahpclient.ui.rememberLineWrap
+import dev.ahpclient.ui.sidewaysUnless
 import kotlin.math.roundToInt
 
 /**
@@ -250,28 +258,43 @@ private fun FileEditResult(
 }
 
 /**
- * Text as the tool printed it: monospace, not wrapped, scrolling sideways, because output is data and its layout matters.
- * When part of it was left out, the block says how much, so nobody mistakes a cut for the whole.
+ * Text as the tool printed it: monospace and, unless the person chose to wrap tool output, not wrapped but scrolling sideways,
+ * because output is data and its layout matters. The wrap button is offered only when a line does not fit, so a short value
+ * carries no control it has no use for. When part of it was left out, the block says how much, so nobody mistakes a cut for
+ * the whole.
  */
 @Composable
 internal fun MonoBlock(text: Clipped, modifier: Modifier = Modifier) {
+    val wrap = rememberLineWrap(WrapView.TOOL_OUTPUT)
+    val sideways = rememberScrollState()
+    // Known only once laid out: kept whole, a line is too long when there is something to scroll to; wrapped, when it took more rows than it has lines.
+    var wrappedRows by remember(text.text) { mutableStateOf(false) }
+    val tooLong = if (wrap.on) wrappedRows else sideways.maxValue > 0
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Surface(color = MaterialTheme.colorScheme.surfaceVariant, contentColor = MaterialTheme.colorScheme.onSurfaceVariant, shape = MaterialTheme.shapes.small) {
             Text(
                 text.text,
                 style = MaterialTheme.typography.bodySmall,
                 fontFamily = FontFamily.Monospace,
-                softWrap = false,
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(8.dp),
+                softWrap = wrap.on,
+                onTextLayout = { layout -> if (wrap.on) wrappedRows = layout.lineCount > text.text.count { it == '\n' } + 1 },
+                modifier = Modifier.fillMaxWidth().sidewaysUnless(wrap.on, sideways).padding(8.dp).testTag("mono_text"),
             )
         }
-        if (text.isClipped) {
-            Text(
-                "Showing the first ${formatInteger(text.text.length.toLong())} of ${formatInteger(text.fullLength.toLong())} characters.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.testTag("clipped_note"),
-            )
+        if (text.isClipped || tooLong) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(modifier = Modifier.weight(1f)) {
+                    if (text.isClipped) {
+                        Text(
+                            "Showing the first ${formatInteger(text.text.length.toLong())} of ${formatInteger(text.fullLength.toLong())} characters.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("clipped_note"),
+                        )
+                    }
+                }
+                if (tooLong) WrapToggle(wrap, WrapView.TOOL_OUTPUT)
+            }
         }
     }
 }

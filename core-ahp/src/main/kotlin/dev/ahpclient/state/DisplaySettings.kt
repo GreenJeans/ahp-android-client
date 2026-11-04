@@ -22,6 +22,20 @@ object TextScale {
     fun percent(scale: Float): String = "${(clamp(scale) * 100).roundToInt()}%"
 }
 
+/**
+ * The kinds of view that show text as written, line for line, and so can either wrap a long line or keep it whole and scroll
+ * sideways. The person's choice is kept per kind, so wrapping one code block wraps them all. [key] is what the choice is saved
+ * under, so renaming an entry does not lose it. Code, tool output and files keep lines whole unless asked, because their layout
+ * is often the point; the terminal and diffs wrap, as they always have.
+ */
+enum class WrapView(val key: String, val wrapsByDefault: Boolean) {
+    CODE("code", false),
+    TOOL_OUTPUT("tool_output", false),
+    FILE("file", false),
+    TERMINAL("terminal", true),
+    DIFF("diff", true),
+}
+
 /** Which colours the app uses: those of the system's light or dark setting, or one of them always. */
 enum class ThemeMode(val label: String) {
     SYSTEM("System"),

@@ -1,5 +1,6 @@
 package dev.ahpclient.ui
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -7,9 +8,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
@@ -37,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import dev.ahpclient.state.ChannelGoneException
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.TerminalView
+import dev.ahpclient.state.WrapView
 import com.microsoft.agenthostprotocol.generated.TerminalState
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
@@ -50,7 +54,16 @@ import kotlinx.coroutines.launch
 @Composable
 fun TerminalScreen(state: TerminalState?, error: Throwable?, connection: ConnState, onBack: () -> Unit, modifier: Modifier = Modifier) {
     val view = remember(state) { state?.let(TerminalView::from) }
-    ScreenScaffold(title = view?.title ?: "Terminal", titleTag = "terminal_title", onBack = onBack, backLabel = "Back to chat", large = false, modifier = modifier) {
+    val wrap = rememberLineWrap(WrapView.TERMINAL)
+    ScreenScaffold(
+        title = view?.title ?: "Terminal",
+        titleTag = "terminal_title",
+        onBack = onBack,
+        backLabel = "Back to chat",
+        large = false,
+        modifier = modifier,
+        actions = { if (view != null && view.lines.isNotEmpty()) WrapToggle(wrap, WrapView.TERMINAL) },
+    ) {
         Column(modifier = Modifier.fillMaxSize()) {
             Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (connection != ConnState.Online) ConnectionLine(connection)
@@ -65,7 +78,7 @@ fun TerminalScreen(state: TerminalState?, error: Throwable?, connection: ConnSta
             }
             val sideMargin = Modifier.padding(horizontal = 24.dp)
             when {
-                view != null -> TerminalBody(view)
+                view != null -> TerminalBody(view, wrap.on)
                 error is ChannelGoneException -> Text(
                     "This terminal is no longer on the host. Its output is in the tool's result.",
                     sideMargin.testTag("terminal_gone"),
@@ -77,9 +90,19 @@ fun TerminalScreen(state: TerminalState?, error: Throwable?, connection: ConnSta
     }
 }
 
+/** [wrap] off keeps every line whole: the list is then as wide as the widest line and scrolls sideways as one block, so the rows stay lined up. */
 @Composable
-private fun TerminalBody(view: TerminalView) {
+private fun TerminalBody(view: TerminalView, wrap: Boolean) {
     val listState = rememberLazyListState()
+    val sideways = rememberScrollState()
+    val lineStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
+    val commandStyle = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace)
+    // The command row also holds its exit code; the side margins are 24 dp each.
+    val wholeWidth = if (wrap) {
+        null
+    } else {
+        maxOf(widestLine(view.lines, lineStyle), widestLine(view.commands.map { "$ ${it.commandLine}" }, commandStyle) + COMMAND_END) + 48.dp
+    }
     val scope = rememberCoroutineScope()
     var following by remember { mutableStateOf(true) }
     val last = view.lines.size - 1
@@ -119,7 +142,9 @@ private fun TerminalBody(view: TerminalView) {
                 Text("No output yet.", modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp).testTag("terminal_empty"))
             } else {
                 SelectionContainer(modifier = Modifier.weight(1f)) {
-                    LazyColumn(state = listState, modifier = Modifier.fillMaxSize().testTag("terminal_list")) {
+                    // The screen's width is passed on as the least the list may be, so a terminal of short lines still fills it.
+                    val size = if (wholeWidth == null) Modifier.fillMaxSize() else Modifier.fillMaxSize().horizontalScroll(sideways).width(wholeWidth)
+                    LazyColumn(state = listState, modifier = size.testTag("terminal_list")) {
                         itemsIndexed(view.lines, key = { index, _ -> index }) { index, line ->
                             val command = view.commands.firstOrNull { it.lineIndex == index }
                             if (command != null) {
@@ -132,8 +157,8 @@ private fun TerminalBody(view: TerminalView) {
                                     ) {
                                         Text(
                                             "$ ${command.commandLine}",
-                                            style = MaterialTheme.typography.labelMedium,
-                                            fontFamily = FontFamily.Monospace,
+                                            style = commandStyle,
+                                            softWrap = wrap,
                                             modifier = Modifier.weight(1f),
                                         )
                                         val exit = command.exitCode
@@ -147,8 +172,8 @@ private fun TerminalBody(view: TerminalView) {
                             } else {
                                 Text(
                                     line.ifEmpty { " " },
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontFamily = FontFamily.Monospace,
+                                    style = lineStyle,
+                                    softWrap = wrap,
                                     modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).testTag("terminal_line"),
                                 )
                             }
@@ -168,3 +193,6 @@ private fun TerminalBody(view: TerminalView) {
         }
     }
 }
+
+/** Room left after a command for its exit code ("Exit 127" or "Running") when lines are kept whole. */
+private val COMMAND_END = 72.dp

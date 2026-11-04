@@ -1,5 +1,6 @@
 package dev.ahpclient.ui
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -48,6 +50,7 @@ import dev.ahpclient.state.DiffResult
 import dev.ahpclient.state.FileDiff
 import dev.ahpclient.state.ManageMessages
 import dev.ahpclient.state.ManageResult
+import dev.ahpclient.state.WrapView
 import kotlinx.coroutines.launch
 
 /** One row of the list: the label of a block of lines, or one line. [key] is stable so a long list keeps its place. */
@@ -101,8 +104,17 @@ fun FileDiffScreen(
             }
         }
     }
+    val wrap = rememberLineWrap(WrapView.DIFF)
+    val hasLines = load is DiffLoad.Loaded && (load.result as? DiffResult.Ready)?.diff?.hunks?.isNotEmpty() == true
     // The bar names the file; the whole path is in the body, because on a long path the bar would cut off the end, which is the file name.
-    ScreenScaffold(title = path.substringAfterLast('/').ifEmpty { path }, onBack = onBack, backLabel = "Back to files", large = false, modifier = modifier) {
+    ScreenScaffold(
+        title = path.substringAfterLast('/').ifEmpty { path },
+        onBack = onBack,
+        backLabel = "Back to files",
+        large = false,
+        modifier = modifier,
+        actions = { if (hasLines) WrapToggle(wrap, WrapView.DIFF) },
+    ) {
         Column(modifier = Modifier.fillMaxSize()) {
             Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (connection != ConnState.Online) ConnectionLine(connection)
@@ -182,7 +194,7 @@ fun FileDiffScreen(
             when (load) {
                 DiffLoad.Loading -> Busy("Loading the file…", sideMargin.testTag("diff_loading"))
                 is DiffLoad.Loaded -> when (val result = load.result) {
-                    is DiffResult.Ready -> DiffBody(result.diff)
+                    is DiffResult.Ready -> DiffBody(result.diff, wrap.on)
                     DiffResult.NoSuchFile -> Text("That file is no longer in this changeset.", sideMargin.testTag("diff_gone"))
                     DiffResult.TooLarge -> Text("Too big to compare on the phone.", sideMargin.testTag("diff_too_large"))
                     DiffResult.Binary -> Text("Not a text file, so it is not shown.", sideMargin.testTag("diff_binary"))
@@ -197,9 +209,15 @@ fun FileDiffScreen(
     }
 }
 
+/** [wrap] off keeps every line whole: the list is then as wide as the widest line and scrolls sideways as one block, so the rows stay lined up. */
 @Composable
-private fun DiffBody(diff: FileDiff) {
+private fun DiffBody(diff: FileDiff, wrap: Boolean) {
     val rows = remember(diff) { rowsOf(diff) }
+    val sideways = rememberScrollState()
+    val texts = remember(diff) { diff.hunks.flatMap { hunk -> hunk.lines.map { it.text } } }
+    val wholeWidth = if (wrap) null else widestLine(texts, MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)) + LINE_START + 24.dp
+    // The screen's width is passed on as the least the list may be, so a diff of short lines still fills it.
+    val size = if (wholeWidth == null) Modifier.fillMaxWidth() else Modifier.fillMaxWidth().horizontalScroll(sideways).width(wholeWidth)
     Column(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             if (diff.hunks.isEmpty()) {
@@ -208,7 +226,7 @@ private fun DiffBody(diff: FileDiff) {
                 Text("+${diff.added} −${diff.removed} lines", style = MaterialTheme.typography.titleSmall, modifier = Modifier.testTag("diff_summary"))
             }
         }
-        LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth().testTag("diff_list")) {
+        LazyColumn(modifier = Modifier.weight(1f).then(size).testTag("diff_list")) {
             items(rows, key = { it.key }) { row ->
                 when (row) {
                     is DiffRow.Header -> Text(
@@ -217,7 +235,7 @@ private fun DiffBody(diff: FileDiff) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp).semantics { heading() }.testTag("diff_hunk"),
                     )
-                    is DiffRow.Line -> DiffLineRow(row.line)
+                    is DiffRow.Line -> DiffLineRow(row.line, wrap)
                 }
             }
             if (diff.omittedLines > 0) {
@@ -229,8 +247,11 @@ private fun DiffBody(diff: FileDiff) {
     }
 }
 
+/** What comes before a line's text in its row: the side margin, the number, the sign and the gaps between them. */
+private val LINE_START = 88.dp
+
 @Composable
-private fun DiffLineRow(line: DiffLine) {
+private fun DiffLineRow(line: DiffLine, wrap: Boolean) {
     val scheme = MaterialTheme.colorScheme
     val isDark = scheme.surface.luminance() < 0.5f
     val (background, content) = when (line.kind) {
@@ -265,7 +286,7 @@ private fun DiffLineRow(line: DiffLine) {
         Row(modifier = Modifier.padding(horizontal = 24.dp, vertical = 1.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
             Text(number?.toString().orEmpty(), style = MaterialTheme.typography.labelSmall, fontFamily = FontFamily.Monospace, modifier = Modifier.width(36.dp))
             Text(marker, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, color = markerColor)
-            Text(line.text.ifEmpty { " " }, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, modifier = Modifier.weight(1f))
+            Text(line.text.ifEmpty { " " }, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, softWrap = wrap, modifier = Modifier.weight(1f))
         }
     }
 }

@@ -10,9 +10,11 @@ import dev.ahpclient.state.SessionOrdering
 import dev.ahpclient.state.SessionShowScope
 import dev.ahpclient.state.TextScale
 import dev.ahpclient.state.ThemeMode
+import dev.ahpclient.state.WrapView
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 
 /**
  * Platform-neutral synchronous key-value store backing [UiSettings] (`SharedPreferences` on Android, `NSUserDefaults` on iOS).
@@ -30,7 +32,7 @@ interface KeyValueStore {
 
 /**
  * How the app looks: the text size in chats, the colours, whether the screen stays on while an agent works, quick-reply
- * suggestion mode, and the saved session-list filter choices. Plain preferences, not secrets; read at once so the first frame
+ * suggestion mode, whether long lines wrap in each kind of view, and the saved session-list filter choices. Plain preferences, not secrets; read at once so the first frame
  * already has them.
  */
 class UiSettings(private val prefs: KeyValueStore) {
@@ -51,6 +53,7 @@ class UiSettings(private val prefs: KeyValueStore) {
             )
         },
     )
+    private val _lineWrap = MutableStateFlow(WrapView.entries.associateWith { prefs.getBoolean(wrapKey(it), it.wrapsByDefault) })
     private val _sessionFilter = MutableStateFlow(
         SessionFilter(
             ordering = SessionOrdering.of(prefs.getString(FILTER_ORDERING, null)),
@@ -67,6 +70,9 @@ class UiSettings(private val prefs: KeyValueStore) {
     val quickReplyMode: StateFlow<QuickReplyMode> = _quickReplyMode.asStateFlow()
     val googleAiConfig: StateFlow<GoogleAiConfig> = _googleAiConfig.asStateFlow()
     val sessionFilter: StateFlow<SessionFilter> = _sessionFilter.asStateFlow()
+
+    /** Whether each kind of view wraps long lines; every kind is always in the map. */
+    val lineWrap: StateFlow<Map<WrapView, Boolean>> = _lineWrap.asStateFlow()
 
     init {
         // Links used to open in a browser the person chose; the setting is gone, so its stored package is not left behind.
@@ -92,6 +98,11 @@ class UiSettings(private val prefs: KeyValueStore) {
     fun setQuickReplyMode(mode: QuickReplyMode) {
         _quickReplyMode.value = mode
         prefs.putString(QUICK_REPLY_MODE, mode.name)
+    }
+
+    fun setLineWrap(view: WrapView, on: Boolean) {
+        _lineWrap.update { it + (view to on) }
+        prefs.putBoolean(wrapKey(view), on)
     }
 
     fun setGoogleAiConfig(config: GoogleAiConfig) {
@@ -139,5 +150,7 @@ class UiSettings(private val prefs: KeyValueStore) {
         const val FILTER_SHOW_SCOPE = "filter_show_scope"
         const val FILTER_SHOW_EXTERNAL = "filter_show_external"
         const val FILTER_SHOW_DONE = "filter_show_done"
+
+        fun wrapKey(view: WrapView) = "wrap_${view.key}"
     }
 }
