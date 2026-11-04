@@ -36,6 +36,8 @@ import androidx.compose.ui.test.center
 import androidx.compose.ui.test.swipeDown
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performScrollToKey
+import dev.ahpclient.state.ChatPlace
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.ahpclient.state.ActivityState
@@ -120,6 +122,41 @@ class ChatScreenTest {
     }
 
     private fun awaitText(text: String) = rule.waitUntil(timeoutMillis = 10_000) { rule.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty() }
+
+    // ---- coming back to a chat (U1) ------------------------------------------------------------------------------
+
+    private fun showAt(place: ChatPlaceKeeper) =
+        rule.setContent { AhpTheme { ChatPane(transcript(rows(1..60)), null, false, null, ConnState.Online, {}, {}, place = place) } }
+
+    @Test
+    fun aChatLeftScrolledUpOpensWhereItWasLeft() {
+        showAt(ChatPlaceKeeper("chat", ChatPlace("u10", 0)) {})
+
+        rule.onNodeWithText("message 10").assertIsDisplayed()
+        rule.onAllNodesWithText("message 60").assertCountEquals(0)
+        rule.onNodeWithTag("jump_latest").assertIsDisplayed()
+    }
+
+    @Test
+    fun aPlaceWhoseRowIsGoneOpensAtTheNewestRow() {
+        showAt(ChatPlaceKeeper("chat", ChatPlace("u999", 0)) {})
+
+        rule.onNodeWithText("message 60").assertIsDisplayed()
+    }
+
+    @Test
+    fun thePlaceIsKeptAsTheChatScrolls_andIsNoneBackAtTheNewestRow() {
+        val saved = mutableListOf<ChatPlace?>()
+        showAt(ChatPlaceKeeper("chat", null) { saved += it })
+
+        rule.onNodeWithTag("transcript").performScrollToKey("u5")
+        rule.waitForIdle()
+        assertTrue("a place was kept: $saved", saved.lastOrNull() != null)
+
+        rule.onNodeWithTag("transcript").performScrollToIndex(0)
+        rule.waitForIdle()
+        assertEquals(null, saved.last())
+    }
 
     // ---- what is shown -----------------------------------------------------------------------------------------
 

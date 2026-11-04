@@ -184,6 +184,27 @@ class HostSessionChatTest {
     }
 
     @Test
+    fun `a chat opened again comes back with the place it was left scrolled to, and one left at the newest row has none`() = runTest {
+        val silence = Silence()
+        val rig = rig(silentWhen(silence)).start()
+        val first = rig.host.openChat(CHAT_A)
+        val second = rig.host.openChat(CHAT_B)
+        runCurrent()
+        first.place = ChatPlace("turn-1/part-2", 140)
+        second.place = null
+        rig.host.closeChat(CHAT_A)
+        rig.host.closeChat(CHAT_B)
+
+        silence.on = true
+        val againA = rig.host.openChat(CHAT_A)
+        val againB = rig.host.openChat(CHAT_B)
+        runCurrent()
+        assertTrue(againA.cached.value)
+        assertEquals(ChatPlace("turn-1/part-2", 140), againA.place)
+        assertNull(againB.place, "left at the newest row, it opens there again")
+    }
+
+    @Test
     fun `only the latest chats are kept, and the oldest is dropped`() = runTest {
         val silence = Silence()
         val rig = rig(silentWhen(silence)).start()

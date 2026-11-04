@@ -179,10 +179,24 @@ class ProEntitlementTest {
         assertTrue(consent.setManagement(true))
         assertSame(CapabilityPolicy.MANAGE, consent.policy())
 
+        val writesBefore = interactStore.writes.toList() to manageStore.writes.toList()
+        entitled = false
         consent.revokeEntitlement()
         assertFalse(consent.allowed.value)
         assertFalse(consent.managementAllowed.value)
         assertSame(CapabilityPolicy.READ, consent.policy())
+        assertEquals(writesBefore, interactStore.writes.toList() to manageStore.writes.toList(), "losing Pro does not erase the user's choices")
+
+        // A reload while Pro is still locked grants nothing.
+        consent.restoreEntitlement()
+        assertSame(CapabilityPolicy.READ, consent.policy())
+
+        // Pro is back: the choices the user had made hold again, without being asked a second time.
+        entitled = true
+        consent.restoreEntitlement()
+        assertTrue(consent.allowed.value)
+        assertTrue(consent.managementAllowed.value)
+        assertSame(CapabilityPolicy.MANAGE, consent.policy())
     }
 
     @Test
@@ -252,7 +266,7 @@ class ProEntitlementTest {
                 directStore = InMemoryDirectHostStore(listOf(hostA, hostB)),
                 directVault = DirectHostVault(FakeBox(), FakeStore()),
                 directSessions = DirectSessionFactory { _, _, consent ->
-                    val scripted = ScriptedConnector(HostScript(), HostScript(), HostScript(), HostScript())
+                    val scripted = ScriptedConnector(HostScript(), HostScript(), HostScript(), HostScript(), HostScript(), HostScript())
                     val connector = HostConnector { clientId, seq, scope ->
                         scripted.policy = consent.policy()
                         scripted.connect(clientId, seq, scope)
@@ -310,6 +324,13 @@ class ProEntitlementTest {
             assertEquals(1, controller.connectedHosts.value.size)
             assertEquals(hostA.id, controller.connectedHosts.value.single().host.id)
             assertFalse( controller.connectedHosts.value.single().session.canInteract.value)
+
+            // Pro comes back (a renewal, or the debug switch): what the user had allowed holds again, and the session reconnects under it.
+            assertTrue(controller.setProUnlocked(true))
+            runCurrent()
+            assertTrue(controller.interactionAllowed.value)
+            assertTrue(controller.managementAllowed.value)
+            assertTrue(controller.connectedHosts.value.single().session.canInteract.value)
 
             controller.disconnect()
             runCurrent()

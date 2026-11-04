@@ -28,9 +28,16 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
+import kotlin.concurrent.Volatile
 
 /** What a chat showed when it was last let go of, kept so that opening it again is not a blank wait (see [ChatStore.prime]). */
-internal class CachedChat(val state: ChatState, val ownConfig: Map<String, JsonElement>)
+internal class CachedChat(val state: ChatState, val ownConfig: Map<String, JsonElement>, val place: ChatPlace? = null)
+
+/**
+ * Where the person had scrolled a chat to (U1): the row at the bottom edge of the screen, by its key, and how far it was scrolled
+ * past. Null means at the newest row, which is also where a chat opens when its place is unknown or that row is gone.
+ */
+data class ChatPlace(val rowKey: String, val offset: Int)
 
 /** The host reported that this chat no longer exists. */
 class ChatGoneException(val uri: String) : Exception("Chat $uri is gone")
@@ -118,6 +125,13 @@ class ChatStore internal constructor(
      */
     internal val subscribeNeeded: StateFlow<Boolean> = _needsSubscribe.asStateFlow()
 
+    /**
+     * Where the screen showing this chat is scrolled to, kept as it moves so that it is current when the chat is let go of, and
+     * kept with the chat's copy for its next visit (U1). Written by the screen only; null at the newest row.
+     */
+    @Volatile
+    var place: ChatPlace? = null
+
     /** Counts openers; the host connection drops the subscription at zero. */
     internal var openers = 0
 
@@ -137,6 +151,7 @@ class ChatStore internal constructor(
             _state.value = copy.state
             _ownConfig.value = copy.ownConfig
             _cached.value = true
+            place = copy.place
         }
     }
 
@@ -144,7 +159,7 @@ class ChatStore internal constructor(
     internal fun keepable(): CachedChat? = platformSynchronized(lock) {
         val shown = _state.value ?: return@platformSynchronized null
         if (_error.value is ChatGoneException) return@platformSynchronized null
-        CachedChat(shown, _ownConfig.value)
+        CachedChat(shown, _ownConfig.value, place)
     }
 
     /** @return false when [snapshot] holds no chat state, so nothing was seeded. */

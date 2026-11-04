@@ -55,6 +55,7 @@ import dev.ahpclient.state.SlashCommands
 import dev.ahpclient.state.Transcript
 import dev.ahpclient.ui.chat.ChatActionsUi
 import dev.ahpclient.ui.chat.ChatPane
+import dev.ahpclient.ui.chat.ChatPlaceKeeper
 import dev.ahpclient.ui.chat.ChatScreen
 import dev.ahpclient.ui.chat.RichModalRequest
 import dev.ahpclient.ui.chat.rememberTranscript
@@ -789,6 +790,8 @@ private fun OpenChatView(
     val onShareLink = { link: String -> if (!platformUi.shareLink(link)) platformUi.showToast("Nothing can share this link") }
     // Read only: a running tool call's block watches its terminal through this for the end of the output as it arrives (U7).
     val liveTerminal = remember(controller) { { uri: String -> controller.watchTerminal(uri) } }
+    // A chat left scrolled up opens where it was, and its place is kept with it as it moves (U1).
+    val place = remember(chat.store) { ChatPlaceKeeper(chat.uri, chat.store.place) { chat.store.place = it } }
     if (screen) {
         ChatScreen(
             transcript = transcript,
@@ -810,6 +813,7 @@ private fun OpenChatView(
             backLabel = "Back to chat",
             fromCache = fromCache,
             liveTerminal = liveTerminal,
+            place = place,
             textScale = textScale,
             onTextScale = ui::setTextScale,
             onReadResource = session::readResource,
@@ -839,6 +843,7 @@ private fun OpenChatView(
             onRetry = chat.store::retry,
             fromCache = fromCache,
             liveTerminal = liveTerminal,
+            place = place,
             textScale = textScale,
             onTextScale = ui::setTextScale,
             onReadResource = session::readResource,

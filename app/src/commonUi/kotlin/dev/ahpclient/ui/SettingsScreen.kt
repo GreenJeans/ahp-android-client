@@ -145,6 +145,7 @@ fun SettingsScreen(
                         onSaveGoogleAiConfig = onSaveGoogleAiConfig,
                         onSaveExternalAiConfig = onSaveExternalAiConfig,
                         onFetchAvailableModels = onFetchAvailableModels,
+                        proUnlocked = proUnlocked,
                     )
                 }
             }
@@ -236,7 +237,7 @@ private fun ProSection(
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Unlock Pro", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "Free watches any session on one host. Pro unlocks acting on sessions, background alerts, and connecting to multiple hosts.",
+                        "Free watches any session on one host. Pro unlocks acting on sessions, AI quick replies, the host's suggestions as you type, background alerts, and connecting to multiple hosts.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.testTag("pro_description"),
@@ -528,6 +529,8 @@ private fun QuickReplyRow(
     onSaveGoogleAiConfig: (suspend (enabled: Boolean, modelName: String, systemPrompt: String, newApiKey: String?, clearKey: Boolean) -> Boolean)?,
     onSaveExternalAiConfig: (suspend (enabled: Boolean, providerKind: AiProviderKind, baseUrl: String, modelName: String, systemPrompt: String, newApiKey: String?, clearKey: Boolean) -> Boolean)? = null,
     onFetchAvailableModels: (suspend (providerKind: AiProviderKind, baseUrl: String, overrideApiKey: String?) -> Result<List<String>>)? = null,
+    /** Without Pro the app only watches, so no reply is ever sent: the row says so, and the AI choices are not offered. */
+    proUnlocked: Boolean = true,
 ) {
     val scope = rememberCoroutineScope()
     var showingGoogleDialog by rememberSaveable { mutableStateOf(false) }
@@ -543,6 +546,7 @@ private fun QuickReplyRow(
                 FilterChip(
                     selected = mode == entry,
                     onClick = { onChange(entry) },
+                    enabled = proUnlocked,
                     label = { Text(entry.label) },
                     modifier = Modifier.heightIn(min = 48.dp).testTag("quick_reply_${entry.name.lowercase()}"),
                 )
@@ -554,6 +558,7 @@ private fun QuickReplyRow(
             QuickReplyMode.OFF -> "Off: no quick-reply suggestions are shown."
         }
         val statusSuffix = when {
+            !proUnlocked -> " Requires Pro."
             mode == QuickReplyMode.OFF -> ""
             googleAiConfig.isActive -> " ${googleAiConfig.displayLabel} active."
             nanoStatus != null -> " ${nanoStatus.label}."
@@ -565,7 +570,7 @@ private fun QuickReplyRow(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 4.dp).testTag("quick_reply_hint"),
         )
-        if (mode != QuickReplyMode.OFF && nanoStatus == NanoStatus.DOWNLOADABLE && onDownloadNano != null && !googleAiConfig.isActive) {
+        if (proUnlocked && mode != QuickReplyMode.OFF && nanoStatus == NanoStatus.DOWNLOADABLE && onDownloadNano != null && !googleAiConfig.isActive) {
             OutlinedButton(
                 onClick = onDownloadNano,
                 modifier = Modifier.heightIn(min = 48.dp).testTag("quick_reply_download_nano"),
@@ -573,7 +578,7 @@ private fun QuickReplyRow(
                 Text("Download Gemini Nano")
             }
         }
-        if (mode != QuickReplyMode.OFF && saveAction != null) {
+        if (proUnlocked && mode != QuickReplyMode.OFF && saveAction != null) {
             Text(
                 "AI source",
                 style = MaterialTheme.typography.bodyMedium,
