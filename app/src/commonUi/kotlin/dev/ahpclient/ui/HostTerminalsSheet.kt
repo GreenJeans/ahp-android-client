@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -37,6 +38,8 @@ fun HostTerminalsSheet(terminals: List<HostTerminalEntry>, onOpen: (String) -> U
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        // The handle is itself a control (it expands and collapses the sheet), so it is drawn wide enough to be a 48 dp target.
+        dragHandle = { BottomSheetDefaults.DragHandle(width = 48.dp) },
         modifier = Modifier.testTag("host_terminals_sheet"),
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
