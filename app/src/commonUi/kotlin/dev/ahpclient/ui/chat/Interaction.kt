@@ -1398,6 +1398,22 @@ internal fun Composer(
                 value = text,
                 onValueChange = { text = it },
                 placeholder = { Text("Message") },
+                // In the field rather than the chip row, so it does not compete with the chips for width.
+                trailingIcon = if (qrContext != null && !showQuickReplyBar) {
+                    {
+                        IconButton(
+                            onClick = {
+                                qrDismissed = false
+                                qrRequested = true
+                            },
+                            modifier = Modifier.size(48.dp).testTag("quick_reply_suggest_button"),
+                        ) {
+                            Icon(AppIcons.Sparkle, contentDescription = "Suggest quick replies", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                        }
+                    }
+                } else {
+                    null
+                },
                 maxLines = 5,
                 colors = TextFieldDefaults.colors(
                     focusedContainerColor = Color.Transparent,
@@ -1415,42 +1431,18 @@ internal fun Composer(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                // The controls that set up the message scroll sideways when they do not fit; sending, on the right, never scrolls away.
+                Row(
+                    modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()).testTag("composer_chip_row"),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     if (picker != null) {
                         IconButton(
                             onClick = { picker.open() },
                             enabled = !busy && attached.count { !it.fromHost } < Attachments.MAX_COUNT,
                             modifier = Modifier.size(48.dp).testTag("composer_attach"),
                         ) { Icon(AppIcons.Attach, contentDescription = "Attach files") }
-                    }
-                    if (qrContext != null && !showQuickReplyBar) {
-                        AssistChip(
-                            onClick = {
-                                qrDismissed = false
-                                qrRequested = true
-                            },
-                            leadingIcon = {
-                                Icon(
-                                    imageVector = AppIcons.Sparkle,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(16.dp),
-                                )
-                            },
-                            label = {
-                                Text(
-                                    text = "Suggest",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    maxLines = 1,
-                                )
-                            },
-                            colors = chipColors,
-                            border = null,
-                            modifier = Modifier
-                                .heightIn(min = 48.dp)
-                                .semantics { contentDescription = "Suggest quick replies" }
-                                .testTag("quick_reply_suggest_button"),
-                        )
                     }
                     if (actions.slashCommands.isNotEmpty() || actions.onOpenCustomizations != null) {
                         AssistChip(
@@ -1473,13 +1465,16 @@ internal fun Composer(
                         )
                     }
                     if (actions.agents.isNotEmpty() || actions.agentInUse != null || actions.config.controls.isNotEmpty()) {
+                        // With no agents to pick from, the chip only opens mode and approvals, so it says so rather than "Default agent".
+                        val optionsOnly = actions.agents.isEmpty() && actions.agentInUse == null
+                        val agentText = if (optionsOnly) "Chat options" else agentLabel(actions.agents, agentUri)
                         AssistChip(
                             onClick = { choosingAgent = true },
-                            label = { Text(agentLabel(actions.agents, agentUri), style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            label = { Text(agentText, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                             colors = chipColors,
                             border = null,
-                            // Capped, so a long name cannot take the model's room; the model button gets the rest.
-                            modifier = Modifier.widthIn(max = 150.dp).semantics { contentDescription = "Agent: ${agentLabel(actions.agents, agentUri)}" }.testTag("agent_button"),
+                            // Capped, so a long name cannot push the model far out of view.
+                            modifier = Modifier.widthIn(max = 150.dp).semantics { contentDescription = if (optionsOnly) agentText else "Agent: $agentText" }.testTag("agent_button"),
                         )
                         if (choosingAgent) {
                             ChatOptionsDialog(
@@ -1518,7 +1513,8 @@ internal fun Composer(
                             label = { Text(modelLabel(actions.models, chosen), style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                             colors = chipColors,
                             border = null,
-                            modifier = Modifier.weight(1f, fill = false).semantics { contentDescription = "Model: ${modelLabel(actions.models, chosen)}" }.testTag("model_button"),
+                            // A row that scrolls has no width to share out, so the model gets a cap of its own; the whole label is still spoken.
+                            modifier = Modifier.widthIn(max = 200.dp).semantics { contentDescription = "Model: ${modelLabel(actions.models, chosen)}" }.testTag("model_button"),
                         )
                         if (choosing) ModelPickerDialog(actions.models, chosen, showDefault = actions.modelInUse == null, onDismiss = { choosing = false }, onPick = { pick = it; choosing = false })
                     }

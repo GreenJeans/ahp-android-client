@@ -15,6 +15,8 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -878,6 +880,161 @@ class ChatScreenTest {
         rule.onNodeWithText("message 120").assertIsDisplayed()
         rule.onAllNodesWithText("message 1").assertCountEquals(0)
         rule.onAllNodesWithTag("jump_latest").assertCountEquals(0)
+    }
+
+    // ---- finding your place (U2) -------------------------------------------------------------------------------
+
+    /** The person asks once, then the agent answers with [replyRows] rows of its own. */
+    private fun askedAndAnswered(replyRows: Int, question: String = "Why did the build break on main?") =
+        listOf<TranscriptItem>(TranscriptItem.User("t1/user", question)) + (1..replyRows).map { TranscriptItem.Markdown("t1/m$it", "reply line $it") }
+
+    @Test
+    fun aLongReplyKeepsTheQuestionInViewAndOffersAJumpToItsStart() {
+        show(transcript(askedAndAnswered(80)))
+
+        rule.onNodeWithTag("pinned_user_message").assertIsDisplayed().assertHeightIsAtLeast(48.dp)
+            .assertContentDescriptionEquals("Your last message: Why did the build break on main?. Tap to go to it.")
+        rule.onNodeWithTag("jump_reply_start").assertIsDisplayed().assertContentDescriptionEquals("Jump to the start of the reply")
+            .assertHeightIsAtLeast(48.dp).assertWidthIsAtLeast(48.dp)
+
+        rule.onNodeWithTag("jump_reply_start").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithText("reply line 1").assertIsDisplayed()
+        rule.onAllNodesWithTag("jump_reply_start").assertCountEquals(0)
+        // The question is in view either way: in the transcript just above the reply (and then the bar goes), or in the bar, with
+        // the reply's first line starting below it rather than hidden under it.
+        val bar = rule.onAllNodesWithTag("pinned_user_message").fetchSemanticsNodes().singleOrNull()
+        if (bar == null) {
+            rule.onNodeWithText("Why did the build break on main?").assertIsDisplayed()
+        } else {
+            assertTrue("the first line is under the bar", rule.onNodeWithText("reply line 1").fetchSemanticsNode().boundsInRoot.top >= bar.boundsInRoot.bottom - 1f)
+        }
+    }
+
+    @Test
+    fun aJumpToAReplyFarUpLeavesItsFirstLineBelowTheBar() {
+        // Two exchanges, so the first reply is far from the oldest end and the list can put its start anywhere.
+        val items = askedAndAnswered(3, question = "First question") +
+            listOf<TranscriptItem>(TranscriptItem.User("t2/user", "Second question")) +
+            (1..80).map { TranscriptItem.Markdown("t2/m$it", "second reply $it") }
+        show(transcript(items))
+
+        rule.onNodeWithTag("jump_reply_start").performClick()
+        rule.waitForIdle()
+
+        rule.onNodeWithText("second reply 1").assertIsDisplayed()
+        val bar = rule.onAllNodesWithTag("pinned_user_message").fetchSemanticsNodes().singleOrNull()
+        if (bar != null) assertTrue("the first line is under the bar", rule.onNodeWithText("second reply 1").fetchSemanticsNode().boundsInRoot.top >= bar.boundsInRoot.bottom - 1f)
+    }
+
+    // ---- the chat cache (U1) ------------------------------------------------------------------------------------
+
+    @Test
+    fun aChatShownFromItsSavedCopySaysSoUntilTheHostAnswers() {
+        var cached by mutableStateOf(true)
+        rule.setContent { AhpTheme { ChatScreen(transcript(askedAndAnswered(3)), null, false, null, ConnState.Online, {}, {}, {}, fromCache = cached) } }
+
+        rule.onNodeWithTag("chat_cached").assertIsDisplayed().assertTextContains("as you last saw it", substring = true)
+        rule.onNodeWithText("reply line 3").assertIsDisplayed()
+
+        rule.runOnIdle { cached = false }
+        rule.waitForIdle()
+        rule.onAllNodesWithTag("chat_cached").assertCountEquals(0)
+    }
+
+    // ---- reader view (U2 part 3) ---------------------------------------------------------------------------------
+
+    private fun turnEnd(turn: String) = TranscriptItem.TurnEnd("$turn/end", TurnOutcome.DONE, 1_200L)
+
+    @Test
+    fun readOpensTheReplyFullScreenAndBackReturnsToTheSamePlace() {
+        val items = listOf<TranscriptItem>(
+            TranscriptItem.User("t1/user", "First question"),
+            TranscriptItem.Markdown("t1/a", "Looking at the build log first."),
+            TranscriptItem.Tool("t1/tool", "read_file", null, ToolState.DONE),
+            TranscriptItem.Markdown("t1/b", "The answer, worth reading slowly."),
+            turnEnd("t1"),
+        ) + askedAndAnswered(60, question = "Second question").map {
+            when (it) {
+                is TranscriptItem.User -> it.copy(key = "t2/user")
+                is TranscriptItem.Markdown -> it.copy(key = it.key.replace("t1/", "t2/"))
+                else -> it
+            }
+        } + turnEnd("t2")
+        show(transcript(items))
+
+        rule.onNodeWithTag("transcript").performScrollToNode(hasTestTag("turn_read_t1"))
+        rule.waitForIdle()
+        val before = rule.onNodeWithTag("turn_read_t1").fetchSemanticsNode().positionInRoot.y
+        rule.onNodeWithTag("turn_read_t1").assertContentDescriptionEquals("Read this reply full screen").assertHeightIsAtLeast(48.dp).performClick()
+        rule.waitForIdle()
+
+        rule.onNodeWithTag("reader_view").assertIsDisplayed()
+        rule.onNodeWithTag("rich_viewer_title").assertTextContains("Reply")
+        // The answer first; the note written on the way is folded under it until asked for.
+        rule.onNodeWithText("The answer, worth reading slowly.").assertIsDisplayed()
+        rule.onAllNodesWithText("Looking at the build log first.").assertCountEquals(0)
+        rule.onNodeWithTag("reader_notes_toggle").assertTextContains("Show 1 note", substring = true).assertHeightIsAtLeast(48.dp).performClick()
+        rule.onNodeWithText("Looking at the build log first.").assertIsDisplayed()
+        assertTrue(
+            "the answer comes before the notes",
+            rule.onNodeWithTag("reader_answer").fetchSemanticsNode().boundsInRoot.top < rule.onNodeWithTag("reader_notes").fetchSemanticsNode().boundsInRoot.top,
+        )
+        // Only that turn's reply: nothing from the next one.
+        rule.onAllNodesWithText("reply line 1").assertCountEquals(0)
+
+        rule.onNodeWithContentDescription("Back to chat").performClick()
+        rule.waitForIdle()
+
+        rule.onAllNodesWithTag("reader_view").assertCountEquals(0)
+        assertEquals("the chat moved while the reply was open", before, rule.onNodeWithTag("turn_read_t1").fetchSemanticsNode().positionInRoot.y, 1f)
+    }
+
+    @Test
+    fun aTurnThatOnlyRanToolsOffersNothingToRead() {
+        val items = listOf(
+            TranscriptItem.User("t1/user", "Run the tests"),
+            TranscriptItem.Tool("t1/tool", "run_tests", null, ToolState.DONE),
+            turnEnd("t1"),
+            TranscriptItem.User("t2/user", "And now?"),
+            TranscriptItem.Markdown("t2/a", "All green."),
+            turnEnd("t2"),
+        )
+        show(transcript(items))
+
+        rule.onAllNodesWithTag("turn_read_t1").assertCountEquals(0)
+        rule.onNodeWithTag("turn_read_t2").assertIsDisplayed()
+    }
+
+    @Test
+    fun tappingTheKeptQuestionGoesToItAndTheBarGoesAway() {
+        show(transcript(askedAndAnswered(80)))
+
+        rule.onNodeWithTag("pinned_user_message").performClick()
+        rule.waitForIdle()
+
+        rule.onAllNodesWithTag("pinned_user_message").assertCountEquals(0)
+        rule.onNodeWithText("Why did the build break on main?").assertIsDisplayed()
+    }
+
+    @Test
+    fun aShortExchangeOnOneScreenNeedsNeitherTheBarNorTheJump() {
+        show(transcript(askedAndAnswered(2)))
+
+        rule.onAllNodesWithTag("pinned_user_message").assertCountEquals(0)
+        rule.onAllNodesWithTag("jump_reply_start").assertCountEquals(0)
+    }
+
+    @Test
+    fun theJumpToTheReplyWorksWhileTheReplyIsStillArriving() {
+        var current by mutableStateOf(transcript(askedAndAnswered(60), running = true))
+        rule.setContent { AhpTheme { ChatScreen(current, null, false, null, ConnState.Online, {}, {}, {}) } }
+        rule.runOnIdle { current = transcript(askedAndAnswered(61), running = true) }
+        rule.waitForIdle()
+
+        rule.onNodeWithTag("jump_reply_start").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithText("reply line 1").assertIsDisplayed()
     }
 
     @Test

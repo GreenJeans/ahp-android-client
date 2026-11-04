@@ -1059,7 +1059,8 @@ class AppController(
 
     private fun interactorFor(session: HostSession, uri: String, store: ChatStore) = ChatInteractor(
         chatUri = uri,
-        chat = { store.state.value },
+        // A copy kept from the last visit is shown, never acted on: until the host's snapshot replaces it, the chat is not usable.
+        chat = { store.state.value.takeUnless { store.cached.value } },
         canInteract = { session.canInteract.value },
         dispatch = session::dispatch,
         gate = approvalGate,

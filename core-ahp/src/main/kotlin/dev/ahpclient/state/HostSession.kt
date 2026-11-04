@@ -184,6 +184,12 @@ class HostSession(
 
     private val sessions = LinkedHashMap<String, SessionStore>()
     private val chats = LinkedHashMap<String, ChatStore>()
+
+    /**
+     * What the last [MAX_CACHED_CHATS] chats let go of showed, most recent last, so that opening one again shows it at once while the
+     * host's snapshot is on its way (U1). Guarded by [chats]. Memory only: it goes with this session, and [stop] empties it.
+     */
+    private val recentChats = LinkedHashMap<String, CachedChat>()
     private val aux = LinkedHashMap<String, AuxStore>()
     private val subscribeLock = Mutex()
 
@@ -226,6 +232,8 @@ class HostSession(
         _canInteract.value = false
         _canManage.value = false
         _connection.value = ConnState.Stopped
+        // A stopped session is left for another host or a sign-out; nothing seen on this one should show on the next.
+        platformSynchronized(chats) { recentChats.clear() }
         saveCatalogSoon()
     }
 
@@ -370,6 +378,7 @@ class HostSession(
         val store = platformSynchronized(chats) {
             chats.getOrPut(uri) {
                 ChatStore(uri, scope, fetchOlder = { cursor -> fetchTurns(uri, cursor) }, subscribeAgain = { chatFor(uri)?.let(::subscribeNow) })
+                    .also { fresh -> recentChats.remove(uri)?.let(fresh::prime) }
             }.also {
                 it.openers++
                 if (background) it.backgroundOpeners++
@@ -377,6 +386,14 @@ class HostSession(
         }
         subscribeNow(store)
         return store
+    }
+
+    /** Keeps what [store] showed for the chat's next visit, dropping the oldest past [MAX_CACHED_CHATS]. Call holding [chats]. */
+    private fun keepRecent(uri: String, store: ChatStore) {
+        recentChats.remove(uri)
+        val kept = store.keepable() ?: return
+        recentChats[uri] = kept
+        while (recentChats.size > MAX_CACHED_CHATS) recentChats.remove(recentChats.keys.first())
     }
 
     /** Subscribes [store] if it needs it. [restoring] marks a subscription brought back on its own, which a parked session leaves to [unpark]; an open that asks for the chat always subscribes. */
@@ -408,6 +425,7 @@ class HostSession(
             if (background) store.backgroundOpeners--
             if (store.openers <= 0) {
                 dropped = chats.remove(uri) != null
+                if (dropped) keepRecent(uri, store)
             } else if (background && parked && store.backgroundOpeners == 0) {
                 letGo = store
             }
@@ -885,5 +903,8 @@ class HostSession(
          * a phone link delivers before the keep-alive gives up on the socket. Older turns are paged in as the person scrolls.
          */
         const val CHAT_SNAPSHOT_TURNS = 10L
+
+        /** Chats whose last state is kept after they are let go of (U1). Each holds what was on screen: its loaded turns. */
+        const val MAX_CACHED_CHATS = 6
     }
 }

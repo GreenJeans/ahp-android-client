@@ -733,6 +733,7 @@ You asked for one place that shows where you are needed. Opened from the side me
 - Battery, network, memory and recovery hardening (network-aware reconnect, releasing subscriptions in the background, bounded buffers, coming back after process death, a session-list cache, a foreground service without the six-hour cut) is specified in [`docs/hardening-spec.md`](hardening-spec.md), with its own acceptance criteria and progress log.
 - The side menu as the home page, hosts in a sheet, host management in Settings, and links in the default browser with Share are specified in [`docs/navigation-spec.md`](navigation-spec.md) (built and merged in `6cd6615` #8, `37fce83` #9 and `999d280` #10; first phone and emulator passes in [`docs/verification/navigation.md`](verification/navigation.md)).
 - Remaining AHP 1.0/1.1 protocol completion slices (pending tool-call risk assessment & pre-approval diff preview, customization toggles & server tools, per-chat changesets & terminal command boundaries, interactive canvas & annotations channels, working directories, protocol completions, automations, and host terminals) are specified in [`docs/protocol-completion-spec.md`](protocol-completion-spec.md).
+- User feedback from 2026-11-03 (a chat cache, finding your place in a long chat, the message box's chips and Suggest button, how side chats and forks are shown, word wrap, live terminal output, AI quick replies in Pro, and a new name for iOS) is in [`docs/ux-feedback-spec.md`](ux-feedback-spec.md) as U1 to U9, with an order of work.
 
 ## Progress Log
 

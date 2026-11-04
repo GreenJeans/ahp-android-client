@@ -655,6 +655,7 @@ private fun OpenChatView(
     val loadingOlder by chat.store.loadingOlder.collectAsStateWithLifecycle()
     val olderError by chat.store.olderError.collectAsStateWithLifecycle()
     val chatState by chat.store.state.collectAsStateWithLifecycle()
+    val fromCache by chat.store.cached.collectAsStateWithLifecycle()
     val canInteract by session.canInteract.collectAsStateWithLifecycle()
     val textScale by ui.textScale.collectAsStateWithLifecycle()
     val keepAwake by ui.keepAwake.collectAsStateWithLifecycle()
@@ -683,7 +684,8 @@ private fun OpenChatView(
     val slashCommands = remember(sessionState, rootTyped, canFork, canSideChat) {
         SlashCommands.of(sessionState, rootTyped, canFork = canFork, canSideChat = canSideChat)
     }
-    val actions = if (ChatInteractor.available(chatState, canInteract)) {
+    // A copy kept from the last visit is for reading only: no message box and no approvals until the host's snapshot replaces it.
+    val actions = if (!fromCache && ChatInteractor.available(chatState, canInteract)) {
         remember(chat.interactor, running, models, inUse, agents, agentInUse, config, canFork, canSideChat, slashCommands, customizations, prefillText, agentToUse, sessionUri, chat.uri, quickReplyMode, googleAiConfig, quickReplyProvider) {
             ChatActionsUi(
                 running = running,
@@ -772,6 +774,7 @@ private fun OpenChatView(
             onOpenTerminal = controller::openTerminal,
             onRetry = chat.store::retry,
             backLabel = "Back to chat",
+            fromCache = fromCache,
             textScale = textScale,
             onTextScale = ui::setTextScale,
             onReadResource = session::readResource,
@@ -799,6 +802,7 @@ private fun OpenChatView(
             onOpenSubagent = controller::openSubagentChat,
             onOpenTerminal = controller::openTerminal,
             onRetry = chat.store::retry,
+            fromCache = fromCache,
             textScale = textScale,
             onTextScale = ui::setTextScale,
             onReadResource = session::readResource,
