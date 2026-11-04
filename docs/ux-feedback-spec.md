@@ -55,7 +55,7 @@ Nine items from using the app day to day. Most are about keeping context in a lo
 - [x] **AC-U2.1** When your last message is off screen, a bar shows its start; tapping it scrolls to it. The bar is hidden when the message is visible and when you have not sent one.
 - [x] **AC-U2.2** A control jumps to the first line of the agent's latest reply, and works while the reply is still streaming.
 - [x] **AC-U2.3** Reader view opens any agent reply full screen and closes back to the same scroll position.
-- [ ] **AC-U2.4** All three read correctly with TalkBack and at the largest font size.
+- [ ] **AC-U2.4** All three read correctly with TalkBack and at the largest font size. (Half checked: at twice the font size, `atTheLargestFontSizeTheBarStaysShortAndTheControlsStayUsable` passes on the emulator; spoken labels are tested; TalkBack itself not run.)
 
 ## U3 — The Suggest button
 
