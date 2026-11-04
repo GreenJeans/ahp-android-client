@@ -55,7 +55,7 @@ Nine items from using the app day to day. Most are about keeping context in a lo
 - [x] **AC-U2.1** When your last message is off screen, a bar shows its start; tapping it scrolls to it. The bar is hidden when the message is visible and when you have not sent one.
 - [x] **AC-U2.2** A control jumps to the first line of the agent's latest reply, and works while the reply is still streaming.
 - [x] **AC-U2.3** Reader view opens any agent reply full screen and closes back to the same scroll position.
-- [ ] **AC-U2.4** All three read correctly with TalkBack and at the largest font size.
+- [ ] **AC-U2.4** All three read correctly with TalkBack and at the largest font size. (Half checked: at twice the font size, `atTheLargestFontSizeTheBarStaysShortAndTheControlsStayUsable` passes on the emulator; spoken labels are tested; TalkBack itself not run.)
 
 ## U3 — The Suggest button
 
@@ -151,8 +151,10 @@ Kept as they are: the order (attach, then the controls that change what the mess
 
 **Acceptance criteria**
 
-- [ ] **AC-U8.1** With Pro off, no AI suggestion and no host `completions` request is made or shown; with Pro on, both work as today.
-- [ ] **AC-U8.2** The Free and Pro table lists AI quick replies and host completions.
+**As built (2026-11-03).** Without Pro the connection is held to the READ tier, which has no message box and refuses `completions` (`CapabilityPolicy`), so Free never reached either feature. Two explicit gates now say so in code, so it stays true if Free ever gains a message box: the AI provider is passed to a chat only with Pro (`AppRoot`), and a chat is given the host's trigger characters only with Pro (`AppController.interactorFor`), so without them the host is never asked. The AI settings in Settings stay visible either way.
+
+- [x] **AC-U8.1** With Pro off, no AI suggestion and no host `completions` request is made or shown; with Pro on, both work as today. (By the READ tier, which is tested; the two new gates have no test of their own, because no state reaches them without Pro.)
+- [x] **AC-U8.2** The Free and Pro table lists AI quick replies and host completions.
 
 ## U9 — A new name
 
@@ -166,8 +168,12 @@ Kept as they are: the order (attach, then the controls that change what the mess
 
 **Acceptance criteria**
 
+**Named (2026-11-04): Hostline.** The launcher, the Quick Settings tile, the sign-in screen, About, the Pro dialog and the iOS display name now say "Hostline"; the store title is "Hostline: AHP Client", so people who know the protocol still find it. `PRODUCT_NAME` on iOS is left as it was, so the Xcode target and binary names do not change. A trademark and store search is still to do before the store listing goes live.
+
+**Prepared (2026-11-03).** Every name the app shows now comes from `AppName` in `core-ahp` (sign-in screen, About, the Pro dialog, the Quick Settings tile) or `app/src/main/res/values/strings.xml` (the launcher and tile labels, which the manifest now reads), so a rename is a change to those two files on Android and to `PRODUCT_NAME` and `CFBundleDisplayName` on iOS. The store text in `play-store-listing.md` is separate. Checked: the built APK's label still reads "AHP Client".
+
 - [ ] **AC-U9.1** The new name appears on the launcher, in the app, on iOS and in the store listing; no "AHP Client" or "AHP Monitor" remains on screen.
-- [ ] **AC-U9.2** The application id and bundle id are unchanged, so an update installs over the existing app.
+- [x] **AC-U9.2** The application id and bundle id are unchanged, so an update installs over the existing app.
 
 ## Order of work
 
@@ -188,7 +194,7 @@ The protocol slices still open (N3b live check, P7 automations, P8 host terminal
 | U2: where reader view opens from | A small "Read" button on the row that ends each turn, beside its duration |
 | U5: how other chats are reached | One "N other chats" control opens a bottom sheet with a tree: chats grouped by relation, those waiting on the person first, chats only the agent uses collapsed |
 | U8: what Pro covers | Both AI quick replies (Gemini Nano) and the host's `@` and `/` completions (N3b). Free keeps the plain, heuristic quick replies |
-| U9: the name | A shortlist of three, then the owner picks one; a trademark and store search comes before it is used. Shortlist: **Hostline** (a direct line to your agent host), **Agent Deck** (one place to run your agents from), **Steerwise** (steering agents from your phone). None of the three has been searched yet |
+| U9: the name | A shortlist of three, then the owner picks one; a trademark and store search comes before it is used. Shortlist: **Hostline** (a direct line to your agent host), **Agent Deck** (one place to run your agents from), **Steerwise** (steering agents from your phone). None of the three has been searched yet. Chosen 2026-11-04: **Hostline**, with the store title "Hostline: AHP Client". |
 | P5: "Add folder" and "Remove" on a host that refuses them | Each is offered until the host refuses that action once; then that one alone is hidden for that host, with the reason shown where it was. A refused add leaves Remove offered. Kept in memory per host connection |
 | A first message with no model chosen and none reported by the host | The model picker starts on the host's first listed model with its default settings, so a message always names a model |
 | N3b: the host's space trigger | Honoured only when the message starts with a slash command, so the host is asked about a command's arguments and not after every word |
