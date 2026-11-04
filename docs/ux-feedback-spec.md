@@ -46,10 +46,12 @@ Nine items from using the app day to day. Most are about keeping context in a lo
 2. **Jump to the start of the agent's last reply.** Next to the existing jump-to-newest button, a second one that goes to the top of the latest reply, not its end.
 3. **Reader view.** A full-screen view of one agent reply: larger text, comfortable line length, no chrome, the same markdown. Opened from the reply's menu.
 
+**As built (2026-11-03, parts 1 and 2).** `TranscriptLandmarks` (core, JVM-tested) finds the latest message and the first row after it in the rows the list shows. The bar shows the message's first two lines at the top of the chat once its top edge has scrolled out of view, and only when the agent has started replying (a message still waiting is the newest row and needs no reminder); tapping it brings the message's first line to the top. A round button at the bottom right, above the message box when that is showing, goes to the first line of the reply. It shows whenever that line is out of view, and keeps working while the reply arrives. Rows that come on screen grow a frame later as their text lays out, so a jump measures again after each frame until the place holds. Reader view (part 3) is not built: it needs a place on each reply to open it from, which is a design question for the reply's menu.
+
 **Acceptance criteria**
 
-- [ ] **AC-U2.1** When your last message is off screen, a bar shows its start; tapping it scrolls to it. The bar is hidden when the message is visible and when you have not sent one.
-- [ ] **AC-U2.2** A control jumps to the first line of the agent's latest reply, and works while the reply is still streaming.
+- [x] **AC-U2.1** When your last message is off screen, a bar shows its start; tapping it scrolls to it. The bar is hidden when the message is visible and when you have not sent one.
+- [x] **AC-U2.2** A control jumps to the first line of the agent's latest reply, and works while the reply is still streaming.
 - [ ] **AC-U2.3** Reader view opens any agent reply full screen and closes back to the same scroll position.
 - [ ] **AC-U2.4** All three read correctly with TalkBack and at the largest font size.
 
@@ -143,12 +145,12 @@ Kept as they are: the order (attach, then the controls that change what the mess
 
 **Today.** The Free and Pro table in [`prerelease-monetization-spec.md`](prerelease-monetization-spec.md) does not mention AI quick replies. In practice Free has no message box (sending needs "Act for me", which is Pro), so Free may already never reach them; this needs checking, not assuming.
 
-**Proposal.** Add a row to the Free and Pro table: Free gets the plain (heuristic) quick replies or none, Pro gets AI suggestions. Gate the AI provider on `proUnlocked`, so the rule holds even if Free later gains a message box.
+**Proposal (decided 2026-11-03: both kinds are Pro).** Add a row to the Free and Pro table: Free gets the plain (heuristic) quick replies, Pro gets AI suggestions and the host's `@` and `/` completions. Gate the AI provider and the `completions` request on `proUnlocked`, so the rule holds even if Free later gains a message box.
 
 **Acceptance criteria**
 
-- [ ] **AC-U8.1** With Pro off, no AI suggestion is requested or shown; with Pro on, they work as today.
-- [ ] **AC-U8.2** The Free and Pro table lists AI quick replies.
+- [ ] **AC-U8.1** With Pro off, no AI suggestion and no host `completions` request is made or shown; with Pro on, both work as today.
+- [ ] **AC-U8.2** The Free and Pro table lists AI quick replies and host completions.
 
 ## U9 — A new name
 
@@ -176,6 +178,21 @@ Kept as they are: the order (attach, then the controls that change what the mess
 7. **U8** and **U9** as soon as their decisions are made; both are small in code.
 
 The protocol slices still open (N3b live check, P7 automations, P8 host terminals) keep their place in [`protocol-completion-spec.md`](protocol-completion-spec.md); U7 overlaps P8 on terminals and should be planned with it.
+
+## Decisions (2026-11-03)
+
+| Question | Decision |
+|---|---|
+| U2: where reader view opens from | A small "Read" button on the row that ends each turn, beside its duration |
+| U5: how other chats are reached | One "N other chats" control opens a bottom sheet with a tree: chats grouped by relation, those waiting on the person first, chats only the agent uses collapsed |
+| U8: what Pro covers | Both AI quick replies (Gemini Nano) and the host's `@` and `/` completions (N3b). Free keeps the plain, heuristic quick replies |
+| U9: the name | A shortlist of three, then the owner picks one; a trademark and store search comes before it is used. Shortlist: **Hostline** (a direct line to your agent host), **Agent Deck** (one place to run your agents from), **Steerwise** (steering agents from your phone). None of the three has been searched yet |
+| P5: "Add folder" on a host that refuses it | Offered until the host refuses it once; then hidden for that host, with the reason shown where it was |
+| A first message with no model chosen and none reported by the host | The model picker starts on the host's first listed model with its default settings, so a message always names a model |
+| N3b: the host's space trigger | Honoured only when the message starts with a slash command, so the host is asked about a command's arguments and not after every word |
+| P7: automations | Wait until a reachable host advertises `automations`, so it can be checked live |
+
+The P5, first-model and N3b decisions belong to [`protocol-completion-spec.md`](protocol-completion-spec.md) and are recorded there when that work is picked up.
 
 ## Progress Log
 
