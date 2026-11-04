@@ -330,10 +330,12 @@ class InteractionUiTest {
 
         rule.onAllNodesWithTag("host_suggestion_0").assertCountEquals(0)
         rule.onNodeWithTag("composer_attachment_0").assertContentDescriptionEquals("Remove attachment notes.md")
+        // Typing on carries on after the mention: the cursor went to the end, not back to where it was before (seen live on a Pixel).
+        rule.onNodeWithTag("composer_input").performTextInput(" please")
         rule.onNodeWithTag("composer_send").performClick()
         rule.waitForIdle()
 
-        assertEquals(listOf("@notes.md"), calls.sent)
+        assertEquals(listOf("@notes.md please"), calls.sent)
         val sent = calls.sentFiles.single().single()
         assertEquals("notes.md", sent.label)
         assertTrue(sent.fromHost)

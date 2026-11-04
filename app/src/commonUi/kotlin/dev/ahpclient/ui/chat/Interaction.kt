@@ -105,7 +105,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.withStyle
 import dev.ahpclient.state.ActiveSlashCommand
 import dev.ahpclient.state.AgentMentionQuery
@@ -1394,9 +1396,13 @@ internal fun Composer(
                     }
                 }
             }
+            // The field keeps its own cursor. When the text is set from outside (a suggestion accepted, a slash command picked, a
+            // draft loaded) the cursor goes to the end, where the person carries on typing; the plain-text field would leave it where it was.
+            var field by remember { mutableStateOf(TextFieldValue(text, TextRange(text.length))) }
+            if (field.text != text) field = TextFieldValue(text, TextRange(text.length))
             TextField(
-                value = text,
-                onValueChange = { text = it },
+                value = field,
+                onValueChange = { field = it; text = it.text },
                 placeholder = { Text("Message") },
                 // In the field rather than the chip row, so it does not compete with the chips for width.
                 trailingIcon = if (qrContext != null && !showQuickReplyBar) {
