@@ -711,6 +711,7 @@ private fun OpenChatView(
                 editAndResend = chat.interactor::editAndResend,
                 retryTurn = chat.interactor::retryTurn,
                 stopAndSend = chat.interactor::stopAndSend,
+                suggest = chat.interactor::suggest,
                 removePending = chat.interactor::removePending,
                 reorderQueue = chat.interactor::reorderQueue,
                 canFork = canFork,

@@ -61,7 +61,10 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.unit.offset
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.Density
@@ -426,7 +429,7 @@ private fun TranscriptList(
         LazyColumn(
             state = listState,
             reverseLayout = true,
-            modifier = Modifier.fillMaxSize().testTag("transcript"),
+            modifier = Modifier.fillMaxSize().coveredAtTop(barInset).testTag("transcript"),
             contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 6.dp + composerPadding),
         ) {
             // The newest row, at the bottom: for as long as the turn runs, the sign that it does (or that it is held up on the person).
@@ -716,6 +719,24 @@ fun CanvasesBar(canvases: List<CanvasView>, modifier: Modifier = Modifier, onOpe
 }
 
 private fun LazyListState.atNewest(): Boolean = firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset == 0
+
+/**
+ * Cuts off the top [px] of the list, where the pinned message lies over it. The list keeps its full height, so where a row sits and
+ * where a jump lands do not change when the bar comes and goes; only what is under the bar is no longer drawn or offered to screen
+ * readers. Left drawn under it, a row half hidden by the bar was offered as an unlabelled sliver too small to touch.
+ */
+private fun Modifier.coveredAtTop(px: Int): Modifier = this
+    // What shows, below the bar.
+    .layout { measurable, constraints ->
+        val placeable = measurable.measure(constraints.offset(vertical = -px))
+        layout(placeable.width, placeable.height + px) { placeable.place(0, px) }
+    }
+    .clipToBounds()
+    // The list itself, at its full height, reaching up under the bar.
+    .layout { measurable, constraints ->
+        val placeable = measurable.measure(constraints.offset(vertical = px))
+        layout(placeable.width, placeable.height - px) { placeable.place(0, -px) }
+    }
 
 /**
  * Whether the top edge of the item at [index] is on screen, below [topInset] pixels (something drawn over the top of the list).
