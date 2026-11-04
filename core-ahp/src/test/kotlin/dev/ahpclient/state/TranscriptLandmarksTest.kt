@@ -49,6 +49,13 @@ class TranscriptLandmarksTest {
     }
 
     @Test
+    fun `the answer is the last text part, and the notes before it keep their order`() {
+        val items = listOf(user("t1"), md("t1/a", "Looking."), tool("t1", 1), md("t1/b", "Found it."), tool("t1", 2), md("t1/c", "Here is the fix."), end("t1"))
+        assertEquals(ReplyParts(answer = "Here is the fix.", notes = listOf("Looking.", "Found it.")), TranscriptLandmarks.replyParts(items, "t1"))
+        assertEquals(ReplyParts("Only this.", emptyList()), TranscriptLandmarks.replyParts(listOf(user("t2"), md("t2/a", "Only this."), end("t2")), "t2"))
+    }
+
+    @Test
     fun `one turn's reply never runs into another's, even when a message is hidden`() {
         // t2's message is hidden from the transcript, so only t1's end separates the two replies.
         val items = listOf(user("t1"), md("t1/a", "Reply one."), end("t1"), md("t2/a", "Reply two."), end("t2"))

@@ -1,5 +1,11 @@
 package dev.ahpclient.state
 
+/** One turn's text for reader view: its [answer] (the last text part) and the [notes] written before it, oldest first. */
+data class ReplyParts(val answer: String, val notes: List<String>) {
+    /** Every part in the order it was written. */
+    val all: List<String> get() = notes + answer
+}
+
 /**
  * The two places a reader of a long chat wants back to: the person's latest message, and the first row of the agent's reply to it.
  * Positions are indexes into the newest-first rows the transcript list shows (see [TranscriptRowModel]). Pure, so it is tested
@@ -28,7 +34,13 @@ data class TranscriptLandmarks(
          * in between. Read back from the turn's end to the message (or the previous turn's end), so a message hidden from the
          * transcript does not let one reply run into the next. Null when the turn has no end here or wrote nothing.
          */
-        fun replyText(items: List<TranscriptItem>, turnId: String): String? {
+        fun replyText(items: List<TranscriptItem>, turnId: String): String? = replyParts(items, turnId)?.all?.joinToString("\n\n")
+
+        /**
+         * The turn's text parts split for reading: [ReplyParts.answer] is the last one, which is where an agent gives its answer, and
+         * [ReplyParts.notes] are the ones before it, the notes it wrote while it worked, oldest first. Null as for [replyText].
+         */
+        fun replyParts(items: List<TranscriptItem>, turnId: String): ReplyParts? {
             val end = items.indexOfLast { it is TranscriptItem.TurnEnd && it.turnId == turnId }
             if (end < 0) return null
             val parts = ArrayList<String>()
@@ -39,7 +51,9 @@ data class TranscriptLandmarks(
                     else -> Unit
                 }
             }
-            return parts.asReversed().joinToString("\n\n").ifBlank { null }
+            if (parts.isEmpty()) return null
+            // Collected from the end, so the first is the answer and the rest are the notes in reverse.
+            return ReplyParts(answer = parts.first(), notes = parts.drop(1).asReversed())
         }
 
         /** The turns that [replyText] has something for, so a turn that only ran tools offers nothing to read. */

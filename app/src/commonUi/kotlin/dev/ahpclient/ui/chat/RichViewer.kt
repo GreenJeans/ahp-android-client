@@ -32,6 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -40,6 +41,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -149,7 +151,7 @@ sealed interface RichModalRequest {
     data class Resource(override val title: String, val ref: ResourceRef) : RichModalRequest
 
     /** One reply of the agent's, opened to read on its own (reader view, U2). */
-    data class Reply(override val title: String, val markdown: String) : RichModalRequest
+    data class Reply(override val title: String, val answer: String, val notes: List<String> = emptyList()) : RichModalRequest
 }
 
 /**
@@ -233,7 +235,7 @@ fun RichViewerModal(
                     onReadResource = onReadResource,
                 )
                 is RichModalRequest.InlineFileEdit -> Unit
-                is RichModalRequest.Reply -> FullScreenReader(request.markdown, onOpenLink, allowHostFiles = onReadResource != null)
+                is RichModalRequest.Reply -> FullScreenReader(request.answer, request.notes, onOpenLink, allowHostFiles = onReadResource != null)
             }
         }
     }
@@ -241,10 +243,12 @@ fun RichViewerModal(
 
 /**
  * A reply set out for reading: a little larger and with more room between lines than in the chat, at a comfortable line length
- * on a wide screen, and nothing else on the page. The same safe markdown as the chat.
+ * on a wide screen, and nothing else on the page. The same safe markdown as the chat. The [answer] comes first; the [notes] the agent
+ * wrote while it worked are folded under it, so a long turn does not bury its answer at the bottom.
  */
 @Composable
-private fun FullScreenReader(markdown: String, onOpenLink: (String) -> Unit, allowHostFiles: Boolean) {
+private fun FullScreenReader(answer: String, notes: List<String>, onOpenLink: (String) -> Unit, allowHostFiles: Boolean) {
+    var showNotes by rememberSaveable(answer) { mutableStateOf(false) }
     val type = MaterialTheme.typography
     val reading = remember(type) {
         // A size the theme leaves unspecified cannot be multiplied, so it is left alone.
@@ -256,12 +260,25 @@ private fun FullScreenReader(markdown: String, onOpenLink: (String) -> Unit, all
     }
     Box(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).testTag("reader_view"), contentAlignment = Alignment.TopCenter) {
         MaterialTheme(typography = reading) {
-            MarkdownPart(
-                markdown,
-                onOpenLink = onOpenLink,
-                allowHostFiles = allowHostFiles,
-                modifier = Modifier.widthIn(max = READER_MAX_WIDTH).fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp),
-            )
+            Column(modifier = Modifier.widthIn(max = READER_MAX_WIDTH).fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp)) {
+                MarkdownPart(answer, onOpenLink = onOpenLink, allowHostFiles = allowHostFiles, modifier = Modifier.testTag("reader_answer"))
+                if (notes.isNotEmpty()) {
+                    TextButton(
+                        onClick = { showNotes = !showNotes },
+                        modifier = Modifier.padding(top = 12.dp).heightIn(min = 48.dp).testTag("reader_notes_toggle"),
+                    ) {
+                        Text(
+                            if (showNotes) "Hide the notes from while it worked" else "Show ${notes.size} ${if (notes.size == 1) "note" else "notes"} from while it worked",
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                    }
+                    if (showNotes) {
+                        Column(modifier = Modifier.testTag("reader_notes"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            notes.forEach { note -> MarkdownPart(note, onOpenLink = onOpenLink, allowHostFiles = allowHostFiles) }
+                        }
+                    }
+                }
+            }
         }
     }
 }

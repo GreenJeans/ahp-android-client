@@ -440,7 +440,7 @@ private fun TranscriptList(
                     onOpenRich = onOpenRich,
                     hasOlder = transcript.hasOlder,
                     onRead = onOpenRich?.let { open ->
-                        { turnId: String -> TranscriptLandmarks.replyText(transcript.items, turnId)?.let { open(RichModalRequest.Reply("Reply", it)) } }
+                        { turnId: String -> TranscriptLandmarks.replyParts(transcript.items, turnId)?.let { open(RichModalRequest.Reply("Reply", it.answer, it.notes)) } }
                     },
                     readableTurns = readableTurns,
                     onLoadDraft = { draft ->

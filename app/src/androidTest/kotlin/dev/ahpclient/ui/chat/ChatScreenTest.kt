@@ -950,8 +950,9 @@ class ChatScreenTest {
     fun readOpensTheReplyFullScreenAndBackReturnsToTheSamePlace() {
         val items = listOf<TranscriptItem>(
             TranscriptItem.User("t1/user", "First question"),
-            TranscriptItem.Markdown("t1/a", "The first answer, worth reading slowly."),
-            TranscriptItem.Markdown("t1/b", "And its second paragraph."),
+            TranscriptItem.Markdown("t1/a", "Looking at the build log first."),
+            TranscriptItem.Tool("t1/tool", "read_file", null, ToolState.DONE),
+            TranscriptItem.Markdown("t1/b", "The answer, worth reading slowly."),
             turnEnd("t1"),
         ) + askedAndAnswered(60, question = "Second question").map {
             when (it) {
@@ -970,8 +971,15 @@ class ChatScreenTest {
 
         rule.onNodeWithTag("reader_view").assertIsDisplayed()
         rule.onNodeWithTag("rich_viewer_title").assertTextContains("Reply")
-        rule.onNodeWithText("The first answer, worth reading slowly.").assertIsDisplayed()
-        rule.onNodeWithText("And its second paragraph.").assertIsDisplayed()
+        // The answer first; the note written on the way is folded under it until asked for.
+        rule.onNodeWithText("The answer, worth reading slowly.").assertIsDisplayed()
+        rule.onAllNodesWithText("Looking at the build log first.").assertCountEquals(0)
+        rule.onNodeWithTag("reader_notes_toggle").assertTextContains("Show 1 note", substring = true).assertHeightIsAtLeast(48.dp).performClick()
+        rule.onNodeWithText("Looking at the build log first.").assertIsDisplayed()
+        assertTrue(
+            "the answer comes before the notes",
+            rule.onNodeWithTag("reader_answer").fetchSemanticsNode().boundsInRoot.top < rule.onNodeWithTag("reader_notes").fetchSemanticsNode().boundsInRoot.top,
+        )
         // Only that turn's reply: nothing from the next one.
         rule.onAllNodesWithText("reply line 1").assertCountEquals(0)
 
