@@ -70,6 +70,7 @@ import dev.ahpclient.state.BackgroundWorkView
 import dev.ahpclient.state.CanvasView
 import dev.ahpclient.ui.chat.BackgroundWorkBar
 import dev.ahpclient.ui.chat.BackgroundWorkChip
+import dev.ahpclient.state.DispatchOutcome
 import dev.ahpclient.state.ManageMessages
 import dev.ahpclient.state.ManageResult
 import dev.ahpclient.state.RecentFolders
@@ -545,6 +546,9 @@ private fun Facts(
 ) {
     var chooseFolder by remember { mutableStateOf(false) }
     var folderNotice by remember { mutableStateOf<String?>(null) }
+    // A refusal seen here, in case the host's refusal is not yet (or never) reported back through [ManageActionsUi.addFolderRefusal].
+    var refusedHere by remember { mutableStateOf<String?>(null) }
+    val addRefusal = manage?.addFolderRefusal ?: refusedHere
     val folderScope = rememberCoroutineScope()
     val addableFolders = manage?.folders.orEmpty().filterNot { offered -> detail.workingDirectories.any { it == displayPath(offered) } }
     val facts = buildList {
@@ -582,19 +586,35 @@ private fun Facts(
             }
         }
         if (manage != null && sessionUri != null) {
-            if (addableFolders.isNotEmpty()) OutlinedButton(
-                onClick = { chooseFolder = true },
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("folder_add"),
-            ) { Text("Add folder") }
+            // Offered until the host refuses it once; after that its reason stands where the button was, for as long as this connection lasts.
+            if (addableFolders.isNotEmpty()) {
+                if (addRefusal != null) {
+                    Text(ManageMessages.addFolderRefused(addRefusal), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("folder_add_refused"))
+                } else {
+                    OutlinedButton(
+                        onClick = { chooseFolder = true },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("folder_add"),
+                    ) { Text("Add folder") }
+                }
+            }
             folderNotice?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("folder_notice")) }
-            if (chooseFolder) AlertDialog(
+            if (chooseFolder && addRefusal == null) AlertDialog(
                 onDismissRequest = { chooseFolder = false },
                 title = { Text("Add a recent folder") },
                 text = {
                     Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         addableFolders.take(RecentFolders.SHOWN).forEachIndexed { index, folder ->
                             TextButton(
-                                onClick = { chooseFolder = false; folderScope.launch { folderNotice = ManageMessages.describe(manage.addWorkingDirectory(sessionUri, folder)) } },
+                                onClick = {
+                                    chooseFolder = false
+                                    folderScope.launch {
+                                        val result = manage.addWorkingDirectory(sessionUri, folder)
+                                        val refused = ((result as? ManageResult.Unconfirmed)?.outcome as? DispatchOutcome.Rejected)?.reason
+                                        // The host's refusal replaces the button rather than showing twice.
+                                        if (refused != null) refusedHere = refused
+                                        folderNotice = if (refused != null) null else ManageMessages.describe(result)
+                                    }
+                                },
                                 modifier = Modifier.fillMaxWidth().testTag("folder_choice_$index"),
                             ) { Text(displayPath(folder).take(500), maxLines = 2, overflow = TextOverflow.Ellipsis) }
                         }

@@ -231,12 +231,14 @@ private fun Shell(
     val listed: List<SessionSummary> = connected?.let { it.session.root.sessions.collectAsStateWithLifecycle().value }.orEmpty()
     // The list is only what was saved last time until the host sends its own: to look at, with nothing in it to act on.
     val stale = connected?.let { it.session.root.stale.collectAsStateWithLifecycle().value } == true
+    // Once this host has refused to add a folder on this connection, "Add folder" is not offered again for it.
+    val addFolderRefusal = connected?.let { it.session.refusals.addFolder.collectAsStateWithLifecycle().value }
     val now by rememberNow()
     // Where the person is needed, across all connected hosts: what waits on them, and what finished unread.
     val inbox = remember(multiHostEntries, now) { Inbox.fromEntries(multiHostEntries, now) }
     // Nothing to look after sessions with unless the connection is on the manage tier: no controls, not disabled ones. Nor from a stale list.
     val manageActions = if (canManage && !stale) {
-        remember(controller.manager, rootState, listed, orderedManageTargets) {
+        remember(controller.manager, rootState, listed, orderedManageTargets, addFolderRefusal) {
             ManageActionsUi(
                 agents = controller.manager.offeredAgents().map { AgentOption(it.provider, it.displayName) },
                 folders = controller.manager.offeredFolders(),
@@ -256,6 +258,7 @@ private fun Shell(
                 toggleCustomization = controller.manager::toggleCustomization,
                 addWorkingDirectory = controller.manager::addWorkingDirectory,
                 removeWorkingDirectory = controller.manager::removeWorkingDirectory,
+                addFolderRefusal = addFolderRefusal,
             )
         }
     } else {

@@ -117,6 +117,8 @@ class SessionManagerTest {
         var answer = true
         var gateFailure: Throwable? = null
         var whileAsking: () -> Unit = {}
+        var whileSending: () -> Unit = {}
+        var refusals: HostRefusals? = HostRefusals()
         private var counter = 0
 
         val manager = SessionManager(
@@ -127,6 +129,7 @@ class SessionManagerTest {
             dispatch = { channel, action ->
                 dispatchFailure?.let { throw it }
                 sent += channel to action
+                whileSending()
                 outcome
             },
             commands = commands,
@@ -137,6 +140,7 @@ class SessionManagerTest {
                 answer
             },
             newId = { "id${++counter}" },
+            refusals = { refusals },
         )
     }
 
@@ -175,6 +179,110 @@ class SessionManagerTest {
         assertEquals(listOf("session/workingDirectorySet", "session/workingDirectoryRemoved"), rig.sent.map { wire(it.second)["type"]!!.jsonPrimitive.content })
         assertEquals("file:///work/c", wire(rig.sent[0].second)["directory"]!!.jsonPrimitive.content)
         assertEquals("file:///work/b", wire(rig.sent[1].second)["directory"]!!.jsonPrimitive.content)
+    }
+
+    // ---- a host that refuses to add a folder (P5) -----------------------------------------------------------------
+
+    private val editorOnly = "Session working-directory actions require an Editor Window client."
+
+    /** s1 with two folders, and a third folder the host's history offers, so "Add folder" has something to add. */
+    private fun folderRig() = Rig().apply {
+        states[s1] = state("ready", c1 to "Main", c2 to "Side").copy(workingDirectories = listOf("file:///work/a", "file:///work/b"))
+        sessions = sessions + summary("ahp-session:/s3", "Recent", listOf("file:///work/c"))
+    }
+
+    @Test
+    fun `once the host refuses to add a folder it is remembered for the host and never sent again on this connection`() = runTest {
+        val rig = folderRig().apply { outcome = DispatchOutcome.Rejected(editorOnly) }
+        assertNull(rig.manager.addFolderRefusal(), "offered until the host refuses it")
+
+        assertEquals(ManageResult.Unconfirmed(DispatchOutcome.Rejected(editorOnly)), rig.manager.addWorkingDirectory(s1, "file:///work/c"))
+        assertEquals(editorOnly, rig.manager.addFolderRefusal())
+
+        rig.outcome = DispatchOutcome.Accepted
+        assertEquals(ManageResult.NotAllowed, rig.manager.addWorkingDirectory(s1, "file:///work/c"))
+        assertEquals(ManageResult.NotAllowed, rig.manager.addWorkingDirectory(s2, "file:///work/c"), "for every session of that host")
+        assertEquals(1, rig.sent.size, "nothing is sent after the refusal")
+
+        // Only adding is withdrawn: the decision covers "Add folder", not removing a folder.
+        assertEquals(ManageResult.Done(), rig.manager.removeWorkingDirectory(s1, "/work/b"))
+    }
+
+    @Test
+    fun `only the host's own refusal counts, not a send that failed, no echo, or this app saying no`() = runTest {
+        val rig = folderRig()
+
+        rig.outcome = DispatchOutcome.NoReply
+        assertEquals(ManageResult.Unconfirmed(DispatchOutcome.NoReply), rig.manager.addWorkingDirectory(s1, "file:///work/c"))
+        rig.outcome = DispatchOutcome.Interrupted
+        assertEquals(ManageResult.Unconfirmed(DispatchOutcome.Interrupted), rig.manager.addWorkingDirectory(s1, "file:///work/c"))
+        rig.dispatchFailure = IOException("socket closed")
+        assertIs<ManageResult.NotSent>(rig.manager.addWorkingDirectory(s1, "file:///work/c"))
+        rig.dispatchFailure = CapabilityDeniedException("dispatchAction", "session/workingDirectorySet")
+        assertEquals(ManageResult.NotAllowed, rig.manager.addWorkingDirectory(s1, "file:///work/c"), "this app's policy said no")
+        rig.dispatchFailure = null
+        assertEquals(ManageResult.InvalidChoice, rig.manager.addWorkingDirectory(s1, "C:/invented"))
+        rig.allowed = false
+        assertEquals(ManageResult.NotAllowed, rig.manager.addWorkingDirectory(s1, "file:///work/c"))
+        rig.allowed = true
+        assertNull(rig.manager.addFolderRefusal())
+
+        // A refusal of some other action does not withdraw adding a folder.
+        rig.outcome = DispatchOutcome.Rejected("no renames here")
+        assertIs<ManageResult.Unconfirmed>(rig.manager.setTitle(s1, "New title"))
+        assertNull(rig.manager.addFolderRefusal())
+
+        rig.outcome = DispatchOutcome.Accepted
+        assertEquals(ManageResult.Done(), rig.manager.addWorkingDirectory(s1, "file:///work/c"))
+    }
+
+    @Test
+    fun `a refusal belongs to the host that gave it, even if another host is in front when the answer comes`() = runTest {
+        val first = HostRefusals()
+        val second = HostRefusals()
+        val rig = folderRig().apply {
+            refusals = first
+            outcome = DispatchOutcome.Rejected(editorOnly)
+            // The person switches to the other host while the first one is answering.
+            whileSending = { refusals = second }
+        }
+
+        rig.manager.addWorkingDirectory(s1, "file:///work/c")
+
+        assertEquals(editorOnly, first.addFolder.value)
+        assertNull(second.addFolder.value)
+        assertNull(rig.manager.addFolderRefusal(), "the host now in front has refused nothing")
+        rig.whileSending = {}
+        rig.outcome = DispatchOutcome.Accepted
+        assertEquals(ManageResult.Done(), rig.manager.addWorkingDirectory(s1, "file:///work/c"))
+
+        rig.refusals = first
+        assertEquals(ManageResult.NotAllowed, rig.manager.addWorkingDirectory(s1, "file:///work/c"), "back on the first host it is still refused")
+    }
+
+    @Test
+    fun `with nowhere to keep a refusal, adding a folder is offered and sent each time`() = runTest {
+        val rig = folderRig().apply { refusals = null; outcome = DispatchOutcome.Rejected(editorOnly) }
+
+        rig.manager.addWorkingDirectory(s1, "file:///work/c")
+        rig.manager.addWorkingDirectory(s1, "file:///work/c")
+
+        assertNull(rig.manager.addFolderRefusal())
+        assertEquals(2, rig.sent.size)
+    }
+
+    @Test
+    fun `the first refusal is kept, bounded, and said in plain words`() {
+        val refusals = HostRefusals()
+        refusals.refuseAddFolder("x".repeat(5_000))
+        refusals.refuseAddFolder("later")
+
+        assertEquals(HostRefusals.MAX_REASON, refusals.addFolder.value!!.length)
+        assertEquals(
+            "This host does not let this app add folders. It said: $editorOnly",
+            ManageMessages.addFolderRefused(editorOnly),
+        )
+        assertTrue(ManageMessages.addFolderRefused("y".repeat(5_000)).length < 300)
     }
 
     @Test

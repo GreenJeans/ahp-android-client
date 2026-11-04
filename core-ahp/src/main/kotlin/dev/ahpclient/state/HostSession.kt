@@ -140,6 +140,9 @@ class HostSession(
 ) : ManagementCommands {
     val root = RootStore()
 
+    /** What this host has refused on this connection, so the app stops offering it (see [HostRefusals]). Memory only; it goes with this session. */
+    val refusals = HostRefusals()
+
     private class CacheTarget(val cache: SessionListCache, val key: String)
 
     private val cacheTarget = if (cache != null && cacheKey != null) CacheTarget(cache, cacheKey) else null
