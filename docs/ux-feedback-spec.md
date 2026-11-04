@@ -166,6 +166,8 @@ Kept as they are: the order (attach, then the controls that change what the mess
 
 **Acceptance criteria**
 
+**Prepared (2026-11-03), name not chosen.** Every name the app shows now comes from `AppName` in `core-ahp` (sign-in screen, About, the Pro dialog, the Quick Settings tile) or `app/src/main/res/values/strings.xml` (the launcher and tile labels, which the manifest now reads), so a rename is a change to those two files on Android and to `PRODUCT_NAME` and `CFBundleDisplayName` on iOS. The store text in `play-store-listing.md` is separate. Checked: the built APK's label still reads "AHP Client".
+
 - [ ] **AC-U9.1** The new name appears on the launcher, in the app, on iOS and in the store listing; no "AHP Client" or "AHP Monitor" remains on screen.
 - [ ] **AC-U9.2** The application id and bundle id are unchanged, so an update installs over the existing app.
 

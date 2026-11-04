@@ -1,5 +1,6 @@
 package dev.ahpclient.ui
 
+import dev.ahpclient.app.AppName
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -50,7 +51,7 @@ fun SignInScreen(
     onUseDirect: (() -> Unit)? = null,
 ) {
     var showingAbout by rememberSaveable { mutableStateOf(false) }
-    ScreenScaffold(title = "AHP Client", modifier = modifier) {
+    ScreenScaffold(title = AppName.NAME, modifier = modifier) {
         Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
             ScreenColumn {
                 Text(

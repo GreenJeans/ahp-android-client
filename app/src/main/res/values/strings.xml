@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Keep in step with dev.ahpclient.app.AppName in core-ahp (U9). -->
+    <string name="app_name" translatable="false">AHP Client</string>
+    <string name="monitor_tile_name" translatable="false">AHP Monitor</string>
+</resources>
