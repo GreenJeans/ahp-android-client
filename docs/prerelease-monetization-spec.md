@@ -79,6 +79,7 @@ When creating the Play Console listing for Internal / Closed testing:
 | Send/steer messages, answer questions, approve/deny tools | Read-only (composer & approval actions hidden) | Enabled when "Act for me" is turned on |
 | Start/archive/remove sessions & chats | Read-only | Enabled when "Look after sessions" is turned on |
 | Background monitoring & notifications (`MonitorService`, inline reply, Quick Settings tile) | Off (updates while app is open) | Enabled when "Monitor in background" is turned on |
+| AI quick replies (Gemini Nano or a configured provider) and the host's `@` and `/` completions in the message box | Not offered: the plain, heuristic quick replies only, and the host is never asked for completions | Offered (U8) |
 
 ### M1 — `ProEntitlement` in `core-ahp`
 

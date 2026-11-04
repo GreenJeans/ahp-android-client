@@ -55,7 +55,7 @@ Nine items from using the app day to day. Most are about keeping context in a lo
 - [x] **AC-U2.1** When your last message is off screen, a bar shows its start; tapping it scrolls to it. The bar is hidden when the message is visible and when you have not sent one.
 - [x] **AC-U2.2** A control jumps to the first line of the agent's latest reply, and works while the reply is still streaming.
 - [x] **AC-U2.3** Reader view opens any agent reply full screen and closes back to the same scroll position.
-- [ ] **AC-U2.4** All three read correctly with TalkBack and at the largest font size.
+- [ ] **AC-U2.4** All three read correctly with TalkBack and at the largest font size. (Half checked: at twice the font size, `atTheLargestFontSizeTheBarStaysShortAndTheControlsStayUsable` passes on the emulator; spoken labels are tested; TalkBack itself not run.)
 
 ## U3 — The Suggest button
 
@@ -105,13 +105,23 @@ Kept as they are: the order (attach, then the controls that change what the mess
 
 **Proposal.** The main chat is the session; other chats are reached from one control (for example "3 other chats") that opens a switcher. The switcher groups chats by how they came about (forks of a turn, side chats, chats the agent started), shows them as a tree under the turn they came from, and puts any that need you at the top. The transcript can also show a small link at the turn a fork or side chat came from. Chats that only the agent uses are collapsed by default.
 
-**Decision needed.** The shape of the switcher (a sheet, a drawer section or a dropdown) and which chats count as "not relevant to the person". Mock two options before building.
+**Decision needed.** The shape of the switcher (a sheet, a drawer section or a dropdown) and which chats count as "not relevant to the person". Mock two options before building. (Decided 2026-11-03: a bottom sheet, see Decisions.)
+
+**As built (2026-11-03).** The tab row is gone. Under the bar there is a chip with the main chat's title (tap it to go back to the main chat) and one control, "2 other chats", which opens a bottom sheet; with only the main chat neither is drawn. When another chat is on screen the control shows its title too ("Try plan B · 2 other chats"). `ChatSwitcher` (core, JVM-tested) builds the sheet from the host's chat list: the main chat first, then groups in this order: Waiting on you, Forks, Side chats, Started by you, Other chats, Chats the agent uses. The relation comes from `ChatSummary.origin` (`fork`, `sideChat`, `tool`, `user`); a chat with no origin, or one of a kind this app does not know, goes under "Other chats" with no relation line. Any chat waiting on the person goes in the first group whatever its relation, so nothing that needs them is folded away. "Chats the agent uses" holds chats a tool call started (origin `tool`, for example a sub-agent) and chats the host marks `read-only` (`ChatSummary.interactivity`); it starts folded, and its heading still says how many chats it holds and how many are unread. Within a group a chat sits under the chat it came from, one step further in (a fork of a fork). The relation line says "Fork of turn 3" only when the app holds every turn of the chat it came from (the one on screen or one of the few kept warm, with no older turns left to load); otherwise it names the chat ("Fork of the main chat", "Fork of Try plan B"). Not built: the link in the transcript at the turn a fork or side chat came from.
+
+**As built, revised (2026-11-04, after review of the first build).**
+
+- *The control's dot means "waiting on you" only.* The "N other chats" control carries a dot only when some other chat is waiting on the person, and its spoken description says only that ("3 other chats, 1 waiting on you"). Unread no longer lights the control or appears in its description. Unread still shows per chat: a quieter dot on the chat's row in the sheet, "Unread" in the row's spoken description, and the unread count in the heading of the folded "Chats the agent uses" group. The main chat's chip is unchanged: it still carries a dot when the main chat is waiting or unread.
+- *Hidden chats are their own group, left out by default.* Chats the host marks `hidden` no longer go in "Chats the agent uses". They make up a last group, "Hidden chats", which is not listed until the person turns on the "Show hidden chats (N)" toggle at the end of the sheet (N is how many are left out; with the toggle on it reads "Show hidden chats" and its state is On). The "N other chats" label counts only the chats the sheet lists; a session whose only other chats are hidden still gets the control, labelled "1 hidden chat", so they can be reached. The toggle is held by the session screen, as "Show archived chats" is, and is not saved on the device.
+- *A waiting chat is never left out.* A hidden chat that is waiting on the person is listed under "Waiting on you" whether hidden chats are shown or not, and is not counted in the toggle's N. An archived chat that is waiting on the person is listed under "Waiting on you" even with "Show archived chats" off; other archived chats stay hidden as before, and the menu's "Show archived chats (N)" no longer counts the waiting ones.
+- *What can be on screen follows the sheet.* A chat stays on screen only while the switcher lists it (the main chat and the listed others), so turning off archived or hidden chats while one of them is shown goes back to the main chat, as archived chats did with the tabs; a waiting archived or hidden chat stays.
 
 **Acceptance criteria**
 
-- [ ] **AC-U5.1** A session with many chats shows one control instead of a tab per chat; the main chat stays one tap away.
-- [ ] **AC-U5.2** The switcher shows each chat's relation (fork of turn N, side chat, started by the agent) and puts chats waiting on the person first.
-- [ ] **AC-U5.3** Unread and needs-input signals are not lost compared with today's tab dots.
+- [ ] **AC-U5.1** A session with many chats shows one control instead of a tab per chat; the main chat stays one tap away. (Built; UI tests written in `SessionScreensTest` and `AccessibilityTest`, not yet run on a device.)
+- [ ] **AC-U5.2** The switcher shows each chat's relation (fork of turn N, side chat, started by the agent) and puts chats waiting on the person first. (Half checked: the grouping, order, tree and wording are covered by JVM tests in `ChatSwitcherTest`; the sheet's UI tests are written, not run. The turn number shows only when the parent chat's turns are all held.)
+- [ ] **AC-U5.3** Unread and needs-input signals are not lost compared with today's tab dots. (Half checked: the counts and marks are covered by JVM tests, including a folded group; the dots on screen are in UI tests written, not run. Unread now shows on rows only, by decision; a waiting chat is never left out by the archived or hidden filters, also JVM-tested.)
+- [ ] **AC-U5.4** Chats the host marks hidden are left out until "Show hidden chats (N)" is turned on, then listed in their own group; a hidden or archived chat waiting on the person is always listed under "Waiting on you". (Half checked: JVM tests in `ChatSwitcherTest`; the toggle's UI tests in `SessionScreensTest` and `AccessibilityTest` are written, not run.)
 
 ## U6 — Word wrap on or off
 
@@ -155,8 +165,10 @@ Kept as they are: the order (attach, then the controls that change what the mess
 
 **Acceptance criteria**
 
-- [ ] **AC-U8.1** With Pro off, no AI suggestion and no host `completions` request is made or shown; with Pro on, both work as today.
-- [ ] **AC-U8.2** The Free and Pro table lists AI quick replies and host completions.
+**As built (2026-11-03).** Without Pro the connection is held to the READ tier, which has no message box and refuses `completions` (`CapabilityPolicy`), so Free never reached either feature. Two explicit gates now say so in code, so it stays true if Free ever gains a message box: the AI provider is passed to a chat only with Pro (`AppRoot`), and a chat is given the host's trigger characters only with Pro (`AppController.interactorFor`), so without them the host is never asked. The AI settings in Settings stay visible either way.
+
+- [x] **AC-U8.1** With Pro off, no AI suggestion and no host `completions` request is made or shown; with Pro on, both work as today. (By the READ tier, which is tested; the two new gates have no test of their own, because no state reaches them without Pro.)
+- [x] **AC-U8.2** The Free and Pro table lists AI quick replies and host completions.
 
 ## U9 — A new name
 
@@ -170,8 +182,12 @@ Kept as they are: the order (attach, then the controls that change what the mess
 
 **Acceptance criteria**
 
+**Named (2026-11-04): Hostline.** The launcher, the Quick Settings tile, the sign-in screen, About, the Pro dialog and the iOS display name now say "Hostline"; the store title is "Hostline: AHP Client", so people who know the protocol still find it. `PRODUCT_NAME` on iOS is left as it was, so the Xcode target and binary names do not change. A trademark and store search is still to do before the store listing goes live.
+
+**Prepared (2026-11-03).** Every name the app shows now comes from `AppName` in `core-ahp` (sign-in screen, About, the Pro dialog, the Quick Settings tile) or `app/src/main/res/values/strings.xml` (the launcher and tile labels, which the manifest now reads), so a rename is a change to those two files on Android and to `PRODUCT_NAME` and `CFBundleDisplayName` on iOS. The store text in `play-store-listing.md` is separate. Checked: the built APK's label still reads "AHP Client".
+
 - [ ] **AC-U9.1** The new name appears on the launcher, in the app, on iOS and in the store listing; no "AHP Client" or "AHP Monitor" remains on screen.
-- [ ] **AC-U9.2** The application id and bundle id are unchanged, so an update installs over the existing app.
+- [x] **AC-U9.2** The application id and bundle id are unchanged, so an update installs over the existing app.
 
 ## Order of work
 
@@ -191,8 +207,11 @@ The protocol slices still open (N3b live check, P7 automations, P8 host terminal
 |---|---|
 | U2: where reader view opens from | A small "Read" button on the row that ends each turn, beside its duration |
 | U5: how other chats are reached | One "N other chats" control opens a bottom sheet with a tree: chats grouped by relation, those waiting on the person first, chats only the agent uses collapsed |
+| U5: what the control's dot means (2026-11-04) | Only that another chat is waiting on the person. Unread does not light the control; it shows on the chat's row in the sheet |
+| U5: chats the host marks hidden (2026-11-04) | A group of their own, left out by default, revealed by a "Show hidden chats (N)" toggle in the sheet. A hidden chat waiting on the person is always listed under "Waiting on you" |
+| U5: archived chats waiting on the person (2026-11-04) | Always listed under "Waiting on you", even with "Show archived chats" off. Other archived chats stay hidden until it is on |
 | U8: what Pro covers | Both AI quick replies (Gemini Nano) and the host's `@` and `/` completions (N3b). Free keeps the plain, heuristic quick replies |
-| U9: the name | A shortlist of three, then the owner picks one; a trademark and store search comes before it is used. Shortlist: **Hostline** (a direct line to your agent host), **Agent Deck** (one place to run your agents from), **Steerwise** (steering agents from your phone). None of the three has been searched yet |
+| U9: the name | A shortlist of three, then the owner picks one; a trademark and store search comes before it is used. Shortlist: **Hostline** (a direct line to your agent host), **Agent Deck** (one place to run your agents from), **Steerwise** (steering agents from your phone). None of the three has been searched yet Chosen 2026-11-04: **Hostline**, with the store title "Hostline: AHP Client". |
 | P5: "Add folder" on a host that refuses it | Offered until the host refuses it once; then hidden for that host, with the reason shown where it was |
 | A first message with no model chosen and none reported by the host | The model picker starts on the host's first listed model with its default settings, so a message always names a model |
 | N3b: the host's space trigger | Honoured only when the message starts with a slash command, so the host is asked about a command's arguments and not after every word |
@@ -207,4 +226,7 @@ The P5, first-model and N3b decisions belong to [`protocol-completion-spec.md`](
 | Date | Entry |
 |---|---|
 | 2026-11-03 | Drafted from a round of user feedback. Nothing built. |
-| 2026-11-04 | U6: markdown tables can fit their columns to the width; the tool-output wrap button always shows. UI tests written, not yet run. |
+| 2026-11-03 | U5 built: the chat switcher (a main chat chip and one "N other chats" control opening a grouped sheet) replaces the tab row. JVM tests pass; UI tests written, not run on a device. |
+| 2026-11-04 | U5 revised: the control's dot means waiting only; hidden chats are their own group behind "Show hidden chats (N)"; waiting archived and hidden chats are always listed. JVM tests pass; UI tests updated, not run on a device. |
+| 2026-11-04 | U5 UI tests pass on the emulator (SessionScreens, Accessibility, ManageUi: 181/181 at 1af4dc0). |
+| 2026-11-04 | U6: markdown tables can fit their columns to the width; the tool-output wrap button always shows. Fitted columns now share the width as fractions (a 6-column table had a row screens tall). UI tests pass on the emulator (174/174 at 766cfb3). |

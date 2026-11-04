@@ -38,6 +38,7 @@ import dev.ahpclient.state.ChangeStats
 import dev.ahpclient.state.ChangesetEntry
 import dev.ahpclient.state.ChatConfig
 import dev.ahpclient.state.ChatInteractor
+import dev.ahpclient.state.ChatSwitcher
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.CustomAgents
 import dev.ahpclient.state.CustomizationCategory
@@ -414,7 +415,8 @@ private fun Shell(
                 SessionPage(
                     controller, ui, connected, open, connection, rootState, canManage, canInteract, manageActions, listed, changesetTitle,
                     onChangesetTitle = { changesetTitle = it }, onMenu = menu::open, alerts = alerts,
-                    quickReplyProvider = quickReplyProvider,
+                    // AI suggestions are a Pro feature (U8); without Pro the bar offers the plain, heuristic replies only.
+                    quickReplyProvider = quickReplyProvider.takeIf { proUnlocked },
                 )
             } else {
                 // The menu is the page here, held open over this strip of background; there is nothing to say behind it.
@@ -597,6 +599,11 @@ private fun SessionPage(
             },
             onOpenSubagent = controller::openSubagentChat,
             onOpenTerminal = controller::openTerminal,
+            // Only chats this app holds can have their turns counted: the one on screen and the few kept warm behind it.
+            chatTurnNumber = { chatUri, turnId ->
+                (listOfNotNull(chat) + open.warm).firstOrNull { it.uri == chatUri }?.store?.state?.value
+                    ?.let { ChatSwitcher.turnNumberIn(it, turnId) }
+            },
         ) {
             if (chat != null) {
                 OpenChatView(
