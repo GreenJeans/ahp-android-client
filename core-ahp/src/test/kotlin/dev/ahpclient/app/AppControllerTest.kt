@@ -42,6 +42,7 @@ import dev.ahpclient.state.HostScript
 import dev.ahpclient.state.HostSession
 import dev.ahpclient.state.ScriptedConnector
 import dev.ahpclient.state.SESSION_C
+import dev.ahpclient.state.TERMINAL_A
 import dev.ahpclient.state.TERMINAL_REAL
 import dev.ahpclient.state.TerminalView
 import dev.ahpclient.state.terminalStateJson
@@ -2159,6 +2160,132 @@ class AppControllerTest {
             connectToFirstHost()
             openTerminalChat(this)
             controller.openTerminal(TERMINAL_REAL)
+            runCurrent()
+            controller.closeTerminal()
+            runCurrent()
+
+            val methods = connectors.single().sockets.flatMap { it.sent }.mapNotNull { it["method"]?.jsonPrimitive?.content }.toSet()
+            assertEquals(emptySet(), methods - setOf("initialize", "reconnect", "ping", "subscribe", "unsubscribe", "listSessions", "fetchTurns"))
+        }
+    }
+
+    // ---- the host's own terminals (RootState.terminals) ----------------------------------------------------------------------
+
+    private fun rootTerminalJson(uri: String, title: String = "dev server") =
+        """{"resource":"$uri","title":"$title","claim":{"kind":"client","clientId":"someone"},"lifecycle":{"status":"running"}}"""
+
+    private fun hostTerminalScript(listed: List<String> = listOf(TERMINAL_A)) =
+        HostScript(rootTerminals = listed.joinToString(",", "[", "]") { rootTerminalJson(it) })
+
+    private suspend fun Rig.awaitRootTerminals() {
+        assertIs<AppState.Connected>(state).session.root.root.first { it?.terminals != null }
+    }
+
+    @Test
+    fun `a terminal the host lists opens read only with no session, and back leaves it`() = runTest {
+        withRig(script = { hostTerminalScript() }) {
+            connectToFirstHost()
+            awaitRootTerminals()
+
+            controller.openTerminal(TERMINAL_A)
+            runCurrent()
+
+            val connected = assertIs<AppState.Connected>(state)
+            assertNull(connected.open, "no session was needed")
+            assertEquals(TERMINAL_A, connected.terminal!!.uri)
+            assertEquals(listOf("hello"), TerminalView.from(connected.terminal!!.store.state.value!!).lines)
+
+            controller.closeTerminal()
+            runCurrent()
+
+            assertNull(assertIs<AppState.Connected>(state).terminal)
+            assertEquals(listOf(TERMINAL_A), unsubscribed())
+        }
+    }
+
+    @Test
+    fun `from the root only a listed terminal address is opened, and only once`() = runTest {
+        withRig(script = { hostTerminalScript(listOf(TERMINAL_A, "https://evil.example/x", "ahp-session:/x")) }) {
+            connectToFirstHost()
+            awaitRootTerminals()
+
+            // Not listed, listed but not a terminal's address, and a tool call's terminal that no open chat names.
+            listOf("ahp-terminal:/not-listed", "https://evil.example/x", "ahp-session:/x", TERMINAL_REAL, "").forEach {
+                controller.openTerminal(it)
+                assertNull(assertIs<AppState.Connected>(state).terminal, it)
+            }
+            assertEquals(emptyList(), channelsSent("subscribe").filter { it.contains("terminal") || it.startsWith("https") })
+
+            controller.openTerminal(TERMINAL_A)
+            controller.openTerminal(TERMINAL_A)
+            runCurrent()
+            assertEquals(1, channelsSent("subscribe").count { it == TERMINAL_A }, "a second tap does not subscribe again")
+        }
+    }
+
+    @Test
+    fun `a terminal the host stops listing can no longer be opened`() = runTest {
+        withRig(script = { hostTerminalScript() }) {
+            connectToFirstHost()
+            awaitRootTerminals()
+
+            connectors.single().sockets.single().serverSends(actionFrame("ahp-root://", """{"type":"root/terminalsChanged","terminals":[]}""", SNAPSHOT_SEQ + 1))
+            assertIs<AppState.Connected>(state).session.root.root.first { it?.terminals?.isEmpty() == true }
+            controller.openTerminal(TERMINAL_A)
+            runCurrent()
+
+            assertNull(assertIs<AppState.Connected>(state).terminal)
+            assertEquals(emptyList(), channelsSent("subscribe").filter { it == TERMINAL_A })
+        }
+    }
+
+    @Test
+    fun `a host terminal opens over an open session and leaves it underneath`() = runTest {
+        withRig(script = { hostTerminalScript() }) {
+            connectToFirstHost()
+            awaitRootTerminals()
+            controller.openSession(SESSION_C)
+            assertIs<AppState.Connected>(state).open!!.store.state.first { it != null }
+
+            controller.openTerminal(TERMINAL_A)
+            runCurrent()
+            val connected = assertIs<AppState.Connected>(state)
+            assertEquals(TERMINAL_A, connected.terminal!!.uri)
+            assertEquals(SESSION_C, connected.open!!.uri)
+            assertNull(connected.open!!.terminal, "it is the host's, not the session's")
+
+            controller.closeTerminal()
+            runCurrent()
+            assertEquals(SESSION_C, assertIs<AppState.Connected>(state).open!!.uri)
+            assertNull(assertIs<AppState.Connected>(state).terminal)
+            assertEquals(listOf(TERMINAL_A), unsubscribed())
+        }
+    }
+
+    @Test
+    fun `opening a session, as a notification does, leaves the host terminal and lets go of it`() = runTest {
+        withRig(script = { hostTerminalScript() }) {
+            connectToFirstHost()
+            awaitRootTerminals()
+            controller.openTerminal(TERMINAL_A)
+            runCurrent()
+
+            controller.showSession(SESSION_C)
+            runCurrent()
+
+            val connected = assertIs<AppState.Connected>(state)
+            assertNull(connected.terminal)
+            assertEquals(SESSION_C, connected.open!!.uri)
+            assertEquals(listOf(TERMINAL_A), unsubscribed())
+        }
+    }
+
+    @Test
+    fun `watching a host terminal sends nothing outside the read tier, with interaction on`() = runTest {
+        withRig(script = { hostTerminalScript() }, interaction = InteractionConsent(FakeInteractionSettings(saved = true))) {
+            connectToFirstHost()
+            awaitRootTerminals()
+            controller.openTerminal(TERMINAL_A)
             runCurrent()
             controller.closeTerminal()
             runCurrent()

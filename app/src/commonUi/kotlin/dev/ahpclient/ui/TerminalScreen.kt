@@ -45,12 +45,13 @@ import kotlinx.coroutines.launch
  * The live output of one terminal a tool call ran a command in. Read only: there is no way to type into it, and nothing here
  * sends anything. The output is the host's own text, shown as plain text only (see [TerminalView]); the end of it follows new
  * output until the person scrolls away, and a button brings them back. [state] is null until the host has sent the terminal,
- * and [error] says why it never will: the terminal is gone, or the host's answer could not be read.
+ * and [error] says why it never will: the terminal is gone, or the host's answer could not be read. [fromHost] is set for one of the
+ * host's own terminals, opened from the side menu: Back then goes to where the person was, and a gone one has no tool result to point at.
  */
 @Composable
-fun TerminalScreen(state: TerminalState?, error: Throwable?, connection: ConnState, onBack: () -> Unit, modifier: Modifier = Modifier) {
+fun TerminalScreen(state: TerminalState?, error: Throwable?, connection: ConnState, onBack: () -> Unit, modifier: Modifier = Modifier, fromHost: Boolean = false) {
     val view = remember(state) { state?.let(TerminalView::from) }
-    ScreenScaffold(title = view?.title ?: "Terminal", titleTag = "terminal_title", onBack = onBack, backLabel = "Back to chat", large = false, modifier = modifier) {
+    ScreenScaffold(title = view?.title ?: "Terminal", titleTag = "terminal_title", onBack = onBack, backLabel = if (fromHost) "Back" else "Back to chat", large = false, modifier = modifier) {
         Column(modifier = Modifier.fillMaxSize()) {
             Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (connection != ConnState.Online) ConnectionLine(connection)
@@ -67,7 +68,7 @@ fun TerminalScreen(state: TerminalState?, error: Throwable?, connection: ConnSta
             when {
                 view != null -> TerminalBody(view)
                 error is ChannelGoneException -> Text(
-                    "This terminal is no longer on the host. Its output is in the tool's result.",
+                    if (fromHost) "This terminal is no longer on the host." else "This terminal is no longer on the host. Its output is in the tool's result.",
                     sideMargin.testTag("terminal_gone"),
                 )
                 error != null -> ErrorText("The host's answer for this terminal could not be read.", sideMargin.testTag("terminal_failed"))

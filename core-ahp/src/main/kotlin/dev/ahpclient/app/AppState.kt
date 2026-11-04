@@ -120,8 +120,12 @@ sealed interface AppState {
     /** Signed in, or holding hosts added by address, with no host connected. The hosts to choose from are [AppController.hosts]. */
     data object Hosts : AppState
 
-    /** [open] is the session whose detail is on screen; its [OpenSession.store] stays subscribed until the user goes back. */
-    data class Connected(val host: HostRef, val session: HostSession, val open: OpenSession? = null) : AppState {
+    /**
+     * [open] is the session whose detail is on screen; its [OpenSession.store] stays subscribed until the user goes back. [terminal] is
+     * one of the host's own terminals (from its root state), on screen over whatever else is: it belongs to the host, not to a session,
+     * so it can be open with no session at all.
+     */
+    data class Connected(val host: HostRef, val session: HostSession, val open: OpenSession? = null, val terminal: OpenTerminal? = null) : AppState {
         constructor(tunnel: TunnelInfo, session: HostSession, open: OpenSession? = null) : this(HostRef.Tunnel(tunnel), session, open)
     }
 }
@@ -141,7 +145,7 @@ data class OpenSession(
     val warm: List<OpenChat> = emptyList(),
 )
 
-/** The live output of one terminal on screen, over the chat it was opened from. Its [store] stays subscribed until the user goes back. */
+/** The live output of one terminal on screen, over the chat or the host it was opened from. Its [store] stays subscribed until the user goes back. */
 data class OpenTerminal(val uri: String, val store: ChannelStore<TerminalState>)
 
 /** Live canvas channel opened from a canvas reference in the active chat. */

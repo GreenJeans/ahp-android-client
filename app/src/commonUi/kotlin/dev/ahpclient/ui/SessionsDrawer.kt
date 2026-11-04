@@ -70,6 +70,7 @@ import dev.ahpclient.app.HostRef
 import dev.ahpclient.state.ActivityState
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.HostSessionEntry
+import dev.ahpclient.state.HostTerminalEntry
 import dev.ahpclient.state.SessionCatalog
 import dev.ahpclient.state.SessionFilter
 import dev.ahpclient.state.SessionListModel
@@ -117,6 +118,10 @@ fun DrawerContent(
     onFilterChange: (SessionFilter) -> Unit = {},
     onOpenSessionOnHost: (hostId: String?, uri: String) -> Unit = { _, uri -> onOpenSession(uri) },
     onSessionCreatedOnHost: (hostId: String?, uri: String) -> Unit = { _, uri -> onSessionCreated(uri) },
+    /** The focused host's own terminals (its root state); the Terminals button shows only when there are some. */
+    terminals: List<HostTerminalEntry> = emptyList(),
+    /** Watches one of [terminals], read only, by its address. */
+    onOpenTerminal: (String) -> Unit = {},
 ) {
     val effectiveFilter = remember(filter, showArchived) { filter.copy(showArchived = showArchived) }
     val model = remember(entries, sessions, effectiveFilter, now, query) {
@@ -127,6 +132,7 @@ fun DrawerContent(
         }
     }
     var filterSheetOpen by rememberSaveable { mutableStateOf(false) }
+    var terminalsSheetOpen by rememberSaveable { mutableStateOf(false) }
     val applyFilter: (SessionFilter) -> Unit = { updated ->
         if (updated.showArchived != showArchived) onToggleArchived()
         onFilterChange(updated)
@@ -145,6 +151,7 @@ fun DrawerContent(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (inboxCount != null && host != null) InboxAction(inboxCount, onOpenInbox)
+                if (host != null && terminals.isNotEmpty()) TerminalsAction(terminals.size) { terminalsSheetOpen = true }
                 if (host != null && (model.hiddenArchived > 0 || showArchived)) ArchivedAction(showArchived, model.hiddenArchived, onToggleArchived)
                 Spacer(Modifier.weight(1f))
                 Tooltip("Settings") {
@@ -188,6 +195,30 @@ fun DrawerContent(
             onReset = resetFilter,
             onDismiss = { filterSheetOpen = false },
         )
+    }
+    // Gone with the last terminal, as the button is: an empty sheet would offer nothing.
+    if (terminalsSheetOpen && host != null && terminals.isNotEmpty()) {
+        HostTerminalsSheet(
+            terminals = terminals,
+            onOpen = { uri ->
+                terminalsSheetOpen = false
+                onOpenTerminal(uri)
+            },
+            onDismiss = { terminalsSheetOpen = false },
+        )
+    }
+}
+
+/** The way to the host's own terminals, said with how many there are: "Terminals, 2 on the host". */
+@Composable
+private fun TerminalsAction(count: Int, onOpen: () -> Unit) {
+    Tooltip("Terminals") {
+        IconButton(
+            onClick = onOpen,
+            modifier = Modifier.semantics(mergeDescendants = true) { contentDescription = "Terminals, $count on the host" }.testTag("drawer_terminals"),
+        ) {
+            Icon(AppIcons.Terminal, contentDescription = null)
+        }
     }
 }
 

@@ -182,6 +182,23 @@ class CapabilityPolicyTest {
     }
 
     @Test
+    fun `no tier can make, remove, type into, resize, clear or claim a terminal, so watching one stays read only`() {
+        val terminalCommands = listOf("createTerminal", "disposeTerminal")
+        val terminalActions = listOf("terminal/input", "terminal/resized", "terminal/cleared", "terminal/claimed", "terminal/data", "terminal/exited")
+        listOf(CapabilityPolicy.READ, CapabilityPolicy.INTERACT, CapabilityPolicy.MANAGE).forEach { tier ->
+            terminalCommands.forEach { command ->
+                assertFailsWith<CapabilityDeniedException>("${tier.name} $command") { tier.check(command) }
+            }
+            terminalActions.forEach { type ->
+                assertFailsWith<CapabilityDeniedException>("${tier.name} $type") { tier.check("dispatchAction", type) }
+            }
+            // What watching needs is still there.
+            tier.check("subscribe")
+            tier.check("unsubscribe")
+        }
+    }
+
+    @Test
     fun `MANAGE denies every other method`() {
         denied.filter { it != "dispatchAction" && it !in manageCommands && it !in manageQueries }.forEach { method ->
             assertFailsWith<CapabilityDeniedException>(method) { CapabilityPolicy.MANAGE.check(method) }
