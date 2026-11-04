@@ -47,6 +47,7 @@ import dev.ahpclient.state.displayPath
 import dev.ahpclient.state.HostFileTarget
 import dev.ahpclient.state.HostSession
 import dev.ahpclient.state.HostSessionEntry
+import dev.ahpclient.state.HostTerminalEntry
 import dev.ahpclient.state.Inbox
 import dev.ahpclient.state.InboxReader
 import dev.ahpclient.state.ManageResult
@@ -142,12 +143,14 @@ private fun Shell(
     val listState = rememberLazyListState()
 
     val open = connected?.open
+    // One of the host's own terminals, over the session or over nothing: it is the host's, not a session's.
+    val hostTerminal = connected?.terminal
     // A session's own chat is part of the session page, left by leaving the session. Only a subagent's transcript is a screen over it.
     val screens = OverlayScreens(
         subagent = open?.chat?.parent != null,
         changeset = open?.changeset != null,
         diff = open?.changeset?.diff != null,
-        terminal = open?.terminal != null,
+        terminal = open?.terminal != null || hostTerminal != null,
         canvas = open?.canvas != null,
     )
     val overlayOpen = screens.any
@@ -159,7 +162,9 @@ private fun Shell(
         onCloseChangeset = controller::closeChangeset,
         onCloseDiff = controller::closeDiff,
     )
-    val menu = rememberHomeMenu(open?.uri, page != Page.MAIN)
+    // What is on the main page, for the menu: the session, or a host terminal opened with none. Either one lets the held-open menu close.
+    val onScreen = open?.uri ?: hostTerminal?.uri
+    val menu = rememberHomeMenu(onScreen, page != Page.MAIN)
     CloseMenuOnRequest(sessionRequests, menu)
     // A host that connects, or goes (removing the connected host from Settings), brings the menu back: Settings and the inbox are of the
     // host they were opened on.
@@ -283,9 +288,12 @@ private fun Shell(
         }
     }
 
+    // The focused host's own terminals: only from the host's live root state, never a saved list.
+    val hostTerminals = remember(rootState) { HostTerminalEntry.of(rootState) }
+
     HomeDrawer(
         menu = menu,
-        session = open?.uri,
+        session = onScreen,
         pageOpen = page != Page.MAIN,
         overlayOpen = overlayOpen,
         onClosePage = { page = Page.MAIN },
@@ -317,6 +325,8 @@ private fun Shell(
                 onFilterChange = ui::setSessionFilter,
                 onOpenSessionOnHost = showSessionOnHost,
                 onSessionCreatedOnHost = showSessionOnHost,
+                terminals = hostTerminals,
+                onOpenTerminal = { uri -> menu.close(); controller.openTerminal(uri) },
             )
         },
     ) {
@@ -416,7 +426,11 @@ private fun Shell(
                     stale = stale,
                 )
             }
-            Page.MAIN -> if (connected != null && connection != null && open != null) {
+            Page.MAIN -> if (connected != null && connection != null && hostTerminal != null) {
+                val terminalState by hostTerminal.store.state.collectAsStateWithLifecycle()
+                val terminalError by hostTerminal.store.error.collectAsStateWithLifecycle()
+                TerminalScreen(terminalState, terminalError, connection, controller::closeTerminal, fromHost = true)
+            } else if (connected != null && connection != null && open != null) {
                 SessionPage(
                     controller, ui, connected, open, connection, rootState, canManage, canInteract, manageActions, listed, changesetTitle,
                     onChangesetTitle = { changesetTitle = it }, onMenu = menu::open, alerts = alerts,

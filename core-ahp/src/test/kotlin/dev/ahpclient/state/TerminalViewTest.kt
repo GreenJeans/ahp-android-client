@@ -1,6 +1,7 @@
 package dev.ahpclient.state
 
 import com.microsoft.agenthostprotocol.Ahp
+import com.microsoft.agenthostprotocol.generated.RootState
 import com.microsoft.agenthostprotocol.generated.TerminalState
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -180,5 +181,55 @@ class TerminalViewTest {
         assertTrue(TerminalLinks.isTerminalUri(TERMINAL_REAL))
         listOf("", "ahp-terminal:/", "agenthost-terminal://", "ahp-chat:/x", "https://example.com", "ahp-terminal:/a\u0000b", "ahp-terminal:/" + "x".repeat(2_000))
             .forEach { assertFalse(TerminalLinks.isTerminalUri(it), it.take(40)) }
+    }
+
+    // ---- the host's own terminals, as its root state lists them ----
+
+    private fun root(terminals: String?): RootState = Ahp.json.decodeFromString(
+        RootState.serializer(),
+        """{"agents":[]${terminals?.let { ""","terminals":$it""" }.orEmpty()}}""",
+    )
+
+    private fun info(uri: String, title: String = "dev server", lifecycle: String = """{"status":"running"}""") =
+        """{"resource":"${json(uri)}","title":"${json(title)}","claim":{"kind":"client","clientId":"x"},"lifecycle":$lifecycle}"""
+
+    @Test
+    fun `the host's terminals are listed with their title and state, in the host's order`() {
+        val failed = info(TERMINAL_REAL, "tests", """{"status":"exited","exitCode":2}""")
+        val exited = info("ahp-terminal:/t3", "done", """{"status":"exited"}""")
+        val entries = HostTerminalEntry.of(root(listOf(info("ahp-terminal:/t1"), failed, exited).joinToString(",", "[", "]")))
+
+        assertEquals(listOf("ahp-terminal:/t1", TERMINAL_REAL, "ahp-terminal:/t3"), entries.map { it.uri })
+        assertEquals(listOf("dev server", "tests", "done"), entries.map { it.title })
+        assertEquals(listOf(true, false, false), entries.map { it.running })
+        assertEquals(listOf("Running", "Exited with code 2", "Exited"), entries.map { it.status })
+    }
+
+    @Test
+    fun `no root state, no terminals in it, or an empty list lists nothing`() {
+        assertEquals(emptyList(), HostTerminalEntry.of(null))
+        assertEquals(emptyList(), HostTerminalEntry.of(root(null)))
+        assertEquals(emptyList(), HostTerminalEntry.of(root("[]")))
+        assertEquals(emptySet(), TerminalLinks.listedBy(null))
+    }
+
+    @Test
+    fun `only terminal addresses are listed, each once, and no more than the cap`() {
+        val odd = listOf("https://evil.example/x", "ahp-session:/x", "ahp-terminal:/", "ahp-terminal:/a\tb", "ahp-terminal:/" + "x".repeat(2_000))
+        val listed = HostTerminalEntry.of(root((odd + "ahp-terminal:/t1" + "ahp-terminal:/t1").joinToString(",", "[", "]") { info(it) }))
+        assertEquals(listOf("ahp-terminal:/t1"), listed.map { it.uri })
+
+        val many = (1..HostTerminalEntry.MAX_ENTRIES + 10).joinToString(",", "[", "]") { info("ahp-terminal:/t$it") }
+        val capped = HostTerminalEntry.of(root(many))
+        assertEquals(HostTerminalEntry.MAX_ENTRIES, capped.size)
+        assertEquals(capped.map { it.uri }.toSet(), TerminalLinks.listedBy(root(many)), "what can be opened is what is listed")
+    }
+
+    @Test
+    fun `a listed title is one bounded line with nothing that reorders text, and a blank one is named`() {
+        val entry = HostTerminalEntry.of(root("[${info("ahp-terminal:/t1", "a‮b\nc" + "x".repeat(500))}]")).single()
+        assertTrue(entry.title.startsWith("a�bc"), entry.title.take(10))
+        assertTrue(entry.title.length <= 125, "${entry.title.length}")
+        assertEquals("Terminal", HostTerminalEntry.of(root("[${info("ahp-terminal:/t1", " ")}]")).single().title)
     }
 }

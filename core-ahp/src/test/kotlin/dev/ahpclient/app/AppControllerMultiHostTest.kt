@@ -16,6 +16,7 @@ import dev.ahpclient.state.HostScript
 import dev.ahpclient.state.HostSession
 import dev.ahpclient.state.SESSION_C
 import dev.ahpclient.state.ScriptedConnector
+import dev.ahpclient.state.TERMINAL_A
 import dev.ahpclient.state.fixture
 import dev.ahpclient.tunnel.DevTunnelsClient
 import dev.ahpclient.tunnel.TunnelInfo
@@ -23,12 +24,15 @@ import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 
@@ -132,6 +136,67 @@ class AppControllerMultiHostTest {
             runCurrent()
             assertIs<AppState.Hosts>(controller.state.value)
             assertEquals(emptyList(), controller.connectedHosts.value)
+        }
+    }
+
+    @Test
+    fun `moving to another connected host lets go of the first host's terminal, which stays connected`() = runTest {
+        MockWebServer().use { server ->
+            server.start()
+            server.enqueue(MockResponse().setResponseCode(200).setBody(fixture("list-tunnels.json")).addHeader("Content-Type", "application/json"))
+            val vault = TokenVault(FakeBox(), FakeStore())
+            vault.save(savedToken)
+            val tunnelConnector = ScriptedConnector(
+                HostScript(rootTerminals = """[{"resource":"$TERMINAL_A","title":"dev server","claim":{"kind":"client","clientId":"x"},"lifecycle":{"status":"running"}}]"""),
+            )
+            val tunnelFactory = HostSessionFactory { tunnel: TunnelInfo, _ ->
+                HostSession(HostConnector { clientId, seq, scope: CoroutineScope -> tunnelConnector.connect(clientId, seq, scope) }, backgroundScope, clientInfo, Backoff(), clientId = "client-${tunnel.tunnelId}")
+            }
+            val directFactory = DirectSessionFactory { host: DirectHost, _, _ ->
+                val scripted = ScriptedConnector(HostScript())
+                HostSession(HostConnector { clientId, seq, scope: CoroutineScope -> scripted.connect(clientId, seq, scope) }, backgroundScope, clientInfo, Backoff(), clientId = "client-${host.id}")
+            }
+            val lastHost = object : LastHostStore {
+                var id: String? = null
+                override suspend fun get(): String? = id
+                override suspend fun set(tunnelId: String) {
+                    id = tunnelId
+                }
+            }
+            val controller = AppController(
+                auth = GitHubDeviceAuth(baseUrl = server.url("/").toString(), now = { Instant.parse("2026-10-22T12:00:00Z") }),
+                vault = vault,
+                devTunnels = DevTunnelsClient(serviceUrl = server.url("/").toString()),
+                lastHost = lastHost,
+                sessions = tunnelFactory,
+                scope = backgroundScope,
+                directStore = InMemoryDirectHostStore(),
+                directSessions = directFactory,
+            )
+            controller.start()
+            controller.state.first { it is AppState.Hosts }
+            val loaded = controller.hosts.first { it.list is HostList.Loaded }.list as HostList.Loaded
+            val added = assertIs<AppController.AddHostResult.Added>(controller.addDirectHost("Lab Box", "192.168.1.50:8123", ""))
+            controller.connectHost(HostRef.Tunnel(loaded.hosts.first().tunnel))
+            runCurrent()
+            val first = assertIs<AppState.Connected>(controller.state.value)
+            first.session.connection.first { it == ConnState.Online }
+            first.session.root.root.first { it?.terminals != null }
+            controller.openTerminal(TERMINAL_A)
+            runCurrent()
+            assertEquals(TERMINAL_A, assertIs<AppState.Connected>(controller.state.value).terminal?.uri)
+
+            controller.connectHost(HostRef.Direct(added.host))
+            runCurrent()
+
+            val now = assertIs<AppState.Connected>(controller.state.value)
+            assertEquals(added.host.id, now.host.id)
+            assertNull(now.terminal)
+            assertEquals(ConnState.Online, first.session.connection.value, "the first host is still connected")
+            val unsubscribed = tunnelConnector.sockets.single().sent
+                .filter { it["method"]?.jsonPrimitive?.content == "unsubscribe" }
+                .map { it["params"]!!.jsonObject["channel"]!!.jsonPrimitive.content }
+            assertEquals(listOf(TERMINAL_A), unsubscribed)
         }
     }
 

@@ -683,6 +683,7 @@ class AppController(
         val existing = _connectedHosts.value.firstOrNull { it.host.id == target.id }
         if (existing != null) {
             if (current.open != null) closeSession()
+            dropHostTerminal()
             val afterClose = _state.value as? AppState.Connected ?: return
             if (_state.compareAndSet(afterClose, AppState.Connected(existing.host, existing.session))) {
                 rememberLastHost(existing.host.id)
@@ -692,6 +693,7 @@ class AppController(
         }
         val host = connectable(target) ?: return
         if (current.open != null) closeSession()
+        dropHostTerminal()
         val afterClose = _state.value as? AppState.Connected ?: return
         val session = newSession(host)
         session.start()
@@ -730,6 +732,7 @@ class AppController(
         }
         if (current.host.id == hostId) {
             if (current.open != null) closeSession()
+            dropHostTerminal()
             cancelDiffJob()
             val afterClose = _state.value as? AppState.Connected ?: return
             val next = remaining.last()
@@ -783,9 +786,14 @@ class AppController(
         }
     }
 
-    /** Opens the detail for [uri]. Ignored unless connected with no detail open, so a double tap cannot subscribe twice. */
+    /**
+     * Opens the detail for [uri]. Ignored unless connected with no detail open, so a double tap cannot subscribe twice. A host terminal
+     * on screen is left first: the session asked for (from a notification, say) is what must be seen.
+     */
     @Synchronized
     fun openSession(uri: String) {
+        if ((_state.value as? AppState.Connected)?.open != null) return
+        dropHostTerminal()
         val current = _state.value as? AppState.Connected ?: return
         if (current.open != null) return
         val store = current.session.openSession(uri)
@@ -797,7 +805,11 @@ class AppController(
     fun focusSession(uri: String) {
         val current = _state.value as? AppState.Connected ?: return
         if (current.session.root.sessions.value.any { it.resource == uri }) {
-            if (current.open?.uri == uri) return
+            if (current.open?.uri == uri) {
+                // The session is already open, perhaps under a host terminal: that is left so the session is seen.
+                dropHostTerminal()
+                return
+            }
             if (current.open != null) closeSession()
             openSession(uri)
             return
@@ -831,6 +843,7 @@ class AppController(
         }
         val target = _connectedHosts.value.firstOrNull { it.host.id == hostId } ?: return
         if (current.open != null) closeSession()
+        dropHostTerminal()
         val afterClose = _state.value as? AppState.Connected ?: return
         if (_state.compareAndSet(afterClose, AppState.Connected(target.host, target.session))) {
             openSession(uri)
@@ -1244,21 +1257,27 @@ class AppController(
     }
 
     /**
-     * Opens the live output of a terminal that a tool call in the open chat ran a command in, over the chat. Read only: the
-     * terminal is only ever watched, and typing into one is not something this app can do at any tier. Only an address that a
-     * tool result in the open chat names is opened, so a host cannot make the app subscribe to one of its choosing by putting it
-     * somewhere else, and not a second one over an open one.
+     * Opens the live output of a terminal. Read only: the terminal is only ever watched, and typing into one is not something this
+     * app can do at any tier. Only an address the app was shown is opened, so a host cannot make the app subscribe to one of its
+     * choosing by putting it somewhere else: one that a tool result in the open chat names opens over that chat, and one the host
+     * lists as its own in its root state ([TerminalLinks.listedBy]) opens over whatever is on screen, with or without a session.
+     * Never a second one over an open one, nor over a canvas or a changeset.
      */
     @Synchronized
     fun openTerminal(uri: String) {
         val current = _state.value as? AppState.Connected ?: return
-        val open = current.open ?: return
-        val chat = open.chat ?: return
-        if (open.terminal != null || open.canvas != null || open.changeset != null) return
-        val shown = chat.store.state.value ?: return
-        if (uri !in TerminalLinks.referencedBy(shown)) return
+        if (current.terminal != null) return
+        val open = current.open
+        if (open != null && (open.terminal != null || open.canvas != null || open.changeset != null)) return
+        val shown = open?.chat?.store?.state?.value
+        if (open != null && shown != null && uri in TerminalLinks.referencedBy(shown)) {
+            val store = current.session.openTerminal(uri)
+            if (!_state.compareAndSet(current, current.copy(open = open.copy(terminal = OpenTerminal(uri, store))))) current.session.closeChannel(uri)
+            return
+        }
+        if (uri !in TerminalLinks.listedBy(current.session.root.root.value)) return
         val store = current.session.openTerminal(uri)
-        if (!_state.compareAndSet(current, current.copy(open = open.copy(terminal = OpenTerminal(uri, store))))) current.session.closeChannel(uri)
+        if (!_state.compareAndSet(current, current.copy(terminal = OpenTerminal(uri, store)))) current.session.closeChannel(uri)
     }
 
     /**
@@ -1277,13 +1296,28 @@ class AppController(
         return LiveTerminal(store.state) { session.closeChannel(uri) }
     }
 
-    /** Leaves the terminal and returns to the chat it was opened from. */
+    /** Leaves the terminal and returns to where it was opened from: the host's own one first, else the one over the chat. */
     @Synchronized
     fun closeTerminal() {
         val current = _state.value as? AppState.Connected ?: return
+        if (current.terminal != null) {
+            dropHostTerminal()
+            return
+        }
         val open = current.open ?: return
         val terminal = open.terminal ?: return
         if (_state.compareAndSet(current, current.copy(open = open.copy(terminal = null)))) current.session.closeChannel(terminal.uri)
+    }
+
+    /**
+     * Leaves the host's own terminal, if one is on screen, and lets go of its channel. Called before the screen moves to another
+     * host or to a session, since a host kept connected in the background would otherwise keep sending a terminal nobody sees.
+     */
+    @Synchronized
+    private fun dropHostTerminal() {
+        val current = _state.value as? AppState.Connected ?: return
+        val terminal = current.terminal ?: return
+        if (_state.compareAndSet(current, current.copy(terminal = null))) current.session.closeChannel(terminal.uri)
     }
 
     /** Leaves the open transcript and returns to where it was opened from: the chat above it for a subagent's, else the session detail. */

@@ -2,6 +2,7 @@ package dev.ahpclient.state
 
 import com.microsoft.agenthostprotocol.generated.ChatState
 import com.microsoft.agenthostprotocol.generated.ResponsePartToolCall
+import com.microsoft.agenthostprotocol.generated.RootState
 import com.microsoft.agenthostprotocol.generated.TerminalContentPartCommand
 import com.microsoft.agenthostprotocol.generated.TerminalContentPartUnclassified
 import com.microsoft.agenthostprotocol.generated.TerminalLifecycleStateExited
@@ -31,6 +32,46 @@ object TerminalLinks {
             ToolDetail.from(call).results.filterIsInstance<ToolResultView.Terminal>().mapNotNullTo(uris) { it.terminalUri }
         }
         return uris
+    }
+
+    /**
+     * The terminal addresses the host lists as its own in its root state, and only those that [HostTerminalEntry.of] would show. The
+     * second way a terminal may be opened: what the person can tap in the list is what can be opened, and nothing else from the root.
+     */
+    fun listedBy(root: RootState?): Set<String> = HostTerminalEntry.of(root).mapTo(LinkedHashSet()) { it.uri }
+}
+
+/**
+ * One of the host's own terminals, as the side menu lists it: from `RootState.terminals`, kept current by `root/terminalsChanged`.
+ * The host's list says nothing of a terminal's folder, so that is shown only once the terminal is open (see [TerminalView.cwd]).
+ */
+data class HostTerminalEntry(val uri: String, val title: String, val running: Boolean, val status: String) {
+    companion object {
+        /** More than this many are not listed: a host could name thousands, and a menu of them helps no one. */
+        const val MAX_ENTRIES = 50
+
+        private const val MAX_TITLE = 120
+
+        /** The terminals [root] lists that have a terminal's address, in the host's order, each once. Empty with no root state yet. */
+        fun of(root: RootState?): List<HostTerminalEntry> {
+            val seen = HashSet<String>()
+            return root?.terminals.orEmpty().asSequence()
+                .filter { TerminalLinks.isTerminalUri(it.resource) && seen.add(it.resource) }
+                .take(MAX_ENTRIES)
+                .map { info ->
+                    val lifecycle = info.lifecycle
+                    HostTerminalEntry(
+                        uri = info.resource,
+                        title = LineDiff.clean(info.title.filterNot { it.isISOControl() }.ifBlank { "Terminal" }.take(MAX_TITLE)),
+                        running = lifecycle is TerminalLifecycleStateRunning,
+                        status = when (lifecycle) {
+                            is TerminalLifecycleStateRunning -> "Running"
+                            is TerminalLifecycleStateExited -> lifecycle.value.exitCode?.let { "Exited with code $it" } ?: "Exited"
+                        },
+                    )
+                }
+                .toList()
+        }
     }
 }
 

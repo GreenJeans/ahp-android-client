@@ -37,7 +37,8 @@ Checked 2026-11-02 on an API 36 emulator and the JVM suite. The boxes in each sl
 | P3 Per-chat changesets and terminal commands | Built, JVM and UI tests | Live terminal content with command parts. Checked live: changeset kinds, the session changeset's file list and a file diff. The host's list count was one higher than the file's real line count (a trailing line break) |
 | P4 Canvas and annotations channels | Built, JVM and UI tests | Live channel subscribe; system back on the canvas screen has no automated test (no `AppRoot` harness with a host) |
 | P5 Working directories | Built, JVM and UI tests | That a live host applies set and remove. The VS Code host refused the add: "Session working-directory actions require an Editor Window client", so the success path cannot be tried against it. Add and Remove are now each hidden after the host's own refusal (see Slice 5, As built) |
-| iOS | Not compiled for P1 to P5 | Kotlin/Native needs a Mac; `commonUi` changes were only reviewed for JVM-only calls |
+| P8a Host terminals, read only | Built, JVM and UI tests (`HostTerminalsUiTest` 48/48 with TerminalUi and Accessibility on the emulator, 2026-11-04) | A live host that lists terminals in its root state (none checked yet). System back from a host terminal inside `AppRoot` has no automated test (same gap as P4) |
+| iOS | Not compiled for P1 to P5 or P8a | Kotlin/Native needs a Mac; `commonUi` changes were only reviewed for JVM-only calls |
 
 ### Decisions taken in review
 
@@ -68,9 +69,12 @@ As built: a picked value is sent only if the host's next `resolveSessionConfig` 
 
 P7 (automations) and P8 (host terminals) keep their order after these.
 
+**P8a, host terminals read only (AC-P8.1). Built; JVM tests pass, UI tests not yet run on a device.** The side menu has a Terminals button (next to the inbox) only while the focused host lists terminals in `RootState.terminals`, kept current by `root/terminalsChanged`. It opens a sheet with one row per terminal: its title and whether it runs or how it exited (at most 50, each address once, only terminal addresses). Tapping a row opens the existing `TerminalScreen`, read only, over whatever is on screen, with or without a session; Back (the bar's or the system's) returns there. `AppController.openTerminal` now allows two sources and nothing else: an address a tool result in the open chat names (as before, opened over that chat), or one the host lists in its root state (opened as the host's, on `AppState.Connected.terminal`). The host's terminal is let go of when a session is opened (a notification tap) and when the screen moves to another connected host. Nothing sends input: `createTerminal`, `disposeTerminal`, `terminal/input`, `terminal/resized`, `terminal/cleared` and `terminal/claimed` stay out of every tier, and `CapabilityPolicyTest` says so. Not built: anything of the MANAGE part (clear, dispose). Only the focused host's terminals are listed, not those of other connected hosts.
+
 ### Corrections to the slices below
 
 - P6: dynamic config options are marked `enumDynamic: true` on `SessionConfigPropertySchema`, not by a `complete-as-you-type` kind.
+- P8: `TerminalInfo` in the root state carries no `cwd` (only address, title, claim and lifecycle), so the list cannot show a folder. The folder shows on the terminal's screen once it is open, from `TerminalState.cwd`.
 
 ---
 
@@ -298,5 +302,5 @@ Today, `ahp-android-client` detects whether a session was spawned by an automati
 
 ### Acceptance Criteria
 
-- [ ] **AC-P8.1** `RootState.terminals` can be opened read-only in `TerminalScreen` without enabling `terminal/input`.
-- [ ] **AC-P8.2** `terminal/input`, `authenticate`, `session/activeClientSet`, and `resourceWrite|Delete|Move|Copy` remain blocked in `CapabilityPolicyTest` across `READ`, `INTERACT`, and `MANAGE`.
+- [ ] **AC-P8.1** (built, JVM tests pass; the UI tests in `HostTerminalsUiTest` are not yet run on a device and no live host has been tried) `RootState.terminals` can be opened read-only in `TerminalScreen` without enabling `terminal/input`.
+- [x] **AC-P8.2** `terminal/input`, `authenticate`, `session/activeClientSet`, and `resourceWrite|Delete|Move|Copy` remain blocked in `CapabilityPolicyTest` across `READ`, `INTERACT`, and `MANAGE`. (JVM only; the same test also refuses `createTerminal`, `disposeTerminal`, `terminal/resized`, `terminal/cleared` and `terminal/claimed` on every tier.)
