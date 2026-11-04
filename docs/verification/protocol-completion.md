@@ -76,3 +76,16 @@ Runs of the P1 to P5 work against a real host. Boxes in `docs/protocol-completio
 **Cost note.** The Copilot retry on the oversized default context used 243.4k tokens ($1.00 on the host's meter). The Claude turns used about 150 tokens each.
 
 **Left behind.** Two throwaway sessions on the host ("secret word in file" on Copilot, "identify word in image" on Claude), to be deleted by the host owner.
+
+## 2026-11-03 (evening): Pixel 10, N3b host completions against the same host
+
+**Setup.** Debug build of `claude/n3b-composer-completions` (with `main` merged in), installed over the existing app over wireless adb, sign-in kept. Two existing idle sessions; only typing in the message box, nothing sent. The draft was cleared afterwards.
+
+| Check | Result | Notes |
+|---|---|---|
+| `@` | App's own list, as designed | The app's agent-mention list ("@dev-advisor", "@dev-assessor"…) took the popup, so the host was not asked; host `@` suggestions show only where no custom agent matches |
+| `#` asks the host on the chat channel | Pass | After the pause the host's file suggestions came back (TOUR.md, TEST-PLAN.md, .gitattributes, .env.example in one session; validate-packs.mjs, tune-signals.mjs… in another), so the VS Code host accepts `completions` with the chat as the channel |
+| Accepting one | Pass | The text became `#TOUR.md` and a "TOUR.md" chip appeared |
+| Typing after accepting | **Fail, fixed** | The cursor stayed after the `#`, so typing on landed inside the mention. The message box now moves the cursor to the end when its text is set from outside (`b7091bd`); rechecked live: `#validate-packs.mjs` then typing gave `#validate-packs.mjszz` |
+
+**Not checked.** What the host's attachment for a file mention holds (it was not sent), the space trigger after a slash command, and a message sent with a mention.
