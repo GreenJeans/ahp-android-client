@@ -285,6 +285,97 @@ class SessionManagerTest {
         assertTrue(ManageMessages.addFolderRefused("y".repeat(5_000)).length < 300)
     }
 
+    // ---- a host that refuses to remove a folder (P5) --------------------------------------------------------------
+
+    @Test
+    fun `once the host refuses to remove a folder it is remembered for the host and never sent again, and adding stays offered`() = runTest {
+        val rig = folderRig().apply { outcome = DispatchOutcome.Rejected(editorOnly) }
+        assertNull(rig.manager.removeFolderRefusal(), "offered until the host refuses it")
+
+        assertEquals(ManageResult.Unconfirmed(DispatchOutcome.Rejected(editorOnly)), rig.manager.removeWorkingDirectory(s1, "/work/b"))
+        assertEquals(editorOnly, rig.manager.removeFolderRefusal())
+        assertNull(rig.manager.addFolderRefusal(), "a refused remove does not withdraw adding")
+
+        rig.outcome = DispatchOutcome.Accepted
+        assertEquals(ManageResult.NotAllowed, rig.manager.removeWorkingDirectory(s1, "/work/b"))
+        assertEquals(ManageResult.NotAllowed, rig.manager.removeWorkingDirectory(s2, "/work/b"), "for every session of that host")
+        assertEquals(1, rig.sent.size, "nothing is sent after the refusal")
+
+        assertEquals(ManageResult.Done(), rig.manager.addWorkingDirectory(s1, "file:///work/c"))
+    }
+
+    @Test
+    fun `a refused add leaves removing offered until the host refuses a remove itself`() = runTest {
+        val rig = folderRig().apply { outcome = DispatchOutcome.Rejected(editorOnly) }
+        rig.manager.addWorkingDirectory(s1, "file:///work/c")
+        assertEquals(editorOnly, rig.manager.addFolderRefusal())
+        assertNull(rig.manager.removeFolderRefusal())
+
+        // Still sent, and its own refusal is what withdraws it.
+        assertIs<ManageResult.Unconfirmed>(rig.manager.removeWorkingDirectory(s1, "/work/b"))
+        assertEquals(2, rig.sent.size)
+        assertEquals("session/workingDirectoryRemoved", wire(rig.sent[1].second)["type"]!!.jsonPrimitive.content)
+        assertEquals(editorOnly, rig.manager.removeFolderRefusal())
+    }
+
+    @Test
+    fun `only the host's own refusal of a remove counts, not a send that failed, no echo, or this app saying no`() = runTest {
+        val rig = folderRig()
+
+        rig.outcome = DispatchOutcome.NoReply
+        assertEquals(ManageResult.Unconfirmed(DispatchOutcome.NoReply), rig.manager.removeWorkingDirectory(s1, "/work/b"))
+        rig.outcome = DispatchOutcome.Interrupted
+        assertEquals(ManageResult.Unconfirmed(DispatchOutcome.Interrupted), rig.manager.removeWorkingDirectory(s1, "/work/b"))
+        rig.dispatchFailure = IOException("socket closed")
+        assertIs<ManageResult.NotSent>(rig.manager.removeWorkingDirectory(s1, "/work/b"))
+        rig.dispatchFailure = CapabilityDeniedException("dispatchAction", "session/workingDirectoryRemoved")
+        assertEquals(ManageResult.NotAllowed, rig.manager.removeWorkingDirectory(s1, "/work/b"), "this app's policy said no")
+        rig.dispatchFailure = null
+        assertEquals(ManageResult.InvalidChoice, rig.manager.removeWorkingDirectory(s1, "/work/a"), "the primary folder is never removed")
+        rig.allowed = false
+        assertEquals(ManageResult.NotAllowed, rig.manager.removeWorkingDirectory(s1, "/work/b"))
+        rig.allowed = true
+        assertNull(rig.manager.removeFolderRefusal())
+
+        rig.outcome = DispatchOutcome.Accepted
+        assertEquals(ManageResult.Done(), rig.manager.removeWorkingDirectory(s1, "/work/b"))
+    }
+
+    @Test
+    fun `a refused remove belongs to the host that gave it, even if another host is in front when the answer comes`() = runTest {
+        val first = HostRefusals()
+        val second = HostRefusals()
+        val rig = folderRig().apply {
+            refusals = first
+            outcome = DispatchOutcome.Rejected(editorOnly)
+            whileSending = { refusals = second }
+        }
+
+        rig.manager.removeWorkingDirectory(s1, "/work/b")
+
+        assertEquals(editorOnly, first.removeFolder.value)
+        assertNull(second.removeFolder.value)
+        assertNull(rig.manager.removeFolderRefusal(), "the host now in front has refused nothing")
+        rig.whileSending = {}
+        rig.refusals = first
+        assertEquals(ManageResult.NotAllowed, rig.manager.removeWorkingDirectory(s1, "/work/b"), "back on the first host it is still refused")
+    }
+
+    @Test
+    fun `the first refused remove is kept, bounded, and said in plain words`() {
+        val refusals = HostRefusals()
+        refusals.refuseRemoveFolder("x".repeat(5_000))
+        refusals.refuseRemoveFolder("later")
+
+        assertEquals(HostRefusals.MAX_REASON, refusals.removeFolder.value!!.length)
+        assertNull(refusals.addFolder.value)
+        assertEquals(
+            "This host does not let this app remove folders. It said: $editorOnly",
+            ManageMessages.removeFolderRefused(editorOnly),
+        )
+        assertTrue(ManageMessages.removeFolderRefused("y".repeat(5_000)).length < 300)
+    }
+
     @Test
     fun `an action is refused before anything is sent when the connection cannot manage`() = runTest {
         val rig = Rig().apply { allowed = false }

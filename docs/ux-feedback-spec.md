@@ -189,12 +189,12 @@ The protocol slices still open (N3b live check, P7 automations, P8 host terminal
 | U5: how other chats are reached | One "N other chats" control opens a bottom sheet with a tree: chats grouped by relation, those waiting on the person first, chats only the agent uses collapsed |
 | U8: what Pro covers | Both AI quick replies (Gemini Nano) and the host's `@` and `/` completions (N3b). Free keeps the plain, heuristic quick replies |
 | U9: the name | A shortlist of three, then the owner picks one; a trademark and store search comes before it is used. Shortlist: **Hostline** (a direct line to your agent host), **Agent Deck** (one place to run your agents from), **Steerwise** (steering agents from your phone). None of the three has been searched yet |
-| P5: "Add folder" on a host that refuses it | Offered until the host refuses it once; then hidden for that host, with the reason shown where it was |
+| P5: "Add folder" and "Remove" on a host that refuses them | Each is offered until the host refuses that action once; then that one alone is hidden for that host, with the reason shown where it was. A refused add leaves Remove offered. Kept in memory per host connection |
 | A first message with no model chosen and none reported by the host | The model picker starts on the host's first listed model with its default settings, so a message always names a model |
 | N3b: the host's space trigger | Honoured only when the message starts with a slash command, so the host is asked about a command's arguments and not after every word |
 | P7: automations | Wait until a reachable host advertises `automations`, so it can be checked live |
 
-The P5, first-model and N3b decisions belong to [`protocol-completion-spec.md`](protocol-completion-spec.md) and are recorded there when that work is picked up.
+The P5, first-model and N3b decisions belong to [`protocol-completion-spec.md`](protocol-completion-spec.md); P5 and first-model are recorded in its Slice 5 "As built" notes.
 
 ## Progress Log
 

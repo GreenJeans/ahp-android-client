@@ -549,6 +549,9 @@ private fun Facts(
     // A refusal seen here, in case the host's refusal is not yet (or never) reported back through [ManageActionsUi.addFolderRefusal].
     var refusedHere by remember { mutableStateOf<String?>(null) }
     val addRefusal = manage?.addFolderRefusal ?: refusedHere
+    // The same for removing, kept apart: a refused add leaves "Remove" offered until the host refuses a remove itself.
+    var removeRefusedHere by remember { mutableStateOf<String?>(null) }
+    val removeRefusal = manage?.removeFolderRefusal ?: removeRefusedHere
     val folderScope = rememberCoroutineScope()
     val addableFolders = manage?.folders.orEmpty().filterNot { offered -> detail.workingDirectories.any { it == displayPath(offered) } }
     val facts = buildList {
@@ -579,11 +582,23 @@ private fun Facts(
         detail.workingDirectories.forEachIndexed { index, folder ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text(folder.take(500), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f).testTag("session_working_directory_$index"))
-                if (manage != null && sessionUri != null && index > 0) TextButton(
-                    onClick = { folderScope.launch { folderNotice = ManageMessages.describe(manage.removeWorkingDirectory(sessionUri, folder)) } },
+                if (manage != null && sessionUri != null && index > 0 && removeRefusal == null) TextButton(
+                    onClick = {
+                        folderScope.launch {
+                            val result = manage.removeWorkingDirectory(sessionUri, folder)
+                            val refused = ((result as? ManageResult.Unconfirmed)?.outcome as? DispatchOutcome.Rejected)?.reason
+                            // The host's refusal replaces the buttons rather than showing twice.
+                            if (refused != null) removeRefusedHere = refused
+                            folderNotice = if (refused != null) null else ManageMessages.describe(result)
+                        }
+                    },
                     modifier = Modifier.testTag("folder_remove_$index"),
                 ) { Text("Remove") }
             }
+        }
+        // Once the host refuses a remove, its reason stands once under the folders in place of their "Remove" buttons, for as long as this connection lasts.
+        if (manage != null && sessionUri != null && removeRefusal != null && detail.workingDirectories.size > 1) {
+            Text(ManageMessages.removeFolderRefused(removeRefusal), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("folder_remove_refused"))
         }
         if (manage != null && sessionUri != null) {
             // Offered until the host refuses it once; after that its reason stands where the button was, for as long as this connection lasts.

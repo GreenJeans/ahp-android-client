@@ -25,6 +25,20 @@ class HostRefusals {
         _addFolder.compareAndSet(null, reason.take(MAX_REASON))
     }
 
+    private val _removeFolder = MutableStateFlow<String?>(null)
+
+    /**
+     * The host's own words the first time it refused to remove a folder from a session (`session/workingDirectoryRemoved`) on this
+     * connection, or null while it has not. Kept apart from [addFolder]: a refused add does not withdraw removing, nor the other
+     * way round. Untrusted display text, bounded.
+     */
+    val removeFolder: StateFlow<String?> = _removeFolder.asStateFlow()
+
+    /** Notes that the host refused to remove a folder. The first refusal is kept; later ones do not replace it. */
+    fun refuseRemoveFolder(reason: String) {
+        _removeFolder.compareAndSet(null, reason.take(MAX_REASON))
+    }
+
     companion object {
         const val MAX_REASON = 500
     }

@@ -1075,14 +1075,20 @@ class SessionScreensTest {
 
     private val editorOnly = "Session working-directory actions require an Editor Window client."
 
-    private fun folderManage(addFolderRefusal: String? = null, add: suspend (String) -> ManageResult) = ManageActionsUi(
+    private fun folderManage(
+        addFolderRefusal: String? = null,
+        removeFolderRefusal: String? = null,
+        remove: suspend (String) -> ManageResult = { ManageResult.Done() },
+        add: suspend (String) -> ManageResult = { ManageResult.Done() },
+    ) = ManageActionsUi(
         agents = emptyList(), folders = listOf("file:///work/new"),
         setRead = { _, _ -> ManageResult.Done() }, setArchived = { _, _ -> ManageResult.Done() },
         newChat = { ManageResult.Done() }, newSession = { _, _, _ -> ManageResult.Done() },
         disposeSession = { ManageResult.Done() }, disposeChat = { _, _ -> ManageResult.Done() },
         addWorkingDirectory = { _, path -> add(path) },
-        removeWorkingDirectory = { _, _ -> ManageResult.Done() },
+        removeWorkingDirectory = { _, path -> remove(path) },
         addFolderRefusal = addFolderRefusal,
+        removeFolderRefusal = removeFolderRefusal,
     )
 
     private fun showFolders(manage: ManageActionsUi) {
@@ -1135,6 +1141,47 @@ class SessionScreensTest {
         rule.onNodeWithTag("folder_notice").assertExists().assertTextEquals("Could not send. Check the connection and try again.")
         rule.onNodeWithTag("folder_add").assertExists()
         rule.onNodeWithTag("folder_add_refused").assertDoesNotExist()
+    }
+
+    @Test
+    fun removeIsReplacedByTheHostsReasonOnceTheHostRefusesIt_andAddFolderStaysOffered() {
+        val removed = mutableListOf<String>()
+        showFolders(folderManage(remove = { path -> removed += path; ManageResult.Unconfirmed(DispatchOutcome.Rejected(editorOnly)) }))
+
+        rule.onNodeWithTag("folder_remove_1").performClick()
+        rule.waitForIdle()
+
+        assertEquals(listOf("file:///work/secondary"), removed)
+        rule.onNodeWithTag("folder_remove_1").assertDoesNotExist()
+        rule.onNodeWithTag("folder_remove_refused").assertExists().assertTextContains(editorOnly, substring = true)
+        // Said once, in place of the buttons, not again as an error under them.
+        rule.onNodeWithTag("folder_notice").assertDoesNotExist()
+        // Adding a folder is not part of this refusal.
+        rule.onNodeWithTag("folder_add").assertExists()
+        rule.onNodeWithTag("folder_add_refused").assertDoesNotExist()
+    }
+
+    @Test
+    fun aHostThatAlreadyRefusedRemovingAFolderIsNotOfferedItAgain() {
+        showFolders(folderManage(removeFolderRefusal = editorOnly, remove = { error("not offered, so never sent") }))
+
+        rule.onNodeWithTag("folder_remove_1").assertDoesNotExist()
+        rule.onNodeWithTag("folder_remove_refused").assertExists()
+            .assertTextEquals("This host does not let this app remove folders. It said: $editorOnly")
+        rule.onNodeWithTag("session_working_directory_1").assertExists()
+        rule.onNodeWithTag("folder_add").assertExists()
+    }
+
+    @Test
+    fun aFailedRemoveIsNotARefusalAndRemoveStaysOffered() {
+        showFolders(folderManage(remove = { ManageResult.NotSent(java.io.IOException("socket closed")) }))
+
+        rule.onNodeWithTag("folder_remove_1").performClick()
+        rule.waitForIdle()
+
+        rule.onNodeWithTag("folder_notice").assertExists().assertTextEquals("Could not send. Check the connection and try again.")
+        rule.onNodeWithTag("folder_remove_1").assertExists()
+        rule.onNodeWithTag("folder_remove_refused").assertDoesNotExist()
     }
 
     @Test

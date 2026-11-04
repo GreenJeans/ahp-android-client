@@ -94,6 +94,9 @@ class SessionManager(
     /** The host's words when it has refused to add a folder on this connection; while set, adding a folder is not offered or sent. */
     fun addFolderRefusal(): String? = refusals()?.addFolder?.value
 
+    /** The host's words when it has refused to remove a folder on this connection; while set, removing a folder is not offered or sent. */
+    fun removeFolderRefusal(): String? = refusals()?.removeFolder?.value
+
     /** The agents the host lists, in its order. */
     fun offeredAgents(): List<AgentInfo> = agents()
 
@@ -170,14 +173,23 @@ class SessionManager(
         return result
     }
 
-    /** Removes an existing secondary folder while preserving the first working directory as the session's primary folder. */
+    /**
+     * Removes an existing secondary folder while preserving the first working directory as the session's primary folder. Like
+     * [addWorkingDirectory], once the host has refused a remove on the current connection it is not sent again
+     * ([ManageResult.NotAllowed]); a refused add does not stop a remove.
+     */
     suspend fun removeWorkingDirectory(sessionUri: String, directory: String): ManageResult {
         if (!allowed()) return ManageResult.NotAllowed
+        // Taken now, so a refusal is noted for the host it was sent to, even if another host is focused by the time it comes back.
+        val memory = refusals()
+        if (memory?.removeFolder?.value != null) return ManageResult.NotAllowed
         val state = sessionState(sessionUri) ?: return ManageResult.NoSuchTarget
         val directories = state.workingDirectories.orEmpty()
         val actual = directories.firstOrNull { it == directory || displayPath(it) == directory } ?: return ManageResult.InvalidChoice
         if (directories.size < 2 || directories.first() == actual) return ManageResult.InvalidChoice
-        return action(sessionUri, SessionActions.removeWorkingDirectory(actual))
+        val result = action(sessionUri, SessionActions.removeWorkingDirectory(actual))
+        ((result as? ManageResult.Unconfirmed)?.outcome as? DispatchOutcome.Rejected)?.let { memory?.refuseRemoveFolder(it.reason) }
+        return result
     }
 
     /** Starts a new, empty chat in a session that is ready. */
@@ -454,4 +466,7 @@ object ManageMessages {
 
     /** What is shown in place of "Add folder" once the host has refused it on this connection, with [reason], the host's own words. */
     fun addFolderRefused(reason: String): String = "This host does not let this app add folders. It said: ${reason.take(MAX_HOST_TEXT)}"
+
+    /** What is shown in place of the "Remove" buttons once the host has refused a remove on this connection, with [reason], the host's own words. */
+    fun removeFolderRefused(reason: String): String = "This host does not let this app remove folders. It said: ${reason.take(MAX_HOST_TEXT)}"
 }
