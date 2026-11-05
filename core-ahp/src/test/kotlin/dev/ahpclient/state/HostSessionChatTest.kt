@@ -321,6 +321,81 @@ class HostSessionChatTest {
         assertEquals(listOf("reconnect", "listSessions", "subscribe"), rig.socket.sentMethods)
     }
 
+    // ---- windowed delivery (P9) ---------------------------------------------------------------------------------
+
+    private val windowAccepted = """{"flowControl":{"clientReceive":{"windowBytes":4096,"maximumFrameBytes":1024},"hostReceive":{"windowBytes":1048576,"maximumFrameBytes":16777216}}}"""
+
+    private fun channelFrame(uri: String, data: String, final: Boolean) = kotlinx.serialization.json.buildJsonObject {
+        put("jsonrpc", kotlinx.serialization.json.JsonPrimitive("2.0"))
+        put("method", kotlinx.serialization.json.JsonPrimitive("channel/frame"))
+        put("params", kotlinx.serialization.json.buildJsonObject {
+            put("channel", kotlinx.serialization.json.JsonPrimitive(uri))
+            put("data", kotlinx.serialization.json.JsonPrimitive(data))
+            if (final) put("final", kotlinx.serialization.json.JsonPrimitive(true))
+        })
+    }.toString()
+
+    private fun channelSnapshot(uri: String, turns: List<String>) =
+        """{"jsonrpc":"2.0","method":"channel/snapshot","params":{"channel":"$uri","snapshot":${chatSnapshotJson(uri, SNAPSHOT_SEQ, turns)}}}"""
+
+    @Test
+    fun `a chat whose host takes windowed delivery loads from its snapshot sent in pieces and follows later actions`() = runTest {
+        val rig = rig(HostScript(onChatSubscribe = { id, _ -> result(id, windowAccepted) })).start()
+        val store = rig.host.openChat(CHAT_A)
+        runCurrent()
+        assertNull(store.state.value, "the reply holds no snapshot: it follows")
+        assertEquals(ConnState.Online, rig.host.connection.value)
+
+        val pieces = channelSnapshot(CHAT_A, (1..12).map { turnJson("t$it") }).chunked(400)
+        pieces.forEachIndexed { i, piece -> rig.socket.serverSends(channelFrame(CHAT_A, piece, final = i == pieces.lastIndex)) }
+        runCurrent()
+        settle()
+        assertEquals(12, store.state.value!!.turns.size)
+        assertNull(store.error.value)
+        assertTrue(rig.socket.sentMethods.contains("channel/credit"), "the host was told what was taken in")
+
+        rig.socket.serverSends(actionFrame(CHAT_A, TURN_STARTED, SNAPSHOT_SEQ + 1))
+        runCurrent()
+        settle()
+        assertEquals("t1", store.state.value!!.activeTurn?.id)
+    }
+
+    @Test
+    fun `a windowed chat the host breaks the rules on shows as not loaded, and retry asks again`() = runTest {
+        val rig = rig(HostScript(onChatSubscribe = { id, _ -> result(id, windowAccepted) })).start()
+        val store = rig.host.openChat(CHAT_A)
+        runCurrent()
+
+        rig.socket.serverSends(channelFrame(CHAT_A, "{\"jsonrpc\":", final = false))
+        rig.socket.serverSends(channelSnapshot(CHAT_A, emptyList())) // a whole message in the middle of a fragmented one
+        runCurrent()
+        settle()
+
+        assertIs<ChatNotLoadedException>(store.error.value)
+        assertEquals(ConnState.Online, rig.host.connection.value, "only the chat was given up")
+        assertEquals(1, rig.socket.sentMethods.count { it == "unsubscribe" })
+
+        store.retry()
+        runCurrent()
+        assertEquals(2, rig.socket.sentMethods.count { it == "subscribe" })
+        rig.socket.serverSends(channelSnapshot(CHAT_A, listOf(turnJson("again"))))
+        runCurrent()
+        settle()
+        assertEquals("again", store.state.value!!.turns.single().id)
+    }
+
+    @Test
+    fun `a chat is subscribed with the windowed offer, and a host that declines it loads the chat as before`() = runTest {
+        val rig = rig(HostScript()).start()
+        val store = rig.host.openChat(CHAT_A)
+        runCurrent()
+
+        assertEquals("Chat", store.state.value!!.title)
+        val subscribe = rig.socket.sent.last { it["method"]?.jsonPrimitive?.content == "subscribe" }
+        assertTrue(subscribe["params"]!!.jsonObject.containsKey("flowControl"))
+        assertFalse(rig.socket.sentMethods.contains("channel/credit"))
+    }
+
     @Test
     fun `a chat that is slow to arrive does not keep the connection from being online`() = runTest {
         val rig = rig(HostScript(onChatSubscribe = { _, _ -> null })).start()

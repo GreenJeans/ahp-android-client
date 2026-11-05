@@ -342,6 +342,8 @@ internal class Probe(private val args: ProbeArgs, private val out: (String) -> U
                     is ServerNotification.Action -> log("", "  action ${note.envelope.channel} seq=${note.envelope.serverSeq} ${actionType(note.envelope.action)}")
                     is ServerNotification.Named -> log("", "  notification ${note.method}")
                     is ServerNotification.Undecodable -> log("warn", "  undecodable ${note.method ?: "frame"}: ${note.cause.javaClass.simpleName}")
+                    is ServerNotification.ChannelSnapshot -> log("", "  snapshot ${note.snapshot.resource} (windowed)")
+                    is ServerNotification.ChannelBroken -> log("warn", "  windowed channel ${note.channel} given up: ${note.cause.message}")
                 }
             }
         }

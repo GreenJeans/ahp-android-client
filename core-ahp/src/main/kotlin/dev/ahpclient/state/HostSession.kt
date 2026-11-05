@@ -8,6 +8,7 @@ import kotlin.concurrent.Volatile
 
 import dev.ahpclient.ahp.AhpConnection
 import dev.ahpclient.ahp.AhpException
+import dev.ahpclient.ahp.ChatSubscription
 import dev.ahpclient.ahp.ROOT_CHANNEL
 import dev.ahpclient.ahp.ServerNotification
 import dev.ahpclient.security.SessionListCache
@@ -495,6 +496,8 @@ class HostSession(
      */
     suspend fun dispatch(channel: String, action: StateAction, timeoutMs: Long = DISPATCH_TIMEOUT_MS): DispatchOutcome {
         val ahp = current ?: throw IOException("Not connected to the host")
+        // On a windowed chat, wait while the host has not yet taken in what was sent before (P9). Nothing is sent if it never does.
+        if (!ahp.awaitSendRoom(channel, timeoutMs)) throw IOException("The host has not taken in what was sent before")
         val clientSeq = nextClientSeq.getAndIncrement()
         val reply = CompletableDeferred<DispatchOutcome>()
         // Registered before sending: the echo can be read before dispatchAction returns.
@@ -812,9 +815,17 @@ class HostSession(
     private suspend fun subscribeIfNeeded(ahp: AhpConnection, store: ChatStore) {
         if (!store.needsSubscribe) return
         try {
-            ahp.subscribe(store.uri, SubscribeView(turns = CHAT_SNAPSHOT_TURNS)).snapshot?.let { store.seed(it, ahp.configFacts(store.uri)) }
+            // Offered windowed delivery (P9), so a chat too long for one message comes in pieces; a host that declines answers as before.
+            when (val subscription = ahp.subscribeChat(store.uri, SubscribeView(turns = CHAT_SNAPSHOT_TURNS))) {
+                is ChatSubscription.Ordinary -> subscription.snapshot?.let { store.seed(it, ahp.configFacts(store.uri)) }
+                // The snapshot follows as its own message, however long it takes; the screen says a long chat can take a while.
+                ChatSubscription.Windowed -> Unit
+            }
         } catch (e: AhpException.Rpc) {
             if (e.code == AhpErrorCodes.SESSION_NOT_FOUND || e.code == AhpErrorCodes.NOT_FOUND) store.markGone() else throw e
+        } catch (_: AhpException.Protocol) {
+            // The host took the offer with limits this app cannot keep to; it has been told to stop. Retrying asks again.
+            store.markNotLoaded(interrupted = false)
         } catch (_: AhpException.Timeout) {
             // The connection is fine and the host is slow with this chat: say so, instead of tearing down a good connection to ask again.
             // The host is told to stop, or it goes on building a snapshot nobody is waiting for.
@@ -852,6 +863,9 @@ class HostSession(
             }
             is ServerNotification.Named -> root.applyNotification(note.method, note.params)
             is ServerNotification.Undecodable -> _undecodableFrames.update { it + 1 }
+            is ServerNotification.ChannelSnapshot -> current?.let { applySnapshots(listOf(note.snapshot), it) }
+            // A windowed chat the host broke the rules on: shown as not loaded, with the way to try again; the rest carries on.
+            is ServerNotification.ChannelBroken -> chatFor(note.channel)?.markNotLoaded(interrupted = false)
         }
     }
 

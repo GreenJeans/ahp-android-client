@@ -6,7 +6,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class CapabilityPolicyTest {
-    private val allowed = setOf("initialize", "reconnect", "ping", "subscribe", "unsubscribe", "listSessions", "fetchTurns", "resourceRead")
+    private val allowed = setOf("initialize", "reconnect", "ping", "subscribe", "unsubscribe", "channel/credit", "listSessions", "fetchTurns", "resourceRead")
 
     private val interactActions = setOf(
         "chat/turnStarted", "chat/pendingMessageSet", "chat/pendingMessageRemoved", "chat/queuedMessagesReordered",
@@ -21,7 +21,7 @@ class CapabilityPolicyTest {
         "resourceWrite", "resourceList", "resourceCopy", "resourceDelete", "resourceMove", "resourceMkdir", "resourceRequest", "resourceResolve",
         "createSession", "disposeSession", "createChat", "disposeChat", "createTerminal", "disposeTerminal",
         "invokeChangesetOperation", "createResourceWatch", "resolveSessionConfig", "sessionConfigCompletions",
-        "runAutomation", "fetchAutomationRuns", "listAutomationTriggerDefinitions", "channel/credit", "tcp/data", "", "Initialize",
+        "runAutomation", "fetchAutomationRuns", "listAutomationTriggerDefinitions", "channel/frame", "tcp/data", "", "Initialize",
     )
 
     @Test
