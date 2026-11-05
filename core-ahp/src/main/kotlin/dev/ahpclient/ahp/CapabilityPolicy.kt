@@ -66,7 +66,8 @@ class CapabilityPolicy private constructor(
          * `resource*` method here: it changes nothing on the host, and the app asks only for content addresses the open
          * changeset itself lists (see `ChangesetDiffs`). `unsubscribe` is a notification in AHP 1.0 but is still a method name on the wire.
          */
-        private val READ_METHODS = setOf("initialize", "reconnect", "ping", "subscribe", "unsubscribe", "listSessions", "fetchTurns", "resourceRead")
+        // `channel/credit` releases what a windowed chat sent (P9): without it the host stops sending, so reading needs it.
+    private val READ_METHODS = setOf("initialize", "reconnect", "ping", "subscribe", "unsubscribe", "channel/credit", "listSessions", "fetchTurns", "resourceRead")
 
         val READ = CapabilityPolicy(name = "READ", methods = READ_METHODS, actionTypes = emptySet())
 

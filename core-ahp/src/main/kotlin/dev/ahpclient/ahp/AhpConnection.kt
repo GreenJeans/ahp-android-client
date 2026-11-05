@@ -91,6 +91,19 @@ sealed interface ServerNotification {
 
     /** A frame that could not be decoded; the state mirror may have missed an update, so the caller should resubscribe. */
     data class Undecodable(val method: String?, val cause: Throwable) : ServerNotification
+
+    /** A windowed channel's state (`channel/snapshot`), which comes after its `subscribe` reply instead of in it. */
+    data class ChannelSnapshot(val snapshot: Snapshot) : ServerNotification
+
+    /** A windowed channel the host broke the rules on. It has been unsubscribed; the connection and other channels carry on. */
+    data class ChannelBroken(val channel: String, val cause: Throwable) : ServerNotification
+}
+
+/** How a chat subscription came back: with its snapshot, as ordinary delivery, or windowed, its snapshot to follow as [ServerNotification.ChannelSnapshot]. */
+sealed interface ChatSubscription {
+    data class Ordinary(val snapshot: Snapshot?) : ChatSubscription
+
+    data object Windowed : ChatSubscription
 }
 
 sealed class AhpException(message: String, cause: Throwable? = null) : Exception(message, cause) {
@@ -136,6 +149,12 @@ class AhpConnection(
     private val inbox = Channel<ServerNotification>(maxQueuedNotifications)
     private val closedBy = AtomicReference<AhpException.ConnectionClosed?>(null)
 
+    /** The windowed subscriptions on this connection, by channel (see [ChannelWindow]). */
+    private val windows = ConcurrentHashMap<String, ChannelWindow>()
+
+    /** The `subscribe` requests that offered windowed delivery and are waiting for their reply, by request id, with the channel and the offer. */
+    private val windowOffers = ConcurrentHashMap<Long, Pair<String, ReceiveLimits>>()
+
     @Volatile
     var lastServerSeq: Long = initialServerSeq
         private set
@@ -178,6 +197,36 @@ class AhpConnection(
 
     suspend fun subscribe(channel: String, view: SubscribeView? = null): SubscribeResult =
         request("subscribe", SubscribeParams.serializer(), SubscribeParams(channel = channel, view = view), SubscribeResult.serializer())
+
+    /**
+     * `subscribe` for a chat, offering windowed delivery ([ChannelWindow.CHAT_RECEIVE]), so a chat too long for one message arrives in
+     * fragments. A host that does not take the offer answers as before, with the snapshot. One that takes it answers without one, and the
+     * snapshot follows as [ServerNotification.ChannelSnapshot]. A chat that is already windowed here is not asked for again: its snapshot
+     * is on its way. Limits the host should not have given end in [AhpException.Protocol], with the chat unsubscribed.
+     */
+    suspend fun subscribeChat(channel: String, view: SubscribeView? = null): ChatSubscription {
+        if (windows.containsKey(channel)) return ChatSubscription.Windowed
+        val params = json.encodeToJsonElement(SubscribeParams.serializer(), SubscribeParams(channel = channel, view = view)).jsonObject
+        val offered = JsonObject(params + ("flowControl" to buildJsonObject { put("receive", ChannelWindow.CHAT_RECEIVE.toJson()) }))
+        val result = requestRaw("subscribe", offered, windowOffer = channel to ChannelWindow.CHAT_RECEIVE)
+        if (windows.containsKey(channel)) return ChatSubscription.Windowed
+        return try {
+            ChatSubscription.Ordinary(json.decodeFromJsonElement(SubscribeResult.serializer(), result).snapshot)
+        } catch (e: SerializationException) {
+            throw AhpException.Protocol("'subscribe' result does not match the expected shape", e)
+        } catch (e: IllegalArgumentException) {
+            throw AhpException.Protocol("'subscribe' result does not match the expected shape", e)
+        }
+    }
+
+    /** Whether [channel] is windowed on this connection. */
+    fun isWindowed(channel: String): Boolean = windows.containsKey(channel)
+
+    /**
+     * Waits up to [timeoutMs] while the host's window for [channel] is full, so an action sent next is not held back. True at once for a
+     * channel that is not windowed. @return false when the host gave no credit in time.
+     */
+    suspend fun awaitSendRoom(channel: String, timeoutMs: Long): Boolean = windows[channel]?.awaitRoom(timeoutMs) ?: true
 
     /**
      * `subscribe` for a terminal, whose reply is read by hand. The library picks the kind of a snapshot from the keys it holds
@@ -323,6 +372,9 @@ class AhpConnection(
     fun unsubscribe(channel: String) {
         policy.check("unsubscribe")
         configFacts.remove(channel)
+        // Whatever still arrives for it is from the subscription just ended, including a reply to a `subscribe` not yet answered: ignored.
+        windows.remove(channel)
+        windowOffers.entries.removeAll { it.value.first == channel }
         val frame = buildJsonObject {
             put("jsonrpc", "2.0")
             put("method", "unsubscribe")
@@ -351,7 +403,13 @@ class AhpConnection(
             put("method", CapabilityPolicy.DISPATCH_ACTION)
             put("params", json.encodeToJsonElement(DispatchActionParams.serializer(), DispatchActionParams(channel = channel, clientSeq = clientSeq, action = action)))
         }
-        if (!socket.send(frame.toString())) throw closedBy.get() ?: AhpException.ConnectionClosed(null)
+        val text = frame.toString()
+        // On a windowed channel what this app sends counts against the host's window, and nothing is sent in fragments.
+        windows[channel]?.let { window ->
+            if (!window.fitsFrame(text)) throw AhpException.Protocol("this action is larger than the host accepts in one message")
+            if (!window.trySend(text)) throw AhpException.Protocol("the host has not yet taken in what was sent before")
+        }
+        if (!socket.send(text)) throw closedBy.get() ?: AhpException.ConnectionClosed(null)
     }
 
     private fun encodeAction(action: StateAction): JsonObject? =
@@ -377,11 +435,18 @@ class AhpConnection(
         }
     }
 
-    private suspend fun requestRaw(method: String, params: JsonObject, requestOffered: List<String>? = null): JsonElement {
+    private suspend fun requestRaw(
+        method: String,
+        params: JsonObject,
+        requestOffered: List<String>? = null,
+        windowOffer: Pair<String, ReceiveLimits>? = null,
+    ): JsonElement {
         policy.check(method)
         closedBy.get()?.let { throw it }
         val id = nextId.getAndIncrement()
         val response = CompletableDeferred<JsonElement>()
+        // Read by the reader as the reply arrives, so the window starts before any frame for the channel can be read.
+        windowOffer?.let { windowOffers[id] = it }
         pending[id] = response
         // The reader may have closed between the first check and registering: fail now instead of waiting for a timeout.
         closedBy.get()?.let {
@@ -406,6 +471,7 @@ class AhpConnection(
             throw if (e.code == AhpErrorCodes.UNSUPPORTED_PROTOCOL_VERSION && requestOffered != null) toUnsupported(e, requestOffered) else e
         } finally {
             pending.remove(id)
+            windowOffers.remove(id)
         }
     }
 
@@ -452,11 +518,112 @@ class AhpConnection(
         val method = (frame["method"] as? JsonPrimitive)?.contentOrNull
         val id = (frame["id"] as? JsonPrimitive)?.longOrNull
         when {
-            method != null && frame["id"] == null -> handleNotification(method, frame["params"] as? JsonObject ?: JsonObject(emptyMap()))
+            method != null && frame["id"] == null -> {
+                val params = frame["params"] as? JsonObject ?: JsonObject(emptyMap())
+                val window = (params["channel"] as? JsonPrimitive)?.contentOrNull?.let { windows[it] }
+                when {
+                    window != null -> handleWindowed(window, text, method, params)
+                    // Windowed delivery's own messages for a channel that is not windowed (any more): from a subscription that has ended.
+                    method == ChannelWindow.FRAME || method == ChannelWindow.CREDIT || method == ChannelWindow.SNAPSHOT -> Unit
+                    else -> handleNotification(method, params)
+                }
+            }
             method != null && id != null -> replyMethodNotFound(id)
             id != null -> handleResponse(id, frame)
             else -> enqueue(ServerNotification.Undecodable(method, AhpException.Protocol("frame has neither a method nor an id")))
         }
+    }
+
+    /**
+     * A notification on a windowed channel, [text] as it came. Credit from the host is noted; any other message counts against this
+     * app's window, a fragment is joined until its last piece, and a whole message is handled as one sent without a window would be.
+     */
+    private fun handleWindowed(window: ChannelWindow, text: String, method: String, params: JsonObject) {
+        if (method == ChannelWindow.CREDIT) {
+            (params["consumedBytes"] as? JsonPrimitive)?.takeIf { !it.isString }?.longOrNull?.let(window::acceptCredit)
+            return
+        }
+        try {
+            val whole = window.receive(text, method, params)
+            if (whole != null) {
+                if (whole === text) deliverWindowed(window, method, params) else deliverJoined(window, whole)
+            }
+        } catch (e: ChannelWindowException) {
+            breakWindow(window, e)
+            return
+        }
+        window.creditDue()?.let { consumed -> sendCredit(window.channel, consumed) }
+    }
+
+    /** A message joined from fragments: it must be a notification for the same channel, and not another fragment. */
+    private fun deliverJoined(window: ChannelWindow, joined: String) {
+        val inner = try {
+            json.parseToJsonElement(joined).jsonObject
+        } catch (e: IllegalArgumentException) {
+            throw ChannelWindowException(window.channel, "the fragments did not join into a JSON object")
+        }
+        val method = (inner["method"] as? JsonPrimitive)?.contentOrNull
+        val params = inner["params"] as? JsonObject ?: JsonObject(emptyMap())
+        val channel = (params["channel"] as? JsonPrimitive)?.contentOrNull
+        if (method == null || inner["id"] != null || channel != window.channel || method == ChannelWindow.FRAME || method == ChannelWindow.CREDIT) {
+            throw ChannelWindowException(window.channel, "the fragments did not join into one of its own data messages")
+        }
+        deliverWindowed(window, method, params)
+    }
+
+    private fun deliverWindowed(window: ChannelWindow, method: String, params: JsonObject) {
+        if (method != ChannelWindow.SNAPSHOT) {
+            handleNotification(method, params)
+            return
+        }
+        val fixed = HostQuirks.result(params) as? JsonObject ?: params
+        ConfigFacts.fromResult(fixed)[window.channel]?.let { configFacts[window.channel] = it }
+        val snapshot = try {
+            json.decodeFromJsonElement(Snapshot.serializer(), fixed["snapshot"] ?: JsonNull)
+        } catch (e: SerializationException) {
+            throw ChannelWindowException(window.channel, "its snapshot could not be read")
+        } catch (e: IllegalArgumentException) {
+            throw ChannelWindowException(window.channel, "its snapshot could not be read")
+        }
+        if (snapshot.resource != window.channel) throw ChannelWindowException(window.channel, "its snapshot was for ${snapshot.resource}")
+        enqueue(ServerNotification.ChannelSnapshot(snapshot))
+    }
+
+    /** Gives up [window]'s channel alone: unsubscribed, so the host stops, and reported, so what shows it can say so. */
+    private fun breakWindow(window: ChannelWindow, cause: ChannelWindowException) {
+        if (windows.remove(window.channel) == null) return
+        unsubscribe(window.channel)
+        enqueue(ServerNotification.ChannelBroken(window.channel, cause))
+    }
+
+    /** `channel/credit`, a control message: it does not count against any window and is allowed on every tier, being needed to read. */
+    private fun sendCredit(channel: String, consumedBytes: Long) {
+        policy.check(ChannelWindow.CREDIT)
+        val frame = buildJsonObject {
+            put("jsonrpc", "2.0")
+            put("method", ChannelWindow.CREDIT)
+            put("params", buildJsonObject {
+                put("channel", channel)
+                put("consumedBytes", consumedBytes)
+            })
+        }
+        socket.send(frame.toString())
+    }
+
+    /**
+     * The reply to a `subscribe` that offered windowed delivery: with `flowControl` and no snapshot, the window starts now, before the
+     * reader reads on. @return why the reply cannot be used, or null when it can (taken or declined).
+     */
+    private fun acceptWindow(channel: String, offer: ReceiveLimits, result: JsonElement?): AhpException? {
+        val obj = result as? JsonObject ?: return null
+        val flowControl = obj["flowControl"] as? JsonObject ?: return null
+        val receive = ReceiveLimits.from(flowControl["clientReceive"])
+        val send = ReceiveLimits.from(flowControl["hostReceive"])
+        if (receive == null || send == null || !receive.within(offer) || obj["snapshot"] != null) {
+            return AhpException.Protocol("'subscribe' accepted windowed delivery for $channel with limits this app cannot use")
+        }
+        windows[channel] = ChannelWindow(channel, receive, send)
+        return null
     }
 
     private fun handleNotification(method: String, params: JsonObject) {
@@ -481,6 +648,14 @@ class AhpConnection(
         val waiting = pending[id] ?: return
         val error = frame["error"] as? JsonObject
         if (error == null) {
+            windowOffers.remove(id)?.let { (channel, offer) ->
+                acceptWindow(channel, offer, frame["result"])?.let { refused ->
+                    // The host now sends as it agreed, which this app cannot follow: it is told to stop, and the caller hears why.
+                    unsubscribe(channel)
+                    waiting.completeExceptionally(refused)
+                    return
+                }
+            }
             // Recorded before the waiting caller is released, so it can read them as soon as it has its reply.
             ConfigFacts.fromResult(frame["result"]).forEach { (channel, facts) -> if (configFacts.size < MAX_CONFIG_FACTS || configFacts.containsKey(channel)) configFacts[channel] = facts }
             waiting.complete(HostQuirks.result(frame["result"]) ?: JsonNull)

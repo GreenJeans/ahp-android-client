@@ -38,6 +38,7 @@ Checked 2026-11-02 on an API 36 emulator and the JVM suite. The boxes in each sl
 | P4 Canvas and annotations channels | Built, JVM and UI tests | Live channel subscribe; system back on the canvas screen has no automated test (no `AppRoot` harness with a host) |
 | P5 Working directories | Built, JVM and UI tests | That a live host applies set and remove. The VS Code host refused the add: "Session working-directory actions require an Editor Window client", so the success path cannot be tried against it. Add and Remove are now each hidden after the host's own refusal (see Slice 5, As built) |
 | P8a Host terminals, read only | Built, JVM and UI tests (`HostTerminalsUiTest` 48/48 with TerminalUi and Accessibility on the emulator, 2026-11-04) | A live host that lists terminals in its root state (none checked yet). System back from a host terminal inside `AppRoot` has no automated test (same gap as P4) |
+| P9 Windowed delivery for chats | Built, JVM tests | A host that accepts it: needs VS Code 1.146 or Insiders. Checked live that a 1.145 host still loads chats (2026-11-05) |
 | iOS | Not compiled for P1 to P5 or P8a | Kotlin/Native needs a Mac; `commonUi` changes were only reviewed for JVM-only calls |
 
 ### Decisions taken in review
@@ -304,3 +305,29 @@ Today, `ahp-android-client` detects whether a session was spawned by an automati
 
 - [ ] **AC-P8.1** (built, JVM tests pass; the UI tests in `HostTerminalsUiTest` pass on the emulator, 48/48 with `TerminalUiTest` and `AccessibilityTest`; not checked live, as the test host lists no terminals in its root state) `RootState.terminals` can be opened read-only in `TerminalScreen` without enabling `terminal/input`.
 - [x] **AC-P8.2** `terminal/input`, `authenticate`, `session/activeClientSet`, and `resourceWrite|Delete|Move|Copy` remain blocked in `CapabilityPolicyTest` across `READ`, `INTERACT`, and `MANAGE`. (JVM only; the same test also refuses `createTerminal`, `disposeTerminal`, `terminal/resized`, `terminal/cleared` and `terminal/claimed` on every tier.)
+
+## Slice 9 — Windowed Delivery for Chats (P9)
+
+### Problem
+
+- A long chat cannot be loaded: the host sends a chat's snapshot as one message, and the dev tunnel carries at most 16 MB in one message (`ChatNotLoadedException`).
+- AHP's [windowed delivery](https://github.com/microsoft/agent-host-protocol/blob/main/docs/specification/windowed-delivery.md) lets a client offer `flowControl` on `subscribe`. The host then sends large messages as `channel/frame` fragments and waits for `channel/credit` before it sends more than a window. VS Code 1.146 (`microsoft/vscode#345886`) accepts it for every state channel but the root, with a 1 MiB window and frames up to 16 MiB. Hosts that are not offered it keep ordinary delivery.
+- The 1.0.0 Kotlin library has no types for it, so the messages are written and read as JSON here.
+
+### Design
+
+1. **Chats only.** Chat subscriptions offer `flowControl.receive` (window 4 MiB, frames up to 1 MiB; the host may lower both). Sessions, the root and terminals keep ordinary delivery: they are small, and the root is never windowed.
+2. **Accepted or not.** A result with `snapshot` and no `flowControl` is ordinary delivery, as today. A result with `flowControl` and no `snapshot` starts the window, registered as the reply is read, before any frame for the channel can be. The chat's state then arrives as a `channel/snapshot` data message. Limits above the offer, or a frame limit under 1024, are refused: the chat is unsubscribed and shown as not loaded.
+3. **Counting.** Every data message on a windowed chat counts its received text as UTF-16 bytes (two per UTF-16 unit, measured before parsing), and so does every `channel/frame`. `channel/credit` and `unsubscribe` are control messages and are not counted.
+4. **Fragments.** `data` pieces are joined in order and parsed only on `final: true`. An empty piece, a data message in the middle of a fragmented one, a joined message for another channel, or one past 64 MiB of text is a broken channel: it is unsubscribed and shown as not loaded, and the connection stays up.
+5. **Credit.** Data is released as it is handed on to be applied. Credit (`consumedBytes`, a running total) is sent once three quarters of the window is uncredited, fragments included, so the host never waits on a whole message.
+6. **Sending.** A `dispatchAction` on a windowed chat counts against the host's limits. It waits (up to the dispatch timeout) while the host's window is full, and is refused, before it is sent, when larger than the host's frame limit. Messages are not sent in fragments.
+7. **Reconnecting.** Chats are not named in `reconnect`; each is subscribed afresh on the new connection, as today, so its counters start at zero and recovery is by a new snapshot. Frames for a channel that is no longer windowed, such as after `unsubscribe`, are ignored.
+8. **Policy.** `channel/credit` is allowed on every tier: it is needed to read.
+
+### Acceptance Criteria
+
+- [x] **AC-P9.1** A chat whose host accepts windowed delivery loads from a `channel/snapshot` sent whole or in fragments, and follows later actions, with credit sent as specified. (JVM tests in `WindowedDeliveryTest` and `HostSessionChatTest` with a scripted host; not yet against a real one, see AC-P9.4.)
+- [x] **AC-P9.2** A host that does not offer it, or a 1.145 host, behaves exactly as before. (JVM tests; live on a Pixel 10 against VS Code 1.145 on 2026-11-05: a chat opened and showed its turns.)
+- [x] **AC-P9.3** Broken fragments or limits mark only that chat not loaded; the connection and other chats carry on. (JVM tests.)
+- [ ] **AC-P9.4** Live: a chat over 16 MB loads through a 1.146 or Insiders host. (Needs that host.)
