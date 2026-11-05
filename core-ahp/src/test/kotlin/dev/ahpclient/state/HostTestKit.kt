@@ -122,6 +122,10 @@ internal class HostScript(
     val sessionAnnotations: String? = null,
     /** What a subscribed annotations channel reports, as the state JSON. */
     val annotationsState: String = """{"annotations":[]}""",
+    /** The `automations` capability `initialize` reports, as JSON; null for a host without automations. */
+    val automations: String? = null,
+    /** What the automation catalogue reports, as the state JSON. The reply names it `ahp-automations:`, as VS Code does. */
+    val automationsState: String = """{"entries":[]}""",
 ) {
     fun reply(method: String, id: Long?, params: JsonObject): String? = when (method) {
         "initialize" -> initializeReply(id, params)
@@ -152,7 +156,8 @@ internal class HostScript(
             .filter { it.startsWith("ahp-terminal:/") || it.startsWith("agenthost-terminal://") }
             .map { Json.parseToJsonElement(terminalSnapshotJson(it, INITIAL_SEQ, terminalState)) }
         val merged = JsonObject(base + ("snapshots" to JsonArray(snapshots + sessionSnapshots + terminalSnapshots)))
-        return result(id, merged.toString())
+        val withAutomations = automations?.let { JsonObject(merged + ("automations" to Json.parseToJsonElement(it))) } ?: merged
+        return result(id, withAutomations.toString())
     }
 
     /** Puts the scripted terminal catalogue into the root snapshot, when there is one. */
@@ -177,6 +182,10 @@ internal class HostScript(
             result(id, """{"snapshot":{"resource":"$channel","fromSeq":$SNAPSHOT_SEQ,"state":{"instanceId":"i1","extensionId":"ext","canvasId":"web","title":"Preview"}}}""")
         channel.startsWith("ahp-annotations:/") ->
             result(id, """{"snapshot":{"resource":"$channel","fromSeq":$SNAPSHOT_SEQ,"state":$annotationsState}}""")
+        channel.startsWith("ahp-automations:") ->
+            result(id, """{"snapshot":{"resource":"ahp-automations:","fromSeq":$SNAPSHOT_SEQ,"state":$automationsState}}""")
+        channel.startsWith("ahp-automation-run:") ->
+            result(id, """{"snapshot":{"resource":"$channel","fromSeq":$SNAPSHOT_SEQ,"state":{"resource":"$channel","automation":"ahp-automation:/a1","origin":{"kind":"manual"},"lifecycle":{"status":"running","createdAt":"2026-11-05T10:00:00.000Z","startedAt":"2026-11-05T10:00:01.000Z"},"sessions":[]}}}""")
         channel in missingSessions -> error(id, -32001, "no such session")
         else -> result(id, """{"snapshot":${sessionSnapshot(channel, SNAPSHOT_SEQ, inputNeeded = inputNeeded, chats = sessionChats, changesets = sessionChangesets, config = sessionConfig, annotations = sessionAnnotations)}}""")
     }

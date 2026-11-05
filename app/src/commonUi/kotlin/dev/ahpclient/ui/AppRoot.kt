@@ -291,6 +291,9 @@ private fun Shell(
 
     // The focused host's own terminals: only from the host's live root state, never a saved list.
     val hostTerminals = remember(rootState) { HostTerminalEntry.of(rootState) }
+    // The focused host's automations (P7), offered only when its last `initialize` said it has them.
+    val automationsOffered = connected?.session?.automations?.collectAsStateWithLifecycle()?.value != null
+    var automationsOpen by rememberSaveable { mutableStateOf(false) }
 
     HomeDrawer(
         menu = menu,
@@ -328,9 +331,18 @@ private fun Shell(
                 onSessionCreatedOnHost = showSessionOnHost,
                 terminals = hostTerminals,
                 onOpenTerminal = { uri -> menu.close(); controller.openTerminal(uri) },
+                onOpenAutomations = if (automationsOffered) ({ automationsOpen = true }) else null,
             )
         },
     ) {
+        if (automationsOpen && automationsOffered && connected != null) {
+            AutomationsHost(
+                session = connected.session,
+                controller = controller,
+                onOpenSession = { uri -> automationsOpen = false; showSession(uri) },
+                onDismiss = { automationsOpen = false },
+            )
+        }
         when (page) {
             Page.SETTINGS -> {
                 if (quickReplyProvider != null) {

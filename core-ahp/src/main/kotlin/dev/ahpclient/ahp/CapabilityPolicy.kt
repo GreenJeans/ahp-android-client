@@ -2,6 +2,7 @@ package dev.ahpclient.ahp
 
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 
 /** Thrown before any bytes leave the device when a call is outside the active tier. */
@@ -39,6 +40,15 @@ class CapabilityPolicy private constructor(
      * @throws CapabilityDeniedException when [action] is not an exact match for what this app may send.
      */
     fun checkContent(actionType: String?, action: JsonObject) {
+        if (actionType == AUTOMATION_UPDATE_REQUESTED) {
+            // Only on or off: a patch could otherwise rewrite the prompt an automation sends, or the session it starts.
+            val denied = CapabilityDeniedException(DISPATCH_ACTION, actionType)
+            if (action.keys.any { it != "type" && it != "resource" && it != "changes" }) throw denied
+            val changes = action["changes"] as? JsonObject ?: throw denied
+            val enabled = changes.entries.singleOrNull()?.takeIf { it.key == "enabled" }?.value as? JsonPrimitive ?: throw denied
+            if (enabled.isString || enabled.booleanOrNull == null) throw denied
+            return
+        }
         if (actionType != CHAT_CONFIG_CHANGED) return
         val denied = CapabilityDeniedException(DISPATCH_ACTION, actionType)
         if (action.keys.any { it != "type" && it != "config" }) throw denied
@@ -60,6 +70,9 @@ class CapabilityPolicy private constructor(
 
         /** Sets one of a chat's own settings (protocol 1.1.0). Allowed only with the content [checkContent] accepts. */
         const val CHAT_CONFIG_CHANGED = "chat/configChanged"
+
+        /** Changes an automation's definition (P7). Allowed only to turn its triggers on or off, which [checkContent] holds it to. */
+        const val AUTOMATION_UPDATE_REQUESTED = "automation/updateRequested"
 
         /**
          * Connect, observe, page through history, and read the content a changed file points at. `resourceRead` is the only
@@ -118,6 +131,9 @@ class CapabilityPolicy private constructor(
          * action, and none of them changes anything the agent runs or any file.
          */
         val MANAGE_ACTIONS = setOf(
+        // An automation's triggers on or off, and cancelling one of its runs (P7). Creating or removing one is not offered.
+        "automation/updateRequested",
+        "automationRun/cancelRequested",
             "session/isReadChanged",
             "session/isArchivedChanged",
             "session/titleChanged",

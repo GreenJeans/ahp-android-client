@@ -128,6 +128,8 @@ class CapabilityPolicyTest {
     }
 
     private val manageActions = setOf(
+        "automation/updateRequested",
+        "automationRun/cancelRequested",
         "session/isReadChanged",
         "session/isArchivedChanged",
         "session/titleChanged",
