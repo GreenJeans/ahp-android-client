@@ -124,3 +124,13 @@ Runs of the P1 to P5 work against a real host. Boxes in `docs/protocol-completio
 | The catalogue loads | Pass | One `subscribe`; the sheet listed "Nexus Context Snapshot" (Manual only, Off, one run Done Oct 8) and "Morning Session Digest" (Weekdays at 06:00 (America/Los_Angeles), On · Next run in 20h, four runs Done 3h to 3d ago), with a switch on each on the manage tier |
 | A run opens its session | Pass | Tapping "Done, 3h" opened "Morning digest of agent sessions", and the catalogue was unsubscribed as the sheet closed |
 | Switching one off, cancelling a run | Not tried | Both change the host's real automations; JVM tests cover what is sent and the policy that holds the update to `enabled` |
+## 2026-11-05: Pixel 10, P8 host terminals against VS Code 1.145
+
+**Setup.** Debug build of `claude/vscode-terminal-uris` over wireless adb, connected to the stable host and Insiders. Read only.
+
+| Check | Result | Notes |
+|---|---|---|
+| Host terminals are listed | **Fail, fixed** | No host showed a Terminals button. VS Code names its terminals `agenthost-terminal:/<id>` (one slash, seen in the root state), and the app took only `agenthost-terminal://…` and `ahp-terminal:/…`, so every one was dropped. With the fix the stable host showed "Terminals, 8 on the host", each "Agent Host Terminal, Running". The Insiders host lists none of its own |
+| A host terminal opens read only | Pass | Title "Agent Host Terminal", "Running · C:\Users\…\featagent-mesh-v3-remote-mail-r2", "Read only, as plain text.", and the PowerShell prompt. Nothing to type into |
+| Back | Pass | Back went to the drawer and the terminal was unsubscribed. Only `subscribe` and `unsubscribe` were sent |
+| Output arriving while watched (U7.2, terminal screen) | Not seen | The terminals were idle at a prompt |
