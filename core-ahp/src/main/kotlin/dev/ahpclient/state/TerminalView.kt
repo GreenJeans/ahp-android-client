@@ -14,11 +14,13 @@ object TerminalLinks {
     /** The longest terminal address accepted. A real one carries its session, chat and tool call in a query, and runs to about 500 characters. */
     const val MAX_URI = 1_024
 
-    private val SCHEMES = listOf("agenthost-terminal://", "ahp-terminal:/")
+    /** VS Code names its own `agenthost-terminal:/<id>` (one slash); `agenthost-terminal://…` and `ahp-terminal:/…` are seen too. */
+    private val SCHEMES = listOf("agenthost-terminal:", "ahp-terminal:")
 
     /** Only an address that is a terminal's, short enough and free of control characters, is ever subscribed to. */
     fun isTerminalUri(uri: String): Boolean =
-        uri.length <= MAX_URI && SCHEMES.any { uri.startsWith(it) && uri.length > it.length } && uri.none { it.isISOControl() }
+        uri.length <= MAX_URI && uri.none { it.isISOControl() } &&
+            SCHEMES.any { scheme -> uri.startsWith(scheme) && uri.removePrefix(scheme).let { rest -> rest.startsWith("/") && rest.trimStart('/').isNotEmpty() } }
 
     /**
      * The terminal addresses that tool results in [chat] name, and only those. A person can open exactly these from this chat,

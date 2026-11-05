@@ -179,7 +179,9 @@ class TerminalViewTest {
     fun `a terminal address is told from anything else`() {
         assertTrue(TerminalLinks.isTerminalUri("ahp-terminal:/t1"))
         assertTrue(TerminalLinks.isTerminalUri(TERMINAL_REAL))
-        listOf("", "ahp-terminal:/", "agenthost-terminal://", "ahp-chat:/x", "https://example.com", "ahp-terminal:/a\u0000b", "ahp-terminal:/" + "x".repeat(2_000))
+        // How VS Code 1.145 and 1.146 name their own terminals in the root state (seen live 2026-11-05): one slash.
+        assertTrue(TerminalLinks.isTerminalUri("agenthost-terminal:/a2a78056-0390-4579-98ea-849159e94777"))
+        listOf("", "ahp-terminal:/", "agenthost-terminal://", "agenthost-terminal:/", "agenthost-terminal:", "agenthost-terminalx:/a", "ahp-terminal:t1", "ahp-chat:/x", "https://example.com", "ahp-terminal:/a\u0000b", "ahp-terminal:/" + "x".repeat(2_000))
             .forEach { assertFalse(TerminalLinks.isTerminalUri(it), it.take(40)) }
     }
 
