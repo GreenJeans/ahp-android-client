@@ -38,7 +38,7 @@ Checked 2026-11-02 on an API 36 emulator and the JVM suite. The boxes in each sl
 | P4 Canvas and annotations channels | Built, JVM and UI tests | Live channel subscribe; system back on the canvas screen has no automated test (no `AppRoot` harness with a host) |
 | P5 Working directories | Built, JVM and UI tests | That a live host applies set and remove. The VS Code host refused the add: "Session working-directory actions require an Editor Window client", so the success path cannot be tried against it. Add and Remove are now each hidden after the host's own refusal (see Slice 5, As built) |
 | P8a Host terminals, read only | Built, JVM and UI tests (`HostTerminalsUiTest` 48/48 with TerminalUi and Accessibility on the emulator, 2026-11-04) | A live host that lists terminals in its root state (none checked yet). System back from a host terminal inside `AppRoot` has no automated test (same gap as P4) |
-| P7 Host automations | Built, JVM and UI tests | Live against VS Code Insiders 1.146, the first host that offers automations |
+| P7 Host automations | Built, JVM and UI tests; live on VS Code 1.145 (2026-11-05): the catalogue and opening a run's session | Switching one off and cancelling a run, live |
 | P9 Windowed delivery for chats | Built, JVM tests; live against VS Code Insiders 1.146 (2026-11-05): the host took the offer and chats loaded from `channel/snapshot` | Fragments and credit live (no chat on the test host is large enough), and a chat over 16 MB (AC-P9.4) |
 | iOS | Not compiled for P1 to P5 or P8a | Kotlin/Native needs a Mac; `commonUi` changes were only reviewed for JVM-only calls |
 
@@ -282,11 +282,11 @@ Today, `ahp-android-client` detects whether a session was spawned by an automati
 ### Acceptance Criteria
 
 - [x] **AC-P7.1** `AutomationStore` decodes `AutomationState` and `AutomationRunState` and folds `automation/*` actions via `AutomationReducer` and `AutomationRunReducer`. (Built as a `ChannelStore` on `ahp-automations://` with the library's reducers, and one for a run's channel while a cancellation is answered. JVM tests in `AutomationsTest` and `AppControllerTest`.)
-- [ ] **AC-P7.2** Users can inspect host automations, jump to a run's primary session, and (on `MANAGE` tier) cancel an active run or toggle an automation's enabled state. (Built: the drawer's Automations button, shown only when `initialize` names `automations`, opens a sheet. JVM and UI tests; the live check against VS Code Insiders is to come.)
+- [ ] **AC-P7.2** Users can inspect host automations, jump to a run's primary session, and (on `MANAGE` tier) cancel an active run or toggle an automation's enabled state. (Built: the drawer's Automations button, shown only when `initialize` names `automations`, opens a sheet. JVM and UI tests. Live on a Pixel 10 against VS Code 1.145 on 2026-11-05: both automations listed with their schedule, state, next run and runs, and a run opened its session. Not yet tried live: switching one off and cancelling a run, which change the host's real automations.)
 
 ### As built (2026-11-05)
 
-- **Offered by.** VS Code Insiders 1.146 advertises `automations` (`create`, `schedules`, `runCancellation`, history of 50) and has real automations on it. The stable 1.145 host does not, and shows no button.
+- **Offered by.** VS Code Insiders 1.146 advertises `automations` (`create`, `schedules`, `runCancellation`, history of 50), and so does the stable 1.145 host: both list the same two automations.
 - **Channel name.** The protocol names the catalogue `ahp-automations://`; VS Code answers and sends actions as `ahp-automations:`. Both reach the one store (`Automations.canonical`).
 - **Action names.** The library's are `automation/updateRequested` and `automationRun/cancelRequested` (not `automation/runCancelRequested` as above). Cancellation is sent on the run's own `ahp-automation-run:` channel, held open only until the host answers.
 - **Policy.** Both are `MANAGE` actions. The update is held by `CapabilityPolicy.checkContent` to `changes: {"enabled": <boolean>}` alone, so it can never rewrite an automation's prompt, session or triggers. Creating and removing an automation, and starting a run, are not offered.

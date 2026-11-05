@@ -114,3 +114,13 @@ Runs of the P1 to P5 work against a real host. Boxes in `docs/protocol-completio
 | A chat over 16 MB (AC-P9.4) | Not run | No chat on the Insiders host is that large |
 
 **Seen in passing.** The phone's home screen still labels the app "AHP Client", though the installed APK's label is "Hostline" (`aapt2 dump badging`). The launcher keeps the name it had when the icon was placed; removing and adding the icon again should show the new name. Worth checking on a clean install before U9.1 is ticked.
+## 2026-11-05: Pixel 10, P7 host automations against VS Code 1.145
+
+**Setup.** Debug build of `claude/p7-automations` installed over wireless adb, sign-in kept, "Act for me" on (manage tier). Read only: the sheet was opened and one run's session was opened from it; no switch was flipped and no run cancelled.
+
+| Check | Result | Notes |
+|---|---|---|
+| The drawer offers Automations | Pass | The button showed for the stable host, which advertises `automations` as Insiders does |
+| The catalogue loads | Pass | One `subscribe`; the sheet listed "Nexus Context Snapshot" (Manual only, Off, one run Done Oct 8) and "Morning Session Digest" (Weekdays at 06:00 (America/Los_Angeles), On · Next run in 20h, four runs Done 3h to 3d ago), with a switch on each on the manage tier |
+| A run opens its session | Pass | Tapping "Done, 3h" opened "Morning digest of agent sessions", and the catalogue was unsubscribed as the sheet closed |
+| Switching one off, cancelling a run | Not tried | Both change the host's real automations; JVM tests cover what is sent and the policy that holds the update to `enabled` |
