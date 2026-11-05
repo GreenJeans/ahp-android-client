@@ -29,7 +29,10 @@ internal class MethodLoggingSocket(private val inner: TextSocket, private val lo
         return inner.send(text)
     }
 
-    /** Inbound frames leave a line only when they are big (just their size) or when the socket ends (why, never what it carried). */
+    /**
+     * Inbound frames leave a line only when they are big (just their size), when they are windowed delivery's own (P9: just the
+     * method, or that a reply took the offer), or when the socket ends (why, never what it carried).
+     */
     override suspend fun receive(): String {
         val frame = try {
             inner.receive()
@@ -40,6 +43,7 @@ internal class MethodLoggingSocket(private val inner: TextSocket, private val lo
             throw e
         }
         if (frame.length >= BIG_FRAME_CHARS) log("received a frame of ${frame.length} characters")
+        describeWindowedInbound(frame)?.let(log)
         return frame
     }
 
@@ -47,6 +51,19 @@ internal class MethodLoggingSocket(private val inner: TextSocket, private val lo
         const val BIG_FRAME_CHARS = 256 * 1024
     }
 }
+
+/**
+ * The log line for an inbound frame that is part of windowed delivery, or null for any other. Only the start of the frame is read,
+ * so a large one costs nothing: a host writes `method` and `result` before the long parts. Public so a test can state what may appear.
+ */
+fun describeWindowedInbound(frame: String): String? {
+    val head = frame.take(WINDOWED_HEAD_CHARS)
+    WINDOWED_METHODS.firstOrNull { head.contains("\"method\":\"$it\"") }?.let { return "received $it" }
+    return if (head.contains("\"result\":{") && head.contains("\"flowControl\":{")) "received a subscribe reply that took windowed delivery" else null
+}
+
+private const val WINDOWED_HEAD_CHARS = 200
+private val WINDOWED_METHODS = listOf("channel/snapshot", "channel/frame", "channel/credit")
 
 /**
  * Why something failed, for a log read on a developer's own phone: the class of each cause in the chain, the close code of a

@@ -38,7 +38,7 @@ Checked 2026-11-02 on an API 36 emulator and the JVM suite. The boxes in each sl
 | P4 Canvas and annotations channels | Built, JVM and UI tests | Live channel subscribe; system back on the canvas screen has no automated test (no `AppRoot` harness with a host) |
 | P5 Working directories | Built, JVM and UI tests | That a live host applies set and remove. The VS Code host refused the add: "Session working-directory actions require an Editor Window client", so the success path cannot be tried against it. Add and Remove are now each hidden after the host's own refusal (see Slice 5, As built) |
 | P8a Host terminals, read only | Built, JVM and UI tests (`HostTerminalsUiTest` 48/48 with TerminalUi and Accessibility on the emulator, 2026-11-04) | A live host that lists terminals in its root state (none checked yet). System back from a host terminal inside `AppRoot` has no automated test (same gap as P4) |
-| P9 Windowed delivery for chats | Built, JVM tests | A host that accepts it: needs VS Code 1.146 or Insiders. Checked live that a 1.145 host still loads chats (2026-11-05) |
+| P9 Windowed delivery for chats | Built, JVM tests; live against VS Code Insiders 1.146 (2026-11-05): the host took the offer and chats loaded from `channel/snapshot` | Fragments and credit live (no chat on the test host is large enough), and a chat over 16 MB (AC-P9.4) |
 | iOS | Not compiled for P1 to P5 or P8a | Kotlin/Native needs a Mac; `commonUi` changes were only reviewed for JVM-only calls |
 
 ### Decisions taken in review

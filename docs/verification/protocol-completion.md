@@ -100,3 +100,17 @@ Runs of the P1 to P5 work against a real host. Boxes in `docs/protocol-completio
 | P5: a refused add hides Add folder for this host | Pass | Choosing a temporary folder from "Add a recent folder" was refused; the button was replaced by "This host does not let this app add folders. It said: Session working-directory actions require an Editor Window client." |
 | P5: a refused remove | Not tried | The host's words cover all "working-directory actions", so a remove is very likely refused too, but trying it on a live session risks removing a folder the person uses |
 | P8: host terminals | Not checked | This host lists no terminals in its root state, so the app offers none |
+
+## 2026-11-05: Pixel 10, P9 windowed delivery against VS Code Insiders
+
+**Setup.** VS Code Insiders `1.146.0-insider` (commit `69176e5`, which contains `microsoft/vscode#345886`) on the same PC, with Remote Tunnel Access on as the host "insiders", beside the stable 1.145 host. Debug build of `main` with the wire log's new inbound lines (`claude/p9-live-check`), installed over wireless adb. Read only: seven existing idle Insiders sessions were opened, nothing was sent. The app's debug wire log (`AhpWire`) names windowed delivery's inbound messages by method only.
+
+| Check | Result | Notes |
+|---|---|---|
+| The host takes the offer | Pass | Every chat opened logged `received a subscribe reply that took windowed delivery`, then `received channel/snapshot` within 1 to 75 ms |
+| The chat loads from `channel/snapshot` | Pass | Each chat showed its turns ("Done · 1m 15s", Read, Regenerate, Fork, Side chat), as with ordinary delivery |
+| A 1.145 host still works beside it | Pass | Connected to both hosts at once; the stable host's chats load as before (checked 2026-11-05 on its own) |
+| Fragments (`channel/frame`) and credit | Not seen | Every snapshot came whole: these chats are far below the 1 MiB frame and the three quarters of a 1 MiB window after which credit is sent. JVM tests cover both |
+| A chat over 16 MB (AC-P9.4) | Not run | No chat on the Insiders host is that large |
+
+**Seen in passing.** The phone's home screen still labels the app "AHP Client", though the installed APK's label is "Hostline" (`aapt2 dump badging`). The launcher keeps the name it had when the icon was placed; removing and adding the icon again should show the new name. Worth checking on a clean install before U9.1 is ticked.
