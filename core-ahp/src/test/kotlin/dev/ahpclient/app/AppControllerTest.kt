@@ -33,6 +33,12 @@ import dev.ahpclient.state.InteractResult
 import dev.ahpclient.state.LiveTerminal
 import dev.ahpclient.state.ModelChoice
 import dev.ahpclient.state.ManageResult
+import dev.ahpclient.state.AUTOMATIONS_CAPABILITY
+import dev.ahpclient.state.Automations
+import dev.ahpclient.state.COMPLETED
+import dev.ahpclient.state.RUNNING
+import dev.ahpclient.state.automationEntryJson
+import dev.ahpclient.state.automationRunJson
 import dev.ahpclient.state.ConfigOffer
 import dev.ahpclient.state.ConfigPick
 import dev.ahpclient.state.SNAPSHOT_SEQ
@@ -2747,6 +2753,80 @@ class AppControllerTest {
 
             assertEquals(InteractResult.NoSuchRequest, controller.decideToolCall(CHAT_A, "c1", approve = true, optionId = "o-allow"))
             assertTrue(dispatches().isEmpty())
+        }
+    }
+
+    // ---- automations (P7) ---------------------------------------------------------------------------------------
+
+    private fun automationsScript(entries: List<String> = listOf(automationEntryJson(runs = listOf(automationRunJson("r2", RUNNING, "ahp-session:/s2"), automationRunJson("r1", COMPLETED, "ahp-session:/s1"))))) =
+        HostScript(automations = AUTOMATIONS_CAPABILITY, automationsState = """{"entries":[${entries.joinToString(",")}]}""", onDispatch = { params -> echoOf(params, SNAPSHOT_SEQ + 1, clientId = automationClient) })
+
+    /** The client the scripted host echoes dispatches to: set once connected, as the client id names the host. */
+    private var automationClient = ""
+
+    @Test
+    fun `a host that offers automations has its catalogue read, and turning one off sends only that, on the catalogue's channel`() = runTest {
+        withRig(script = { automationsScript() }, interaction = managing) {
+            val connected = connectToFirstHost()
+            automationClient = "client-${connected.host.id}"
+            val session = connected.session
+            session.canManage.first { it }
+            assertEquals(50L, session.automations.value?.runHistoryLimit)
+
+            // The host names the catalogue `ahp-automations:`; it still reaches the store kept under the protocol's own address.
+            val catalogue = session.openAutomations()
+            catalogue.state.first { it != null }
+            assertEquals("Morning digest", catalogue.state.value!!.entries.single().definition.title)
+
+            assertIs<ManageResult.Done>(controller.setAutomationEnabled("ahp-automation:/a1", false))
+            val sent = requests("dispatchAction").single()
+            assertEquals(Automations.CHANNEL, sent["channel"]!!.jsonPrimitive.content)
+            assertEquals("""{"type":"automation/updateRequested","resource":"ahp-automation:/a1","changes":{"enabled":false}}""", sent["action"].toString())
+
+            assertIs<ManageResult.Done>(controller.setAutomationEnabled("ahp-automation:/a1", true), "already on: nothing to send")
+            assertEquals(1, requests("dispatchAction").size)
+            assertIs<ManageResult.NoSuchTarget>(controller.setAutomationEnabled("ahp-automation:/nope", false))
+            session.closeChannel(Automations.CHANNEL)
+        }
+    }
+
+    @Test
+    fun `a running run is cancelled on its own channel, held only while the answer comes, and a finished one is not`() = runTest {
+        withRig(script = { automationsScript() }, interaction = managing) {
+            val connected = connectToFirstHost()
+            automationClient = "client-${connected.host.id}"
+            val session = connected.session
+            session.canManage.first { it }
+            val catalogue = session.openAutomations()
+            catalogue.state.first { it != null }
+
+            assertIs<ManageResult.Done>(controller.cancelAutomationRun("ahp-automation-run:/r2"))
+            val sent = requests("dispatchAction").single()
+            assertEquals("ahp-automation-run:/r2", sent["channel"]!!.jsonPrimitive.content)
+            assertEquals("""{"type":"automationRun/cancelRequested"}""", sent["action"].toString())
+            runCurrent()
+            assertTrue("ahp-automation-run:/r2" in unsubscribed(), "the run's channel is let go of once answered")
+
+            assertIs<ManageResult.InvalidChoice>(controller.cancelAutomationRun("ahp-automation-run:/r1"), "a finished run")
+            assertIs<ManageResult.NoSuchTarget>(controller.cancelAutomationRun("ahp-automation-run:/elsewhere"))
+            assertEquals(1, requests("dispatchAction").size)
+            session.closeChannel(Automations.CHANNEL)
+        }
+    }
+
+    @Test
+    fun `without the manage tier, or on a host with no automations, nothing is sent`() = runTest {
+        withRig(script = { automationsScript() }) {
+            connectToFirstHost()
+            assertIs<ManageResult.NotAllowed>(controller.setAutomationEnabled("ahp-automation:/a1", false))
+            assertIs<ManageResult.NotAllowed>(controller.cancelAutomationRun("ahp-automation-run:/r2"))
+            assertTrue(requests("dispatchAction").isEmpty())
+        }
+        withRig(interaction = managing) {
+            val session = connectToFirstHost().session
+            assertNull(session.automations.value)
+            assertIs<ManageResult.NoSuchTarget>(controller.setAutomationEnabled("ahp-automation:/a1", false))
+            assertTrue(requests("subscribe").none { it["channel"]!!.jsonPrimitive.content.startsWith("ahp-automations") })
         }
     }
 

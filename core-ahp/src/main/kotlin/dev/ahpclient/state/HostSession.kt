@@ -35,8 +35,13 @@ import com.microsoft.agenthostprotocol.generated.SnapshotState
 import com.microsoft.agenthostprotocol.generated.SubscribeView
 import com.microsoft.agenthostprotocol.generated.TerminalState
 import com.microsoft.agenthostprotocol.generated.StateAction
+import com.microsoft.agenthostprotocol.automationReducer
+import com.microsoft.agenthostprotocol.automationRunReducer
 import com.microsoft.agenthostprotocol.changesetReducer
 import com.microsoft.agenthostprotocol.terminalReducer
+import com.microsoft.agenthostprotocol.generated.AutomationCapabilities
+import com.microsoft.agenthostprotocol.generated.AutomationRunState
+import com.microsoft.agenthostprotocol.generated.AutomationState
 import dev.ahpclient.platform.IOException
 import dev.ahpclient.platform.randomUuid
 import dev.ahpclient.platform.ConcurrentHashMap
@@ -180,6 +185,14 @@ class HostSession(
      * named none, and then the composer never asks. A `reconnect` does not repeat them, so the last answer stands.
      */
     val completionTriggers: StateFlow<List<String>> = _completionTriggers.asStateFlow()
+
+    private val _automations = MutableStateFlow<AutomationCapabilities?>(null)
+
+    /**
+     * What the host offers of automations (P7), as its last `initialize` said: null when it offers none, and then the app shows no
+     * automations. A `reconnect` does not repeat it, so the last answer stands.
+     */
+    val automations: StateFlow<AutomationCapabilities?> = _automations.asStateFlow()
 
     private val _undecodableFrames = MutableStateFlow(0)
 
@@ -448,6 +461,17 @@ class HostSession(
 
     /** Subscribes to the live annotations state at [uri]. Pair every call with [closeChannel]. */
     fun openAnnotations(uri: String): AnnotationsStore = openAux(uri) { annotationsStore(uri) }
+
+    /** The host's automation catalogue (P7), read only, at [Automations.CHANNEL]. Pair every call with [closeChannel] on the same address. */
+    fun openAutomations(): ChannelStore<AutomationState> = openAux(Automations.CHANNEL) {
+        ChannelStore(Automations.CHANNEL, { (it as? SnapshotState.Automations)?.value }, ::automationReducer)
+    }
+
+    /** One automation run's own channel, held while a cancellation is sent on it, so its answer comes back here. Pair with [closeChannel]. */
+    fun openAutomationRun(uri: String): ChannelStore<AutomationRunState> {
+        require(uri.startsWith("ahp-automation-run:")) { "Not an automation run's address" }
+        return openAux(uri) { ChannelStore(uri, { (it as? SnapshotState.AutomationRun)?.value }, ::automationRunReducer) }
+    }
 
     /**
      * The store for the terminal at [uri], read only. A terminal is subscribed by hand (see [AhpConnection.subscribeTerminal])
@@ -734,6 +758,7 @@ class HostSession(
     private suspend fun initialize(ahp: AhpConnection, open: List<String>) {
         val result = ahp.initialize(clientInfo, listOf(ROOT_CHANNEL) + open)
         _completionTriggers.value = result.completionTriggerCharacters.orEmpty().filter { it.isNotEmpty() }
+        _automations.value = result.automations
         applySnapshots(result.snapshots, ahp)
     }
 
@@ -898,7 +923,8 @@ class HostSession(
 
     private fun chatFor(uri: String): ChatStore? = platformSynchronized(chats) { chats[uri] }
 
-    private fun auxFor(uri: String): AuxStore? = platformSynchronized(aux) { aux[uri] }
+    /** The store for [uri], the automation catalogue found under either way a host writes its address (see [Automations.canonical]). */
+    private fun auxFor(uri: String): AuxStore? = platformSynchronized(aux) { aux[uri] ?: aux[Automations.canonical(uri)] }
 
     /** The channels named to the host in `initialize` and `reconnect`: every session, and unless parked, every changeset. */
     private fun openChannels(): List<String> {

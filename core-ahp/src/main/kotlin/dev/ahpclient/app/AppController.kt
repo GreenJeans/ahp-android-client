@@ -8,8 +8,12 @@ import dev.ahpclient.platform.Synchronized
 
 import kotlin.concurrent.Volatile
 
+import com.microsoft.agenthostprotocol.generated.AutomationOperation
+import com.microsoft.agenthostprotocol.generated.AutomationRunLifecyclePending
+import com.microsoft.agenthostprotocol.generated.AutomationRunLifecycleRunning
 import com.microsoft.agenthostprotocol.generated.ChatSource
 import com.microsoft.agenthostprotocol.generated.Message
+import dev.ahpclient.state.Automations
 import dev.ahpclient.auth.DeviceFlowResult
 import dev.ahpclient.auth.GitHubAuthException
 import dev.ahpclient.auth.GitHubDeviceAuth
@@ -940,6 +944,65 @@ class AppController(
         if (annotation.entries.size < 2 || annotation.entries.none { it.id == entryId }) return ManageResult.InvalidChoice
         return dispatchAnnotation(current.session, channel.uri, AnnotationActions.removeEntry(annotationId, entryId))
     }
+
+    /**
+     * Turns the triggers of the automation at [resource] on or off (P7), on the focused host. Only an automation the catalogue holds and
+     * lets be changed, on the manage tier; nothing else of its definition is sent (and the policy refuses anything else).
+     */
+    suspend fun setAutomationEnabled(resource: String, enabled: Boolean): ManageResult {
+        val current = _state.value as? AppState.Connected ?: return ManageResult.NoSuchTarget
+        val session = current.session
+        if (session.automations.value == null) return ManageResult.NoSuchTarget
+        if (!session.canManage.value) return ManageResult.NotAllowed
+        val catalogue = session.openAutomations()
+        try {
+            val entry = catalogue.state.value?.entries?.firstOrNull { it.resource == resource } ?: return ManageResult.NoSuchTarget
+            if (AutomationOperation.UPDATE !in entry.operations) return ManageResult.NotAllowed
+            if (entry.definition.enabled == enabled) return ManageResult.Done()
+            return dispatchManaged(session, Automations.CHANNEL, Automations.setEnabled(resource, enabled))
+        } finally {
+            session.closeChannel(Automations.CHANNEL)
+        }
+    }
+
+    /**
+     * Asks the focused host to cancel the run at [run] (P7). Only a run the catalogue lists as waiting or running, on a host that takes
+     * cancellations, on the manage tier. Sent on the run's own channel, held only while the answer comes back.
+     */
+    suspend fun cancelAutomationRun(run: String): ManageResult {
+        val current = _state.value as? AppState.Connected ?: return ManageResult.NoSuchTarget
+        val session = current.session
+        val capabilities = session.automations.value ?: return ManageResult.NoSuchTarget
+        if (capabilities.runCancellation == null || !session.canManage.value) return ManageResult.NotAllowed
+        val catalogue = session.openAutomations()
+        try {
+            val summary = catalogue.state.value?.entries?.flatMap { it.runs }?.firstOrNull { it.resource == run } ?: return ManageResult.NoSuchTarget
+            val active = summary.lifecycle is AutomationRunLifecyclePending || summary.lifecycle is AutomationRunLifecycleRunning
+            if (!active || !run.startsWith("ahp-automation-run:")) return ManageResult.InvalidChoice
+            session.openAutomationRun(run)
+            try {
+                return dispatchManaged(session, run, Automations.cancelRun())
+            } finally {
+                session.closeChannel(run)
+            }
+        } finally {
+            session.closeChannel(Automations.CHANNEL)
+        }
+    }
+
+    private suspend fun dispatchManaged(session: HostSession, uri: String, action: com.microsoft.agenthostprotocol.generated.StateAction): ManageResult =
+        try {
+            when (val result = session.dispatch(uri, action)) {
+                DispatchOutcome.Accepted -> ManageResult.Done()
+                else -> ManageResult.Unconfirmed(result)
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: CapabilityDeniedException) {
+            ManageResult.NotAllowed
+        } catch (e: IOException) {
+            ManageResult.NotSent(e)
+        }
 
     private suspend fun dispatchAnnotation(session: HostSession, uri: String, action: com.microsoft.agenthostprotocol.generated.StateAction): ManageResult {
         if (!session.canInteract.value) return ManageResult.NotAllowed

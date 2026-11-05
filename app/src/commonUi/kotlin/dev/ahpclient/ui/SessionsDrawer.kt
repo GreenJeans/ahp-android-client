@@ -122,6 +122,8 @@ fun DrawerContent(
     terminals: List<HostTerminalEntry> = emptyList(),
     /** Watches one of [terminals], read only, by its address. */
     onOpenTerminal: (String) -> Unit = {},
+    /** Opens the focused host's automations (P7); null when the host offers none, and then there is no button. */
+    onOpenAutomations: (() -> Unit)? = null,
 ) {
     val effectiveFilter = remember(filter, showArchived) { filter.copy(showArchived = showArchived) }
     val model = remember(entries, sessions, effectiveFilter, now, query) {
@@ -152,6 +154,7 @@ fun DrawerContent(
             ) {
                 if (inboxCount != null && host != null) InboxAction(inboxCount, onOpenInbox)
                 if (host != null && terminals.isNotEmpty()) TerminalsAction(terminals.size) { terminalsSheetOpen = true }
+                if (host != null && onOpenAutomations != null) AutomationsAction(onOpenAutomations)
                 if (host != null && (model.hiddenArchived > 0 || showArchived)) ArchivedAction(showArchived, model.hiddenArchived, onToggleArchived)
                 Spacer(Modifier.weight(1f))
                 Tooltip("Settings") {
@@ -218,6 +221,16 @@ private fun TerminalsAction(count: Int, onOpen: () -> Unit) {
             modifier = Modifier.semantics(mergeDescendants = true) { contentDescription = "Terminals, $count on the host" }.testTag("drawer_terminals"),
         ) {
             Icon(AppIcons.Terminal, contentDescription = null)
+        }
+    }
+}
+
+/** The way to the host's automations (P7). */
+@Composable
+private fun AutomationsAction(onOpen: () -> Unit) {
+    Tooltip("Automations") {
+        IconButton(onClick = onOpen, modifier = Modifier.testTag("drawer_automations")) {
+            Icon(AppIcons.Lightning, contentDescription = "Automations")
         }
     }
 }
