@@ -21,6 +21,21 @@ class MethodLoggingSocketTest {
     }
 
     @Test
+    fun `windowed delivery's inbound messages are named by method alone, and a reply that took the offer is noted`() {
+        assertEquals("received channel/snapshot", describeWindowedInbound("""{"jsonrpc":"2.0","method":"channel/snapshot","params":{"channel":"ahp-chat:/a","snapshot":{"secret":"x"}}}"""))
+        assertEquals("received channel/frame", describeWindowedInbound("""{"jsonrpc":"2.0","method":"channel/frame","params":{"channel":"ahp-chat:/a","data":"{\"token\":\"abc\"}"}}"""))
+        assertEquals("received channel/credit", describeWindowedInbound("""{"jsonrpc":"2.0","method":"channel/credit","params":{"channel":"ahp-chat:/a","consumedBytes":10}}"""))
+        assertEquals(
+            "received a subscribe reply that took windowed delivery",
+            describeWindowedInbound("""{"jsonrpc":"2.0","id":5,"result":{"flowControl":{"clientReceive":{"windowBytes":1,"maximumFrameBytes":1024}}}}"""),
+        )
+        assertEquals(null, describeWindowedInbound("""{"jsonrpc":"2.0","id":5,"result":{"snapshot":{"resource":"ahp-chat:/a"}}}"""))
+        assertEquals(null, describeWindowedInbound("""{"jsonrpc":"2.0","method":"action","params":{"channel":"ahp-chat:/a"}}"""))
+        // A method name deep inside a large frame's content is not read: only the head is looked at.
+        assertEquals(null, describeWindowedInbound("""{"jsonrpc":"2.0","method":"action","params":{"text":"${"x".repeat(300)} \"method\":\"channel/frame\""}}"""))
+    }
+
+    @Test
     fun `a method outside the read tier is marked, whatever its params`() {
         assertEquals("NOT-READ dispatchAction", describeOutbound("""{"jsonrpc":"2.0","id":2,"method":"dispatchAction","params":{"action":{"type":"session/titleChanged"}}}"""))
         assertEquals("NOT-READ authenticate", describeOutbound("""{"method":"authenticate"}"""))
