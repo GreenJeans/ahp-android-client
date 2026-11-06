@@ -102,6 +102,27 @@ fun AutomationsSheet(
     onDismiss: () -> Unit,
     notice: String? = null,
 ) {
+    // One that runs by itself is asked about first: a stray tap on a list of switches must not stop or start real runs (seen live:
+    // a tap meant for one automation turned another's weekday schedule off). A manual-only one changes nothing that runs, so needs no asking.
+    var confirmToggle by remember { mutableStateOf<Pair<AutomationRow, Boolean>?>(null) }
+    val toggle: (String, Boolean) -> Unit = { resource, enabled ->
+        val row = rows?.firstOrNull { it.resource == resource }
+        if (row != null && row.triggered) confirmToggle = row to enabled else onToggle(resource, enabled)
+    }
+    confirmToggle?.let { (row, enabled) ->
+        AlertDialog(
+            onDismissRequest = { confirmToggle = null },
+            title = { Text(if (enabled) "Turn on ${row.title}?" else "Turn off ${row.title}?") },
+            text = { Text(if (enabled) "It will run by itself again: ${row.triggers}." else "It will stop running by itself (${row.triggers}) until it is turned on again.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmToggle = null
+                    onToggle(row.resource, enabled)
+                }, modifier = Modifier.testTag("automation_toggle_confirm")) { Text(if (enabled) "Turn on" else "Turn off") }
+            },
+            dismissButton = { TextButton(onClick = { confirmToggle = null }, modifier = Modifier.testTag("automation_toggle_keep")) { Text(if (row.enabled) "Keep it on" else "Keep it off") } },
+        )
+    }
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -123,7 +144,7 @@ fun AutomationsSheet(
                 rows.isEmpty() -> Text("This host has no automations.", modifier = Modifier.padding(20.dp).testTag("automations_empty"))
                 else -> LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 600.dp).testTag("automation_list")) {
                     items(rows, key = { it.resource }) { row ->
-                        AutomationItem(row, canManage, onToggle, onCancelRun, onOpenSession)
+                        AutomationItem(row, canManage, toggle, onCancelRun, onOpenSession)
                         HorizontalDivider()
                     }
                 }

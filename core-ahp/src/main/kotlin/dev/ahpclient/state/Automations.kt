@@ -62,6 +62,7 @@ object Automations {
             resource = entry.resource,
             title = definition.title.ifBlank { "Automation" },
             triggers = triggersText(definition.triggers),
+            triggered = definition.triggers.isNotEmpty(),
             enabled = definition.enabled,
             canToggle = canUpdate,
             nextRun = entry.nextRunAt?.takeIf { definition.enabled }?.let { untilText(it, now) }?.let { "Next run $it" },
@@ -137,6 +138,8 @@ data class AutomationRow(
     val title: String,
     /** What sets it off: "Weekdays at 06:00 (America/Los_Angeles)", "Manual only". */
     val triggers: String,
+    /** Whether anything sets it off by itself (a schedule or an event); switching such a one on or off is asked about first. */
+    val triggered: Boolean,
     val enabled: Boolean,
     /** Whether the host lets this automation be changed; the switch is offered only then, and only on the manage tier. */
     val canToggle: Boolean,

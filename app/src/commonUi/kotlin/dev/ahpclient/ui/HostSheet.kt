@@ -170,7 +170,10 @@ fun HostSheet(
                     if (onDisconnectHost != null) onDisconnectHost(host.id) else onDisconnect()
                     if (activeHosts.size <= 1) close()
                 }
-                ConnectedCard(host, conn, disconnectOne, color = card)
+                // With more than one connected, the one shown is marked, and a tap on another brings it to the front without reconnecting.
+                val shown = host.id == connectedHost?.id
+                val focus: (() -> Unit)? = if (activeHosts.size > 1 && !shown) ({ pickHost(host); close() }) else null
+                ConnectedCard(host, conn, disconnectOne, color = card, onFocus = focus, shown = shown && activeHosts.size > 1)
             }
             // The heading is drawn only with something under it; with a host connected and nothing else to show, a plain line says so.
             if (listing) Column(verticalArrangement = Arrangement.spacedBy(Design.Gap)) {
@@ -226,10 +229,20 @@ fun HostSheet(
     }
 }
 
-/** The host connected to now, and the way to leave it without picking another. */
+/**
+ * A host connected to now, and the way to leave it without picking another. With several connected, [shown] marks the one the app
+ * shows, and [onFocus], given for each of the others, brings that one to the front: its sessions, terminals and automations.
+ */
 @Composable
-internal fun ConnectedCard(host: HostRef, connection: ConnState?, onDisconnect: () -> Unit, color: Color = MaterialTheme.colorScheme.surfaceContainerLow) {
-    TileCard(color = color, modifier = Modifier.testTag("connected_host")) {
+internal fun ConnectedCard(
+    host: HostRef,
+    connection: ConnState?,
+    onDisconnect: () -> Unit,
+    color: Color = MaterialTheme.colorScheme.surfaceContainerLow,
+    onFocus: (() -> Unit)? = null,
+    shown: Boolean = false,
+) {
+    TileCard(color = color, onClick = onFocus, onClickLabel = onFocus?.let { "Show ${host.name}" }, modifier = Modifier.testTag("connected_host")) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -239,6 +252,7 @@ internal fun ConnectedCard(host: HostRef, connection: ConnState?, onDisconnect: 
             Column(Modifier.weight(1f)) {
                 Text(host.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (connection != null) ConnectionLine(connection, Modifier.testTag("connection_status"))
+                if (shown) Text("Shown now", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.testTag("connected_host_shown"))
             }
             TextButton(onClick = onDisconnect, modifier = Modifier.heightIn(min = 48.dp).testTag("disconnect")) { Text("Disconnect") }
         }

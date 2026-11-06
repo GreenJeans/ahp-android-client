@@ -51,6 +51,7 @@ class AutomationsTest {
         assertEquals("Weekdays at 06:00 (America/Los_Angeles)", row.triggers)
         assertTrue(row.enabled)
         assertTrue(row.canToggle)
+        assertTrue(row.triggered, "a schedule sets it off by itself")
         assertEquals("Next run in 1d", row.nextRun)
         assertEquals("Morning digest, On, Weekdays at 06:00 (America/Los_Angeles), Next run in 1d", row.spoken)
     }
@@ -59,7 +60,9 @@ class AutomationsTest {
     fun `one that is off shows no next run, and one without the update operation cannot be switched`() {
         assertNull(Automations.rows(state(automationEntryJson(enabled = false)), now, capabilities).single().nextRun)
         assertFalse(Automations.rows(state(automationEntryJson(operations = """["run"]""")), now, capabilities).single().canToggle)
-        assertEquals("Manual only", Automations.rows(state(automationEntryJson(triggers = "[]")), now, capabilities).single().triggers)
+        val manual = Automations.rows(state(automationEntryJson(triggers = "[]")), now, capabilities).single()
+        assertEquals("Manual only", manual.triggers)
+        assertFalse(manual.triggered, "nothing sets a manual-only one off")
     }
 
     @Test

@@ -134,3 +134,24 @@ Runs of the P1 to P5 work against a real host. Boxes in `docs/protocol-completio
 | A host terminal opens read only | Pass | Title "Agent Host Terminal", "Running · C:\Users\…\featagent-mesh-v3-remote-mail-r2", "Read only, as plain text.", and the PowerShell prompt. Nothing to type into |
 | Back | Pass | Back went to the drawer and the terminal was unsubscribed. Only `subscribe` and `unsubscribe` were sent |
 | Output arriving while watched (U7.2, terminal screen) | Not seen | The terminals were idle at a prompt |
+
+## 2026-11-06: Pixel 10, supervised writes against VS Code Insiders 1.146 and stable 1.145
+
+**Setup.** Debug build of `main` (`bf5032c`) over USB adb, "Act for me" on. The tester approved each write beforehand and did the tapping and the approvals on the phone; the app was read over `adb` and the `AhpWire` log. Writes were limited to a throwaway Insiders session and one automation switch.
+
+| Check | Result | Notes |
+|---|---|---|
+| New session on Insiders | **Fail, not fixed** | The first start failed with "working directory no longer exists": the new-session form offered a recent folder that had since been removed. The second, in a folder that exists, started |
+| A command's approval | Pass | The phone asked; once approved there, the run went ahead. The approval card in the Insiders window took a moment to clear, which is the host's |
+| Streamed output in the chat (U7.2) | Pass | A command printing 1 to 60, a line a second, filled the chat's tool block as it ran: 26 lines at 9 s, 52 at 35 s, 58 at 41 s, 60 at 49 s |
+| Insiders' own automations | Empty | "This host has no automations." The two seen from the Insiders window on 2026-11-05 were the stable host's |
+| Two hosts connected, focus the other | **Fail, fixed** | With Insiders shown, tapping the stable host's connected card did nothing, so the drawer and Automations stayed on Insiders. With the fix a tap on a connected card that is not shown brings that host to the front without reconnecting, and the shown one reads "Shown now" |
+| Switch an automation (P7) | Pass, with a finding | Two `automation/updateRequested` were sent (06:51:42, 06:51:48) and both applied. One tap landed on "Morning Session Digest" rather than the manual-only "Nexus Context Snapshot" and turned its weekday schedule off; it was turned back on from the phone at 06:53:45 (On, next run in 2d, no run missed) |
+| Ask before switching one that runs by itself | **Missing, fixed** | Nothing asked before the schedule above was turned off. With the fix, switching an automation with a schedule or an event asks "Turn off …?" (or "Turn on …?") first; a manual-only one switches at once |
+| Cancel a run | Not tried | No run was in progress |
+
+**Also on the phone.** Two stray taps from the `adb` driver, before the tester took over the tapping: one landed on the approval card's Skip and denied the first command, and one opened a side chat ("Side chat from turn 1"). Neither is an app fault, but both came from controls close to rows that move while a turn runs (see the 2026-11-04 finding in `ux-feedback.md`).
+
+**Left on the host.** The Insiders sessions "PowerShell command for printing numbers" (the failed start) and "PowerShell command to print numbers" with its side chat, for the tester to remove.
+
+**Not run.** A chat over 16 MB (AC-P9.4), cancelling a run, TalkBack.
