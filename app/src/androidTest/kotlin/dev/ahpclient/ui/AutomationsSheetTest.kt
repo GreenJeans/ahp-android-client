@@ -30,8 +30,8 @@ class AutomationsSheetTest {
 
     private val running = AutomationRunRow("ahp-automation-run:/r2", "Running", "59m", "ahp-session:/s2", canCancel = true)
     private val done = AutomationRunRow("ahp-automation-run:/r1", "Done", "23h", "ahp-session:/s1", canCancel = false)
-    private val digest = AutomationRow("ahp-automation:/a1", "Morning digest", "Weekdays at 06:00 (America/Los_Angeles)", enabled = true, canToggle = true, nextRun = "Next run in 1d", runs = listOf(running, done))
-    private val manual = AutomationRow("ahp-automation:/a2", "Context snapshot", "Manual only", enabled = false, canToggle = false, nextRun = null, runs = emptyList())
+    private val digest = AutomationRow("ahp-automation:/a1", "Morning digest", "Weekdays at 06:00 (America/Los_Angeles)", triggered = true, enabled = true, canToggle = true, nextRun = "Next run in 1d", runs = listOf(running, done))
+    private val manual = AutomationRow("ahp-automation:/a2", "Context snapshot", "Manual only", triggered = false, enabled = false, canToggle = false, nextRun = null, runs = emptyList())
 
     private val toggled = mutableListOf<Pair<String, Boolean>>()
     private val cancelled = mutableListOf<String>()
@@ -88,11 +88,28 @@ class AutomationsSheetTest {
 
         rule.onAllNodesWithTag("automation_switch", useUnmergedTree = true).assertCountEquals(1)
         rule.onAllNodesWithTag("automation_header").onFirst().assertIsOn().performClick()
+        // It runs on a schedule, so it is asked about first, and nothing is sent until the answer.
+        rule.onNodeWithText("Turn off Morning digest?").assertIsDisplayed()
+        assertEquals(emptyList<Pair<String, Boolean>>(), toggled)
+        rule.onNodeWithTag("automation_toggle_confirm").performClick()
         assertEquals(listOf("ahp-automation:/a1" to false), toggled)
 
         rule.onAllNodesWithTag("automation_run_cancel").assertCountEquals(1)
         rule.onNodeWithTag("automation_run_cancel").assertTouchTargetAtLeast(48.dp).performClick()
         assertEquals(listOf("ahp-automation-run:/r2"), cancelled)
+    }
+
+    @Test
+    fun keepingItAsItWasSendsNothing_andAManualOnlyOneIsSwitchedWithoutAsking() {
+        val manualSwitchable = manual.copy(resource = "ahp-automation:/a3", title = "By hand", canToggle = true)
+        show(listOf(digest, manualSwitchable), canManage = true)
+
+        rule.onAllNodesWithTag("automation_header").onFirst().performClick()
+        rule.onNodeWithTag("automation_toggle_keep").performClick()
+        assertEquals(emptyList<Pair<String, Boolean>>(), toggled)
+
+        rule.onAllNodesWithTag("automation_header")[1].performClick()
+        assertEquals(listOf("ahp-automation:/a3" to true), toggled)
     }
 
     @Test

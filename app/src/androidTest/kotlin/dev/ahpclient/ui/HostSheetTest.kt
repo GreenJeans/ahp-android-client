@@ -92,6 +92,31 @@ class HostSheetTest {
     }
 
     @Test
+    fun withTwoHostsConnectedTheShownOneIsMarkedAndATapOnTheOtherBringsItToTheFront() {
+        val shownHost = HostRef.Tunnel(devBox)
+        val other = HostRef.Tunnel(buildBox)
+        val focused = mutableListOf<String>()
+        rule.setContent {
+            AhpTheme {
+                HostSheet(
+                    catalog, shownHost, ConnState.Online, {}, {}, {}, {}, {},
+                    connectedHosts = listOf(shownHost to ConnState.Online, other to ConnState.Online),
+                    onConnectHost = { focused += it.id },
+                    onDisconnectHost = {},
+                )
+            }
+        }
+
+        rule.onNodeWithTag("connected_host_shown", useUnmergedTree = true).assertIsDisplayed()
+        rule.onAllNodesWithTag("connected_host_shown", useUnmergedTree = true).assertCountEquals(1)
+        // The shown one is not a button; the other is, and a tap on it focuses it without disconnecting anything.
+        rule.onAllNodesWithTag("connected_host")[0].performClick()
+        assertEquals(emptyList<String>(), focused)
+        rule.onAllNodesWithTag("connected_host")[1].assertTouchTargetAtLeast(48.dp).performClick()
+        assertEquals(listOf(other.id), focused)
+    }
+
+    @Test
     fun theSheetIsNamedAndRefreshesTheHostsWhenItOpens() {
         var refreshed = 0
         show(onRefresh = { refreshed++ })

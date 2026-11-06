@@ -155,7 +155,7 @@ Kept as they are: the order (attach, then the controls that change what the mess
 **Acceptance criteria**
 
 - [ ] **AC-U7.1** The live check is recorded in `docs/verification/`, naming for each place whether output streams, and why not if it does not. (Not done: the finding above is from reading the code. Still to do on a phone with a real host: a long-running command in the terminal screen, in the tool call's block, and in the session's output, noting for each whether output arrives as it is printed.)
-- [ ] **AC-U7.2** Output that the host sends as a stream appears on the phone within about a second, in the terminal screen and in the chat. (Built for the chat's tool call block; `LiveTerminalTailTest` passes on the emulator. Not seen live: no tool result on the test host named a terminal.)
+- [ ] **AC-U7.2** Output that the host sends as a stream appears on the phone within about a second, in the terminal screen and in the chat. (Built for the chat's tool call block; `LiveTerminalTailTest` passes on the emulator. Live on 2026-11-06 in the chat: a command printing a line a second showed on the phone as it ran, 26 lines at 9 s and 60 at 49 s. Not seen live on the terminal screen: the host's terminals were idle.)
 
 ## U8 — AI quick replies behind Pro
 
