@@ -4,6 +4,7 @@ import dev.ahpclient.platform.*
 import dev.ahpclient.app.SafeLinks
 import com.microsoft.agenthostprotocol.generated.ChatOrigin
 import com.microsoft.agenthostprotocol.generated.ChatState
+import com.microsoft.agenthostprotocol.generated.ErrorInfo
 import com.microsoft.agenthostprotocol.generated.Message
 import com.microsoft.agenthostprotocol.generated.SessionOriginAutomation
 import com.microsoft.agenthostprotocol.generated.SessionOriginUnknown
@@ -232,10 +233,13 @@ object HostExtras {
     private val MODEL_KEYS = listOf("model", "ahpd.model", "vscode.model")
     private val HIDDEN_KEYS = listOf("vscode.chat.hiddenFromTranscript", "requestHiddenFromTranscript", "hiddenFromTranscript")
     private val EXTERNAL_KEYS = listOf("vscode.external", "external", "ahpd.external")
+    private val WORKSPACELESS_KEYS = listOf("workspaceless", "vscode.workspaceless", "ahpd.workspaceless")
+    private val SCRATCH_FOLDER_KEYS = listOf("vscode.scratchFolders", "scratchFolders", "ahpd.scratchFolders")
     private val INITIATOR_KEYS = listOf("vscode.session.initiator.name", "initiator.name", "initiator", "ahpd.initiator")
     private val ARGUMENT_HINT_KEYS = listOf("vscode.skill.argumentHint", "ahpd.argumentHint", "argumentHint")
     private val SPAWNED_ORIGINS = setOf("automation", "subagent", "tool", "external")
     private val WHITESPACE_RUN = Regex("""[\r\n\t ]+""")
+    private const val WORKING_DIRECTORY_FAILED = "workingDirectoryFailed"
 
     /** Whether `_meta` marks the session as created outside the primary agent panel (`vscode.external`). */
     fun isExternal(meta: Map<String, JsonElement>?): Boolean {
@@ -243,6 +247,36 @@ object HostExtras {
         val root = JsonObject(meta)
         return EXTERNAL_KEYS.any { root.flag(it) }
     }
+
+    /** Whether `_meta` marks the session as started without a workspace folder (`workspaceless`). */
+    fun isWorkspaceless(meta: Map<String, JsonElement>?): Boolean {
+        if (meta.isNullOrEmpty()) return false
+        val root = JsonObject(meta)
+        return WORKSPACELESS_KEYS.any { root.flag(it) }
+    }
+
+    /** Scratch working directories the host created for the session (`vscode.scratchFolders`), so they are not offered as recent folders. */
+    fun scratchFolders(meta: Map<String, JsonElement>?): List<String> {
+        if (meta.isNullOrEmpty()) return emptyList()
+        val root = JsonObject(meta)
+        val array = SCRATCH_FOLDER_KEYS.firstNotNullOfOrNull { root.at(it) as? JsonArray } ?: return emptyList()
+        return array.asSequence().take(MAX_ROOTS).mapNotNull { element ->
+            val primitive = element as? JsonPrimitive ?: return@mapNotNull null
+            if (!primitive.isString) return@mapNotNull null
+            primitive.content.take(MAX_URL * 2).filterNot { it.isISOControl() }.trim().take(MAX_URL).trim().ifEmpty { null }
+        }.toList()
+    }
+
+    /** Whether [error] reports that a session's or chat's working directory no longer exists on the host (`workingDirectoryFailed`). */
+    fun isMissingWorkingDirectoryError(error: ErrorInfo?): Boolean =
+        error != null && (error.errorType.equals(WORKING_DIRECTORY_FAILED, ignoreCase = true) || isMissingWorkingDirectoryMessage(error.message))
+
+    /** Whether an error [message] from the host says that a working directory does not exist on disk. */
+    fun isMissingWorkingDirectoryMessage(message: String?): Boolean =
+        message != null && (
+            message.contains("working directory no longer exists", ignoreCase = true) ||
+                message.contains("working directory does not exist", ignoreCase = true)
+            )
 
     /** Which client or surface started the session (`vscode.session.initiator.name`), or null when the host did not say. */
     fun initiator(meta: Map<String, JsonElement>?): String? {

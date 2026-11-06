@@ -204,11 +204,12 @@ private fun Shell(
             val hostCanManage by ch.session.canManage.collectAsStateWithLifecycle()
             val hostStale by ch.session.root.stale.collectAsStateWithLifecycle()
             val hostRoot by ch.session.root.root.collectAsStateWithLifecycle()
+            val hostMissingFolders by ch.session.refusals.missingFolders.collectAsStateWithLifecycle()
             hostSessions.mapTo(multiHostEntries) { s -> HostSessionEntry(host = ch.host, summary = s) }
             hostConnections += ch.host to hostConn
             if (hostCanManage && !hostStale) {
                 val hostManager = remember(controller, ch.session) { controller.managerFor(ch.session) }
-                val target = remember(hostManager, ch.host.id, ch.host.name, hostRoot, hostSessions) {
+                val target = remember(hostManager, ch.host.id, ch.host.name, hostRoot, hostSessions, hostMissingFolders) {
                     HostManageTarget(
                         hostId = ch.host.id,
                         hostName = ch.host.name,
@@ -245,12 +246,14 @@ private fun Shell(
     val addFolderRefusal = connected?.let { it.session.refusals.addFolder.collectAsStateWithLifecycle().value }
     // The same for removing a folder, kept apart: each is hidden only after its own refusal.
     val removeFolderRefusal = connected?.let { it.session.refusals.removeFolder.collectAsStateWithLifecycle().value }
+    // Folders the focused host has reported missing on this connection, so they drop out of the folder pickers at once.
+    val missingFolders = connected?.let { it.session.refusals.missingFolders.collectAsStateWithLifecycle().value }.orEmpty()
     val now by rememberNow()
     // Where the person is needed, across all connected hosts: what waits on them, and what finished unread.
     val inbox = remember(multiHostEntries, now) { Inbox.fromEntries(multiHostEntries, now) }
     // Nothing to look after sessions with unless the connection is on the manage tier: no controls, not disabled ones. Nor from a stale list.
     val manageActions = if (canManage && !stale) {
-        remember(controller.manager, rootState, listed, orderedManageTargets, addFolderRefusal, removeFolderRefusal) {
+        remember(controller.manager, rootState, listed, orderedManageTargets, addFolderRefusal, removeFolderRefusal, missingFolders) {
             ManageActionsUi(
                 agents = controller.manager.offeredAgents().map { AgentOption(it.provider, it.displayName) },
                 folders = controller.manager.offeredFolders(),

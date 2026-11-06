@@ -141,7 +141,7 @@ Runs of the P1 to P5 work against a real host. Boxes in `docs/protocol-completio
 
 | Check | Result | Notes |
 |---|---|---|
-| New session on Insiders | **Fail, not fixed** | The first start failed with "working directory no longer exists": the new-session form offered a recent folder that had since been removed. The second, in a folder that exists, started |
+| New session on Insiders | **Fail, fixed** | The first start failed with "working directory no longer exists": the new-session form offered `AppData/Local/Temp/nexus-gate-cli-probe-20261104-054603`, a deleted CLI probe temp folder. `RecentFolders` now leaves out OS temporary folders (`AppData/Local/Temp`, `/tmp`, `/var/folders/…/T`), non-local project URLs (`https://…`), `.claude/worktrees`, `.gemini/antigravity/worktrees`, and `copilot-worktrees`, and host-marked scratch folders (`workspaceless`, `vscode.scratchFolders`), and `HostRefusals` drops any folder the host reports as `workingDirectoryFailed` on the connection. The second, in a folder that exists, started |
 | A command's approval | Pass | The phone asked; once approved there, the run went ahead. The approval card in the Insiders window took a moment to clear, which is the host's |
 | Streamed output in the chat (U7.2) | Pass | A command printing 1 to 60, a line a second, filled the chat's tool block as it ran: 26 lines at 9 s, 52 at 35 s, 58 at 41 s, 60 at 49 s |
 | Insiders' own automations | Empty | "This host has no automations." The two seen from the Insiders window on 2026-11-05 were the stable host's |
