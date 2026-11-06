@@ -1145,4 +1145,23 @@ class SessionManagerTest {
         assertEquals(ManageResult.NotAllowed, rig.manager.forkChat(s1, c1, "turn-1"))
         assertEquals(ManageResult.NotAllowed, rig.manager.createSideChat(s1, c1, "turn-1"))
     }
+
+    @Test
+    fun `a folder reported missing on this connection is dropped from offeredFolders and rejected`() = runTest {
+        val rig = Rig()
+        assertEquals(listOf("file:///work/a", "file:///work/b"), rig.manager.offeredFolders())
+
+        rig.refusals!!.noteMissingFolder("file:///work/a/")
+        assertEquals(listOf("file:///work/b"), rig.manager.offeredFolders())
+        assertEquals(ManageResult.InvalidChoice, rig.manager.newSession("copilotcli", "file:///work/a"))
+
+        // If resolveSessionConfig fails because a folder no longer exists, that folder is remembered as missing too.
+        rig.commands.resolveFailure = AhpException.Rpc(
+            -32603,
+            "This session couldn't be loaded because its working directory no longer exists: /work/b.",
+            null,
+        )
+        assertIs<ConfigOffer.Unavailable>(rig.manager.sessionSettings("copilotcli", "file:///work/b"))
+        assertEquals(emptyList(), rig.manager.offeredFolders())
+    }
 }

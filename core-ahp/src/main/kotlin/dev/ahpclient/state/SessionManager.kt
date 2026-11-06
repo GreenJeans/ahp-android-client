@@ -3,6 +3,7 @@ package dev.ahpclient.state
 import dev.ahpclient.ahp.AhpException
 import dev.ahpclient.ahp.CapabilityDeniedException
 import com.microsoft.agenthostprotocol.generated.AgentInfo
+import com.microsoft.agenthostprotocol.generated.AhpErrorCodes
 import com.microsoft.agenthostprotocol.generated.ChatSource
 import com.microsoft.agenthostprotocol.generated.ChatSourceFork
 import com.microsoft.agenthostprotocol.generated.ChatSourceSideChat
@@ -101,7 +102,7 @@ class SessionManager(
     fun offeredAgents(): List<AgentInfo> = agents()
 
     /** The folders the person may start a session in: the host's own sessions' folders, most recently used first, without its working copies. See [RecentFolders]. */
-    fun offeredFolders(): List<String> = RecentFolders.from(sessions())
+    fun offeredFolders(): List<String> = RecentFolders.from(sessions(), refusals()?.missingFolders?.value.orEmpty())
 
     suspend fun setRead(sessionUri: String, read: Boolean): ManageResult =
         action(sessionUri, SessionActions.setRead(read))
@@ -323,7 +324,13 @@ class SessionManager(
         if (!confirmed(request)) return ManageResult.NotConfirmed
         if (!allowed()) return ManageResult.NotAllowed
         val uri = "$SESSION_SCHEME${newId()}"
-        return command { commands.createSession(uri, provider, folder?.let(::listOf), config) }.let { if (it is ManageResult.Done) ManageResult.Done(uri) else it }
+        val memory = refusals()
+        return command { commands.createSession(uri, provider, folder?.let(::listOf), config) }.let { result ->
+            if (folder != null && result is ManageResult.Refused && isMissingFolderRpc(result.code, result.reason)) {
+                memory?.noteMissingFolder(folder)
+            }
+            if (result is ManageResult.Done) ManageResult.Done(uri) else result
+        }
     }
 
     /** No folder is always a valid choice, because nothing is sent for it; a named one must be one the host's own sessions use. */
@@ -335,8 +342,9 @@ class SessionManager(
         data class Failed(val result: ManageResult) : Resolved
     }
 
-    private suspend fun resolve(provider: String, folder: String?, picks: Map<String, ConfigPick>): Resolved =
-        try {
+    private suspend fun resolve(provider: String, folder: String?, picks: Map<String, ConfigPick>): Resolved {
+        val memory = refusals()
+        return try {
             val values = picks.takeIf { it.isNotEmpty() }?.mapValues { it.value.toJson() }
             Resolved.Form(SessionConfigForm.from(commands.resolveSessionConfig(provider, folder, values)))
         } catch (e: CancellationException) {
@@ -344,12 +352,20 @@ class SessionManager(
         } catch (_: CapabilityDeniedException) {
             Resolved.Failed(ManageResult.NotAllowed)
         } catch (e: AhpException.Rpc) {
-            Resolved.Failed(ManageResult.Refused(e.code, e.message.orEmpty()))
+            val reason = e.message.orEmpty()
+            if (folder != null && isMissingFolderRpc(e.code, reason)) {
+                memory?.noteMissingFolder(folder)
+            }
+            Resolved.Failed(ManageResult.Refused(e.code, reason))
         } catch (e: AhpException) {
             Resolved.Failed(ManageResult.NotSent(e))
         } catch (e: IOException) {
             Resolved.Failed(ManageResult.NotSent(e))
         }
+    }
+
+    private fun isMissingFolderRpc(code: Int, reason: String): Boolean =
+        code == AhpErrorCodes.NOT_FOUND || HostExtras.isMissingWorkingDirectoryMessage(reason)
 
     /** Removes a session and everything in it, after the device check. Cannot be undone; archiving is the way back. */
     suspend fun disposeSession(sessionUri: String): ManageResult {

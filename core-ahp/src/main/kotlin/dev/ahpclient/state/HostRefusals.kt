@@ -3,6 +3,7 @@ package dev.ahpclient.state
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 
 /**
  * What one host has refused on this connection, so the app stops offering it. Memory only: it belongs to one [HostSession], so it
@@ -39,7 +40,39 @@ class HostRefusals {
         _removeFolder.compareAndSet(null, reason.take(MAX_REASON))
     }
 
+    private val _missingFolders = MutableStateFlow<Set<String>>(emptySet())
+
+    /**
+     * Folders the host has reported as no longer existing on this connection (`workingDirectoryFailed`), normalized by
+     * [RecentFolders.key] so the new-session and add-folder pickers stop offering them. Memory only: a new connection starts empty.
+     */
+    val missingFolders: StateFlow<Set<String>> = _missingFolders.asStateFlow()
+
+    /** Notes that [folder] no longer exists on the host. */
+    fun noteMissingFolder(folder: String) {
+        noteMissingFolders(listOf(folder))
+    }
+
+    /** Notes that each folder in [folders] no longer exists on the host. Bounded to [MAX_MISSING_FOLDERS] entries. */
+    fun noteMissingFolders(folders: Iterable<String>) {
+        val keys = folders.mapNotNull { raw -> raw.trim().takeIf { it.isNotEmpty() }?.let(RecentFolders::key)?.takeIf { it.isNotEmpty() } }
+        if (keys.isEmpty()) return
+        _missingFolders.update { current ->
+            val merged = LinkedHashSet<String>(current.size + keys.size)
+            merged.addAll(current)
+            for (k in keys) {
+                merged.remove(k)
+                merged.add(k)
+            }
+            while (merged.size > MAX_MISSING_FOLDERS) {
+                merged.remove(merged.first())
+            }
+            merged
+        }
+    }
+
     companion object {
         const val MAX_REASON = 500
+        const val MAX_MISSING_FOLDERS = 64
     }
 }

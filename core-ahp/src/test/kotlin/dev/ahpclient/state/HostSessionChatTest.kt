@@ -541,4 +541,44 @@ class HostSessionChatTest {
         assertEquals("c1", store.state.value!!.turnsNextCursor)
         assertTrue("fetchTurns" !in rig.socket.sentMethods)
     }
+
+    @Test
+    fun `a workingDirectoryFailed chat error or session creationFailed records the session's folder as missing`() = runTest {
+        val rig = rig(HostScript(sessionChats = "[${chatSummaryJson(CHAT_A)}]")).start()
+        val session = rig.host.openSession(SESSION_C)
+        val chat = rig.host.openChat(CHAT_A)
+        runCurrent()
+        assertTrue(rig.host.refusals.missingFolders.value.isEmpty())
+
+        rig.socket.serverSends(actionFrame(CHAT_A, TURN_STARTED, SNAPSHOT_SEQ + 1))
+        rig.socket.serverSends(
+            actionFrame(
+                CHAT_A,
+                """{"type":"chat/error","turnId":"t1","duration":12,"part":{"kind":"error","error":{"errorType":"workingDirectoryFailed","message":"This session couldn't be loaded because its working directory no longer exists: /workspace/repo-c."}}}""",
+                SNAPSHOT_SEQ + 2,
+            ),
+        )
+        runCurrent()
+        settle()
+
+        // SESSION_C owns CHAT_A and its working directory in live/list-sessions.json is recorded as missing.
+        val expectedFolder = rig.host.root.sessions.value.first { it.resource == SESSION_C }.workingDirectories!!.first()
+        assertEquals(setOf(RecentFolders.key(expectedFolder)), rig.host.refusals.missingFolders.value)
+
+        // And a session/creationFailed with workingDirectoryFailed records its folder too.
+        val sessionB = rig.host.openSession(SESSION_B)
+        runCurrent()
+        rig.socket.serverSends(
+            actionFrame(
+                SESSION_B,
+                """{"type":"session/creationFailed","error":{"errorType":"workingDirectoryFailed","message":"Working directory no longer exists"}}""",
+                SNAPSHOT_SEQ + 3,
+            ),
+        )
+        runCurrent()
+        val expectedFolderB = rig.host.root.sessions.value.first { it.resource == SESSION_B }.workingDirectories!!.first()
+        assertTrue(RecentFolders.key(expectedFolderB) in rig.host.refusals.missingFolders.value)
+        assertEquals("failed", sessionB.state.value!!.lifecycle.rawValue)
+        assertEquals("Session C", session.state.value!!.title)
+    }
 }

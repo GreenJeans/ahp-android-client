@@ -20,6 +20,7 @@ import com.microsoft.agenthostprotocol.generated.ChangesetOperationTarget
 import com.microsoft.agenthostprotocol.generated.ChangesetState
 import com.microsoft.agenthostprotocol.generated.InvokeChangesetOperationResult
 import com.microsoft.agenthostprotocol.generated.ChatSource
+import com.microsoft.agenthostprotocol.generated.ChatState
 import com.microsoft.agenthostprotocol.generated.Implementation
 import com.microsoft.agenthostprotocol.generated.Message
 import com.microsoft.agenthostprotocol.generated.ReconnectResult
@@ -27,14 +28,18 @@ import com.microsoft.agenthostprotocol.generated.ReconnectResultReplay
 import com.microsoft.agenthostprotocol.generated.ReconnectResultSnapshot
 import com.microsoft.agenthostprotocol.generated.CompletionsResult
 import com.microsoft.agenthostprotocol.generated.ResolveSessionConfigResult
+import com.microsoft.agenthostprotocol.generated.ResponsePartError
 import com.microsoft.agenthostprotocol.generated.SessionConfigCompletionsResult
 import com.microsoft.agenthostprotocol.generated.ResourceReadResult
+import com.microsoft.agenthostprotocol.generated.SessionState
 import com.microsoft.agenthostprotocol.generated.SessionSummary
 import com.microsoft.agenthostprotocol.generated.Snapshot
 import com.microsoft.agenthostprotocol.generated.SnapshotState
 import com.microsoft.agenthostprotocol.generated.SubscribeView
 import com.microsoft.agenthostprotocol.generated.TerminalState
 import com.microsoft.agenthostprotocol.generated.StateAction
+import com.microsoft.agenthostprotocol.generated.StateActionChatError
+import com.microsoft.agenthostprotocol.generated.StateActionSessionCreationFailed
 import com.microsoft.agenthostprotocol.automationReducer
 import com.microsoft.agenthostprotocol.automationRunReducer
 import com.microsoft.agenthostprotocol.changesetReducer
@@ -788,8 +793,16 @@ class HostSession(
         snapshots.forEach { snapshot ->
             when (val state = snapshot.state) {
                 is SnapshotState.Root -> root.seedRoot(state.value)
-                is SnapshotState.Session -> storeFor(snapshot.resource)?.seed(snapshot, ahp.configFacts(snapshot.resource))
-                is SnapshotState.Chat -> chatFor(snapshot.resource)?.seed(snapshot, ahp.configFacts(snapshot.resource))
+                is SnapshotState.Session -> storeFor(snapshot.resource)?.let { store ->
+                    if (store.seed(snapshot, ahp.configFacts(snapshot.resource))) {
+                        noteMissingFoldersInSession(snapshot.resource, store.state.value)
+                    }
+                }
+                is SnapshotState.Chat -> chatFor(snapshot.resource)?.let { store ->
+                    if (store.seed(snapshot, ahp.configFacts(snapshot.resource))) {
+                        noteMissingFoldersInChat(snapshot.resource, store.state.value)
+                    }
+                }
                 else -> auxFor(snapshot.resource)?.seed(snapshot)
             }
         }
@@ -805,6 +818,8 @@ class HostSession(
             cursor = page.nextCursor
         } while (cursor != null && ++pages < MAX_LIST_PAGES)
         root.replaceCatalog(all)
+        platformSynchronized(sessions) { sessions.values.toList() }.forEach { noteMissingFoldersInSession(it.uri, it.state.value) }
+        platformSynchronized(chats) { chats.values.toList() }.forEach { noteMissingFoldersInChat(it.uri, it.state.value) }
     }
 
     private fun sessionsNeedingSubscribe(): List<SessionStore> =
@@ -842,7 +857,11 @@ class HostSession(
         try {
             // Offered windowed delivery (P9), so a chat too long for one message comes in pieces; a host that declines answers as before.
             when (val subscription = ahp.subscribeChat(store.uri, SubscribeView(turns = CHAT_SNAPSHOT_TURNS))) {
-                is ChatSubscription.Ordinary -> subscription.snapshot?.let { store.seed(it, ahp.configFacts(store.uri)) }
+                is ChatSubscription.Ordinary -> subscription.snapshot?.let {
+                    if (store.seed(it, ahp.configFacts(store.uri))) {
+                        noteMissingFoldersInChat(store.uri, store.state.value)
+                    }
+                }
                 // The snapshot follows as its own message, however long it takes; the screen says a long chat can take a while.
                 ChatSubscription.Windowed -> Unit
             }
@@ -866,7 +885,11 @@ class HostSession(
     private suspend fun subscribeIfNeeded(ahp: AhpConnection, store: SessionStore) {
         if (!store.needsSubscribe) return
         try {
-            ahp.subscribe(store.uri).snapshot?.let { store.seed(it, ahp.configFacts(store.uri)) }
+            ahp.subscribe(store.uri).snapshot?.let {
+                if (store.seed(it, ahp.configFacts(store.uri))) {
+                    noteMissingFoldersInSession(store.uri, store.state.value)
+                }
+            }
         } catch (e: AhpException.Rpc) {
             if (e.code == AhpErrorCodes.SESSION_NOT_FOUND) store.markGone() else throw e
         }
@@ -881,7 +904,24 @@ class HostSession(
                     if (envelope.channel == ROOT_CHANNEL) {
                         root.applyAction(envelope.action)
                     } else {
-                        storeFor(envelope.channel)?.apply(envelope) ?: chatFor(envelope.channel)?.apply(envelope) ?: auxFor(envelope.channel)?.apply(envelope)
+                        val sessionStore = storeFor(envelope.channel)
+                        val chatStore = if (sessionStore == null) chatFor(envelope.channel) else null
+                        when {
+                            sessionStore != null -> sessionStore.apply(envelope)
+                            chatStore != null -> chatStore.apply(envelope)
+                            else -> auxFor(envelope.channel)?.apply(envelope)
+                        }
+                        when (val action = envelope.action) {
+                            is StateActionSessionCreationFailed ->
+                                if (HostExtras.isMissingWorkingDirectoryError(action.value.error)) {
+                                    noteMissingFoldersForSession(envelope.channel, sessionStore?.state?.value)
+                                }
+                            is StateActionChatError ->
+                                if (HostExtras.isMissingWorkingDirectoryError(action.value.part.error)) {
+                                    noteMissingFoldersForChat(envelope.channel, chatStore?.state?.value)
+                                }
+                            else -> Unit
+                        }
                     }
                 }
                 resolveDispatch(envelope)
@@ -925,6 +965,54 @@ class HostSession(
 
     /** The store for [uri], the automation catalogue found under either way a host writes its address (see [Automations.canonical]). */
     private fun auxFor(uri: String): AuxStore? = platformSynchronized(aux) { aux[uri] ?: aux[Automations.canonical(uri)] }
+
+    private fun noteMissingFoldersInSession(sessionUri: String, state: SessionState?) {
+        state ?: return
+        if (HostExtras.isMissingWorkingDirectoryError(state.creationError)) {
+            noteMissingFoldersForSession(sessionUri, state)
+        }
+    }
+
+    private fun noteMissingFoldersInChat(chatUri: String, state: ChatState?) {
+        state ?: return
+        val hasMissingDirError = state.turns.any { turn ->
+            turn.responseParts.any { part -> part is ResponsePartError && HostExtras.isMissingWorkingDirectoryError(part.value.error) }
+        }
+        if (hasMissingDirError) {
+            noteMissingFoldersForChat(chatUri, state)
+        }
+    }
+
+    private fun noteMissingFoldersForSession(sessionUri: String, state: SessionState?) {
+        val dirs = state?.workingDirectories?.takeIf { it.isNotEmpty() }
+            ?: root.sessions.value.firstOrNull { it.resource == sessionUri }?.workingDirectories
+            ?: return
+        refusals.noteMissingFolders(dirs.take(1))
+    }
+
+    private fun noteMissingFoldersForChat(chatUri: String, state: ChatState?) {
+        val dirs = state?.workingDirectories?.takeIf { it.isNotEmpty() }
+            ?: workingDirectoriesForChat(chatUri)
+            ?: return
+        refusals.noteMissingFolders(dirs.take(1))
+    }
+
+    private fun workingDirectoriesForChat(chatUri: String): List<String>? {
+        val openSessions = platformSynchronized(sessions) { sessions.entries.mapNotNull { (uri, store) -> store.state.value?.let { uri to it } } }
+        for ((sessionUri, session) in openSessions) {
+            val chat = session.chats.firstOrNull { it.resource == chatUri }
+            if (chat != null || session.defaultChat == chatUri) {
+                val dirs = chat?.workingDirectories?.takeIf { it.isNotEmpty() }
+                    ?: session.workingDirectories?.takeIf { it.isNotEmpty() }
+                    ?: root.sessions.value.firstOrNull { it.resource == sessionUri }?.workingDirectories?.takeIf { it.isNotEmpty() }
+                if (dirs != null) return dirs
+            }
+        }
+        val summary = root.sessions.value.firstOrNull { s ->
+            s.defaultChat == chatUri || s.chats.orEmpty().any { it.resource == chatUri }
+        } ?: return null
+        return summary.workingDirectories?.takeIf { it.isNotEmpty() }
+    }
 
     /** The channels named to the host in `initialize` and `reconnect`: every session, and unless parked, every changeset. */
     private fun openChannels(): List<String> {
