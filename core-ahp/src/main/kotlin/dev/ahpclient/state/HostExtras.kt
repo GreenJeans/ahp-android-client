@@ -220,7 +220,8 @@ object HostExtras {
     private const val MAX_COST = 1_000_000.0
 
     private val CACHE_WRITE_KEYS = listOf("ahpd.cacheWriteTokens", "cacheWriteTokens", "vscode.cacheWriteTokens")
-    private val COST_AMOUNT_KEYS = listOf("cost", "ahpd.cost.amount", "cost.amount", "vscode.cost")
+    private val MONETARY_COST_KEYS = listOf("ahpd.cost.amount", "cost.amount")
+    private val CURRENCY_QUALIFIED_COST_KEYS = listOf("cost", "vscode.cost")
     private val COST_CURRENCY_KEYS = listOf("ahpd.cost.currency", "cost.currency", "currency")
 
     private val PROGRESS_KEYS = listOf("progressMessage", "vscode.toolCall.progressMessage", "ahpd.progressMessage")
@@ -361,8 +362,15 @@ object HostExtras {
         val output = info.outputTokens?.takeIf { it in 1L..MAX_TOKENS }
         val cacheRead = info.cacheReadTokens?.takeIf { it in 1L..MAX_TOKENS }
         val cacheWrite = root?.let { r -> CACHE_WRITE_KEYS.firstNotNullOfOrNull { r.tokens(it) } }
-        val costAmount = root?.let { r -> COST_AMOUNT_KEYS.firstNotNullOfOrNull { r.amount(it) } }
-        val costCurrency = if (costAmount != null) root.let { r -> COST_CURRENCY_KEYS.firstNotNullOfOrNull { r.text(it, MAX_STATE) } } else null
+        val rawCurrency = root?.let { r -> COST_CURRENCY_KEYS.firstNotNullOfOrNull { r.text(it, MAX_STATE) } }
+        // VS Code's bare `_meta.cost` is unitless Copilot premium-request credits (`copilotCredits`), summed across model steps in a turn
+        // (so a 15-step turn reports `cost: 15` with no currency). Only `ahpd.cost.amount` / `cost.amount` or a cost accompanied by an
+        // explicit currency is monetary.
+        val costAmount = root?.let { r ->
+            MONETARY_COST_KEYS.firstNotNullOfOrNull { r.amount(it) }
+                ?: if (rawCurrency != null) CURRENCY_QUALIFIED_COST_KEYS.firstNotNullOfOrNull { r.amount(it) } else null
+        }
+        val costCurrency = if (costAmount != null) rawCurrency else null
         val model = info.model?.filterNot { it.isISOControl() }?.trim()?.take(MAX_TEXT)?.trim()?.ifEmpty { null }
         if (input == null && output == null && cacheRead == null && cacheWrite == null && costAmount == null) return null
         return TurnUsage(

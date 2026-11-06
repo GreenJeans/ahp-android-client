@@ -315,12 +315,21 @@ class HostExtrasTest {
     fun `usage reads tokens and cost from both VS Code and ahpd _meta shapes and drops invalid values`() {
         val vscodeUsage = Ahp.json.decodeFromString(
             com.microsoft.agenthostprotocol.generated.UsageInfo.serializer(),
-            """{"inputTokens":68002,"outputTokens":3214,"cacheReadTokens":58793,"model":"claude-sonnet-4","_meta":{"cost":0.04}}""",
+            """{"inputTokens":68002,"outputTokens":3214,"cacheReadTokens":58793,"model":"claude-sonnet-4","_meta":{"cost":15}}""",
         )
         val parsedVscode = HostExtras.usage(vscodeUsage)!!
-        assertEquals(TurnUsage(inputTokens = 68_002L, outputTokens = 3_214L, cacheReadTokens = 58_793L, costAmount = 0.04, model = "claude-sonnet-4"), parsedVscode)
-        assertEquals("71.2k tok \u00b7 $0.04", parsedVscode.summaryText)
-        assertEquals("68k in, 3.2k out \u00b7 58.8k cached \u00b7 $0.04", parsedVscode.detailText)
+        assertEquals(TurnUsage(inputTokens = 68_002L, outputTokens = 3_214L, cacheReadTokens = 58_793L, model = "claude-sonnet-4"), parsedVscode)
+        assertEquals("71.2k tok", parsedVscode.summaryText)
+        assertEquals("68k in, 3.2k out \u00b7 58.8k cached", parsedVscode.detailText)
+
+        val currencyQualifiedCost = Ahp.json.decodeFromString(
+            com.microsoft.agenthostprotocol.generated.UsageInfo.serializer(),
+            """{"inputTokens":68002,"outputTokens":3214,"cacheReadTokens":58793,"model":"claude-sonnet-4","_meta":{"cost":0.04,"currency":"USD"}}""",
+        )
+        val parsedQualified = HostExtras.usage(currencyQualifiedCost)!!
+        assertEquals(TurnUsage(inputTokens = 68_002L, outputTokens = 3_214L, cacheReadTokens = 58_793L, costAmount = 0.04, costCurrency = "USD", model = "claude-sonnet-4"), parsedQualified)
+        assertEquals("71.2k tok \u00b7 $0.04", parsedQualified.summaryText)
+        assertEquals("68k in, 3.2k out \u00b7 58.8k cached \u00b7 $0.04", parsedQualified.detailText)
 
         val ahpdUsage = Ahp.json.decodeFromString(
             com.microsoft.agenthostprotocol.generated.UsageInfo.serializer(),

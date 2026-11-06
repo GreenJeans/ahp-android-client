@@ -29,11 +29,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
@@ -84,6 +89,7 @@ import dev.ahpclient.state.QuickReplyMode
 import dev.ahpclient.state.Transcript
 import dev.ahpclient.state.TranscriptItem
 import dev.ahpclient.state.TranscriptLandmarks
+import dev.ahpclient.state.TurnBranchLink
 import kotlin.math.abs
 import dev.ahpclient.state.TranscriptRowModel
 import dev.ahpclient.state.label
@@ -95,6 +101,7 @@ import dev.ahpclient.ui.ScreenScaffold
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /** How close to the oldest loaded row the user has to scroll before the next page of older turns is asked for. */
@@ -221,6 +228,12 @@ fun ChatPane(
     liveTerminal: ((String) -> LiveTerminal?)? = null,
     /** Where this chat was left scrolled to, and where to keep it as it moves (U1). */
     place: ChatPlaceKeeper? = null,
+    /** Forks and side chats that branched from each turn of this chat (U5). */
+    turnBranches: Map<String, List<TurnBranchLink>> = emptyMap(),
+    /** Switches to a fork or side chat branched from a turn in this chat (U5). */
+    onSelectChat: ((String) -> Unit)? = null,
+    /** Invoked once when the user has viewed the newest message of a finished chat, so the caller can mark it read. */
+    onViewedLatest: (() -> Unit)? = null,
 ) {
     // Kept as the text it came from: that survives the app being recreated, and a target is made from it again.
     var pendingRaw by rememberSaveable { mutableStateOf<String?>(null) }
@@ -268,7 +281,6 @@ fun ChatPane(
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp).testTag("chat_cached"),
                     )
                 }
-                if (transcript?.running == true && !transcript.waitingOnYou) WorkingBar()
                 when {
                     error is ChatGoneException -> ErrorText("This chat is no longer on the host.", Modifier.padding(horizontal = 16.dp).testTag("chat_gone"))
                     notLoaded != null && transcript == null ->
@@ -291,6 +303,9 @@ fun ChatPane(
                             modifier = Modifier.weight(1f),
                             liveTerminal = liveTerminal,
                             place = place,
+                            turnBranches = turnBranches,
+                            onSelectChat = onSelectChat,
+                            onViewedLatest = onViewedLatest,
                         )
                     }
                     error != null -> ErrorText("Could not load this chat (${error::class.simpleName}).", Modifier.padding(horizontal = 16.dp).testTag("chat_error"))
@@ -389,12 +404,23 @@ private fun TranscriptList(
     modifier: Modifier = Modifier,
     liveTerminal: ((String) -> LiveTerminal?)? = null,
     place: ChatPlaceKeeper? = null,
+    turnBranches: Map<String, List<TurnBranchLink>> = emptyMap(),
+    onSelectChat: ((String) -> Unit)? = null,
+    onViewedLatest: (() -> Unit)? = null,
 ) {
     val listState = rememberSaveable(place?.chatKey, saver = LazyListState.Saver) { LazyListState() }
     val scope = rememberCoroutineScope()
     var composerDraft by rememberSaveable { mutableStateOf<String?>(null) }
-    val newestFirst = remember(transcript.items) { TranscriptRowModel.from(transcript.items).asReversed() }
-    val rowOffset = if (transcript.running) 1 else 0
+    var pointerDown by remember(place?.chatKey) { mutableStateOf(false) }
+    val isDragged by listState.interactionSource.collectIsDraggedAsState()
+    val holdingTouch = pointerDown || isDragged
+    var heldTranscript by remember(place?.chatKey) { mutableStateOf(transcript) }
+    if (!holdingTouch || heldTranscript.items.isEmpty()) {
+        heldTranscript = transcript
+    }
+    val shownTranscript = heldTranscript
+    val newestFirst = remember(shownTranscript.items) { TranscriptRowModel.from(shownTranscript.items).asReversed() }
+    val rowOffset = if (shownTranscript.running) 1 else 0
 
     // Whether the user is at the newest row. It changes only when the position moves while the rows stay the same: a row arriving
     // shifts the position by itself (and changes the row count in the same layout), and must not be mistaken for the user scrolling
@@ -431,13 +457,21 @@ private fun TranscriptList(
         }.distinctUntilChanged().collect { currentPlace?.save?.invoke(it) }
     }
     val newestKey = newestFirst.firstOrNull()?.key
-    LaunchedEffect(newestKey) {
-        if (following && newestKey != null) listState.scrollToItem(0)
+    LaunchedEffect(newestKey, holdingTouch, shownTranscript.waitingOnYou) {
+        if (following && !holdingTouch && !shownTranscript.waitingOnYou && newestKey != null) listState.scrollToItem(0)
+    }
+
+    val currentOnViewedLatest by rememberUpdatedState(onViewedLatest)
+    val lastTurnKey = transcript.lastTurnId ?: transcript.items.lastOrNull()?.key
+    LaunchedEffect(listState, transcript.running, lastTurnKey, currentOnViewedLatest) {
+        if (currentOnViewedLatest == null || transcript.running || transcript.items.isEmpty()) return@LaunchedEffect
+        snapshotFlow { listState.atNewest() }.filter { it }.first()
+        currentOnViewedLatest?.invoke()
     }
 
     val currentLoadOlder by rememberUpdatedState(onLoadOlder)
-    LaunchedEffect(listState, transcript.hasOlder) {
-        if (!transcript.hasOlder) return@LaunchedEffect
+    LaunchedEffect(listState, shownTranscript.hasOlder) {
+        if (!shownTranscript.hasOlder) return@LaunchedEffect
         snapshotFlow {
             val info = listState.layoutInfo
             info.totalItemsCount > 0 && (info.visibleItemsInfo.lastOrNull()?.index ?: -1) >= info.totalItemsCount - 1 - LOAD_OLDER_MARGIN
@@ -447,7 +481,7 @@ private fun TranscriptList(
     val away by remember { derivedStateOf { !listState.atNewest() } }
     // The person's latest message and the start of the reply to it, as list positions (the working row, when shown, comes first).
     val landmarks = remember(newestFirst) { TranscriptLandmarks.of(newestFirst) }
-    val readableTurns = remember(transcript.items) { TranscriptLandmarks.readableTurns(transcript.items) }
+    val readableTurns = remember(shownTranscript.items) { TranscriptLandmarks.readableTurns(shownTranscript.items) }
     val lastUserTopShown by remember(landmarks, rowOffset) { derivedStateOf { landmarks.lastUser?.let { listState.topShown(it + rowOffset) } ?: true } }
     // Shown only once there is a reply: a message still waiting for one is the newest row, and needs no reminder.
     val barShown = landmarks.lastUserText != null && landmarks.replyStart != null && !lastUserTopShown
@@ -459,18 +493,34 @@ private fun TranscriptList(
     val composerPadding = if (actions != null) with(LocalDensity.current) { composerHeightPx.toDp() } else 0.dp
     val saveableHolder = rememberSaveableStateHolder()
     Box(modifier = modifier.fillMaxSize()) {
-        if (newestFirst.isEmpty() && !transcript.hasOlder) {
+        if (newestFirst.isEmpty() && !shownTranscript.hasOlder) {
             Text("No messages yet.", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(24.dp).testTag("chat_empty"))
         }
         LazyColumn(
             state = listState,
             reverseLayout = true,
-            modifier = Modifier.fillMaxSize().coveredAtTop(barInset).testTag("transcript"),
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(place?.chatKey) {
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                        pointerDown = true
+                        try {
+                            do {
+                                val event = awaitPointerEvent(PointerEventPass.Initial)
+                            } while (event.changes.any { it.pressed })
+                        } finally {
+                            pointerDown = false
+                        }
+                    }
+                }
+                .coveredAtTop(barInset)
+                .testTag("transcript"),
             contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 6.dp + composerPadding),
         ) {
             // The newest row, at the bottom: for as long as the turn runs, the sign that it does (or that it is held up on the person).
-            if (transcript.running) {
-                item(key = WORKING_KEY, contentType = WORKING_KEY) { WorkingRow(transcript.activity, transcript.waitingOnYou, Modifier.padding(top = 8.dp)) }
+            if (shownTranscript.running) {
+                item(key = WORKING_KEY, contentType = WORKING_KEY) { WorkingRow(shownTranscript.activity, shownTranscript.waitingOnYou, Modifier.padding(top = 8.dp)) }
             }
             itemsIndexed(newestFirst, key = { _, row -> row.key }, contentType = { _, row -> row::class }) { index, row ->
                 TranscriptRow(
@@ -484,9 +534,9 @@ private fun TranscriptList(
                     onOpenTerminal = onOpenTerminal,
                     allowHostFiles = allowHostFiles,
                     onOpenRich = onOpenRich,
-                    hasOlder = transcript.hasOlder,
+                    hasOlder = shownTranscript.hasOlder,
                     onRead = onOpenRich?.let { open ->
-                        { turnId: String -> TranscriptLandmarks.replyParts(transcript.items, turnId)?.let { open(RichModalRequest.Reply("Reply", it.answer, it.notes)) } }
+                        { turnId: String -> TranscriptLandmarks.replyParts(shownTranscript.items, turnId)?.let { open(RichModalRequest.Reply("Reply", it.answer, it.notes)) } }
                     },
                     readableTurns = readableTurns,
                     onLoadDraft = { draft ->
@@ -494,9 +544,11 @@ private fun TranscriptList(
                         scope.launch { listState.scrollToItem(0) }
                     },
                     liveTerminal = liveTerminal,
+                    turnBranches = turnBranches,
+                    onSelectChat = onSelectChat,
                 )
             }
-            if (loadingOlder || olderError != null || transcript.hasOlder) {
+            if (loadingOlder || olderError != null || shownTranscript.hasOlder) {
                 item(key = OLDER_KEY, contentType = OLDER_KEY) { OlderRow(loadingOlder, olderError, onLoadOlder) }
             }
         }

@@ -669,7 +669,7 @@ class ChatScreenTest {
 
         rule.onNodeWithTag("working_text", useUnmergedTree = true).assertTextEquals("Running tests")
         rule.onAllNodesWithTag("working_dots", useUnmergedTree = true).assertCountEquals(1)
-        rule.onAllNodesWithTag("chat_progress", useUnmergedTree = true).assertCountEquals(1)
+        rule.onAllNodesWithTag("chat_progress", useUnmergedTree = true).assertCountEquals(0)
         assertTrue("the working row is below the newest message", rule.onNodeWithTag("row_working").fetchSemanticsNode().positionInRoot.y > y("message 2"))
     }
 

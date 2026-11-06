@@ -225,4 +225,56 @@ class SessionFilterSheetTest {
         rule.onNodeWithTag("facet_workspace_toggle_all").assertTextEquals("Show fewer")
         rule.onNodeWithTag("facet_workspace_repo-12").performScrollTo().assertIsDisplayed()
     }
+
+    @Test
+    fun userSubChatsAreShownInSessionsListAndCanBeCollapsedAndOpened() {
+        val openedSubChats = mutableListOf<Triple<String?, String, String>>()
+        val withSubChats = summary(
+            "ahp-session:/subs",
+            "Auth refactor",
+            1,
+            "2026-10-26T10:25:00.000Z",
+            ""","defaultChat":"ahp-chat:/main","chats":[
+                {"resource":"ahp-chat:/main","title":"Main thread","status":33,"origin":{"kind":"user"}},
+                {"resource":"ahp-chat:/fork-1","title":"OAuth experiment","status":1,"origin":{"kind":"fork","chat":"ahp-chat:/main","turnId":"t2"}},
+                {"resource":"ahp-chat:/side-1","title":"Check docs","status":33,"origin":{"kind":"sideChat","chat":"ahp-chat:/main","turnId":"t3"}}
+            ]""",
+        )
+        rule.setContent {
+            var filter by remember { mutableStateOf(SessionFilter.DEFAULT) }
+            AhpTheme {
+                DrawerContent(
+                    host = HostRef.Tunnel(host),
+                    connection = ConnState.Online,
+                    sessions = listOf(withSubChats),
+                    now = now,
+                    selected = "ahp-session:/subs",
+                    selectedChat = "ahp-chat:/fork-1",
+                    showArchived = false,
+                    onToggleArchived = {},
+                    query = "",
+                    onQueryChange = {},
+                    listState = rememberLazyListState(),
+                    manage = null,
+                    onOpenHost = {},
+                    onOpenSession = {},
+                    onOpenSettings = {},
+                    onSessionCreated = {},
+                    filter = filter,
+                    onFilterChange = { filter = it },
+                    onOpenSubChat = { hostId, sessionUri, chatUri -> openedSubChats += Triple(hostId, sessionUri, chatUri) },
+                )
+            }
+        }
+
+        rule.onAllNodesWithTag("session_subchat_row").assertCountEquals(2)
+        rule.onAllNodesWithTag("session_subchat_row")[0].assertTouchTargetAtLeast(48.dp).performClick()
+        assertEquals(listOf(Triple<String?, String, String>(null, "ahp-session:/subs", "ahp-chat:/fork-1")), openedSubChats)
+
+        // Collapsing hides the sub-chats; expanding shows them again
+        rule.onNodeWithTag("session_subchats_toggle_ahp-session:/subs").assertTouchTargetAtLeast(48.dp).performClick()
+        rule.onAllNodesWithTag("session_subchat_row").assertCountEquals(0)
+        rule.onNodeWithTag("session_subchats_toggle_ahp-session:/subs").performClick()
+        rule.onAllNodesWithTag("session_subchat_row").assertCountEquals(2)
+    }
 }

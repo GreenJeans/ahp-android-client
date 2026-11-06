@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
@@ -51,6 +52,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
@@ -75,6 +77,7 @@ import dev.ahpclient.state.SessionCatalog
 import dev.ahpclient.state.SessionFilter
 import dev.ahpclient.state.SessionListModel
 import dev.ahpclient.state.SessionRow
+import dev.ahpclient.state.SessionSubChatRow
 import dev.ahpclient.state.label
 import dev.ahpclient.platform.Instant
 
@@ -124,6 +127,10 @@ fun DrawerContent(
     onOpenTerminal: (String) -> Unit = {},
     /** Opens the focused host's automations (P7); null when the host offers none, and then there is no button. */
     onOpenAutomations: (() -> Unit)? = null,
+    /** The currently shown chat URI in [selected], so its sub-chat row can be highlighted. */
+    selectedChat: String? = null,
+    /** Opens a specific user sub-chat inside a session directly from the sessions list. */
+    onOpenSubChat: (hostId: String?, sessionUri: String, chatUri: String) -> Unit = { hostId, sessionUri, _ -> onOpenSessionOnHost(hostId, sessionUri) },
 ) {
     val effectiveFilter = remember(filter, showArchived) { filter.copy(showArchived = showArchived) }
     val model = remember(entries, sessions, effectiveFilter, now, query) {
@@ -175,6 +182,7 @@ fun DrawerContent(
                     connection = connection,
                     stale = stale,
                     selected = selected,
+                    selectedChat = selectedChat,
                     query = query,
                     onQueryChange = onQueryChange,
                     onOpenFilter = { filterSheetOpen = true },
@@ -185,6 +193,7 @@ fun DrawerContent(
                     onSessionCreatedOnHost = onSessionCreatedOnHost,
                     watched = watched,
                     onOpen = onOpenSessionOnHost,
+                    onOpenSubChat = onOpenSubChat,
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -385,6 +394,7 @@ private fun SessionList(
     connection: ConnState?,
     stale: Boolean,
     selected: String?,
+    selectedChat: String?,
     query: String,
     onQueryChange: (String) -> Unit,
     onOpenFilter: () -> Unit,
@@ -395,9 +405,12 @@ private fun SessionList(
     onSessionCreatedOnHost: (hostId: String?, uri: String) -> Unit,
     watched: Set<String>,
     onOpen: (hostId: String?, uri: String) -> Unit,
+    onOpenSubChat: (hostId: String?, sessionUri: String, chatUri: String) -> Unit,
     modifier: Modifier,
 ) {
     val showSearch = model.total > 0 || !model.filter.isDefault
+    var collapsedSubChats by rememberSaveable { mutableStateOf(emptySet<String>()) }
+    val condensed = model.filter.condensed
     LazyColumn(state = listState, modifier = modifier.fillMaxWidth().testTag("session_list")) {
         if (stale) {
             item(key = "stale") {
@@ -450,11 +463,19 @@ private fun SessionList(
                     }
                 }
                 items(group.rows, key = { "${group.key}:${it.key}" }) { row ->
+                    val subChatsExpanded = row.key !in collapsedSubChats
                     SessionRowItem(
                         row = row,
                         selected = row.resource == selected,
+                        selectedChat = if (row.resource == selected) selectedChat else null,
                         watched = row.resource in watched,
+                        condensed = condensed,
+                        subChatsExpanded = subChatsExpanded,
+                        onToggleSubChats = {
+                            collapsedSubChats = if (row.key in collapsedSubChats) collapsedSubChats - row.key else collapsedSubChats + row.key
+                        },
                         onOpen = { onOpen(row.hostId, row.resource) },
+                        onOpenSubChat = { chatUri -> onOpenSubChat(row.hostId, row.resource, chatUri) },
                     )
                 }
             }
@@ -525,9 +546,19 @@ private fun EmptyList(model: SessionListModel, connection: ConnState?, onResetFi
     if (text != null) Text(text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = tag)
 }
 
-/** One session on one or two lines. Its spoken description joins every part, so TalkBack reads the title, state, changes and age as a single item. */
+/** One session on one or two lines (or a compact single line when [condensed]), plus its collapsible user [SessionRow.subChats] when present. */
 @Composable
-private fun SessionRowItem(row: SessionRow, selected: Boolean, watched: Boolean, onOpen: () -> Unit) {
+private fun SessionRowItem(
+    row: SessionRow,
+    selected: Boolean,
+    watched: Boolean,
+    onOpen: () -> Unit,
+    selectedChat: String? = null,
+    condensed: Boolean = false,
+    subChatsExpanded: Boolean = true,
+    onToggleSubChats: () -> Unit = {},
+    onOpenSubChat: (String) -> Unit = {},
+) {
     val description = listOfNotNull(
         row.title,
         row.state.label,
@@ -540,98 +571,246 @@ private fun SessionRowItem(row: SessionRow, selected: Boolean, watched: Boolean,
         if (row.isArchived) "archived" else null,
         if (watched) "alert when done is on" else null,
     ).joinToString(", ")
-    val shape = RoundedCornerShape(16.dp)
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp)
-            .clip(shape)
-            .background(if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
-            .clickable(onClickLabel = "Open session", role = Role.Button, onClick = onOpen)
-            .heightIn(min = 52.dp)
-            .padding(horizontal = 12.dp, vertical = 6.dp)
-            .semantics(mergeDescendants = true) {
-                contentDescription = description
-                if (selected) stateDescription = "Open"
-            }
-            .testTag("session_row"),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        StateMark(row.state, unread = !row.isRead)
-        Column(Modifier.weight(1f)) {
-            Text(
-                row.title,
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = if (row.isRead) FontWeight.Normal else FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            val hostName = row.hostName
-            val second = row.subtitle
-            val changes = row.changes
-            val branch = row.branch
-            val inlineBranch = branch.takeIf { second == null }
-            val separateBranch = branch.takeIf { second != null }
-            hostName?.let {
-                Text(
-                    it,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    maxLines = 1,
-                    overflow = TextOverflow.MiddleEllipsis,
-                    modifier = Modifier.testTag("row_host"),
-                )
-            }
-            if (second != null || changes != null || inlineBranch != null) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    second?.let {
-                        Text(
-                            it,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false),
-                        )
+    val shape = RoundedCornerShape(if (condensed) 12.dp else 16.dp)
+    val hasSubChats = row.subChats.isNotEmpty()
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(shape)
+                    .background(if (selected && selectedChat == null) MaterialTheme.colorScheme.secondaryContainer else if (selected) MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f) else Color.Transparent)
+                    .clickable(onClickLabel = "Open session", role = Role.Button, onClick = onOpen)
+                    .heightIn(min = if (condensed) 38.dp else 52.dp)
+                    .padding(horizontal = if (condensed) 10.dp else 12.dp, vertical = if (condensed) 2.dp else 6.dp)
+                    .semantics(mergeDescendants = true) {
+                        contentDescription = description
+                        if (selected) stateDescription = "Open"
                     }
-                    inlineBranch?.let {
-                        Text(
-                            it,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.MiddleEllipsis,
-                            modifier = Modifier.weight(1f, fill = false).testTag("row_branch"),
-                        )
-                    }
-                    changes?.let {
+                    .testTag("session_row"),
+                horizontalArrangement = Arrangement.spacedBy(if (condensed) 8.dp else 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                StateMark(row.state, unread = !row.isRead)
+                if (condensed) {
+                    Text(
+                        row.title,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = if (row.isRead) FontWeight.Normal else FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    row.changes?.let {
                         Text(
                             it.text,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
-                            modifier = Modifier.padding(start = if (second != null || inlineBranch != null) 6.dp else 0.dp).testTag("row_changes"),
+                            modifier = Modifier.testTag("row_changes"),
                         )
                     }
+                } else {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            row.title,
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = if (row.isRead) FontWeight.Normal else FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        val hostName = row.hostName
+                        val second = row.subtitle
+                        val changes = row.changes
+                        val branch = row.branch
+                        val inlineBranch = branch.takeIf { second == null }
+                        val separateBranch = branch.takeIf { second != null }
+                        hostName?.let {
+                            Text(
+                                it,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                maxLines = 1,
+                                overflow = TextOverflow.MiddleEllipsis,
+                                modifier = Modifier.testTag("row_host"),
+                            )
+                        }
+                        if (second != null || changes != null || inlineBranch != null) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                second?.let {
+                                    Text(
+                                        it,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false),
+                                    )
+                                }
+                                inlineBranch?.let {
+                                    Text(
+                                        it,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.MiddleEllipsis,
+                                        modifier = Modifier.weight(1f, fill = false).testTag("row_branch"),
+                                    )
+                                }
+                                changes?.let {
+                                    Text(
+                                        it.text,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        modifier = Modifier.padding(start = if (second != null || inlineBranch != null) 6.dp else 0.dp).testTag("row_changes"),
+                                    )
+                                }
+                            }
+                        }
+                        separateBranch?.let {
+                            Text(
+                                it,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.MiddleEllipsis,
+                                modifier = Modifier.testTag("row_branch"),
+                            )
+                        }
+                    }
+                }
+                if (watched) {
+                    Icon(AppIcons.Bell, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(14.dp).testTag("row_alert"))
+                }
+                if (row.whenText.isNotEmpty()) {
+                    Text(row.whenText, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            separateBranch?.let {
-                Text(
-                    it,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.MiddleEllipsis,
-                    modifier = Modifier.testTag("row_branch"),
+            if (hasSubChats) {
+                val count = row.subChats.size
+                val toggleLabel = "${if (subChatsExpanded) "Collapse" else "Expand"} $count ${if (count == 1) "sub-chat" else "sub-chats"} in ${row.title}"
+                Row(
+                    modifier = Modifier
+                        .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable(
+                            onClickLabel = if (subChatsExpanded) "Collapse sub-chats" else "Expand sub-chats",
+                            role = Role.Button,
+                            onClick = onToggleSubChats,
+                        )
+                        .padding(horizontal = 6.dp)
+                        .semantics(mergeDescendants = true) {
+                            contentDescription = toggleLabel
+                            stateDescription = if (subChatsExpanded) "Expanded" else "Collapsed"
+                        }
+                        .testTag("session_subchats_toggle_${row.resource}"),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterHorizontally),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "$count",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Icon(
+                        AppIcons.ChevronDown,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp).rotate(if (subChatsExpanded) 0f else -90f),
+                    )
+                }
+            }
+        }
+        if (hasSubChats && subChatsExpanded) {
+            row.subChats.forEach { sub ->
+                SessionSubChatRowItem(
+                    sub = sub,
+                    sessionTitle = row.title,
+                    selected = selected && selectedChat == sub.resource,
+                    condensed = condensed,
+                    onOpen = { onOpenSubChat(sub.resource) },
                 )
             }
         }
-        if (watched) {
-            Icon(AppIcons.Bell, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(14.dp).testTag("row_alert"))
+    }
+}
+
+@Composable
+private fun SessionSubChatRowItem(
+    sub: SessionSubChatRow,
+    sessionTitle: String,
+    selected: Boolean,
+    condensed: Boolean,
+    onOpen: () -> Unit,
+) {
+    val spoken = listOfNotNull(
+        sub.title,
+        sub.relationLabel ?: "sub-chat",
+        "in $sessionTitle",
+        sub.state.label,
+        sub.changes?.spoken,
+        if (sub.isRead) null else "unread",
+        if (sub.isArchived) "archived" else null,
+    ).joinToString(", ")
+    val colors = MaterialTheme.colorScheme
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 32.dp, end = 8.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (selected) colors.secondaryContainer else Color.Transparent)
+            .clickable(onClickLabel = "Open sub-chat", role = Role.Button, onClick = onOpen)
+            .heightIn(min = if (condensed) 34.dp else 48.dp)
+            .padding(horizontal = 10.dp, vertical = if (condensed) 2.dp else 4.dp)
+            .semantics(mergeDescendants = true) {
+                contentDescription = spoken
+                if (selected) stateDescription = "Open"
+            }
+            .testTag("session_subchat_row"),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(14.dp).testTag("subchat_state_mark").clearAndSetSemantics {}, contentAlignment = Alignment.Center) {
+            when (sub.state) {
+                ActivityState.IN_PROGRESS -> CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 1.5.dp, color = colors.primary)
+                ActivityState.NEEDS_INPUT -> Icon(AppIcons.Lock, contentDescription = null, tint = colors.tertiary, modifier = Modifier.size(12.dp))
+                ActivityState.ERROR -> Icon(AppIcons.ErrorCircle, contentDescription = null, tint = colors.error, modifier = Modifier.size(12.dp))
+                ActivityState.IDLE -> Box(
+                    Modifier
+                        .size(if (!sub.isRead) 8.dp else 6.dp)
+                        .clip(CircleShape)
+                        .background(if (!sub.isRead) colors.primary else colors.outlineVariant),
+                )
+            }
         }
-        if (row.whenText.isNotEmpty()) {
-            Text(row.whenText, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            sub.title,
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = if (sub.isRead) FontWeight.Normal else FontWeight.Bold,
+            color = colors.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        sub.relationLabel?.let { rel ->
+            Text(
+                rel,
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.onSurfaceVariant,
+                maxLines = 1,
+            )
+        }
+        sub.changes?.let {
+            Text(
+                it.text,
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.onSurfaceVariant,
+                maxLines = 1,
+            )
         }
     }
 }

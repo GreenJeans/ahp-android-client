@@ -110,6 +110,7 @@ fun SessionScreen(
     onOpenLink: (String) -> Unit = {},
     onShareLink: ((String) -> Unit)? = null,
     requestedChat: String? = null,
+    onRequestedChatConsumed: () -> Unit = {},
     rootState: RootState? = null,
     onUseSlashCommand: ((String) -> Unit)? = null,
     onUseAgent: ((String) -> Unit)? = null,
@@ -152,8 +153,8 @@ fun SessionScreen(
     }
     var notice by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-    // A chat the user has just started is not in the host's list until the host echoes it, so the tab is brought forward then.
-    var pendingChat by remember { mutableStateOf<String?>(null) }
+    // A chat the user has just started or chosen from the drawer is brought forward as soon as it is in the session's reachable chats.
+    var pendingChat by remember { mutableStateOf(requestedChat) }
     LaunchedEffect(requestedChat) {
         if (requestedChat != null) pendingChat = requestedChat
     }
@@ -169,14 +170,14 @@ fun SessionScreen(
     val tabUris = switcher.reachable
     var showSwitcher by rememberSaveable { mutableStateOf(false) }
     val canShowChat = detail != null && detail.phase != SessionPhase.FAILED
-    LaunchedEffect(tabUris, shownChat, canShowChat) {
-        if (canShowChat && (shownChat == null || shownChat !in tabUris)) detail.mainChat?.let { onSelectChat(it.uri) }
-    }
-    LaunchedEffect(tabUris, pendingChat) {
-        val wanted = pendingChat ?: return@LaunchedEffect
-        if (wanted in tabUris) {
+    LaunchedEffect(tabUris, shownChat, canShowChat, pendingChat) {
+        val wanted = pendingChat
+        if (wanted != null && wanted in tabUris) {
             onSelectChat(wanted)
             pendingChat = null
+            onRequestedChatConsumed()
+        } else if (canShowChat && (shownChat == null || shownChat !in tabUris)) {
+            detail.mainChat?.let { onSelectChat(it.uri) }
         }
     }
 

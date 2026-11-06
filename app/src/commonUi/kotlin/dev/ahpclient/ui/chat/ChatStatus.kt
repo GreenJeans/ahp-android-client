@@ -89,9 +89,3 @@ private fun PulseDots() {
         }
     }
 }
-
-/** A thin bar across the top of the chat that moves for as long as the agent works. Decorative: the row at the end of the chat says it in words. */
-@Composable
-internal fun WorkingBar(modifier: Modifier = Modifier) {
-    LinearProgressIndicator(modifier = modifier.fillMaxWidth().height(2.dp).testTag("chat_progress").clearAndSetSemantics {})
-}

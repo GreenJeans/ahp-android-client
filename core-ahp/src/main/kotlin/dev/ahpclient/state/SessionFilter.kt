@@ -96,6 +96,7 @@ data class SessionFilter(
     val showExternal: Boolean = false,
     val showDone: Boolean = true,
     val showArchived: Boolean = false,
+    val condensed: Boolean = false,
     val hostIds: Set<String> = emptySet(),
     val providers: Set<String> = emptySet(),
     val workspaces: Set<String> = emptySet(),

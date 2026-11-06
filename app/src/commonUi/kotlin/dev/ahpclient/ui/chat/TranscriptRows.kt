@@ -55,6 +55,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import dev.ahpclient.state.AgentPick
+import dev.ahpclient.state.BranchLinkKind
 import dev.ahpclient.state.InteractMessages
 import dev.ahpclient.state.ManageMessages
 import dev.ahpclient.state.LiveTerminal
@@ -63,6 +64,7 @@ import dev.ahpclient.state.PendingApproval
 import dev.ahpclient.state.SessionDetail
 import dev.ahpclient.state.ToolDetail
 import dev.ahpclient.state.RiskLevelView
+import dev.ahpclient.state.TurnBranchLink
 import dev.ahpclient.state.TurnDuration
 import dev.ahpclient.state.TurnOutcome
 import dev.ahpclient.state.ToolState
@@ -96,6 +98,9 @@ internal fun TranscriptRow(
     onLoadDraft: (String) -> Unit = {},
     /** Watches a terminal, read only, for the live tail of a running tool call's command (U7). */
     liveTerminal: ((String) -> LiveTerminal?)? = null,
+    /** Forks and side chats that branched from each turn of this chat (U5). */
+    turnBranches: Map<String, List<TurnBranchLink>> = emptyMap(),
+    onSelectChat: ((String) -> Unit)? = null,
 ) {
     when (row) {
         is TranscriptRowModel.Single -> ItemRow(
@@ -103,6 +108,8 @@ internal fun TranscriptRow(
             actions, onOpenSubagent, onOpenTerminal, allowHostFiles, onOpenRich, hasOlder, onLoadDraft,
             onRead = onRead?.takeIf { (row.item as? TranscriptItem.TurnEnd)?.turnId in readableTurns },
             liveTerminal = liveTerminal,
+            branches = (row.item as? TranscriptItem.TurnEnd)?.let { turnBranches[it.turnId] }.orEmpty(),
+            onSelectChat = onSelectChat,
         )
         is TranscriptRowModel.Steps -> StepsRow(
             row, onOpenLink, modifier, expanded, onToggle,
@@ -128,6 +135,8 @@ private fun ItemRow(
     onLoadDraft: (String) -> Unit = {},
     onRead: ((String) -> Unit)? = null,
     liveTerminal: ((String) -> LiveTerminal?)? = null,
+    branches: List<TurnBranchLink> = emptyList(),
+    onSelectChat: ((String) -> Unit)? = null,
 ) {
     when (item) {
         is TranscriptItem.User -> UserRow(item, actions, hasOlder, onLoadDraft, modifier)
@@ -135,7 +144,7 @@ private fun ItemRow(
         is TranscriptItem.Reasoning -> ReasoningBlock(item, expanded, onToggle, onOpenLink, modifier, allowHostFiles, onOpenRich)
         is TranscriptItem.Tool -> ToolCallBlock(item, expanded, onToggle, actions, onOpenSubagent, onOpenTerminal, onOpenRich, modifier, liveTerminal)
         is TranscriptItem.Notice -> NoticeRow(item, modifier)
-        is TranscriptItem.TurnEnd -> TurnEndRow(item, actions, modifier, onRead)
+        is TranscriptItem.TurnEnd -> TurnEndRow(item, actions, modifier, onRead, branches, onSelectChat)
         is TranscriptItem.Question -> {
             val form = item.form
             if (actions != null && form != null && !item.answered) {
@@ -503,7 +512,14 @@ private fun AgentBubble(
 
 /** The line that ends a turn: that the agent has stopped, how it ended, how long it worked, and actions to retry, fork, or open a side chat. */
 @Composable
-private fun TurnEndRow(item: TranscriptItem.TurnEnd, actions: ChatActionsUi?, modifier: Modifier, onRead: ((String) -> Unit)? = null) {
+private fun TurnEndRow(
+    item: TranscriptItem.TurnEnd,
+    actions: ChatActionsUi?,
+    modifier: Modifier,
+    onRead: ((String) -> Unit)? = null,
+    branches: List<TurnBranchLink> = emptyList(),
+    onSelectChat: ((String) -> Unit)? = null,
+) {
     val colors = MaterialTheme.colorScheme
     val (glyph, word) = when (item.outcome) {
         TurnOutcome.DONE -> Glyph.DONE to "Done"
@@ -620,6 +636,28 @@ private fun TurnEndRow(item: TranscriptItem.TurnEnd, actions: ChatActionsUi?, mo
                         Icon(AppIcons.SideChat, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
                         Text("Side chat", style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+            }
+        }
+        if (branches.isNotEmpty() && onSelectChat != null) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                branches.forEach { branch ->
+                    val icon = if (branch.kind == BranchLinkKind.FORK) AppIcons.Fork else AppIcons.SideChat
+                    val label = "${branch.kind.label}: ${branch.title}"
+                    TextButton(
+                        onClick = { onSelectChat(branch.uri) },
+                        modifier = Modifier
+                            .heightIn(min = 48.dp)
+                            .semantics { contentDescription = "Open $label" }
+                            .testTag("turn_branch_${item.turnId}_${branch.uri}"),
+                    ) {
+                        Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }

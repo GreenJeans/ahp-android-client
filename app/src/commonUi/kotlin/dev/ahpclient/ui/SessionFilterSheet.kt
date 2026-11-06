@@ -214,7 +214,19 @@ fun SessionFilterSheet(
             }
 
             SectionHeader("Visibility")
-            TileCard(shape = connectedShape(0, 3), color = card) {
+            TileCard(shape = connectedShape(0, 4), color = card) {
+                FilterTilePadding {
+                    FilterSwitchRow(
+                        label = "Condensed view",
+                        subtitle = "Compact single-line rows in the sessions list",
+                        checked = filter.condensed,
+                        tag = "filter_condensed",
+                        onCheckedChange = { onFilterChange(filter.copy(condensed = it)) },
+                    )
+                }
+            }
+            Spacer(Modifier.height(Design.Gap))
+            TileCard(shape = connectedShape(1, 4), color = card) {
                 FilterTilePadding {
                     FilterSwitchRow(
                         label = "Show done sessions",
@@ -226,7 +238,7 @@ fun SessionFilterSheet(
                 }
             }
             Spacer(Modifier.height(Design.Gap))
-            TileCard(shape = connectedShape(1, 3), color = card) {
+            TileCard(shape = connectedShape(2, 4), color = card) {
                 FilterTilePadding {
                     val hiddenNote = if (!filter.showExternal && model.hiddenExternal > 0) {
                         "Background CLI, subagent & automation runs (${model.hiddenExternal} hidden)"
@@ -243,7 +255,7 @@ fun SessionFilterSheet(
                 }
             }
             Spacer(Modifier.height(Design.Gap))
-            TileCard(shape = connectedShape(2, 3), color = card) {
+            TileCard(shape = connectedShape(3, 4), color = card) {
                 FilterTilePadding {
                     val archivedNote = if (!filter.showArchived && model.hiddenArchived > 0) {
                         "Archived sessions (${model.hiddenArchived} hidden)"

@@ -1,5 +1,8 @@
 package dev.ahpclient.state
 
+import com.microsoft.agenthostprotocol.generated.ChatInteractivity
+import com.microsoft.agenthostprotocol.generated.ChatOrigin
+import com.microsoft.agenthostprotocol.generated.SessionChatSummary
 import com.microsoft.agenthostprotocol.generated.SessionSummary
 import dev.ahpclient.platform.INSTANT_EPOCH
 import dev.ahpclient.platform.Instant
@@ -7,6 +10,17 @@ import dev.ahpclient.platform.instantNow
 import dev.ahpclient.platform.parseInstant
 import dev.ahpclient.platform.ZoneId
 import dev.ahpclient.platform.systemDefaultZone
+
+/** A user sub-chat (fork, side chat, or additional user chat) belonging to a session in the sessions list. */
+data class SessionSubChatRow(
+    val resource: String,
+    val title: String,
+    val relationLabel: String? = null,
+    val state: ActivityState = ActivityState.IDLE,
+    val isRead: Boolean = true,
+    val isArchived: Boolean = false,
+    val changes: ChangeStats? = null,
+)
 
 data class SessionRow(
     val resource: String,
@@ -33,6 +47,8 @@ data class SessionRow(
     val initiator: String? = null,
     /** Whether the session was created externally, spawned by a tool, or started by an automation. */
     val isExternal: Boolean = false,
+    /** Non-main user sub-chats (forks, side chats, and additional user-created chats) in this session. */
+    val subChats: List<SessionSubChatRow> = emptyList(),
 ) {
     /** Unique key across hosts for Compose lists. */
     val key: String get() = if (hostId != null) "$hostId::$resource" else resource
@@ -164,6 +180,7 @@ data class SessionListModel(
                     ordering = filter.ordering,
                     hostId = entry.hostId,
                     hostName = entry.hostName?.takeIf { multiHost && filter.grouping != SessionGrouping.HOST },
+                    showArchived = filter.showArchived,
                 )
             }
 
@@ -176,7 +193,8 @@ data class SessionListModel(
                         row.subtitle?.contains(needle, ignoreCase = true) == true ||
                         row.branch?.contains(needle, ignoreCase = true) == true ||
                         row.workspace?.contains(needle, ignoreCase = true) == true ||
-                        row.hostName?.contains(needle, ignoreCase = true) == true
+                        row.hostName?.contains(needle, ignoreCase = true) == true ||
+                        row.subChats.any { it.title.contains(needle, ignoreCase = true) }
                 }
             }
 
@@ -207,6 +225,7 @@ data class SessionListModel(
             ordering: SessionOrdering = SessionOrdering.UPDATED,
             hostId: String? = null,
             hostName: String? = null,
+            showArchived: Boolean = false,
         ) = SessionRow(
             resource = session.resource,
             title = session.title.ifBlank { UNTITLED },
@@ -224,7 +243,40 @@ data class SessionListModel(
             workspace = session.workspaceLabel,
             initiator = session.initiatorLabel,
             isExternal = session.isSpawnedOrExternal,
+            subChats = extractSubChats(session, showArchived),
         )
+
+        private fun extractSubChats(session: SessionSummary, showArchived: Boolean): List<SessionSubChatRow> {
+            val chats = session.chats.orEmpty()
+            if (chats.size <= 1) return emptyList()
+            val mainUri = session.defaultChat ?: chats.first().resource
+            return chats.mapNotNull { chat ->
+                if (chat.resource == mainUri) return@mapNotNull null
+                val state = chat.status?.activityState ?: ActivityState.IDLE
+                val waiting = state == ActivityState.NEEDS_INPUT
+                val archived = chat.status?.isArchived == true
+                if (archived && !showArchived && !waiting) return@mapNotNull null
+                if (!waiting) {
+                    val interactivity = chat.interactivity ?: ChatInteractivity.FULL
+                    if (interactivity == ChatInteractivity.HIDDEN || interactivity == ChatInteractivity.READ_ONLY) return@mapNotNull null
+                    if (chat.origin is ChatOrigin.Tool) return@mapNotNull null
+                }
+                val relationLabel = when (chat.origin) {
+                    is ChatOrigin.Fork -> "Fork"
+                    is ChatOrigin.SideChat -> "Side chat"
+                    else -> null
+                }
+                SessionSubChatRow(
+                    resource = chat.resource,
+                    title = chat.title.ifBlank { UNTITLED },
+                    relationLabel = relationLabel,
+                    state = state,
+                    isRead = chat.status?.isRead ?: true,
+                    isArchived = archived,
+                    changes = ChangeStats.of(chat.changes),
+                )
+            }
+        }
 
         private fun rowKey(hostId: String?, resource: String): String = if (hostId != null) "$hostId::$resource" else resource
 
