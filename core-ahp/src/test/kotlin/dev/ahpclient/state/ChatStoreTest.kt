@@ -305,4 +305,19 @@ class ChatStoreTest {
         runCurrent()
         assertEquals(listOf("c2"), fetched)
     }
+
+    @Test
+    fun `dismissed quick-reply turn key is preserved across keepable and prime`() = runTest {
+        val first = store {}
+        first.seed(chatSnapshot(CHAT_A, 10, turns = listOf(turnJson("t1"))))
+        first.setDismissedQuickReplyTurnKey("t1:1")
+        assertEquals("t1:1", first.dismissedQuickReplyTurnKey.value)
+
+        val cached = first.keepable()!!
+        assertEquals("t1:1", cached.dismissedQuickReplyTurnKey)
+
+        val reopened = store {}
+        reopened.prime(cached)
+        assertEquals("t1:1", reopened.dismissedQuickReplyTurnKey.value)
+    }
 }

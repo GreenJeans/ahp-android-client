@@ -426,4 +426,58 @@ class SessionFilterTest {
         assertEquals("h2", inbox.finished.single().row.hostId)
         assertEquals("Host Two", inbox.finished.single().row.hostName)
     }
+
+    @Test
+    fun `user sub-chats are extracted onto SessionRow excluding main tool and hidden chats and match search queries`() {
+        val mainChat = baseSession.chats!!.first().copy(
+            resource = "ahp-chat:/main",
+            title = "Main thread",
+        )
+        val forkOrigin = Ahp.json.decodeFromString(ChatOrigin.serializer(), """{"kind":"fork","chat":"ahp-chat:/main","turnId":"t2"}""")
+        val sideOrigin = Ahp.json.decodeFromString(ChatOrigin.serializer(), """{"kind":"sideChat","chat":"ahp-chat:/main","turnId":"t3"}""")
+        val toolOrigin = Ahp.json.decodeFromString(ChatOrigin.serializer(), """{"kind":"tool","chat":"ahp-chat:/main","toolCallId":"call-1"}""")
+        val forkChat = mainChat.copy(
+            resource = "ahp-chat:/fork-1",
+            title = "OAuth experiment",
+            origin = forkOrigin,
+            status = SessionStatus.IDLE,
+        )
+        val sideChat = mainChat.copy(
+            resource = "ahp-chat:/side-1",
+            title = "Check docs",
+            origin = sideOrigin,
+            status = SessionStatus.IDLE or SessionStatus.IS_READ,
+        )
+        val toolChat = mainChat.copy(
+            resource = "ahp-chat:/tool-1",
+            title = "Subagent worker",
+            origin = toolOrigin,
+            status = SessionStatus.IDLE or SessionStatus.IS_READ,
+        )
+        val archivedSubChat = mainChat.copy(
+            resource = "ahp-chat:/archived-sub",
+            title = "Archived fork",
+            origin = forkOrigin,
+            status = SessionStatus.IDLE or SessionStatus.IS_READ or SessionStatus.IS_ARCHIVED,
+        )
+        val s = session(
+            resource = "ahp-session:/with-subs",
+            title = "Auth refactor",
+            chats = listOf(mainChat, forkChat, sideChat, toolChat, archivedSubChat),
+        ).copy(defaultChat = "ahp-chat:/main")
+
+        val model = SessionListModel.from(listOf(s), showArchived = false, now = now)
+        val row = model.rows.single()
+        assertEquals(listOf("OAuth experiment", "Check docs"), row.subChats.map { it.title })
+        assertEquals(listOf("Fork", "Side chat"), row.subChats.map { it.relationLabel })
+        assertEquals(listOf(false, true), row.subChats.map { it.isRead })
+
+        // Searching by a sub-chat's title finds the parent session.
+        val searched = SessionListModel.from(listOf(s), showArchived = false, now = now, query = "OAuth")
+        assertEquals(listOf("Auth refactor"), searched.rows.map { it.title })
+
+        // When showArchived is true, archived user sub-chats appear too.
+        val withArchived = SessionListModel.from(listOf(s), showArchived = true, now = now)
+        assertEquals(listOf("OAuth experiment", "Check docs", "Archived fork"), withArchived.rows.single().subChats.map { it.title })
+    }
 }

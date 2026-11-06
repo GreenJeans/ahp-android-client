@@ -215,6 +215,10 @@ class ChatActionsUi(
     val quickReplyProvider: QuickReplyProvider? = null,
     /** Key representing the active AI provider configuration so changing settings re-triggers suggestion generation. */
     val quickReplyCacheKey: String = "",
+    /** The `turnKey` of the turn whose quick-reply bar was dismissed in this chat, persisted across visits (A.2). */
+    val dismissedQuickReplyTurnKey: String? = null,
+    /** Records or clears the dismissed quick-reply `turnKey` for this chat (A.2). */
+    val onDismissQuickReply: (String?) -> Unit = {},
 )
 
 /** The host's own words on a button or a field are untrusted display text: shown as plain text and cut to a sane length. */
@@ -482,28 +486,44 @@ private fun ChatOptionsDialog(
 private fun ConfigStateRow(config: ChatConfigView, onClick: () -> Unit, chipColors: androidx.compose.material3.ChipColors, modifier: Modifier = Modifier) {
     val notable = config.notable
     if (notable.isEmpty()) return
-    Row(modifier = modifier.fillMaxWidth().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    Row(
+        modifier = modifier.fillMaxWidth().padding(horizontal = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         notable.forEach { control ->
             val label = control.currentLabel.orEmpty()
             val warn = control.isAllowAll
-            AssistChip(
-                onClick = onClick,
-                label = { Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1) },
-                leadingIcon = if (warn) ({ Icon(AppIcons.ErrorCircle, contentDescription = null, modifier = Modifier.size(16.dp)) }) else null,
-                colors = if (warn) {
-                    AssistChipDefaults.assistChipColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer,
-                        labelColor = MaterialTheme.colorScheme.onErrorContainer,
-                        leadingIconContentColor = MaterialTheme.colorScheme.onErrorContainer,
-                    )
-                } else {
-                    chipColors
-                },
-                border = null,
+            val bgColor = if (warn) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surfaceContainerHighest
+            val fgColor = if (warn) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurfaceVariant
+            Box(
+                contentAlignment = Alignment.CenterStart,
                 modifier = Modifier
-                    .semantics { contentDescription = "${control.title}: $label" + if (warn) ". Tool calls run without asking. Opens the options" else ". Opens the options" }
+                    .heightIn(min = 48.dp)
+                    .widthIn(min = 48.dp)
+                    .clickable(role = Role.Button, onClick = onClick)
+                    .semantics(mergeDescendants = true) {
+                        contentDescription = "${control.title}: $label" + if (warn) ". Tool calls run without asking. Opens the options" else ". Opens the options"
+                    }
                     .testTag(if (control.kind == ConfigKind.MODE) "config_state_mode" else "config_state_approvals"),
-            )
+            ) {
+                Surface(
+                    color = bgColor,
+                    contentColor = fgColor,
+                    shape = RoundedCornerShape(8.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (warn) {
+                            Icon(AppIcons.ErrorCircle, contentDescription = null, modifier = Modifier.size(12.dp))
+                        }
+                        Text(label, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                    }
+                }
+            }
         }
     }
 }
@@ -1282,8 +1302,8 @@ internal fun Composer(
         shape = RoundedCornerShape(28.dp),
         modifier = modifier.fillMaxWidth().imePadding().padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
-        Column(modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 8.dp)) {
-            ConfigStateRow(actions.config, onClick = { choosingAgent = true }, chipColors = chipColors, modifier = Modifier.padding(top = 4.dp))
+        Column(modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 2.dp, bottom = 8.dp)) {
+            ConfigStateRow(actions.config, onClick = { choosingAgent = true }, chipColors = chipColors)
             PendingMessageTray(
                 pendingMessages = pendingMessages,
                 busy = busy,
@@ -1382,7 +1402,10 @@ internal fun Composer(
                 )
             }
             val qrContext = if (!actions.running && actions.quickReplyMode != QuickReplyMode.OFF) quickReplyContext else null
-            var qrDismissed by rememberSaveable(qrContext?.turnKey) { mutableStateOf(false) }
+            var qrDismissedLocal by rememberSaveable(qrContext?.turnKey) {
+                mutableStateOf(qrContext?.turnKey != null && qrContext.turnKey == actions.dismissedQuickReplyTurnKey)
+            }
+            val qrDismissed = qrDismissedLocal || (qrContext?.turnKey != null && qrContext.turnKey == actions.dismissedQuickReplyTurnKey)
             var qrRequested by rememberSaveable(qrContext?.turnKey) { mutableStateOf(false) }
             val showQuickReplyBar = qrContext != null && !qrDismissed &&
                 (actions.quickReplyMode == QuickReplyMode.AUTO || qrRequested) &&
@@ -1408,7 +1431,10 @@ internal fun Composer(
                     aiLoading = aiLoading,
                     selectedPrompt = text,
                     onSelectChip = { chip -> text = chip.prompt },
-                    onDismiss = { qrDismissed = true },
+                    onDismiss = {
+                        qrDismissedLocal = true
+                        actions.onDismissQuickReply(qrContext.turnKey)
+                    },
                 )
             }
             if (attached.isNotEmpty()) {
@@ -1444,8 +1470,9 @@ internal fun Composer(
                     {
                         IconButton(
                             onClick = {
-                                qrDismissed = false
+                                qrDismissedLocal = false
                                 qrRequested = true
+                                actions.onDismissQuickReply(null)
                             },
                             modifier = Modifier.size(48.dp).testTag("quick_reply_suggest_button"),
                         ) {

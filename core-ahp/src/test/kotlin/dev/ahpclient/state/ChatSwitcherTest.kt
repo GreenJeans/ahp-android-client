@@ -406,4 +406,37 @@ class ChatSwitcherTest {
         // Older turns not yet loaded: the place from the start is not known, so no number is made up.
         assertNull(ChatSwitcher.turnNumberIn(chatState(listOf("t8", "t9"), cursor = "older"), "t9"))
     }
+
+    @Test
+    fun `branchesFrom maps turn ids to forks and side chats of the open chat while omitting archived and hidden ones unless waiting`() {
+        val state = Ahp.json.decodeFromString(
+            SessionState.serializer(),
+            """{"provider":"p","title":"S","status":1,"lifecycle":"ready","activeClients":[],"defaultChat":"$main",
+                "chats":[
+                    {"resource":"$main","title":"Main","status":33,"modifiedAt":"2026-10-26T10:29:00.000Z"},
+                    {"resource":"ahp-chat:/fork-1","title":"Alt approach","status":33,"modifiedAt":"2026-10-26T10:29:00.000Z","origin":{"kind":"fork","chat":"$main","turnId":"t2"}},
+                    {"resource":"ahp-chat:/side-1","title":"Check docs","status":33,"modifiedAt":"2026-10-26T10:29:00.000Z","origin":{"kind":"sideChat","chat":"$main","turnId":"t2"}},
+                    {"resource":"ahp-chat:/fork-other","title":"Nested","status":33,"modifiedAt":"2026-10-26T10:29:00.000Z","origin":{"kind":"fork","chat":"ahp-chat:/fork-1","turnId":"t1"}},
+                    {"resource":"ahp-chat:/archived-fork","title":"Old fork","status":97,"modifiedAt":"2026-10-26T10:29:00.000Z","origin":{"kind":"fork","chat":"$main","turnId":"t3"}},
+                    {"resource":"ahp-chat:/waiting-archived","title":"Waiting fork","status":120,"modifiedAt":"2026-10-26T10:29:00.000Z","origin":{"kind":"fork","chat":"$main","turnId":"t4"}}
+                ]}""",
+        )
+
+        val fromState = ChatSwitcher.branchesFrom(state, main)
+        assertEquals(setOf("t2", "t4"), fromState.keys)
+        assertEquals(
+            listOf(
+                TurnBranchLink("ahp-chat:/fork-1", "Alt approach", BranchLinkKind.FORK),
+                TurnBranchLink("ahp-chat:/side-1", "Check docs", BranchLinkKind.SIDE_CHAT),
+            ),
+            fromState["t2"],
+        )
+        assertEquals(
+            listOf(TurnBranchLink("ahp-chat:/waiting-archived", "Waiting fork", BranchLinkKind.FORK)),
+            fromState["t4"],
+        )
+
+        val rows = SessionDetail.from(state, now).chats
+        assertEquals(fromState, ChatSwitcher.branchesFrom(rows, main))
+    }
 }

@@ -31,7 +31,12 @@ import kotlinx.serialization.json.contentOrNull
 import kotlin.concurrent.Volatile
 
 /** What a chat showed when it was last let go of, kept so that opening it again is not a blank wait (see [ChatStore.prime]). */
-internal class CachedChat(val state: ChatState, val ownConfig: Map<String, JsonElement>, val place: ChatPlace? = null)
+internal class CachedChat(
+    val state: ChatState,
+    val ownConfig: Map<String, JsonElement>,
+    val place: ChatPlace? = null,
+    val dismissedQuickReplyTurnKey: String? = null,
+)
 
 /**
  * Where the person had scrolled a chat to (U1): the row at the bottom edge of the screen, by its key, and how far it was scrolled
@@ -132,6 +137,18 @@ class ChatStore internal constructor(
     @Volatile
     var place: ChatPlace? = null
 
+    private val _dismissedQuickReplyTurnKey = MutableStateFlow<String?>(null)
+
+    /**
+     * The `turnKey` of the turn whose quick-reply bar the person dismissed in this chat, kept across visits so leaving and
+     * returning to the chat does not re-open the dismissed bar until a newer turn finishes.
+     */
+    val dismissedQuickReplyTurnKey: StateFlow<String?> = _dismissedQuickReplyTurnKey.asStateFlow()
+
+    fun setDismissedQuickReplyTurnKey(turnKey: String?) {
+        _dismissedQuickReplyTurnKey.value = turnKey
+    }
+
     /** Counts openers; the host connection drops the subscription at zero. */
     internal var openers = 0
 
@@ -152,6 +169,7 @@ class ChatStore internal constructor(
             _ownConfig.value = copy.ownConfig
             _cached.value = true
             place = copy.place
+            _dismissedQuickReplyTurnKey.value = copy.dismissedQuickReplyTurnKey
         }
     }
 
@@ -159,7 +177,7 @@ class ChatStore internal constructor(
     internal fun keepable(): CachedChat? = platformSynchronized(lock) {
         val shown = _state.value ?: return@platformSynchronized null
         if (_error.value is ChatGoneException) return@platformSynchronized null
-        CachedChat(shown, _ownConfig.value, place)
+        CachedChat(shown, _ownConfig.value, place, _dismissedQuickReplyTurnKey.value)
     }
 
     /** @return false when [snapshot] holds no chat state, so nothing was seeded. */

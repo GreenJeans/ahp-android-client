@@ -3,6 +3,20 @@ package dev.ahpclient.state
 import com.microsoft.agenthostprotocol.generated.ChatInteractivity
 import com.microsoft.agenthostprotocol.generated.ChatOrigin
 import com.microsoft.agenthostprotocol.generated.ChatState
+import com.microsoft.agenthostprotocol.generated.SessionState
+
+/** Whether a branched chat from a turn is a fork or a side chat (U5). */
+enum class BranchLinkKind(val label: String) {
+    FORK("Fork"),
+    SIDE_CHAT("Side chat"),
+}
+
+/** A fork or side chat that branched from a specific turn of the shown chat (U5). */
+data class TurnBranchLink(
+    val uri: String,
+    val title: String,
+    val kind: BranchLinkKind,
+)
 
 /** How a chat came about, from the host's `ChatSummary.origin`. [parentChat] is the chat it came from, when the host names one. */
 sealed interface ChatRelation {
@@ -199,6 +213,70 @@ data class ChatSwitcher(val main: SwitcherRow?, val groups: List<SwitcherGroup>,
                 state.activeTurn?.id == turnId -> state.turns.size + 1
                 else -> null
             }
+        }
+
+        /**
+         * Maps each `turnId` in [chatUri] to the forks and side chats in [chats] that branched from `(chatUri, turnId)` (U5).
+         * Archived and hidden chats are omitted unless [showArchived] / [showHidden] or waiting on the person.
+         */
+        fun branchesFrom(
+            chats: List<ChatRow>,
+            chatUri: String,
+            showArchived: Boolean = false,
+            showHidden: Boolean = false,
+        ): Map<String, List<TurnBranchLink>> {
+            val out = LinkedHashMap<String, MutableList<TurnBranchLink>>()
+            for (chat in chats) {
+                if (chat.uri == chatUri) continue
+                val waiting = chat.state == ActivityState.NEEDS_INPUT
+                if (chat.isArchived && !showArchived && !waiting) continue
+                if (chat.interactivity == ChatInteractivity.HIDDEN && !showHidden && !waiting) continue
+                val (parentChat, turnId, kind) = when (val rel = chat.relation) {
+                    is ChatRelation.Fork -> Triple(rel.parentChat, rel.turnId, BranchLinkKind.FORK)
+                    is ChatRelation.SideChat -> Triple(rel.parentChat, rel.turnId, BranchLinkKind.SIDE_CHAT)
+                    else -> continue
+                }
+                if (parentChat == chatUri && turnId.isNotBlank()) {
+                    out.getOrPut(turnId) { ArrayList() } += TurnBranchLink(
+                        uri = chat.uri,
+                        title = chat.title.ifBlank { SessionListModel.UNTITLED },
+                        kind = kind,
+                    )
+                }
+            }
+            return out
+        }
+
+        /**
+         * Maps each `turnId` in [chatUri] to the forks and side chats in [state] that branched from `(chatUri, turnId)` (U5).
+         */
+        fun branchesFrom(
+            state: SessionState?,
+            chatUri: String,
+            showArchived: Boolean = false,
+            showHidden: Boolean = false,
+        ): Map<String, List<TurnBranchLink>> {
+            state ?: return emptyMap()
+            val out = LinkedHashMap<String, MutableList<TurnBranchLink>>()
+            for (chat in state.chats) {
+                if (chat.resource == chatUri) continue
+                val waiting = chat.status.activityState == ActivityState.NEEDS_INPUT
+                if (chat.status.isArchived && !showArchived && !waiting) continue
+                if (chat.interactivity == ChatInteractivity.HIDDEN && !showHidden && !waiting) continue
+                val (parentChat, turnId, kind) = when (val rel = ChatRelation.of(chat.origin)) {
+                    is ChatRelation.Fork -> Triple(rel.parentChat, rel.turnId, BranchLinkKind.FORK)
+                    is ChatRelation.SideChat -> Triple(rel.parentChat, rel.turnId, BranchLinkKind.SIDE_CHAT)
+                    else -> continue
+                }
+                if (parentChat == chatUri && turnId.isNotBlank()) {
+                    out.getOrPut(turnId) { ArrayList() } += TurnBranchLink(
+                        uri = chat.resource,
+                        title = chat.title.ifBlank { SessionListModel.UNTITLED },
+                        kind = kind,
+                    )
+                }
+            }
+            return out
         }
 
         private fun agentOnly(chat: ChatRow): Boolean = chat.relation is ChatRelation.ByAgent || chat.interactivity == ChatInteractivity.READ_ONLY

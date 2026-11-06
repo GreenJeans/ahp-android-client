@@ -449,10 +449,10 @@ class TranscriptTest {
                 "turns":[
                   {"id":"t1","message":{"text":"first","origin":{"kind":"user"}},"responseParts":[${markdown("m1", "ok")}],
                     "startedAt":"2026-10-22T10:00:00.000Z","duration":12000,"state":"complete",
-                    "usage":{"inputTokens":10000,"outputTokens":2400,"cacheReadTokens":8000,"model":"model-a","_meta":{"cost":0.03}}},
+                    "usage":{"inputTokens":10000,"outputTokens":2400,"cacheReadTokens":8000,"model":"model-a","_meta":{"ahpd.cost.amount":0.03}}},
                   {"id":"t2","message":{"text":"second","origin":{"kind":"user"}},"responseParts":[${markdown("m2", "done")}],
                     "startedAt":"2026-10-22T10:01:00.000Z","duration":5000,"state":"complete",
-                    "usage":{"inputTokens":15000,"outputTokens":600,"cacheReadTokens":12000,"model":"model-a","_meta":{"ahpd.cacheWriteTokens":500,"cost":0.02}}}
+                    "usage":{"inputTokens":15000,"outputTokens":600,"cacheReadTokens":12000,"model":"model-a","_meta":{"ahpd.cacheWriteTokens":500,"ahpd.cost.amount":0.02}}}
                 ]}""",
         )
 

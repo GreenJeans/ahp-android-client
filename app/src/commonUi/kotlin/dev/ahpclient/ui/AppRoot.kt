@@ -44,6 +44,7 @@ import dev.ahpclient.state.CustomAgents
 import dev.ahpclient.state.CustomizationCategory
 import dev.ahpclient.state.HostExtras
 import dev.ahpclient.state.displayPath
+import dev.ahpclient.state.isRead
 import dev.ahpclient.state.HostFileTarget
 import dev.ahpclient.state.HostSession
 import dev.ahpclient.state.HostSessionEntry
@@ -279,8 +280,15 @@ private fun Shell(
     }
     // With no session the menu is held open, and the session that opens closes it (HomeMenu); over a session it is closed here, so that
     // picking the session that is already open, or another, closes it too.
-    val showSession = { uri: String -> menu.close(); controller.showSession(uri) }
-    val showSessionOnHost = { hostId: String?, uri: String -> menu.close(); controller.showSession(uri, hostId) }
+    var drawerRequestedChat by rememberSaveable { mutableStateOf<String?>(null) }
+    val showSession = { uri: String -> menu.close(); drawerRequestedChat = null; controller.showSession(uri) }
+    val showSessionOnHost = { hostId: String?, uri: String -> menu.close(); drawerRequestedChat = null; controller.showSession(uri, hostId) }
+    val showSubChatOnHost = { hostId: String?, sessionUri: String, chatUri: String ->
+        menu.close()
+        drawerRequestedChat = chatUri
+        controller.showSession(sessionUri, hostId)
+        controller.selectChat(chatUri)
+    }
     val addHost: suspend (String, String, String) -> String? = { name, address, token ->
         when (val result = controller.addDirectHost(name, address, token)) {
             is AppController.AddHostResult.Added -> null
@@ -332,6 +340,8 @@ private fun Shell(
                 terminals = hostTerminals,
                 onOpenTerminal = { uri -> menu.close(); controller.openTerminal(uri) },
                 onOpenAutomations = if (automationsOffered) ({ automationsOpen = true }) else null,
+                selectedChat = open?.chat?.uri,
+                onOpenSubChat = showSubChatOnHost,
             )
         },
     ) {
@@ -449,6 +459,8 @@ private fun Shell(
                     onChangesetTitle = { changesetTitle = it }, onMenu = menu::open, alerts = alerts,
                     // AI suggestions are a Pro feature (U8); without Pro the bar offers the plain, heuristic replies only.
                     quickReplyProvider = quickReplyProvider.takeIf { proUnlocked },
+                    drawerRequestedChat = drawerRequestedChat,
+                    onDrawerRequestedChatConsumed = { drawerRequestedChat = null },
                 )
             } else {
                 // The menu is the page here, held open over this strip of background; there is nothing to say behind it.
@@ -503,6 +515,8 @@ private fun SessionPage(
     onMenu: () -> Unit,
     alerts: FinishedAlertsUi,
     quickReplyProvider: QuickReplyController? = null,
+    drawerRequestedChat: String? = null,
+    onDrawerRequestedChatConsumed: () -> Unit = {},
 ) {
     val chat = open.chat
     val sessionState by open.store.state.collectAsStateWithLifecycle()
@@ -605,7 +619,11 @@ private fun SessionPage(
             summary = summary,
             onOpenLink = { link -> if (!platformUi.openLink(link)) platformUi.showToast("Nothing can open this link") },
             onShareLink = { link -> if (!platformUi.shareLink(link)) platformUi.showToast("Nothing can share this link") },
-            requestedChat = requestedChat,
+            requestedChat = requestedChat ?: drawerRequestedChat,
+            onRequestedChatConsumed = {
+                requestedChat = null
+                onDrawerRequestedChatConsumed()
+            },
             rootState = rootState as? RootState,
             onUseSlashCommand = { name -> prefillText = "/$name " },
             onUseAgent = { uri -> agentToUse = uri },
@@ -692,6 +710,7 @@ private fun OpenChatView(
     modifier: Modifier,
 ) {
     val platformUi = rememberPlatformUiActions()
+    val scope = rememberCoroutineScope()
     val transcript by rememberTranscript(chat.store)
     val expanded by chat.expansion.expanded.collectAsStateWithLifecycle()
     val error by chat.store.error.collectAsStateWithLifecycle()
@@ -699,6 +718,7 @@ private fun OpenChatView(
     val olderError by chat.store.olderError.collectAsStateWithLifecycle()
     val chatState by chat.store.state.collectAsStateWithLifecycle()
     val fromCache by chat.store.cached.collectAsStateWithLifecycle()
+    val dismissedQuickReplyTurnKey by chat.store.dismissedQuickReplyTurnKey.collectAsStateWithLifecycle()
     val canInteract by session.canInteract.collectAsStateWithLifecycle()
     val textScale by ui.textScale.collectAsStateWithLifecycle()
     val keepAwake by ui.keepAwake.collectAsStateWithLifecycle()
@@ -731,7 +751,7 @@ private fun OpenChatView(
     }
     // A copy kept from the last visit is for reading only: no message box and no approvals until the host's snapshot replaces it.
     val actions = if (!fromCache && ChatInteractor.available(chatState, canInteract)) {
-        remember(chat.interactor, running, models, inUse, agents, agentInUse, config, canFork, canSideChat, slashCommands, customizations, prefillText, agentToUse, sessionUri, chat.uri, quickReplyMode, googleAiConfig, quickReplyProvider) {
+        remember(chat.interactor, running, models, inUse, agents, agentInUse, config, canFork, canSideChat, slashCommands, customizations, prefillText, agentToUse, sessionUri, chat.uri, quickReplyMode, googleAiConfig, quickReplyProvider, dismissedQuickReplyTurnKey) {
             ChatActionsUi(
                 running = running,
                 send = chat.interactor::send,
@@ -787,6 +807,8 @@ private fun OpenChatView(
                 quickReplyMode = quickReplyMode,
                 quickReplyProvider = quickReplyProvider,
                 quickReplyCacheKey = googleAiConfig.toString(),
+                dismissedQuickReplyTurnKey = dismissedQuickReplyTurnKey,
+                onDismissQuickReply = chat.store::setDismissedQuickReplyTurnKey,
                 openSideChat = { turnId, initialText, model, agent ->
                     val msg = initialText?.let { chat.interactor.buildInitialMessage(it, model, agent) }
                     val res = controller.manager.createSideChat(sessionUri, chat.uri, turnId, msg)
@@ -804,6 +826,24 @@ private fun OpenChatView(
     val liveTerminal = remember(controller) { { uri: String -> controller.watchTerminal(uri) } }
     // A chat left scrolled up opens where it was, and its place is kept with it as it moves (U1).
     val place = remember(chat.store) { ChatPlaceKeeper(chat.uri, chat.store.place) { chat.store.place = it } }
+    val turnBranches = remember(sessionState, chat.uri) { ChatSwitcher.branchesFrom(sessionState, chat.uri) }
+    val onViewedLatest: (() -> Unit)? = if (!fromCache && canManage && !screen) {
+        {
+            val currentChatSummary = sessionState?.chats?.firstOrNull { it.resource == chat.uri }
+            val chatUnread = currentChatSummary?.status?.isRead == false
+            val otherChatUnread = sessionState?.chats?.any { it.resource != chat.uri && !it.status.isRead } == true
+            val sessionSummaryUnread = listedSessions.firstOrNull { it.resource == sessionUri }?.status?.isRead == false
+            val sessionStateUnread = sessionState?.status?.isRead == false
+            if (chatUnread) {
+                scope.launch { controller.manager.setChatRead(sessionUri, chat.uri, true) }
+            }
+            if (!otherChatUnread && (sessionStateUnread || sessionSummaryUnread)) {
+                scope.launch { controller.manager.setRead(sessionUri, true) }
+            }
+        }
+    } else {
+        null
+    }
     if (screen) {
         ChatScreen(
             transcript = transcript,
@@ -865,6 +905,9 @@ private fun OpenChatView(
                 onExternalRichConsumed()
                 localRichRequest = null
             },
+            turnBranches = turnBranches,
+            onSelectChat = controller::selectChat,
+            onViewedLatest = onViewedLatest,
             modifier = modifier,
         )
     }

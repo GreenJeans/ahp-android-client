@@ -61,6 +61,7 @@ class UiSettings(private val prefs: KeyValueStore) {
             showScope = SessionShowScope.of(prefs.getString(FILTER_SHOW_SCOPE, null)),
             showExternal = prefs.getBoolean(FILTER_SHOW_EXTERNAL, SessionFilter.DEFAULT.showExternal),
             showDone = prefs.getBoolean(FILTER_SHOW_DONE, SessionFilter.DEFAULT.showDone),
+            condensed = prefs.getBoolean(FILTER_CONDENSED, SessionFilter.DEFAULT.condensed),
         ),
     )
 
@@ -127,6 +128,7 @@ class UiSettings(private val prefs: KeyValueStore) {
         prefs.putString(FILTER_SHOW_SCOPE, filter.showScope.name)
         prefs.putBoolean(FILTER_SHOW_EXTERNAL, filter.showExternal)
         prefs.putBoolean(FILTER_SHOW_DONE, filter.showDone)
+        prefs.putBoolean(FILTER_CONDENSED, filter.condensed)
     }
 
     fun resetSessionFilter() {
@@ -150,6 +152,7 @@ class UiSettings(private val prefs: KeyValueStore) {
         const val FILTER_SHOW_SCOPE = "filter_show_scope"
         const val FILTER_SHOW_EXTERNAL = "filter_show_external"
         const val FILTER_SHOW_DONE = "filter_show_done"
+        const val FILTER_CONDENSED = "filter_condensed"
 
         fun wrapKey(view: WrapView) = "wrap_${view.key}"
     }
