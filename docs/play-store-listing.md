@@ -30,6 +30,21 @@ $env:AHP_KEY_PASSWORD = "<key-password>"
 - Signed release APK: `app/build/outputs/apk/release/app-release.apk`
 - R8 mapping file (upload to Play Console for deobfuscated stack traces): `app/build/outputs/mapping/release/mapping.txt`
 
+### Release Notes for `v0.2.0` (`versionCode 3`) — Play Console "What's new" (`<= 500 chars`)
+```text
+<en-US>
+• AHP Client is now Hostline!
+• AI quick replies (on-device Gemini Nano & cloud providers) + live #, /, and @ host completions
+• File & image attachments in chat
+• Reader view, pinned last message bar, jump-to-reply, and instant chat cache
+• Hierarchical Chat Switcher for forks, side chats & sub-agents
+• Pre-approval risk & file diff previews on tool calls
+• MCP server controls, customizations toggles & Host Automations
+• Live streaming terminal tails & windowed delivery for huge chats
+</en-US>
+```
+*(496 characters including `<en-US>` tags; 479 characters inside tags. See [`CHANGELOG.md`](../CHANGELOG.md) for the full release changelog.)*
+
 ---
 
 ## 2. Store Listing Copy
@@ -43,14 +58,16 @@ $env:AHP_KEY_PASSWORD = "<key-password>"
 
   FREE TIER (READ-ONLY MONITOR)
   • Connect to your VS Code Remote Tunnel or direct ahpd host
-  • Watch live streaming transcripts, tool calls, reasoning steps, and terminal output
-  • Inspect unified side-by-side and inline file diffs and syntax-highlighted files
-  • Search and filter sessions by status, repository, or keyword
+  • Watch live streaming transcripts, tool calls, reasoning steps, and real-time terminal tails
+  • Full-screen Reader View, pinned prompt bar, and per-view word-wrap & table-fit controls
+  • Inspect per-chat changesets, file diffs, canvases, annotations, and host terminals
+  • Search and filter sessions by status, repository, or keyword with instant chat caching
   • Zero telemetry, zero cloud relay servers — connections go straight from your phone to your machine
 
   PRO UNLOCK (ONE-TIME PURCHASE)
-  • Act for me: send and steer prompts, answer agent questions, and approve or deny tool calls (protected by your phone's biometric / screen-lock check)
-  • Look after sessions: start new sessions, switch models/agents, and archive or remove chats
+  • Act for me: send and steer prompts with file/image attachments, answer agent questions, and approve or deny tool calls with pre-approval risk & diff previews (protected by your phone's biometric / screen-lock check)
+  • AI quick replies & live completions: on-device Gemini Nano or cloud AI quick-reply suggestions plus live host #, /, and @ completions
+  • Look after sessions: start new sessions, rename sessions, manage MCP servers & customizations, control host automations, discard changeset edits, and manage forks/side chats
   • Background monitoring & notifications: keep a live connection in the background and get instant notifications (with inline reply and Approve/Deny actions) the moment an agent needs input or finishes a task
   • Quick Settings tile to toggle background monitoring from the notification shade
   • Concurrent multi-host connections across multiple machines
