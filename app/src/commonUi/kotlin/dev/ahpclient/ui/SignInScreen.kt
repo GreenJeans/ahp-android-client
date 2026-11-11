@@ -49,6 +49,8 @@ fun SignInScreen(
     modifier: Modifier = Modifier,
     /** Skips the sign-in to use only hosts added by address. Null hides the way. */
     onUseDirect: (() -> Unit)? = null,
+    /** Launches the built-in interactive demo workspace with no server or account required. */
+    onTryDemo: (() -> Unit)? = null,
 ) {
     var showingAbout by rememberSaveable { mutableStateOf(false) }
     ScreenScaffold(title = AppName.NAME, modifier = modifier) {
@@ -63,6 +65,7 @@ fun SignInScreen(
                     SignInStep.Idle -> {
                         StartSignIn(onSignIn, label = "Sign in with GitHub")
                         if (onUseDirect != null) UseDirect(onUseDirect)
+                        if (onTryDemo != null) TryDemoWorkspace(onTryDemo)
                         if (state.offerRevoke) RevokeAccess(onOpenGitHub)
                     }
                     SignInStep.RequestingCode -> {
@@ -74,6 +77,7 @@ fun SignInScreen(
                         ErrorText(step.message, Modifier.testTag("sign_in_error"))
                         StartSignIn(onSignIn, label = "Try again")
                         if (onUseDirect != null) UseDirect(onUseDirect)
+                        if (onTryDemo != null) TryDemoWorkspace(onTryDemo)
                     }
                 }
                 TextButton(
@@ -98,6 +102,16 @@ private fun UseDirect(onUseDirect: () -> Unit) {
         style = MaterialTheme.typography.bodyMedium,
     )
     OutlinedButton(onClick = onUseDirect, modifier = Modifier.fillMaxWidth().testTag("use_direct_hosts")) { Text("Connect to a host by address") }
+}
+
+/** Opens the built-in interactive demo workspace so the app can be explored offline with no live host. */
+@Composable
+private fun TryDemoWorkspace(onTryDemo: () -> Unit) {
+    Text(
+        "Or explore a sample workspace with live transcripts, file diffs, and tool approvals before connecting a host.",
+        style = MaterialTheme.typography.bodyMedium,
+    )
+    OutlinedButton(onClick = onTryDemo, modifier = Modifier.fillMaxWidth().testTag("try_demo_workspace")) { Text("Try demo workspace") }
 }
 
 /** Signing out forgets the token on this phone; the grant stays on the GitHub account until it is removed there. */

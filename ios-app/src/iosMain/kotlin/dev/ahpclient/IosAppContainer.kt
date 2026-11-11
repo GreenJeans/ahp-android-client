@@ -46,6 +46,7 @@ import dev.ahpclient.state.DirectHostConnector
 import dev.ahpclient.state.HostSession
 import dev.ahpclient.state.InteractResult
 import dev.ahpclient.state.TunnelHostConnector
+import dev.ahpclient.tunnel.DemoSocketOpener
 import dev.ahpclient.tunnel.DevTunnelsClient
 import dev.ahpclient.tunnel.IosSocketOpener
 import dev.ahpclient.tunnel.MethodLoggingSocketOpener
@@ -211,7 +212,7 @@ class IosAppContainer(
     private val network by lazy { IosNetworkMonitor() }
     val monitorService by lazy { IosMonitorService() }
 
-    private val directOpener by lazy { withWireLog(IosSocketOpener()) }
+    private val directOpener by lazy { withWireLog(DemoSocketOpener(IosSocketOpener())) }
 
     val controller: AppController by lazy {
         val devTunnels = DevTunnelsClient(http, userAgent = "ahp-ios-client/$versionName")
@@ -377,6 +378,7 @@ class IosAppContainer(
         const val CONN_TAG = "AhpConn"
         const val AUTH_TAG = "AhpAuth"
 
-        val shared: IosAppContainer by lazy { IosAppContainer(debuggable = true) }
+        @OptIn(kotlin.experimental.ExperimentalNativeApi::class)
+        val shared: IosAppContainer by lazy { IosAppContainer(debuggable = kotlin.native.Platform.isDebugBinary) }
     }
 }

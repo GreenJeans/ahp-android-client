@@ -89,7 +89,7 @@ fun AppRoot(
             Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                 when (val current = state) {
                     AppState.Restoring -> Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars).testTag("restoring"), contentAlignment = Alignment.Center) { Busy("Loading…") }
-                    is AppState.SignedOut -> SignInScreen(current, controller::signIn, controller::cancelSignIn, onOpenGitHub, onCopyCode, onUseDirect = controller::useDirectHosts)
+                    is AppState.SignedOut -> SignInScreen(current, controller::signIn, controller::cancelSignIn, onOpenGitHub, onCopyCode, onUseDirect = controller::useDirectHosts, onTryDemo = controller::openDemoWorkspace)
                     // One call for both, so that going from the host list to a host (and back) keeps the menu, and the sheet over it, as they are.
                     AppState.Hosts, is AppState.Connected -> Shell(controller, ui, catalog, current as? AppState.Connected, monitorEnabled, notificationsAllowed, onMonitorChange, alerts, sessionRequests, quickReplyProvider, onOpenGitHub, onCopyCode)
                 }
@@ -487,6 +487,7 @@ private fun Shell(
             connectedHosts = hostConnections,
             onConnectHost = controller::connectHost,
             onDisconnectHost = controller::disconnectHost,
+            onTryDemo = controller::openDemoWorkspace,
         )
     }
     if (hosts.signInStep !is SignInStep.Idle) {
