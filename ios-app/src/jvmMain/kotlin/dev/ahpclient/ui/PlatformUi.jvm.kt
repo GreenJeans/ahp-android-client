@@ -37,3 +37,6 @@ fun decodeImageBitmap(bytes: ByteArray): ImageBitmap? = try {
 } catch (_: Exception) {
     null
 }
+
+/** True on iOS, where the shared UI must describe Keychain, Face ID and the App Store instead of Android services. */
+internal const val IS_IOS_PLATFORM: Boolean = false
