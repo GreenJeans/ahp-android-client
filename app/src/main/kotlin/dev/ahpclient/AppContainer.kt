@@ -42,6 +42,7 @@ import dev.ahpclient.security.DirectHostVault
 import dev.ahpclient.security.FileBlobStore
 import dev.ahpclient.security.KeystoreSecureBox
 import dev.ahpclient.security.BiometricApprovalGate
+import dev.ahpclient.tunnel.DemoSocketOpener
 import java.io.File
 import dev.ahpclient.state.ConnState
 import dev.ahpclient.state.DirectHostConnector
@@ -204,7 +205,7 @@ class AppContainer(context: Context) {
         DirectHostVault(KeystoreSecureBox("ahp-android-client.direct-hosts-key.v1"), DataStoreBlobStore(DataStoreBlobStore.dataStoreFor(file, ioScope)))
     }
 
-    private val directOpener by lazy { withWireLog(OkHttpSocketOpener(wsHttp)) }
+    private val directOpener by lazy { withWireLog(DemoSocketOpener(OkHttpSocketOpener(wsHttp))) }
 
     /** The session list kept encrypted between runs, so a cold start has something to show. One instance: every session writes it and sign-out wipes it. */
     private val sessionList by lazy { AndroidSessionListCache.create(appContext) }

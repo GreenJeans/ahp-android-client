@@ -61,6 +61,7 @@ import dev.ahpclient.state.TerminalLinks
 import dev.ahpclient.state.Transcript
 import dev.ahpclient.state.displayPath
 import dev.ahpclient.state.extras
+import dev.ahpclient.tunnel.DemoAhpHost
 import dev.ahpclient.tunnel.DevTunnelsClient
 import dev.ahpclient.tunnel.DevTunnelsException
 import dev.ahpclient.tunnel.TunnelInfo
@@ -509,6 +510,29 @@ class AppController(
         if (current.step is SignInStep.RequestingCode || current.step is SignInStep.AwaitingApproval) return
         _hosts.value = HostCatalog(HostList.NotSignedIn, directEntries())
         _state.compareAndSet(current, AppState.Hosts)
+    }
+
+    /**
+     * Connects to the built-in offline [DemoAhpHost] (`ws://localhost:9187/demo`) and opens its primary demo session so reviewers
+     * and new users can explore transcripts, diffs, tool approvals, and customizations without setting up a live host first.
+     */
+    fun openDemoWorkspace() {
+        if (directSessions == null) return
+        scope.launch {
+            val existing = directHosts.firstOrNull { it.url == DemoAhpHost.URL }
+            val demoHost = existing ?: when (val added = addDirectHost(DemoAhpHost.NAME, DemoAhpHost.URL, "")) {
+                is AddHostResult.Added -> added.host
+                else -> return@launch
+            }
+            val consent = consentFor(demoHost)
+            consent.set(true)
+            consent.setManagement(true)
+            if (_state.value is AppState.SignedOut) {
+                useDirectHosts()
+            }
+            switchHost(HostRef.Direct(demoHost))
+            showSession(DemoAhpHost.PRIMARY_SESSION_URI)
+        }
     }
 
     /** What [addDirectHost] came to. */

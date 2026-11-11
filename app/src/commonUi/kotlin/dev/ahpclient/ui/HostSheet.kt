@@ -55,6 +55,7 @@ import dev.ahpclient.app.HostList
 import dev.ahpclient.app.HostRef
 import dev.ahpclient.direct.DirectHost
 import dev.ahpclient.state.ConnState
+import dev.ahpclient.tunnel.DemoAhpHost
 import dev.ahpclient.tunnel.TunnelInfo
 import kotlinx.coroutines.launch
 
@@ -126,6 +127,8 @@ fun HostSheet(
     onConnectHost: ((HostRef) -> Unit)? = null,
     /** Disconnects a specific host by id; falls back to [onDisconnect] when null. */
     onDisconnectHost: ((String) -> Unit)? = null,
+    /** Connects to the built-in interactive demo workspace. */
+    onTryDemo: (() -> Unit)? = null,
 ) {
     var adding by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(Unit) { onRefresh() }
@@ -209,6 +212,14 @@ fun HostSheet(
                 OutlinedButton(onClick = { adding = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("add_host")) {
                     Icon(AppIcons.Add, contentDescription = null, modifier = Modifier.padding(end = 8.dp))
                     Text("Add a host by address")
+                }
+            }
+            if (onTryDemo != null && catalog.direct.none { it.host.url == DemoAhpHost.URL }) {
+                OutlinedButton(
+                    onClick = { onTryDemo(); close() },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("try_demo_from_hosts"),
+                ) {
+                    Text("Try demo workspace")
                 }
             }
             if (catalog.list == HostList.NotSignedIn && onSignIn != null) {
