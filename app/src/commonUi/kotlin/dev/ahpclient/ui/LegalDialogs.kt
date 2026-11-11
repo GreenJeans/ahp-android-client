@@ -100,12 +100,21 @@ private fun OverviewCards() {
 
 @Composable
 private fun PrivacyCards() {
-    val items = listOf(
-        "Zero data collection" to "No developer servers, analytics, telemetry, or ads. Session data travels directly between your phone and your hosts.",
-        "Encrypted on device" to "GitHub tokens, direct-host tokens, and the session cache are encrypted with AES-256-GCM in Android Keystore (allowBackup=false).",
-        "Direct connections only" to "Communicates only with GitHub (device sign-in), Microsoft Dev Tunnels (wss://), your direct ahpd hosts, and Google Play Billing.",
-        "Permissions & deletion" to "Biometrics are verified locally by Android. Background monitoring runs only while enabled. Signing out destroys stored keys.",
-    )
+    val items = if (IS_IOS_PLATFORM) {
+        listOf(
+            "Zero data collection" to "No developer servers, analytics, telemetry, or ads. Session data travels directly between your device and your hosts.",
+            "Encrypted on device" to "GitHub tokens, direct-host tokens, AI provider keys, and the session cache are encrypted with a device-only key held in the iOS Keychain and excluded from iCloud backup.",
+            "Direct connections only" to "Communicates only with GitHub (device sign-in), Microsoft Dev Tunnels (wss://), your direct ahpd hosts, the AI provider you choose for quick replies, and the App Store.",
+            "Permissions & deletion" to "Face ID / Touch ID is verified by iOS. Notifications are local and only sent if you allow them. Signing out destroys stored keys.",
+        )
+    } else {
+        listOf(
+            "Zero data collection" to "No developer servers, analytics, telemetry, or ads. Session data travels directly between your phone and your hosts.",
+            "Encrypted on device" to "GitHub tokens, direct-host tokens, and the session cache are encrypted with AES-256-GCM in Android Keystore (allowBackup=false).",
+            "Direct connections only" to "Communicates only with GitHub (device sign-in), Microsoft Dev Tunnels (wss://), your direct ahpd hosts, and Google Play Billing.",
+            "Permissions & deletion" to "Biometrics are verified locally by Android. Background monitoring runs only while enabled. Signing out destroys stored keys.",
+        )
+    }
     InfoCardStack(items, tag = "about_privacy_content")
 }
 

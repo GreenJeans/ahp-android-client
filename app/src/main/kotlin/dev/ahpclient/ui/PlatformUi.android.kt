@@ -91,3 +91,6 @@ fun decodeImageBitmap(bytes: ByteArray): ImageBitmap? = try {
 internal fun leaveApp(context: Context) {
     generateSequence(context) { (it as? ContextWrapper)?.baseContext }.filterIsInstance<Activity>().firstOrNull()?.moveTaskToBack(true)
 }
+
+/** True on iOS, where the shared UI must describe Keychain, Face ID and the App Store instead of Android services. */
+internal const val IS_IOS_PLATFORM: Boolean = false
