@@ -10,12 +10,17 @@ looking after sessions (mark read, archive, new chat, new session, remove), behi
 and Phase 5 adds a session's changed files (the list, a line-by-line diff of each file, and a "Viewed" box on the manage tier); the long-term goal is a near-full replacement for the VS Code Agents panel. The authoritative plan, acceptance criteria and
 progress log live in this repo: [`docs/spec.md`](docs/spec.md), [`docs/prerelease-monetization-spec.md`](docs/prerelease-monetization-spec.md), and [`docs/protocol-completion-spec.md`](docs/protocol-completion-spec.md).
 
+## Install
+
+- **Google Play** (closed testing for now): join the test group and install from the Play Store. Pro is a one-time $4.99 unlock in the app.
+- **GitHub** (Android, no Play account needed): install with [Obtainium](https://github.com/ImranR98/Obtainium) — Add App, paste `https://github.com/GreenJeans/ahp-android-client` — or download the APK from [Releases](https://github.com/GreenJeans/ahp-android-client/releases). The GitHub build includes Pro free during the beta; it is signed with our own key, so it cannot update over a Play install (uninstall first if you switch channels). Details: [`docs/github-distribution.md`](docs/github-distribution.md).
+
 ## Modules
 
 | Module | Type | Status |
 |---|---|---|
 | `core-ahp` | Pure Kotlin/JVM library: GitHub device-flow auth, Dev Tunnels REST, tunnel socket and gateway selection, direct WebSocket host connector (`ahpd`), AHP connection, state stores (sessions and chats, with older-turn paging), host extension readers (`HostExtras`: session git branch/counts, pull requests and model; turn and chat token usage and cost telemetry; tool-call progress, timing, MCP server and subagent metadata; hidden-from-transcript message flags), session list and detail models (including multi-chat read/archive state and annotations summary), the transcript (including active background work and canvases) and tool-detail models, background-monitoring logic, the capability allowlist, `ProEntitlement`, and the write path (action builders, the interactor, the question form model, the consent settings), the session manager (including MCP server lifecycle controls), the changeset view model, the line diff and the model options | Phases 1–5 built and verified on the Pixel 10 (`docs/verification/`); `ProEntitlement` built and tested |
-| `app` | Android application (Jetpack Compose): sign-in, a side menu (host, new session, the sessions with search and each one's changes, settings), a hosts sheet (switch host, add one by address), a session screen (a tab for each chat, the changes in the bar, a menu, a Details sheet), a chat transcript in the manner of the chat apps (what you said and each thing the agent wrote as bubbles, each run of its steps folded to one line that opens, a marker for when the agent has stopped, pinch to resize the text) with markdown and collapsible reasoning, tool-call and result blocks (selectable text, "Show all", subagent transcripts), opt-in background monitoring with a foreground service, needs-input notifications, and "finished" notifications for the sessions you pick with the bell in a session's menu (or all of them, in Settings), and, when the user turns it on (Android 11+), a message box with steering, tool and tool-result approval behind the phone's own device check (also from a notification), and a form for the agent's questions with draft sync; with a second switch, mark read, archive, new chat, new session and remove; and a session's changed files (a line diff of each, and a "Viewed" box), a model picker for messages, the chat's mode (Interactive, Plan, Autopilot) and approvals (Manual, Assisted, Allow all) beside its custom agent, with the phone's own check before giving the agent more freedom, an inbox of the sessions that wait on you and the ones that finished unread, and the settings the host offers for a new session | Phases 1–5 built; design pass 4 done; R8-shrunk release APK (`:app:assembleRelease`) and debug APK |
+| `app` | Android application (Jetpack Compose): sign-in, a side menu (host, new session, the sessions with search and each one's changes, settings), a hosts sheet (switch host, add one by address), a session screen (a tab for each chat, the changes in the bar, a menu, a Details sheet), a chat transcript in the manner of the chat apps (what you said and each thing the agent wrote as bubbles, each run of its steps folded to one line that opens, a marker for when the agent has stopped, pinch to resize the text) with markdown and collapsible reasoning, tool-call and result blocks (selectable text, "Show all", subagent transcripts), opt-in background monitoring with a foreground service, needs-input notifications, and "finished" notifications for the sessions you pick with the bell in a session's menu (or all of them, in Settings), and, when the user turns it on (Android 11+), a message box with steering, tool and tool-result approval behind the phone's own device check (also from a notification), and a form for the agent's questions with draft sync; with a second switch, mark read, archive, new chat, new session and remove; and a session's changed files (a line diff of each, and a "Viewed" box), a model picker for messages, the chat's mode (Interactive, Plan, Autopilot) and approvals (Manual, Assisted, Allow all) beside its custom agent, with the phone's own check before giving the agent more freedom, an inbox of the sessions that wait on you and the ones that finished unread, and the settings the host offers for a new session | Phases 1–5 built; design pass 4 done; R8-shrunk release APKs (`:app:assemblePlayRelease` for Play, `:app:assembleGithubRelease` for GitHub — see `docs/github-distribution.md`) and debug APK |
 
 ## Hosts added by address (ahpd)
 
@@ -57,10 +62,11 @@ sdk.dir=C:/Users/<you>/AppData/Local/Android/Sdk
 ```
 
 ```powershell
-.\gradlew.bat build                # core-ahp tests + app lint and debug/release checks
-.\gradlew.bat :app:assembleDebug   # app/build/outputs/apk/debug/app-debug.apk
-.\gradlew.bat :app:assembleRelease # app/build/outputs/apk/release/app-release-unsigned.apk (R8-shrunk)
-.\gradlew.bat :core-ahp:test       # JVM-only, no Android SDK needed; also writes the coverage report
+.\gradlew.bat build                        # core-ahp tests + app lint and debug/release checks
+.\gradlew.bat :app:assembleDebug           # app/build/outputs/apk/debug/app-debug.apk
+.\gradlew.bat :app:assemblePlayRelease     # Play build: app/build/outputs/apk/play/release/app-play-release.apk (R8-shrunk)
+.\gradlew.bat :app:assembleGithubRelease   # GitHub build (Pro included, see docs/github-distribution.md)
+.\gradlew.bat :core-ahp:test               # JVM-only, no Android SDK needed; also writes the coverage report
 .\gradlew.bat :core-ahp:jacocoTestCoverageVerification   # fails below 80% line coverage on auth, tunnel, ahp, state
 ```
 

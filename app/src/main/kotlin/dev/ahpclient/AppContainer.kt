@@ -86,6 +86,13 @@ class AppContainer(context: Context) {
     private val wsHttp = http.newBuilder().pingInterval(WS_PING_SECONDS, TimeUnit.SECONDS).build()
     private val versionName: String = appContext.packageManager.getPackageInfo(appContext.packageName, 0).versionName ?: "0"
     private val debuggable: Boolean = appContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
+
+    /**
+     * True for the `github` product flavor (see `app/build.gradle.kts`): the sideloaded build distributed from
+     * GitHub Releases / Obtainium. Google Play Billing does not work in a sideloaded APK, so this flavor includes
+     * Pro free for the beta period instead of selling it through Play (see `docs/github-distribution.md`).
+     */
+    private val githubBuild: Boolean = BuildConfig.GITHUB_BUILD
     private val prefs by lazy { PrefsLastHostStore.dataStoreFor(appContext.preferencesDataStoreFile("ahp_prefs"), ioScope) }
 
     /** How the app looks. */
@@ -113,13 +120,15 @@ class AppContainer(context: Context) {
 
     /**
      * Pro entitlement state. Debug builds default to unlocked (`defaultUnlocked = true`) and allow toggling between Free and Pro in
-     * Settings for testing; release builds default to locked (`false`) and read `pro_unlocked` from disk.
+     * Settings for testing; release builds default to locked (`false`) and read `pro_unlocked` from disk. The GitHub flavor is
+     * always unlocked: Play Billing cannot sell the unlock in a sideloaded APK, so Pro is included free in that build for the
+     * beta period (see `docs/github-distribution.md`).
      */
     val pro: ProEntitlement by lazy {
         ProEntitlement(
-            settings = PrefsEntitlementSettings(prefs, defaultUnlocked = debuggable),
-            alwaysUnlocked = false,
-            initialUnlocked = debuggable,
+            settings = PrefsEntitlementSettings(prefs, defaultUnlocked = debuggable || githubBuild),
+            alwaysUnlocked = githubBuild,
+            initialUnlocked = debuggable || githubBuild,
         )
     }
 
@@ -137,7 +146,8 @@ class AppContainer(context: Context) {
     private val storeBilling: StoreBillingGateway by lazy { StoreBillingGateway(billingDriver) }
 
     private val billingGateway: BillingGateway by lazy {
-        if (debuggable) {
+        if (debuggable || githubBuild) {
+            // Debug builds and the GitHub flavor never touch Play Billing: the GitHub build includes Pro free.
             object : BillingGateway {
                 override suspend fun purchasePro(): BillingResult = BillingResult.Unlocked
                 override suspend fun restorePurchases(): BillingResult = BillingResult.Unlocked
@@ -342,8 +352,9 @@ class AppContainer(context: Context) {
         if (started.compareAndSet(false, true)) {
             controller.start()
             monitor.start()
-            if (!debuggable) {
+            if (!debuggable && !githubBuild) {
                 // Reconcile any existing, newly completed, or refunded Google Play Pro purchase on cold start.
+                // Skipped in the GitHub flavor: Pro is included there and there is no Play purchase to reconcile.
                 appScope.launch {
                     controller.reconcileProEntitlement()
                 }

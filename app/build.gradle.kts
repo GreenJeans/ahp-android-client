@@ -34,6 +34,26 @@ android {
         }
     }
 
+    buildFeatures {
+        buildConfig = true
+    }
+
+    // Two store flavors. `play` is the Google Play build (Pro via Play Billing).
+    // `github` is the sideloaded build distributed from GitHub Releases / Obtainium:
+    // Play Billing does not work in a sideloaded APK, so Pro is included free in
+    // this flavor for the beta period (see docs/github-distribution.md).
+    flavorDimensions += "store"
+    productFlavors {
+        create("play") {
+            dimension = "store"
+            buildConfigField("boolean", "GITHUB_BUILD", "false")
+        }
+        create("github") {
+            dimension = "store"
+            buildConfigField("boolean", "GITHUB_BUILD", "true")
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true

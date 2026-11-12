@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### GitHub distribution
+- **GitHub flavor with Pro included during the beta**: a new `github` product flavor alongside `play` (see `docs/github-distribution.md`). The GitHub build is distributed from GitHub Releases and installable via Obtainium; Google Play Billing does not work in a sideloaded APK, so Pro is included free in this flavor for the beta period. The Play flavor is unchanged. A tag-triggered workflow (`.github/workflows/release-apk.yml`) builds the signed GitHub APK and publishes it to Releases.
+- **Build task names changed**: adding flavors renames the release tasks — Play is now `:app:assemblePlayRelease` / `:app:bundlePlayRelease`, GitHub is `:app:assembleGithubRelease`.
+
 ## v0.2.0 (`versionCode 3`) — 2026-11-06
 
 ### Rebrand

@@ -17,7 +17,7 @@ With Phases 1–5, hardening (`H1`–`H8`, `F1`–`F2`), host extensions (`E0`�
 
 ### P1 — Release build configuration and R8 shrinking
 
-- **Goal:** Ensure `:app:assembleRelease` runs R8 code shrinking, obfuscation, and resource shrinking (`isMinifyEnabled = true`, `isShrinkResources = true`) without stripping reflection/serializer targets needed at runtime.
+- **Goal:** Ensure `:app:assemblePlayRelease` runs R8 code shrinking, obfuscation, and resource shrinking (`isMinifyEnabled = true`, `isShrinkResources = true`) without stripping reflection/serializer targets needed at runtime.
 - **Files:** [`app/build.gradle.kts`](../app/build.gradle.kts), [`app/proguard-rules.pro`](../app/proguard-rules.pro).
 - **Rules required in `app/proguard-rules.pro`:**
   - Keep `kotlinx.serialization` generated `$serializer` classes and `Companion.serializer()` methods across `com.microsoft.agenthostprotocol.**` and `dev.ahpclient.**` (`SessionListCache`, `DirectHostCodec`).
@@ -26,7 +26,7 @@ With Phases 1–5, hardening (`H1`–`H8`, `F1`–`F2`), host extensions (`E0`�
 
 #### Acceptance criteria
 - [x] **AC-P1.1** `app/build.gradle.kts` enables `isMinifyEnabled = true` and `isShrinkResources = true` on `buildTypes.release` with `proguard-rules.pro`, and signs the release APK/AAB automatically when `AHP_KEYSTORE_FILE`, `AHP_KEYSTORE_PASSWORD`, `AHP_KEY_ALIAS`, and `AHP_KEY_PASSWORD` are supplied.
-- [x] **AC-P1.2** `./gradlew :app:assembleRelease` succeeds and produces a shrunk release APK (`app-release-unsigned.apk` or signed `app-release.apk`).
+- [x] **AC-P1.2** `./gradlew :app:assemblePlayRelease` succeeds and produces a shrunk release APK (`app-play-release-unsigned.apk` or signed `app-play-release.apk`).
 
 ### P2 — Dev Tunnels GitHub App Client ID terms of use (Phase 0 gate)
 
