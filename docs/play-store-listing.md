@@ -27,8 +27,8 @@ $env:AHP_KEY_PASSWORD = "<key-password>"
 .\gradlew.bat :app:bundlePlayRelease :app:assemblePlayRelease
 ```
 - Signed Play Store bundle: `app/build/outputs/bundle/playRelease/app-play-release.aab`
-- Signed release APK: `app/build/outputs/apk/release/app-release.apk`
-- R8 mapping file (upload to Play Console for deobfuscated stack traces): `app/build/outputs/mapping/release/mapping.txt`
+- Signed release APK: `app/build/outputs/apk/play/release/app-play-release.apk`
+- R8 mapping file (upload to Play Console for deobfuscated stack traces): `app/build/outputs/mapping/playRelease/mapping.txt`
 
 ### Release Notes for `v0.2.0` (`versionCode 3`) — Play Console "What's new" (`<= 500 chars`)
 ```text
