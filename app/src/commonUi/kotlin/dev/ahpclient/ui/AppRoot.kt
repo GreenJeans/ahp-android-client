@@ -25,6 +25,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.microsoft.agenthostprotocol.generated.RootState
 import com.microsoft.agenthostprotocol.generated.SessionState
 import com.microsoft.agenthostprotocol.generated.SessionSummary
+import dev.ahpclient.BuildConfig
 import dev.ahpclient.ai.QuickReplyController
 import dev.ahpclient.app.AppController
 import dev.ahpclient.app.AppState
@@ -424,6 +425,7 @@ private fun Shell(
                         }
                     },
                     proUnlocked = proUnlocked,
+                    githubBuild = BuildConfig.GITHUB_BUILD,
                     onPurchasePro = controller::purchasePro,
                     onRestorePro = controller::restorePro,
                     onDebugProChange = if (platformUi.isDebuggable) {

@@ -24,9 +24,9 @@ $env:AHP_KEYSTORE_PASSWORD = "<keystore-password>"
 $env:AHP_KEY_ALIAS = "ahp-upload"
 $env:AHP_KEY_PASSWORD = "<key-password>"
 
-.\gradlew.bat :app:bundleRelease :app:assembleRelease
+.\gradlew.bat :app:bundlePlayRelease :app:assemblePlayRelease
 ```
-- Signed Play Store bundle: `app/build/outputs/bundle/release/app-release.aab`
+- Signed Play Store bundle: `app/build/outputs/bundle/playRelease/app-play-release.aab`
 - Signed release APK: `app/build/outputs/apk/release/app-release.apk`
 - R8 mapping file (upload to Play Console for deobfuscated stack traces): `app/build/outputs/mapping/release/mapping.txt`
 

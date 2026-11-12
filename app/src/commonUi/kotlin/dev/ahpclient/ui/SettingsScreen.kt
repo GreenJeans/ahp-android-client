@@ -110,6 +110,8 @@ fun SettingsScreen(
     onFetchAvailableModels: (suspend (providerKind: AiProviderKind, baseUrl: String, overrideApiKey: String?) -> Result<List<String>>)? = null,
     /** Whether Pro features (background monitoring, acting, managing, and concurrent multi-host) are unlocked. */
     proUnlocked: Boolean = true,
+    /** True for the GitHub flavor, where Pro is included free during the beta instead of sold through Play. */
+    githubBuild: Boolean = false,
     /** Starts the Pro unlock flow when tapped; when null and [onPurchasePro] or [onRestorePro] is set, opens [ProUpgradeDialog]. */
     onUnlockPro: (() -> Unit)? = null,
     /** Launches the Pro purchase flow from [ProUpgradeDialog]. */
@@ -149,8 +151,8 @@ fun SettingsScreen(
                     )
                 }
             }
-            if (!proUnlocked || onDebugProChange != null) {
-                ProSection(proUnlocked, onUnlockPro, onPurchasePro, onRestorePro, onDebugProChange)
+            if (!proUnlocked || onDebugProChange != null || githubBuild) {
+                ProSection(proUnlocked, onUnlockPro, onPurchasePro, onRestorePro, onDebugProChange, githubBuild)
             }
             SectionHeader("Background")
             TileCard(shape = connectedShape(0, 2)) {
@@ -223,11 +225,30 @@ private fun ProSection(
     onPurchasePro: (suspend () -> BillingResult)?,
     onRestorePro: (suspend () -> BillingResult)?,
     onDebugProChange: ((Boolean) -> Unit)?,
+    githubBuild: Boolean = false,
 ) {
     var showingDialog by rememberSaveable { mutableStateOf(false) }
     val hasDialogFlow = onPurchasePro != null || onRestorePro != null
     val action: (() -> Unit)? = onUnlockPro ?: if (hasDialogFlow) ({ showingDialog = true }) else null
     SectionHeader("Pro")
+    if (githubBuild && proUnlocked) {
+        // The GitHub flavor includes Pro free during the beta; say so plainly instead of showing a buy button.
+        TileCard(
+            shape = connectedShape(0, 1),
+            modifier = Modifier.testTag("pro_section"),
+        ) {
+            TilePadding {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Pro included", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "This GitHub build includes Pro free during the beta. The Play Store version sells it as a one-time unlock.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
     if (!proUnlocked) {
         TileCard(
             shape = if (onDebugProChange != null) connectedShape(0, 2) else connectedShape(0, 1),

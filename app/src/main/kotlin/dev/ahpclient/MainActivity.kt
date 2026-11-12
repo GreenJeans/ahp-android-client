@@ -88,11 +88,16 @@ class MainActivity : FragmentActivity() {
         container.inForeground = true
         container.clearMonitorWarning()
         container.approvalGate.attach(this)
-        container.billingDriver.attach(this)
+        // The GitHub flavor never uses Play Billing (Pro is included), so there is no purchase sheet to host.
+        if (!BuildConfig.GITHUB_BUILD) {
+            container.billingDriver.attach(this)
+        }
     }
 
     override fun onStop() {
-        container.billingDriver.detach(this)
+        if (!BuildConfig.GITHUB_BUILD) {
+            container.billingDriver.detach(this)
+        }
         container.approvalGate.detach(this)
         container.inForeground = false
         super.onStop()
