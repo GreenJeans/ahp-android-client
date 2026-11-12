@@ -43,6 +43,11 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # Do NOT use the action's default package list: it includes the legacy
+          # `tools` package, which current cmdline-tools no longer publish
+          # ("Failed to find package 'tools'").
+          packages: "platforms;android-37.0 build-tools;36.0.0 platform-tools"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v3
