@@ -66,9 +66,9 @@ Watch your coding agents work, review their diffs, and approve tool calls with F
 
 ### Keywords (≤ 100, comma-separated, no spaces)
 ```text
-agent,coding,AI,copilot,vscode,tunnel,remote,developer,diff,terminal,MCP,tailscale,ahp,claude,monitor
+agent,coding,copilot,vscode,tunnel,remote,developer,diff,terminal,MCP,tailscale,ahp,claude,monitor
 ```
-*(97 characters. Avoid other companies' trademarks in keywords beyond plain descriptive terms if Review objects.)*
+*(98 characters — this is the string actually saved in App Store Connect. The original string with "AI" was 101 characters, over Apple's 100 cap, so "AI" was dropped at submission. Avoid other companies' trademarks in keywords beyond plain descriptive terms if Review objects.)*
 
 ### Description (≤ 4000)
 ```text
