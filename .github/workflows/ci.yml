@@ -1,0 +1,54 @@
+# CI for pull requests and pushes to main: the core-ahp unit test suite plus
+# debug builds of both store flavors.
+#
+# Why this exists: until now the only workflow was the tag-triggered release
+# build, so the first compile check of a change could be a failed release run
+# (exactly what happened when the store flavors landed). Debug assembles are
+# used because release signing needs the keystore secrets; the debug builds
+# still compile every flavor's code, and the instrumented-test sources are
+# compiled (not run — they need an emulator) so a UI change cannot silently
+# break them.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          # Same pin as the release workflow: the action's default package
+          # list includes the legacy `tools` package, which current
+          # cmdline-tools no longer publish ("Failed to find package 'tools'").
+          packages: "platforms;android-37.0 build-tools;36.0.0 platform-tools"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Unit tests and coverage gate (core-ahp)
+        run: ./gradlew :core-ahp:check --stacktrace
+
+      - name: Build both flavors (debug) and compile the UI tests
+        run: ./gradlew :app:assemblePlayDebug :app:assembleGithubDebug :app:assemblePlayDebugAndroidTest --stacktrace
