@@ -35,6 +35,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -183,6 +184,7 @@ fun SettingsScreen(
                 }
             }
             AboutSection()
+            FeedbackSection()
         }
     }
 }
@@ -215,6 +217,41 @@ private fun AboutSection() {
     }
     if (showingAbout) {
         AboutSheet(onDismiss = { showingAbout = false })
+    }
+}
+
+/** Where beta feedback goes: the same address App Store Connect lists for TestFlight feedback. */
+private const val FEEDBACK_MAILTO = "mailto:tyler.morita@gmail.com?subject=Hostline%20feedback"
+
+/**
+ * One tap from Settings to a feedback email, so closed-testing and TestFlight testers can report problems
+ * without hunting for an address. Opens the mail app with the subject filled in; nothing is sent from here.
+ */
+@Composable
+private fun FeedbackSection() {
+    val uriHandler = LocalUriHandler.current
+    Spacer(Modifier.height(Design.Gap))
+    TileCard(
+        onClick = { uriHandler.openUri(FEEDBACK_MAILTO) },
+        modifier = Modifier.testTag("feedback_button"),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(AppIcons.Mail, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Send feedback", style = MaterialTheme.typography.bodyLarge, maxLines = 1, modifier = Modifier.weight(1f))
+            Text(
+                "Opens your mail app",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+        }
     }
 }
 
