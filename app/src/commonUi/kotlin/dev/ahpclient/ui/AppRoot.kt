@@ -52,7 +52,9 @@ import dev.ahpclient.state.HostSessionEntry
 import dev.ahpclient.state.HostTerminalEntry
 import dev.ahpclient.state.Inbox
 import dev.ahpclient.state.InboxReader
+import dev.ahpclient.state.InteractMessages
 import dev.ahpclient.state.ManageResult
+import dev.ahpclient.state.ModelOptions
 import dev.ahpclient.state.SlashCommands
 import dev.ahpclient.state.Transcript
 import dev.ahpclient.ui.chat.ChatActionsUi
@@ -100,7 +102,7 @@ fun AppRoot(
 }
 
 /** The screens a signed-in person moves between: the main page (the open session, or nothing but the side menu) with the side menu, settings, and the inbox. */
-private enum class Page { MAIN, SETTINGS, INBOX }
+private enum class Page { MAIN, SETTINGS, INBOX, NEW_SESSION }
 
 /**
  * Everything once signed in: a side menu (the host, the inbox, a new session, Settings, the sessions) over the main page, which is the
@@ -220,6 +222,8 @@ private fun Shell(
                         newSession = hostManager::newSession,
                         sessionSettings = hostManager::sessionSettings,
                         settingCompletions = hostManager::settingCompletions,
+                        models = { provider -> ModelOptions.forProvider(hostRoot?.agents.orEmpty(), provider) },
+                        customAgents = CustomAgents.of(null, hostRoot),
                     )
                 }
                 rawManageTargets += target
@@ -265,6 +269,8 @@ private fun Shell(
                 newSession = controller.manager::newSession,
                 sessionSettings = controller.manager::sessionSettings,
                 settingCompletions = controller.manager::settingCompletions,
+                models = { provider -> ModelOptions.forProvider((rootState as? RootState)?.agents.orEmpty(), provider) },
+                customAgents = CustomAgents.of(null, rootState as? RootState),
                 disposeSession = controller.manager::disposeSession,
                 disposeChat = controller.manager::disposeChat,
                 hosts = orderedManageTargets,
@@ -287,6 +293,13 @@ private fun Shell(
     var drawerRequestedChat by rememberSaveable { mutableStateOf<String?>(null) }
     val showSession = { uri: String -> menu.close(); drawerRequestedChat = null; controller.showSession(uri) }
     val showSessionOnHost = { hostId: String?, uri: String -> menu.close(); drawerRequestedChat = null; controller.showSession(uri, hostId) }
+    // The task typed on the new-session page, waiting for the new session's chat to take it. Held in memory only (it can carry files),
+    // and dropped once another session is opened, so it is never sent anywhere but the session it was written for.
+    var firstMessage by remember { mutableStateOf<FirstMessage?>(null) }
+    LaunchedEffect(open?.uri) {
+        val waiting = firstMessage
+        if (waiting != null && open?.uri != null && open.uri != waiting.sessionUri) firstMessage = null
+    }
     val showSubChatOnHost = { hostId: String?, sessionUri: String, chatUri: String ->
         menu.close()
         drawerRequestedChat = chatUri
@@ -331,7 +344,7 @@ private fun Shell(
                 onOpenHost = { hostSheet = true },
                 onOpenSession = showSession,
                 onOpenSettings = { page = Page.SETTINGS; menu.close() },
-                onSessionCreated = showSession,
+                onNewSession = { page = Page.NEW_SESSION; menu.close() },
                 inboxCount = if (connected != null) inbox.waiting.size else null,
                 onOpenInbox = { page = Page.INBOX; menu.close() },
                 stale = stale,
@@ -340,7 +353,6 @@ private fun Shell(
                 filter = savedFilter,
                 onFilterChange = ui::setSessionFilter,
                 onOpenSessionOnHost = showSessionOnHost,
-                onSessionCreatedOnHost = showSessionOnHost,
                 terminals = hostTerminals,
                 onOpenTerminal = { uri -> menu.close(); controller.openTerminal(uri) },
                 onOpenAutomations = if (automationsOffered) ({ automationsOpen = true }) else null,
@@ -454,6 +466,20 @@ private fun Shell(
                     stale = stale,
                 )
             }
+            Page.NEW_SESSION -> if (manageActions != null) {
+                NewSessionScreen(
+                    manage = manageActions,
+                    onBack = { page = Page.MAIN },
+                    onStarted = { started ->
+                        firstMessage = started
+                        page = Page.MAIN
+                        showSessionOnHost(started.hostId, started.sessionUri)
+                    },
+                )
+            } else {
+                // Starting sessions is no longer allowed here (the connection dropped to a lower tier, or went): back to the menu.
+                LaunchedEffect(Unit) { page = Page.MAIN }
+            }
             Page.MAIN -> if (connected != null && connection != null && hostTerminal != null) {
                 val terminalState by hostTerminal.store.state.collectAsStateWithLifecycle()
                 val terminalError by hostTerminal.store.error.collectAsStateWithLifecycle()
@@ -466,6 +492,8 @@ private fun Shell(
                     quickReplyProvider = quickReplyProvider.takeIf { proUnlocked },
                     drawerRequestedChat = drawerRequestedChat,
                     onDrawerRequestedChatConsumed = { drawerRequestedChat = null },
+                    firstMessage = firstMessage,
+                    onFirstMessageTaken = { firstMessage = null },
                 )
             } else {
                 // The menu is the page here, held open over this strip of background; there is nothing to say behind it.
@@ -523,6 +551,8 @@ private fun SessionPage(
     quickReplyProvider: QuickReplyController? = null,
     drawerRequestedChat: String? = null,
     onDrawerRequestedChatConsumed: () -> Unit = {},
+    firstMessage: FirstMessage? = null,
+    onFirstMessageTaken: () -> Unit = {},
 ) {
     val chat = open.chat
     val sessionState by open.store.state.collectAsStateWithLifecycle()
@@ -683,6 +713,10 @@ private fun SessionPage(
                     onExternalRichConsumed = { externalRichRequest = null },
                     onOpenCustomizations = { cat, q -> openCustomizationsRequest = cat to q },
                     quickReplyProvider = quickReplyProvider,
+                    firstMessage = firstMessage?.takeIf { it.sessionUri == open.uri },
+                    onFirstMessageTaken = onFirstMessageTaken,
+                    // A first message the host did not take goes back in the message box, so the task is never lost.
+                    onFirstMessageFailed = { text -> prefillText = text },
                     modifier = Modifier,
                 )
             }
@@ -713,6 +747,9 @@ private fun OpenChatView(
     onExternalRichConsumed: () -> Unit = {},
     onOpenCustomizations: ((CustomizationCategory?, String) -> Unit)? = null,
     quickReplyProvider: QuickReplyController? = null,
+    firstMessage: FirstMessage? = null,
+    onFirstMessageTaken: () -> Unit = {},
+    onFirstMessageFailed: (String) -> Unit = {},
     modifier: Modifier,
 ) {
     val platformUi = rememberPlatformUiActions()
@@ -825,6 +862,21 @@ private fun OpenChatView(
         }
     } else {
         null
+    }
+    // The task from the new-session page is sent once, as soon as the new session's chat can take a message. It is taken first, so a
+    // chat that recomposes (or comes back after a dropped connection) never sends it twice; if the host refuses it, it goes back in the box.
+    val sendFirst = firstMessage?.takeIf { !screen && actions != null }
+    if (sendFirst != null && actions != null) {
+        LaunchedEffect(sendFirst) {
+            onFirstMessageTaken()
+            scope.launch {
+                val result = actions.send(sendFirst.text, sendFirst.model, sendFirst.agent, sendFirst.attachments)
+                if (!InteractMessages.succeeded(result)) {
+                    onFirstMessageFailed(sendFirst.text)
+                    InteractMessages.describe(result)?.let(platformUi::showToast)
+                }
+            }
+        }
     }
     val onOpenLink = { link: String -> if (!platformUi.openLink(link)) platformUi.showToast("Nothing can open this link") }
     val onShareLink = { link: String -> if (!platformUi.shareLink(link)) platformUi.showToast("Nothing can share this link") }

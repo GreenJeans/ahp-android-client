@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### New session
+- **New session is a page shaped like the chat it starts**: the long dialog of radio lists is gone. Where the agent works sits at the top as chips (host when several are connected, folder, agent harness, then the host's own settings such as isolation (folder or worktree) and starting branch), each opening a short sheet. The message box at the bottom holds the task, Add context (files), the custom agent, mode and approvals (Allow all in the warning colour), and the model with its settings such as effort. One send starts the session after the device check and hands the task to its chat, so a new session is never left half started. The page opens on the host's first agent and most recent folder, so a task can go with no extra taps.
+
 ## v0.2.1 (`versionCode 4`) — 2026-11-12
 
 ### GitHub distribution

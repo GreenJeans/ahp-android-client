@@ -84,7 +84,7 @@ class HostTerminalsUiTest {
                     onOpenHost = {},
                     onOpenSession = {},
                     onOpenSettings = {},
-                    onSessionCreated = {},
+                    onNewSession = {},
                     terminals = terminals,
                     onOpenTerminal = onOpenTerminal,
                 )
@@ -157,7 +157,7 @@ class HostTerminalsUiTest {
                     DrawerContent(
                         host = host, connection = ConnState.Online, sessions = emptyList(), now = now, selected = null,
                         showArchived = false, onToggleArchived = {}, query = "", onQueryChange = {}, listState = rememberLazyListState(),
-                        manage = null, onOpenHost = {}, onOpenSession = {}, onOpenSettings = {}, onSessionCreated = {},
+                        manage = null, onOpenHost = {}, onOpenSession = {}, onOpenSettings = {}, onNewSession = {},
                         terminals = listOf(devServer), onOpenTerminal = { watching = it },
                     )
                 }
