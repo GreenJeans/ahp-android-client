@@ -303,6 +303,20 @@ class NewSessionScreenTest {
     }
 
     @Test
+    fun aSettingWithNoValueYetIsNamedByItsTitleAndLeftToTheHost() {
+        val sandbox = ConfigField(
+            "sandbox", "Sandbox", null,
+            listOf(ConfigOption(ConfigPick.Text("default"), "default"), ConfigOption(ConfigPick.Text("on"), "on")),
+            false, null,
+        )
+        val calls = Calls().apply { offer = { _, _, picks -> ConfigOffer.Form(SessionConfigForm(listOf(sandbox.copy(value = picks["sandbox"])), 0, emptyMap())) } }
+        show(calls)
+
+        openSetting("sandbox").assertContentDescriptionContains("Sandbox: the host's default")
+            .assertTextContains("Sandbox")
+    }
+
+    @Test
     fun aSettingShowsItsTitleDescriptionAndChoicesAndAPickAsksAgainAndIsSent() {
         val calls = Calls().apply { hostOffers() }
         show(calls)

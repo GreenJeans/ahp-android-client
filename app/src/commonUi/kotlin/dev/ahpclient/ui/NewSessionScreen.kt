@@ -300,7 +300,13 @@ fun NewSessionScreen(
                                 NewSessionSetup.BRANCH -> AppIcons.Branch
                                 else -> AppIcons.Wrench
                             }
-                            SetupChip(icon, field.title, NewSessionSetup.valueLabel(field, picks) ?: "Choose", "pick_setting_${field.id}", required = field in missing) {
+                            // A setting with no value yet is named by its title, so the chip says what it is; a screen reader hears who decides.
+                            val value = NewSessionSetup.valueLabel(field, picks)
+                            val required = field in missing
+                            SetupChip(
+                                icon, field.title, value ?: field.title, "pick_setting_${field.id}", required = required,
+                                spoken = value ?: if (required) "choose a value" else "the host's default",
+                            ) {
                                 picker = Pickers.SETTING + field.id
                             }
                         }
@@ -408,7 +414,7 @@ fun NewSessionScreen(
 
 /** A chip for one choice about where the agent works: an icon, the value, and a chevron that says it opens a list. Spoken as "Title: value". */
 @Composable
-private fun SetupChip(icon: ImageVector, title: String, value: String, tag: String, required: Boolean = false, onClick: () -> Unit) {
+private fun SetupChip(icon: ImageVector, title: String, value: String, tag: String, required: Boolean = false, spoken: String = value, onClick: () -> Unit) {
     AssistChip(
         onClick = onClick,
         label = { Text(value, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 220.dp)) },
@@ -419,7 +425,7 @@ private fun SetupChip(icon: ImageVector, title: String, value: String, tag: Stri
             labelColor = if (required) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurface,
         ),
         border = null,
-        modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "$title: $value" }.testTag(tag),
+        modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "$title: $spoken" }.testTag(tag),
     )
 }
 
