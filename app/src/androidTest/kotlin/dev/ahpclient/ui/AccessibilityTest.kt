@@ -143,7 +143,7 @@ class AccessibilityTest {
         inboxCount: Int? = null,
     ) = DrawerContent(
         connected?.let(HostRef::Tunnel), connection, list, now, selected = null, showArchived = showArchived, onToggleArchived = {}, query = query, onQueryChange = {},
-        listState = rememberLazyListState(), manage = manage, onOpenHost = {}, onOpenSession = {}, onOpenSettings = {}, onSessionCreated = {}, watched = watched, inboxCount = inboxCount,
+        listState = rememberLazyListState(), manage = manage, onOpenHost = {}, onOpenSession = {}, onOpenSettings = {}, onNewSession = {}, watched = watched, inboxCount = inboxCount,
     )
 
     @Test

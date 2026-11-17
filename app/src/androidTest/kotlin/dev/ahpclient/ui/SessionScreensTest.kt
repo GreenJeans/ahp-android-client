@@ -109,13 +109,14 @@ class SessionScreensTest {
         watched: Set<String> = emptySet(),
         inboxCount: Int? = null,
         onOpenInbox: () -> Unit = {},
+        onNewSession: () -> Unit = {},
     ) = rule.setContent {
         var showArchived by androidx.compose.runtime.remember { mutableStateOf(initialShowArchived) }
         var query by androidx.compose.runtime.remember { mutableStateOf(initialQuery) }
         AhpTheme {
             DrawerContent(
                 connectedHost?.let(HostRef::Tunnel), connection, sessions, now, selected, showArchived, { showArchived = !showArchived; onToggle() }, query, { query = it },
-                rememberLazyListState(), manage, onOpenHost, onOpen, onOpenSettings, onSessionCreated = {}, watched = watched, inboxCount = inboxCount, onOpenInbox = onOpenInbox,
+                rememberLazyListState(), manage, onOpenHost, onOpen, onOpenSettings, onNewSession = onNewSession, watched = watched, inboxCount = inboxCount, onOpenInbox = onOpenInbox,
             )
         }
     }
@@ -420,12 +421,13 @@ class SessionScreensTest {
     }
 
     @Test
-    fun theNewSessionIconOpensTheSameDialogAsTheButton() {
-        showSessions(manage = manageActions())
+    fun theNewSessionIconAsksForTheNewSessionPage() {
+        var asked = 0
+        showSessions(manage = manageActions(), onNewSession = { asked++ })
 
         rule.onNodeWithTag("new_session").performClick()
 
-        rule.onNodeWithText("Start a new session").assertIsDisplayed()
+        assertEquals(1, asked)
     }
 
     private fun manageActions() = ManageActionsUi(
@@ -490,7 +492,7 @@ class SessionScreensTest {
                     onOpenHost = {},
                     onOpenSession = {},
                     onOpenSettings = {},
-                    onSessionCreated = {},
+                    onNewSession = {},
                     connectedHosts = listOf(HostRef.Tunnel(host), HostRef.Tunnel(otherHost)),
                     entries = listOf(
                         dev.ahpclient.state.HostSessionEntry(host.tunnelId, host.name, waiting),

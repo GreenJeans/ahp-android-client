@@ -225,8 +225,8 @@ class ChatActionsUi(
 private const val MAX_LABEL = 80
 
 /** The widest a chip's label may be in the scrolling row (the chips were capped at 150 and 200 dp, padding included). */
-private val AGENT_LABEL_MAX = 126.dp
-private val MODEL_LABEL_MAX = 176.dp
+internal val AGENT_LABEL_MAX = 126.dp
+internal val MODEL_LABEL_MAX = 176.dp
 private const val MAX_QUESTION_TEXT = 4_000
 private const val MAX_OPTION_TEXT = 1_000
 
@@ -237,13 +237,13 @@ private const val FILES_STAY_HERE = "Files can only be sent in this chat. Remove
 private const val DRAFT_PAUSE_MS = 700L
 
 /** Keeps a picked model across rotation: its id, then each setting as a key and a value. A null pick is an empty list. */
-private val ModelPickSaver: Saver<ModelChoice?, Any> = listSaver(
+internal val ModelPickSaver: Saver<ModelChoice?, Any> = listSaver(
     save = { choice -> if (choice == null) emptyList<String>() else listOf(choice.id) + choice.config.flatMap { listOf(it.key, it.value) } },
     restore = { saved -> if (saved.isEmpty()) null else ModelChoice(saved[0], saved.drop(1).chunked(2).filter { it.size == 2 }.associate { it[0] to it[1] }) },
 )
 
 /** What the model button says: the model's name and the labels of the settings picked for it, or that the host's default is used. */
-private fun modelLabel(models: List<ModelOption>, choice: ModelChoice?): String {
+internal fun modelLabel(models: List<ModelOption>, choice: ModelChoice?): String {
     val model = choice?.let { c -> models.firstOrNull { it.id == c.id } } ?: return "Default model"
     val settings = model.settings.mapNotNull { s -> choice.config[s.id]?.let { v -> s.values.firstOrNull { it.value == v }?.label } }
     return (listOf(model.name) + settings).joinToString(" · ")
@@ -255,7 +255,7 @@ private fun modelLabel(models: List<ModelOption>, choice: ModelChoice?): String 
  * itself is still cut. The chip's spoken description carries the whole label either way.
  */
 @Composable
-private fun WholeWordsLabel(full: String, maxWidth: Dp) {
+internal fun WholeWordsLabel(full: String, maxWidth: Dp) {
     val style = MaterialTheme.typography.labelMedium
     val measurer = rememberTextMeasurer()
     val widthPx = with(LocalDensity.current) { maxWidth.roundToPx() }
@@ -298,7 +298,7 @@ private fun PickRow(label: String, selected: Boolean, tag: String, onClick: () -
  * "Default" (offered only when the app cannot tell which model the chat is on, such as one the host no longer lists; a new chat starts on the host's first model instead) sends no model at all. The names and labels are the host's words, shown as plain text.
  */
 @Composable
-private fun ModelPickerDialog(models: List<ModelOption>, current: ModelChoice?, showDefault: Boolean, onDismiss: () -> Unit, onPick: (ModelChoice?) -> Unit) {
+internal fun ModelPickerDialog(models: List<ModelOption>, current: ModelChoice?, showDefault: Boolean, onDismiss: () -> Unit, onPick: (ModelChoice?) -> Unit) {
     var draft by rememberSaveable(stateSaver = ModelPickSaver) { mutableStateOf(current) }
     val model = models.firstOrNull { it.id == draft?.id }
     AlertDialog(
@@ -352,10 +352,10 @@ private val AgentPickSaver: Saver<AgentPick, Any> = listSaver(
 )
 
 /** What the agent button says: the agent's name, or that none is in use. */
-private fun agentLabel(agents: List<AgentChoice>, uri: String?): String = CustomAgents.nameOf(uri, agents) ?: "Default agent"
+internal fun agentLabel(agents: List<AgentChoice>, uri: String?): String = CustomAgents.nameOf(uri, agents) ?: "Default agent"
 
 @Composable
-private fun AgentRow(name: String, description: String?, selected: Boolean, tag: String, onClick: () -> Unit) {
+internal fun AgentRow(name: String, description: String?, selected: Boolean, tag: String, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()

@@ -104,7 +104,7 @@ fun DrawerContent(
     onOpenHost: () -> Unit,
     onOpenSession: (String) -> Unit,
     onOpenSettings: () -> Unit,
-    onSessionCreated: (String) -> Unit,
+    onNewSession: () -> Unit = {},
     modifier: Modifier = Modifier,
     /** The sessions the user chose to be alerted about, each marked with a bell in the list. */
     watched: Set<String> = emptySet(),
@@ -120,7 +120,6 @@ fun DrawerContent(
     filter: SessionFilter = SessionFilter.DEFAULT,
     onFilterChange: (SessionFilter) -> Unit = {},
     onOpenSessionOnHost: (hostId: String?, uri: String) -> Unit = { _, uri -> onOpenSession(uri) },
-    onSessionCreatedOnHost: (hostId: String?, uri: String) -> Unit = { _, uri -> onSessionCreated(uri) },
     /** The focused host's own terminals (its root state); the Terminals button shows only when there are some. */
     terminals: List<HostTerminalEntry> = emptyList(),
     /** Watches one of [terminals], read only, by its address. */
@@ -189,8 +188,7 @@ fun DrawerContent(
                     onResetFilter = resetFilter,
                     listState = listState,
                     manage = manage,
-                    onSessionCreated = onSessionCreated,
-                    onSessionCreatedOnHost = onSessionCreatedOnHost,
+                    onNewSession = onNewSession,
                     watched = watched,
                     onOpen = onOpenSessionOnHost,
                     onOpenSubChat = onOpenSubChat,
@@ -401,8 +399,7 @@ private fun SessionList(
     onResetFilter: () -> Unit,
     listState: LazyListState,
     manage: ManageActionsUi?,
-    onSessionCreated: (String) -> Unit,
-    onSessionCreatedOnHost: (hostId: String?, uri: String) -> Unit,
+    onNewSession: () -> Unit = {},
     watched: Set<String>,
     onOpen: (hostId: String?, uri: String) -> Unit,
     onOpenSubChat: (hostId: String?, sessionUri: String, chatUri: String) -> Unit,
@@ -438,7 +435,7 @@ private fun SessionList(
                     }
                     if (manage != null) {
                         Tooltip("New session") {
-                            NewSessionIconButton(manage, onSessionCreated, onCreatedOnHost = onSessionCreatedOnHost)
+                            NewSessionIconButton(onNewSession)
                         }
                     }
                 }
