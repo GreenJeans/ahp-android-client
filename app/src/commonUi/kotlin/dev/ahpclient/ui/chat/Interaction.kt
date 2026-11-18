@@ -63,6 +63,8 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -102,6 +104,7 @@ import dev.ahpclient.state.ManageResult
 import dev.ahpclient.state.ModelChoice
 import dev.ahpclient.state.ModelOption
 import dev.ahpclient.state.ModelOptions
+import dev.ahpclient.state.ModelSetting
 import dev.ahpclient.state.PendingMessageKind
 import dev.ahpclient.state.PendingMessageView
 import androidx.compose.foundation.clickable
@@ -242,10 +245,14 @@ internal val ModelPickSaver: Saver<ModelChoice?, Any> = listSaver(
     restore = { saved -> if (saved.isEmpty()) null else ModelChoice(saved[0], saved.drop(1).chunked(2).filter { it.size == 2 }.associate { it[0] to it[1] }) },
 )
 
-/** What the model button says: the model's name and the labels of the settings picked for it, or that the host's default is used. */
+/**
+ * What the model button says: the model's name and the value each of its settings will go with (the one picked, else the host's
+ * default), or that the host's default model is used. A default is spelled out so the button never hides that, say, the context
+ * is the small one.
+ */
 internal fun modelLabel(models: List<ModelOption>, choice: ModelChoice?): String {
     val model = choice?.let { c -> models.firstOrNull { it.id == c.id } } ?: return "Default model"
-    val settings = model.settings.mapNotNull { s -> choice.config[s.id]?.let { v -> s.values.firstOrNull { it.value == v }?.label } }
+    val settings = model.settings.mapNotNull { s -> ModelOptions.effective(s, choice)?.let { v -> s.values.firstOrNull { it.value == v }?.label } }
     return (listOf(model.name) + settings).joinToString(" · ")
 }
 
@@ -294,38 +301,85 @@ private fun PickRow(label: String, selected: Boolean, tag: String, onClick: () -
 }
 
 /**
- * Picks the model for the next messages: one the host lists for this agent, and for it, one of each setting's listed values.
- * "Default" (offered only when the app cannot tell which model the chat is on, such as one the host no longer lists; a new chat starts on the host's first model instead) sends no model at all. The names and labels are the host's words, shown as plain text.
+ * One setting of the picked model (effort, context size) as a row of chips under its title, so each setting reads as one short
+ * question rather than more lines of a long list. The host's default value is marked "(default)" and picking it leaves the setting
+ * to the host, which sends the same value. A setting the host names no default for also offers "Default".
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ModelSettingRow(setting: ModelSetting, draft: ModelChoice, onChange: (ModelChoice) -> Unit) {
+    val picked = draft.config[setting.id]
+    Column(modifier = Modifier.fillMaxWidth().testTag("model_setting"), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(setting.title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.semantics { heading() })
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            if (setting.default == null) {
+                FilterChip(
+                    selected = picked == null,
+                    onClick = { onChange(draft.copy(config = draft.config - setting.id)) },
+                    label = { Text("Default") },
+                    modifier = Modifier.heightIn(min = 48.dp).testTag("model_setting_default"),
+                )
+            }
+            setting.values.forEach { v ->
+                val isDefault = v.value == setting.default
+                FilterChip(
+                    selected = (picked ?: setting.default) == v.value,
+                    onClick = {
+                        val config = if (isDefault) draft.config - setting.id else draft.config + (setting.id to v.value)
+                        onChange(draft.copy(config = config))
+                    },
+                    label = { Text(if (isDefault) "${v.label} (default)" else v.label) },
+                    modifier = Modifier.heightIn(min = 48.dp).testTag("model_setting_value"),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Picks the model for the next messages, in two parts that each read at a glance: the models the host lists for this agent, as a
+ * short scrolling list that opens at the one in use, and under it, always in view, each setting of the picked model (effort,
+ * context size) as a row of chips. "Default" (offered only when the app cannot tell which model the chat is on, such as one the host
+ * no longer lists; a new chat starts on the host's first model instead) sends no model at all. The names and labels are the host's
+ * words, shown as plain text.
  */
 @Composable
 internal fun ModelPickerDialog(models: List<ModelOption>, current: ModelChoice?, showDefault: Boolean, onDismiss: () -> Unit, onPick: (ModelChoice?) -> Unit) {
     var draft by rememberSaveable(stateSaver = ModelPickSaver) { mutableStateOf(current) }
     val model = models.firstOrNull { it.id == draft?.id }
+    val listScroll = rememberScrollState()
+    // The list opens scrolled to the model in use, so what is true shows without a search; only the first placement moves it.
+    var placedAt by remember { mutableStateOf<Int?>(null) }
+    LaunchedEffect(placedAt) { placedAt?.let { listScroll.scrollTo(it) } }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Model") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                if (models.size > 5) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                Column(
-                    modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()).testTag("model_dialog"),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    if (showDefault) PickRow("Default", draft == null, "model_default") { draft = null }
-                    models.forEach { m -> PickRow(m.name, draft?.id == m.id, "model_option") { if (draft?.id != m.id) draft = ModelChoice(m.id) } }
-                    model?.settings?.forEach { setting ->
-                        Text(setting.title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 12.dp).semantics { heading() })
-                        PickRow("Default", draft?.config?.containsKey(setting.id) != true, "model_setting_default") {
-                            draft = draft?.let { it.copy(config = it.config - setting.id) }
-                        }
-                        setting.values.forEach { v ->
-                            PickRow(v.label, draft?.config?.get(setting.id) == v.value, "model_setting_value") {
-                                draft = draft?.let { it.copy(config = it.config + (setting.id to v.value)) }
+            Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (models.size > 5) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    Column(
+                        modifier = Modifier.heightIn(max = 240.dp).verticalScroll(listScroll).testTag("model_dialog"),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        if (showDefault) PickRow("Default", draft == null, "model_default") { draft = null }
+                        models.forEach { m ->
+                            val selected = draft?.id == m.id
+                            Box(
+                                Modifier.onGloballyPositioned { coords ->
+                                    if (selected && placedAt == null && m.id == current?.id) placedAt = coords.positionInParent().y.toInt()
+                                },
+                            ) {
+                                PickRow(m.name, selected, "model_option") { if (draft?.id != m.id) draft = ModelChoice(m.id) }
                             }
                         }
                     }
+                    if (models.size > 5) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
-                if (models.size > 5) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                val picked = draft
+                if (model != null && picked != null) {
+                    model.settings.forEach { setting -> ModelSettingRow(setting, picked) { draft = it } }
+                }
             }
         },
         confirmButton = { TextButton(onClick = { onPick(draft) }, modifier = Modifier.testTag("model_use")) { Text("Use") } },
