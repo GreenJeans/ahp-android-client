@@ -64,10 +64,28 @@ object ModelOptions {
                         }.distinctBy { it.value }.take(MAX_VALUES)
                         val default = plainValue(property.default, numeric)?.takeIf { d -> values.any { it.value == d } }
                         if (values.isEmpty()) null else ModelSetting(id, property.title.ifBlank { id }.take(MAX_TEXT), values, numeric, default)
-                    }.take(MAX_SETTINGS),
+                    }.let(::withoutAliases).take(MAX_SETTINGS),
                     supportsVision = model.supportsVision,
                 )
             }
+
+    /**
+     * Older names a host still lists beside the current ones, for clients that know only those: the VS Code host copies
+     * `thinkingLevel` as `reasoningEffort` and `tier` as `autoTier` (same title, same values, no default). Shown, they put one
+     * choice on screen twice, so an alias is dropped when the setting it copies is listed.
+     */
+    private val ALIASES = mapOf("reasoningEffort" to "thinkingLevel", "autoTier" to "tier")
+
+    /** [settings] with each alias, and each later copy of a setting (same title, same values), left out. */
+    private fun withoutAliases(settings: List<ModelSetting>): List<ModelSetting> {
+        val ids = settings.mapTo(HashSet()) { it.id }
+        return settings
+            .filterNot { s -> ALIASES[s.id]?.let { it in ids } == true }
+            .distinctBy { s -> s.title.lowercase() to s.values.map { it.value } }
+    }
+
+    /** The value [setting] has in [choice]: the one picked, else the host's default; null when neither is known. */
+    fun effective(setting: ModelSetting, choice: ModelChoice?): String? = choice?.config?.get(setting.id) ?: setting.default
 
     /** "936000" as "936,000", so a size reads at a glance. */
     private fun grouped(whole: String): String {

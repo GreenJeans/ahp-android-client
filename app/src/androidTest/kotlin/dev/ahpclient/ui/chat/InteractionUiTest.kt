@@ -655,6 +655,28 @@ class InteractionUiTest {
     }
 
     @Test
+    fun theHostsDefaultIsSpelledOutOnTheButtonAndMarkedInThePicker() {
+        val sized = ModelOption(
+            "sized",
+            "Sized",
+            listOf(ModelSetting("contextSize", "Context size", listOf(ModelSettingValue("200000", "200K"), ModelSettingValue("1000000", "1M")), numeric = true, default = "200000")),
+        )
+        val calls = Calls()
+        show(transcript(), actions(calls, models = listOf(sized), modelInUse = ModelChoice("sized")))
+
+        rule.onNodeWithTag("model_button").assertTextContains("Sized · 200K", substring = true)
+        rule.onNodeWithTag("model_button").performClick()
+        rule.onAllNodesWithTag("model_setting_default").assertCountEquals(0)
+        rule.onAllNodesWithTag("model_setting_value")[0].assertIsSelected().assertTextContains("200K (default)", substring = true)
+        rule.onAllNodesWithTag("model_setting_value")[1].performClick()
+        rule.onNodeWithTag("model_use").performClick()
+
+        rule.onNodeWithTag("model_button").assertTextContains("Sized · 1M", substring = true)
+        sendHi()
+        assertEquals(listOf<ModelChoice?>(ModelChoice("sized", mapOf("contextSize" to "1000000"))), calls.sentModels)
+    }
+
+    @Test
     fun aSettingCanGoBackToTheModelsOwnDefault() {
         val calls = Calls()
         show(transcript(), actions(calls, models = listOf(auto, sonnet)))

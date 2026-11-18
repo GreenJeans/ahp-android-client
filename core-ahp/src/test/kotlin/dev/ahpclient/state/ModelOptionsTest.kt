@@ -67,6 +67,48 @@ class ModelOptionsTest {
     }
 
     @Test
+    fun `an alias the host lists beside the setting it copies is shown once`() {
+        // As the VS Code host lists them: `reasoningEffort` and `autoTier` are copies of `thinkingLevel` and `tier` with no default.
+        val effort = """{"type":"string","title":"Thinking effort","enum":["low","medium","high"]"""
+        val tier = """{"type":"string","title":"Tier","enum":["standard","max"]"""
+        val settings = ModelOptions.of(
+            agent(
+                model(
+                    "a",
+                    schema = schema(
+                        property("thinkingLevel", "$effort,\"default\":\"medium\"}"),
+                        contextSize,
+                        property("tier", "$tier,\"default\":\"standard\"}"),
+                        property("reasoningEffort", "$effort}"),
+                        property("autoTier", "$tier}"),
+                    ),
+                ),
+            ),
+        ).single().settings
+
+        assertEquals(listOf("thinkingLevel", "contextSize", "tier"), settings.map { it.id })
+        assertEquals("medium", settings.first().default)
+    }
+
+    @Test
+    fun `an alias alone is kept, and a later setting with the same title and values is dropped`() {
+        val alone = ModelOptions.of(agent(model("a", schema = schema(property("reasoningEffort", """{"type":"string","title":"Effort","enum":["low","high"]}""")))))
+        val copy = ModelOptions.of(agent(model("b", schema = schema(thinking, property("thinkingCopy", """{"type":"string","title":"thinking","enum":["low","high"]}""")))))
+
+        assertEquals(listOf("reasoningEffort"), alone.single().settings.map { it.id })
+        assertEquals(listOf("thinking"), copy.single().settings.map { it.id })
+    }
+
+    @Test
+    fun `a setting's effective value is the one picked, else the host's default`() {
+        val setting = ModelOptions.of(agent(model("a", schema = schema(contextSize)))).single().settings.single()
+
+        assertEquals("936000", ModelOptions.effective(setting, ModelChoice("a")))
+        assertEquals("200000", ModelOptions.effective(setting, ModelChoice("a", mapOf("contextSize" to "200000"))))
+        assertNull(ModelOptions.effective(setting.copy(default = null), ModelChoice("a")))
+    }
+
+    @Test
     fun `preparing a choice for a model that is not offered changes nothing`() {
         val choice = ModelChoice("ghost", mapOf("x" to "1"))
 
