@@ -1,11 +1,14 @@
 # Changelog
 
-## Unreleased
+## v0.2.3 (`versionCode 6`) — 2026-11-19
 
 ### Model picker
 - **Model, effort and context read as separate choices**: the picker no longer runs models and every setting value together as one long radio list. Models sit in a short list that opens at the one in use; under it, always in view, each setting (effort, context size) is one row of chips.
 - **Effort shows once**: the VS Code host lists `reasoningEffort` (and `autoTier`) as copies of `thinkingLevel` (and `tier`) for older clients; the copy is now left out.
 - **The context a message runs with is never hidden**: "Default" used to stand in for the host's default, which can be the small context (the host sets it from VS Code's own setting). The default value is now named and marked "(default)" in the picker, and the model button always shows the effort and context that will be sent, e.g. "Claude Sonnet 5.5 · High · 200K".
+
+### Settings
+- **Send feedback row**: Settings now has a feedback row that opens a mail to the beta feedback address.
 
 ## v0.2.2 (`versionCode 5`) — 2026-11-17
 
