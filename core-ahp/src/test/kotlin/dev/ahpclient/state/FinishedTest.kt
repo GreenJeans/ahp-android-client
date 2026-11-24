@@ -342,3 +342,62 @@ class FinishedNotifierTest {
         assertEquals(listOf(10_000L, 20_000L), posted.map { it.tookMs })
     }
 }
+
+/**
+ * Reconnects swap the whole session list through [RootStore.replaceCatalog], and [FinishedNotifier]
+ * keeps running across them (one per connected host, after the first online). These tests drive
+ * that path: the notifier watches the store's sessions flow, and each reconnect is a catalog replace.
+ */
+@OptIn(ExperimentalCoroutinesApi::class)
+class FinishedNotifierReconnectTest {
+    private val posted = mutableListOf<FinishedSession>()
+    private val root = RootStore()
+    private val watch = MutableStateFlow(FinishedWatch(all = true))
+
+    private fun TestScope.start(scope: CoroutineScope = backgroundScope) {
+        val notifier = FinishedNotifier(root.sessions, watch, { posted += it }, debounceMs = 5_000, clock = { testScheduler.currentTime })
+        scope.launch { notifier.run() }
+        runCurrent()
+    }
+
+    private fun TestScope.reconnect(vararg sessions: SessionSummary) {
+        root.replaceCatalog(sessions.toList())
+        runCurrent()
+    }
+
+    @Test
+    fun `a session working before a drop, idle in the list after reconnect, alerts once after the debounce`() = runTest {
+        root.replaceCatalog(listOf(busy(1), quiet(2)))
+        start()
+        advanceTimeBy(10_000)
+        assertEquals(emptyList(), posted, "working at the start is the baseline")
+
+        reconnect(quiet(1), quiet(2))
+        advanceTimeBy(4_900)
+        assertEquals(emptyList(), posted)
+
+        advanceTimeBy(200)
+        assertEquals(listOf("ahp-session:/s1"), posted.map { it.resource })
+        advanceTimeBy(10_000)
+        assertEquals(1, posted.size, "exactly once")
+    }
+
+    @Test
+    fun `a session that finished and started working again while offline does not alert on reconnect, and alerts once when it later stops`() = runTest {
+        root.replaceCatalog(listOf(busy(1), quiet(2)))
+        start()
+        advanceTimeBy(10_000)
+
+        reconnect(busy(1).copy(activity = "working again"), quiet(2))
+        advanceTimeBy(6_000)
+        assertEquals(emptyList(), posted, "busy after reconnect is not a stop")
+
+        reconnect(quiet(1), quiet(2))
+        advanceTimeBy(4_900)
+        assertEquals(emptyList(), posted)
+        advanceTimeBy(200)
+        assertEquals(listOf("ahp-session:/s1"), posted.map { it.resource })
+        advanceTimeBy(10_000)
+        assertEquals(1, posted.size)
+    }
+}
