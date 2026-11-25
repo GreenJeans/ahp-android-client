@@ -34,8 +34,10 @@ could not have paid through Play at all).
 ## Time-box
 
 This is a beta arrangement, not a permanent price. The decision checkpoint
-is the Play production launch (expected ~Nov 30, 2026) or v0.3.0, whichever
-comes first. At that point, decide one of:
+was the Play production launch (expected ~Nov 30, 2026) or v0.3.0, whichever
+came first. **Decided 2026-11-25: option 1 — Pro stays free on GitHub past
+the production launch; the checkpoint moves to v0.3.0**, when there will be
+install and conversion data to decide with. At that point, decide one of:
 
 1. Keep Pro free on GitHub (goodwill channel, Play remains the money channel).
 2. Switch the GitHub flavor to a license key sold outside Play (Stripe /
