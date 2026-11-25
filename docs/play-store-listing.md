@@ -54,6 +54,8 @@ $env:AHP_KEY_PASSWORD = "<key-password>"
   `Monitor, review diffs, and steer your coding-agent sessions from your phone.`
 - **Full description (<= 4000 chars):**
   ```text
+  Watch your coding agents work from your phone — and with Hostline Pro, chat with them and approve their tool calls.
+
   Hostline connects your Android phone directly to coding-agent hosts running the Agent Host Protocol (AHP) — either through Microsoft Dev Tunnels (VS Code Remote Tunnel Access) or directly to an ahpd WebSocket server over your LAN or Tailscale tailnet.
 
   FREE TIER (READ-ONLY MONITOR)
@@ -62,13 +64,13 @@ $env:AHP_KEY_PASSWORD = "<key-password>"
   • Full-screen Reader View, pinned prompt bar, and per-view word-wrap & table-fit controls
   • Inspect per-chat changesets, file diffs, canvases, annotations, and host terminals
   • Search and filter sessions by status, repository, or keyword with instant chat caching
-  • Zero telemetry, zero cloud relay servers — connections go straight from your phone to your machine
+  • No developer servers or telemetry. Direct ahpd connections go straight to your machine; Dev Tunnels connections go through Microsoft's tunnel service.
 
   PRO UNLOCK (ONE-TIME PURCHASE)
   • Act for me: send and steer prompts with file/image attachments, answer agent questions, and approve or deny tool calls with pre-approval risk & diff previews (protected by your phone's biometric / screen-lock check)
   • AI quick replies & live completions: on-device Gemini Nano or cloud AI quick-reply suggestions plus live host #, /, and @ completions
   • Look after sessions: start new sessions, rename sessions, manage MCP servers & customizations, control host automations, discard changeset edits, and manage forks/side chats
-  • Background monitoring & notifications: keep a live connection in the background and get instant notifications (with inline reply and Approve/Deny actions) the moment an agent needs input or finishes a task
+  • Background monitoring & notifications: get an on-device alert when your agent session finishes or needs you, even with the app in the background — and send approvals and answers straight from the notification. While a session is being watched, Android shows an ongoing notification, and it clears when the connection closes.
   • Quick Settings tile to toggle background monitoring from the notification shade
   • Concurrent multi-host connections across multiple machines
 

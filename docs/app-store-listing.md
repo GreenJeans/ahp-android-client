@@ -61,14 +61,14 @@ review screenshot first.
 
 ### Promotional text (≤ 170, editable without a new build)
 ```text
-Watch your coding agents work, review their diffs, and approve tool calls with Face ID — straight from your iPhone or iPad to your own machine. No cloud relay.
+Watch your coding agents work, review their diffs, and approve tool calls with Face ID — from your iPhone or iPad to your own machine. No developer servers or telemetry.
 ```
 
 ### Keywords (≤ 100, comma-separated, no spaces)
 ```text
-agent,coding,copilot,vscode,tunnel,remote,developer,diff,terminal,MCP,tailscale,ahp,claude,monitor
+agent,coding,tunnel,remote,developer,diff,terminal,MCP,tailscale,ahp,monitor
 ```
-*(98 characters — this is the string actually saved in App Store Connect. The original string with "AI" was 101 characters, over Apple's 100 cap, so "AI" was dropped at submission. Avoid other companies' trademarks in keywords beyond plain descriptive terms if Review objects.)*
+*(76 characters. Updated 2026-11-25: `copilot`, `vscode`, and `claude` dropped per the trademark check — other companies' marks. The previous string (98 chars, with those three) is what was saved in App Store Connect at submission; apply this string at the next metadata edit.)*
 
 ### Description (≤ 4000)
 ```text
@@ -82,7 +82,7 @@ FREE: WATCH YOUR AGENTS
 • Full-screen Reader view, pinned prompt bar, word-wrap and table-fit controls
 • Per-chat changesets, file diffs, canvases, annotations and host terminals
 • Search and filter sessions by status, repository or keyword
-• No telemetry and no relay servers — your phone talks straight to your machine
+• No developer servers or telemetry. Direct ahpd connections go straight to your machine; Dev Tunnels connections go through Microsoft's tunnel service.
 
 HOSTLINE PRO (ONE-TIME PURCHASE)
 • Act for me: send and steer prompts with file and image attachments, answer agent questions, and approve or deny tool calls with risk and diff previews — protected by Face ID or Touch ID
@@ -126,8 +126,9 @@ Subscriptions*); a first IAP cannot be submitted on its own.
 ## 4. App Privacy ("Nutrition Label")
 
 - **Data collection:** *No, we do not collect data from this app.*
-  The developer receives nothing: tokens live in the iOS Keychain, session data goes only between the device and
-  the user's own hosts, and purchases go through Apple.
+  The developer receives nothing: tokens live in the iOS Keychain, session data goes between the device and
+  the user's own hosts — directly for ahpd hosts, through Microsoft's Dev Tunnels service for tunnel hosts —
+  and purchases go through Apple.
 - Quick-reply text is sent to the AI provider **the user configures with their own API key**; that is the user's
   own account with that provider, not collection by the developer. The in-app provider setup explains what is sent.
 - The published policy is [`privacy-policy.md`](privacy-policy.md), copied to the `ahp-client-legal` repository that
