@@ -13,7 +13,7 @@ progress log live in this repo: [`docs/spec.md`](docs/spec.md), [`docs/prereleas
 ## Install
 
 - **Google Play** (closed testing for now): join the [test group](https://groups.google.com/g/ahp-client-testers), then [opt in](https://play.google.com/apps/testing/com.greenjeans.ahpclient) and install from the Play Store. Pro is a one-time $4.99 unlock in the app.
-- **GitHub** (Android, no Play account needed): install with [Obtainium](https://github.com/ImranR98/Obtainium) — Add App, paste `https://github.com/GreenJeans/ahp-android-client` — or download the APK from [Releases](https://github.com/GreenJeans/ahp-android-client/releases). The GitHub build includes Pro free during the beta; it is signed with our own key, so it cannot update over a Play install (uninstall first if you switch channels). Details: [`docs/github-distribution.md`](docs/github-distribution.md).
+- **GitHub** (Android, no Play account needed): install with [Obtainium](https://github.com/ImranR98/Obtainium) — Add App, paste `https://github.com/GreenJeans/ahp-android-client` — or download the APK from [Releases](https://github.com/GreenJeans/ahp-android-client/releases). The GitHub build includes Pro free; it is signed with our own key, so it cannot update over a Play install (uninstall first if you switch channels). Details: [`docs/github-distribution.md`](docs/github-distribution.md).
 
 ## Modules
 
