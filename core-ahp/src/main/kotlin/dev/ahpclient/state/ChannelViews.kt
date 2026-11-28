@@ -27,7 +27,7 @@ data class CanvasDetail(
                 extension = extension,
                 canvasId = oneLine(state.canvasId, MAX_TITLE),
                 status = oneLine(state.status, MAX_STATUS),
-                url = state.url?.takeIf { it.startsWith("https://", ignoreCase = true) && LinkTarget.of(it) is LinkTarget.Web },
+                url = state.uri?.takeIf { it.startsWith("https://", ignoreCase = true) && LinkTarget.of(it) is LinkTarget.Web },
             )
         }
     }

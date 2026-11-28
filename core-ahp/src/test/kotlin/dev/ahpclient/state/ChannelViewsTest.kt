@@ -35,10 +35,10 @@ class ChannelViewsTest {
 
     @Test
     fun `only a plain https canvas address can be opened`() {
-        assertEquals("https://example.com/p", canvas(""","url":"https://example.com/p"""").url)
-        assertNull(canvas(""","url":"http://example.com/p"""").url)
-        assertNull(canvas(""","url":"javascript:alert(1)"""").url)
-        assertNull(canvas(""","url":"file:///etc/passwd"""").url)
+        assertEquals("https://example.com/p", canvas(""","uri":"https://example.com/p"""").url)
+        assertNull(canvas(""","uri":"http://example.com/p"""").url)
+        assertNull(canvas(""","uri":"javascript:alert(1)"""").url)
+        assertNull(canvas(""","uri":"file:///etc/passwd"""").url)
         assertNull(canvas("").url)
     }
 
