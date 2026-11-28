@@ -61,7 +61,7 @@ review screenshot first.
 
 ### Promotional text (≤ 170, editable without a new build)
 ```text
-Watch your coding agents work, review their diffs, and approve tool calls with Face ID — from your iPhone or iPad to your own machine. No developer servers or telemetry.
+Sign in with GitHub, pick your machine, and watch your coding agents work from your iPhone — review diffs, approve tool calls with Face ID. No VPN, no port forwarding.
 ```
 
 ### Keywords (≤ 100, comma-separated, no spaces)
@@ -72,7 +72,7 @@ agent,coding,tunnel,remote,developer,diff,terminal,MCP,tailscale,ahp,monitor
 
 ### Description (≤ 4000)
 ```text
-Hostline connects your iPhone or iPad directly to coding-agent hosts running the Agent Host Protocol (AHP) — either through Microsoft Dev Tunnels (VS Code Remote Tunnel Access) or straight to an ahpd WebSocket server over your LAN or Tailscale tailnet.
+Your coding agents are running on your machine. Hostline puts them on your iPhone or iPad. Sign in with GitHub and pick your machine — Hostline reaches it through Microsoft Dev Tunnels (VS Code Remote Tunnel Access), with no VPN to set up and no ports to forward. Or connect straight to an ahpd WebSocket server over your LAN or Tailscale tailnet.
 
 No host yet? Tap "Try demo workspace" to explore a sample workspace with live transcripts, diffs and tool approvals — no account or server needed.
 

@@ -54,12 +54,12 @@ $env:AHP_KEY_PASSWORD = "<key-password>"
   `Monitor, review diffs, and steer your coding-agent sessions from your phone.`
 - **Full description (<= 4000 chars):**
   ```text
-  Watch your coding agents work from your phone — and with Hostline Pro, chat with them and approve their tool calls.
+  Your coding agents are running on your machine. Hostline puts them on your phone — watch them work, and with Hostline Pro, chat with them and approve their tool calls.
 
-  Hostline connects your Android phone directly to coding-agent hosts running the Agent Host Protocol (AHP) — either through Microsoft Dev Tunnels (VS Code Remote Tunnel Access) or directly to an ahpd WebSocket server over your LAN or Tailscale tailnet.
+  Getting connected takes a minute: sign in with GitHub and pick your machine. Hostline reaches it through Microsoft Dev Tunnels (VS Code Remote Tunnel Access) — no VPN to set up, no ports to forward, nothing to paste. Prefer to run your own host? Connect straight to an ahpd WebSocket server over your LAN or Tailscale tailnet instead.
 
   FREE TIER (READ-ONLY MONITOR)
-  • Connect to your VS Code Remote Tunnel or direct ahpd host
+  • Sign in with GitHub and connect to your VS Code Remote Tunnel — or connect directly to an ahpd host by address
   • Watch live streaming transcripts, tool calls, reasoning steps, and real-time terminal tails
   • Full-screen Reader View, pinned prompt bar, and per-view word-wrap & table-fit controls
   • Inspect per-chat changesets, file diffs, canvases, annotations, and host terminals
@@ -121,8 +121,10 @@ In **Play Console -> Policy and programs -> App content -> Foreground service pe
 In **Play Console -> Policy and programs -> App content -> Data safety**:
 
 1. **Does your app collect or share any of the required user data types?**
-   - Select **No**.
-   - *Reason:* All authentication tokens (`GitHub` OAuth device token, direct host bearer tokens) and session data remain exclusively on the user's device (encrypted in `AndroidKeyStore`) and are transmitted only directly between the user's device and the user's own configured host endpoints. No data is sent to the developer or any third-party analytics/ad service.
+   - Select **Yes** (amended 2026-11-25; published). Exactly one data type is declared:
+     - **Messages → Other in-app messages** (the cloud AI quick-reply text): collected + shared, purpose **App functionality** only, **optional**, **processed ephemerally = Yes**, **encrypted in transit = Yes**.
+   - Follow-ups: account creation = "My app does not allow users to create an account"; external login = **No** (GitHub sign-in is tunnel auth, not an app account); optional deletion question left blank.
+   - *Reasoning for everything else staying undeclared:* authentication tokens (`GitHub` OAuth device token, direct host bearer tokens) remain exclusively on the user's device (encrypted in `AndroidKeyStore`), and session data is transmitted only between the user's device and the user's own configured host endpoints — never received by the developer. The one exception is the optional cloud AI quick-reply text, which the user sends to the AI provider they configure; that is what the declared data type covers.
 2. **Privacy Policy URL:**
    - Publish [`docs/privacy-policy.md`](privacy-policy.md) to the standalone public [`GreenJeans/ahp-client-legal`](https://github.com/GreenJeans/ahp-client-legal) repo using [`tools/publish-legal-docs.ps1`](../tools/publish-legal-docs.ps1), enable GitHub Pages on `ahp-client-legal`, and paste `https://greenjeans.github.io/ahp-client-legal/privacy-policy` under **Policy and programs -> App content -> Privacy policy**. (The full Privacy Policy and Open-Source Licenses are also built into the app behind the **About** button on the Sign-In and Settings screens.)
 3. **App Access Instructions for Play Reviewers:**
