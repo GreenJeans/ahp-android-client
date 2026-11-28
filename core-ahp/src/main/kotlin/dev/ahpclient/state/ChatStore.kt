@@ -9,6 +9,7 @@ import com.microsoft.agenthostprotocol.generated.ActionEnvelope
 import com.microsoft.agenthostprotocol.generated.ChatState
 import com.microsoft.agenthostprotocol.generated.Snapshot
 import com.microsoft.agenthostprotocol.generated.SnapshotState
+import com.microsoft.agenthostprotocol.generated.StateActionChatConfigChanged
 import com.microsoft.agenthostprotocol.generated.StateActionChatTurnsLoaded
 import com.microsoft.agenthostprotocol.generated.StateActionUnknown
 import kotlinx.coroutines.CancellationException
@@ -298,6 +299,17 @@ class ChatStore internal constructor(
             olderArrived?.complete(Unit)
         }
         (envelope.action as? StateActionUnknown)?.let { noteConfig(it.raw) }
+        if (envelope.action is StateActionChatConfigChanged) noteTypedConfig()
+    }
+
+    /**
+     * A `chat/configChanged` the library now decodes (protocol 1.1.0): the reducer has folded it into the chat's
+     * config, so mirror the readable values into [ownConfig] with the same filtering [noteConfig] applies to raw
+     * ones. Before 1.1.0 the library could not decode this action and [noteConfig] maintained the values instead.
+     */
+    private fun noteTypedConfig() {
+        val values = latest?.config?.values ?: return
+        _ownConfig.value = values.filterKeys { it in ChatConfigKeys.READ }.filterValues { it !is JsonNull }
     }
 
     /** A `chat/configChanged` the library cannot decode: merges (or, with `replace`, swaps) the chat's own values. A null value takes a setting away. */
