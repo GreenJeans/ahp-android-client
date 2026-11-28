@@ -1,5 +1,7 @@
 // Generated from types/*.ts — do not edit
 
+@file:OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+
 package com.microsoft.agenthostprotocol.generated
 
 import kotlin.jvm.JvmInline
@@ -21,6 +23,10 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.contentOrNull
+
+import kotlinx.serialization.KeepGeneratedSerializer
+import kotlinx.serialization.Transient
+import com.microsoft.agenthostprotocol.UnknownMembersSerializer
 
 // ─── Type Aliases ───────────────────────────────────────────────────────────
 
@@ -73,6 +79,31 @@ internal object StringOrMarkdownSerializer : KSerializer<StringOrMarkdown> {
 }
 
 // ─── Enums ──────────────────────────────────────────────────────────────────
+
+/**
+ * How the server resumes sending data on a windowed subscription after
+ * reconnection.
+ *
+ * Stability: 1.0 - Early development.
+ */
+@Serializable
+enum class ChannelRecoveryKind {
+    /**
+     * The server sends a new `channel/snapshot`, and the client replaces its state.
+     */
+    @SerialName("snapshot")
+    SNAPSHOT,
+    /**
+     * The server sends again each action with a `serverSeq` greater than `lastAppliedServerSeq`.
+     */
+    @SerialName("replay")
+    REPLAY,
+    /**
+     * The server sends only data created after reconnection.
+     */
+    @SerialName("live")
+    LIVE
+}
 
 /**
  * Policy configuration state for a model.
@@ -680,8 +711,8 @@ internal object ToolResultContentTypeSerializer : KSerializer<ToolResultContentT
  * ({@link CustomizationType.Plugin | `Plugin`} or
  * {@link CustomizationType.Directory | `Directory`}) or
  * {@link CustomizationType.McpServer | `McpServer`} entries surfaced
- * directly by the host. The remaining types appear only as children of
- * a container.
+ * directly by the host. The remaining types appear as children of a
+ * container; skills may also be served by an MCP server.
  */
 @Serializable(with = CustomizationTypeSerializer::class)
 @JvmInline
@@ -929,6 +960,36 @@ internal object ChangesetStatusSerializer : KSerializer<ChangesetStatus> {
     }
     override fun deserialize(decoder: Decoder): ChangesetStatus =
         ChangesetStatus(decoder.decodeString())
+}
+
+/**
+ * Bitset flags describing host-reported activity on a {@link ChangesetFile}.
+ */
+@Serializable(with = ChangesetFileStatusSerializer::class)
+@JvmInline
+value class ChangesetFileStatus(val rawValue: UInt) {
+    operator fun contains(other: ChangesetFileStatus): Boolean =
+        (rawValue and other.rawValue) == other.rawValue
+
+    infix fun or(other: ChangesetFileStatus): ChangesetFileStatus = ChangesetFileStatus(rawValue or other.rawValue)
+    infix fun and(other: ChangesetFileStatus): ChangesetFileStatus = ChangesetFileStatus(rawValue and other.rawValue)
+
+    companion object {
+        /**
+         * The host reports an ongoing edit to this file.
+         */
+        val EDITING: ChangesetFileStatus = ChangesetFileStatus(1u)
+    }
+}
+
+internal object ChangesetFileStatusSerializer : KSerializer<ChangesetFileStatus> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("ChangesetFileStatus", PrimitiveKind.LONG)
+    override fun serialize(encoder: Encoder, value: ChangesetFileStatus) {
+        encoder.encodeLong(value.rawValue.toLong())
+    }
+    override fun deserialize(decoder: Decoder): ChangesetFileStatus =
+        ChangesetFileStatus(decoder.decodeLong().toUInt())
 }
 
 /**
@@ -1199,7 +1260,101 @@ enum class AutomationRunOriginKind {
 
 // ─── State Types ────────────────────────────────────────────────────────────
 
+/**
+ * Present when the host supports `createTcpConnection`.
+ *
+ * A client creates a connection with `createTcpConnection`, then subscribes to
+ * its channel with windowed delivery. A TCP channel's state is an
+ * {@link EmptyState}; its data is sent in `tcp/data` and `tcp/eof`
+ * notifications. TCP connections do not survive the loss of the AHP connection.
+ *
+ * Stability: 1.0 - Early development.
+ */
 @Serializable
+class TcpConnectionsCapability
+
+/**
+ * Limits on data that one peer receives on a windowed subscription.
+ *
+ * All sizes are UTF-16 bytes: two bytes for each UTF-16 code unit of a JSON-RPC
+ * message's complete text, as sent. For a `channel/frame` notification, this
+ * includes its envelope and escape characters. The same size is used for the
+ * window, credit, and `maxFrameBytes`. There is no negotiated limit on the
+ * size of a complete data message. Outstanding data is always less than
+ * `windowBytes + maxFrameBytes`.
+ *
+ * Stability: 1.0 - Early development.
+ */
+@Serializable
+data class ChannelReceiveLimits(
+    /**
+     * The target amount of outstanding data. This is a soft target.
+     * The sender MUST NOT send a data message or frame while outstanding data
+     * is equal to or greater than this value. The last message or frame sent
+     * before the window is full can go past it, so a message that fits within
+     * `maxFrameBytes` can be sent whole even when it is larger than the
+     * remaining credit.
+     */
+    val windowBytes: Long,
+    /**
+     * The largest JSON-RPC message that the sender can send for a data message.
+     * This is a hard limit, and MUST be at least 1024. For a `channel/frame`
+     * notification, it includes the envelope and escape characters. A larger data
+     * message MUST be split into smaller messages or sent in frames.
+     */
+    val maxFrameBytes: Long
+)
+
+/**
+ * The limits that the server accepted for a windowed subscription.
+ *
+ * The client ID and channel URI identify the subscription. All counters start at
+ * zero when the subscription starts.
+ *
+ * Stability: 1.0 - Early development.
+ */
+@Serializable
+data class ChannelFlowControl(
+    /**
+     * Limits for data that the server sends to the client.
+     */
+    val clientReceive: ChannelReceiveLimits,
+    /**
+     * Limits for data that the client sends to the server.
+     */
+    val hostReceive: ChannelReceiveLimits
+)
+
+/**
+ * A windowed subscription that the server kept after reconnection.
+ *
+ * The subscription's counters start at zero on the new connection. If a
+ * channel that the client requested is not in the result, the subscription was
+ * not kept. The client discards the old subscription and, for a byte stream,
+ * closes the stream.
+ *
+ * Stability: 1.0 - Early development.
+ */
+@Serializable
+data class ResumedChannelSubscription(
+    /**
+     * The URI of the windowed subscription.
+     */
+    val channel: String,
+    /**
+     * The limits that the server accepted for the new connection, as in a
+     * `subscribe` result. The server MAY lower the limits that the client offered
+     * in its request, and MUST NOT raise them.
+     */
+    val flowControl: ChannelFlowControl,
+    /**
+     * How the server resumes sending data.
+     */
+    val recovery: ChannelRecoveryKind
+)
+
+@KeepGeneratedSerializer
+@Serializable(with = IconSerializer::class)
 data class Icon(
     /**
      * A standard URI pointing to an icon resource. May be an HTTP/HTTPS URL or a
@@ -1231,10 +1386,19 @@ data class Icon(
      *
      * If not provided, the client should assume the icon can be used with any theme.
      */
-    val theme: String? = null
+    val theme: String? = null,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
 )
 
-@Serializable
+internal object IconSerializer : UnknownMembersSerializer<Icon>(
+    Icon.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
+)
+
+@KeepGeneratedSerializer
+@Serializable(with = ProtectedResourceMetadataSerializer::class)
 data class ProtectedResourceMetadata(
     /**
      * REQUIRED. The protected resource's resource identifier, a URL using the
@@ -1297,7 +1461,15 @@ data class ProtectedResourceMetadata(
      *
      * Clients SHOULD treat an absent field the same as `true`.
      */
-    val required: Boolean? = null
+    val required: Boolean? = null,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
+)
+
+internal object ProtectedResourceMetadataSerializer : UnknownMembersSerializer<ProtectedResourceMetadata>(
+    ProtectedResourceMetadata.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
 )
 
 @Serializable
@@ -1479,7 +1651,7 @@ data class SessionModelInfo(
      */
     val id: String,
     /**
-     * Provider this model belongs to
+     * Agent provider that owns this model. Matches {@link AgentInfo.provider}.
      */
     val provider: String,
     /**
@@ -1519,10 +1691,21 @@ data class SessionModelInfo(
      * For example, a `pricing` key may carry model pricing metadata.
      */
     @SerialName("_meta")
-    val meta: Map<String, JsonElement>? = null
+    val meta: Map<String, JsonElement>? = null,
+    /**
+     * Vendor of this model as the provider reports it, for example `Anthropic`
+     * or `Azure OpenAI`. This is sometimes the company that serves the model
+     * rather than the one that built it. Not the same as {@link provider},
+     * which names the agent provider that owns this model. Absent when the
+     * provider does not report a vendor. Providers MAY send any value; clients
+     * SHOULD fall back to a generic presentation for values they do not
+     * recognize.
+     */
+    val vendor: String? = null
 )
 
-@Serializable
+@KeepGeneratedSerializer
+@Serializable(with = ModelSelectionSerializer::class)
 data class ModelSelection(
     /**
      * Model identifier
@@ -1533,15 +1716,32 @@ data class ModelSelection(
      * pickers produce strings, but some (e.g. a numeric context-size picker)
      * produce numbers or booleans, which are carried through as-is.
      */
-    val config: Map<String, JsonElement>? = null
+    val config: Map<String, JsonElement>? = null,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
 )
 
-@Serializable
+internal object ModelSelectionSerializer : UnknownMembersSerializer<ModelSelection>(
+    ModelSelection.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
+)
+
+@KeepGeneratedSerializer
+@Serializable(with = AgentSelectionSerializer::class)
 data class AgentSelection(
     /**
      * Stable agent URI (matches an {@link AgentCustomization.uri}).
      */
-    val uri: String
+    val uri: String,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
+)
+
+internal object AgentSelectionSerializer : UnknownMembersSerializer<AgentSelection>(
+    AgentSelection.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
 )
 
 @Serializable
@@ -1627,7 +1827,11 @@ data class PendingMessage(
      */
     val id: String,
     /**
-     * The message that will start the next turn
+     * Delivery kind, defaults to {@link PendingMessageKind.Queued}.
+     */
+    val kind: PendingMessageKind? = null,
+    /**
+     * The queued or steering message
      */
     val message: Message
 )
@@ -1682,6 +1886,17 @@ data class ChatState(
      */
     val interactivity: ChatInteractivity? = null,
     /**
+     * Agent provider ID backing this chat. Absent means the session's
+     * {@link SessionMetadata.provider | agent provider}; hosts set it when it
+     * differs. The chat's agent provider never changes, but `provider` is
+     * reported relative to its session, so `chat/moved` may set or clear it.
+     * `session/chatUpdated` does not carry it. Forks and side chats use the
+     * source chat's agent provider.
+     *
+     * Stability: 1.0 - Early development.
+     */
+    val provider: String? = null,
+    /**
      * The subset of the session's
      * {@link SessionState.workingDirectories | `workingDirectories`} that this
      * chat's agent has tool access to. Every entry MUST be present in the owning
@@ -1726,6 +1941,10 @@ data class ChatState(
      */
     val canvases: List<CanvasReference>? = null,
     /**
+     * This chat's configuration. See {@link ChatConfigState}.
+     */
+    val config: ChatConfigState? = null,
+    /**
      * Completed turns
      */
     val turns: List<Turn>,
@@ -1743,11 +1962,16 @@ data class ChatState(
      */
     val activeTurn: ActiveTurn? = null,
     /**
-     * Message to inject into the current turn at a convenient point
+     * Legacy steering input retained only when reading old snapshots.
      */
     val steeringMessage: PendingMessage? = null,
     /**
-     * Messages to send automatically as new turns after the current turn finishes
+     * Pending messages of both kinds, in host acceptance order unless explicitly
+     * reordered.
+     *
+     * This raw order is not consumption priority. UIs SHOULD group steering
+     * messages before queued messages, preserving relative order within each
+     * group without changing the underlying array.
      */
     val queuedMessages: List<PendingMessage>? = null,
     /**
@@ -1819,6 +2043,12 @@ data class ChatSummary(
      */
     val interactivity: ChatInteractivity? = null,
     /**
+     * Agent provider ID backing this chat. See {@link ChatState.provider}.
+     *
+     * Stability: 1.0 - Early development.
+     */
+    val provider: String? = null,
+    /**
      * The subset of the session's working directories this chat uses.
      * See {@link ChatState.workingDirectories} for the full semantics.
      */
@@ -1884,7 +2114,7 @@ data class SessionState(
     val workingDirectories: List<String>? = null,
     /**
      * Lightweight summary of this session's inline annotations channel
-     * (`ahp-session:/<uuid>/annotations`). Surfaced so badge UI can render
+     * (`ahp-annotations:/<uuid>`). Surfaced so badge UI can render
      * annotation / entry counts without subscribing. Absent when the session
      * does not expose an annotations channel.
      */
@@ -1942,7 +2172,8 @@ data class SessionState(
      * - Top-level {@link McpServerCustomization} entries the host
      * surfaces directly (for example a globally-configured MCP server
      * that isn't bundled in a plugin or directory). MCP servers may
-     * also appear as children of a container.
+     * also appear as children of a container, and may serve skills in
+     * their own {@link McpServerCustomization.children | `children`} array.
      *
      * Client-published plugins arrive via
      * {@link SessionActiveClient.customizations | `activeClients[].customizations`}
@@ -2119,13 +2350,22 @@ data class CanvasState(
      */
     val status: String? = null,
     /**
-     * Current absolute HTTP(S) source URL; absent when the live source is unavailable.
-     * Hosts MUST clear this field when the provider becomes unavailable.
+     * Absolute URI of the canvas's live content, typically an HTTP(S) URL;
+     * absent when the live source is unavailable. Hosts MUST clear this field
+     * when the provider becomes unavailable.
      *
-     * Source URLs MUST be redacted from diagnostic logs and MUST NOT be reused
+     * A client that can't load this URI directly, for example because it is a
+     * loopback address in the host's environment or uses a scheme that the
+     * client doesn't load, reads it with `resourceRead`. The client resolves the
+     * relative references in its content and reads them the same way. Hosts
+     * SHOULD serve reads of this URI, and of other URLs on its origin when it is
+     * an HTTP(S) URL, to clients that can subscribe to the canvas. The provider
+     * chooses the URI, so the host decides which sources it is willing to read.
+     *
+     * Source URIs MUST be redacted from diagnostic logs and MUST NOT be reused
      * from persisted state after a provider or host restart.
      */
-    val url: String? = null
+    val uri: String? = null
 )
 
 @Serializable
@@ -2279,7 +2519,7 @@ data class SessionSummary(
     val workingDirectories: List<String>? = null,
     /**
      * Lightweight summary of this session's inline annotations channel
-     * (`ahp-session:/<uuid>/annotations`). Surfaced so badge UI can render
+     * (`ahp-annotations:/<uuid>`). Surfaced so badge UI can render
      * annotation / entry counts without subscribing. Absent when the session
      * does not expose an annotations channel.
      */
@@ -2344,6 +2584,12 @@ data class SessionChatSummary(
      */
     val interactivity: ChatInteractivity? = null,
     /**
+     * Agent provider ID backing this chat. See {@link ChatState.provider}.
+     *
+     * Stability: 1.0 - Early development.
+     */
+    val provider: String? = null,
+    /**
      * Current chat status, matching {@link ChatSummary.status}.
      *
      * Includes the activity bits and the orthogonal {@link SessionStatus.IsRead}
@@ -2400,6 +2646,25 @@ data class SessionConfigState(
     val schema: SessionConfigSchema,
     /**
      * Current configuration values
+     */
+    val values: Map<String, JsonElement>
+)
+
+@Serializable
+data class ChatConfigState(
+    /**
+     * Config schema for this chat's `chatMutable` properties. Absent means the
+     * session's schema. Hosts set it, as the chat's own schema, when the chat's
+     * {@link ChatState.provider | agent provider} differs from the session's; when
+     * present, clients use it instead of the session's schema.
+     *
+     * Stability: 1.0 - Early development.
+     */
+    val schema: SessionConfigSchema? = null,
+    /**
+     * The chat's values for the `chatMutable` properties of the effective
+     * schema, keyed by property id. A missing key takes that property's
+     * `default`.
      */
     val values: Map<String, JsonElement>
 )
@@ -2465,7 +2730,8 @@ data class ActiveTurn(
     val usage: UsageInfo? = null
 )
 
-@Serializable
+@KeepGeneratedSerializer
+@Serializable(with = MessageSerializer::class)
 data class Message(
     /**
      * Message text
@@ -2505,15 +2771,32 @@ data class Message(
      * field. Mirrors the MCP `_meta` convention.
      */
     @SerialName("_meta")
-    val meta: Map<String, JsonElement>? = null
+    val meta: Map<String, JsonElement>? = null,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
 )
 
-@Serializable
+internal object MessageSerializer : UnknownMembersSerializer<Message>(
+    Message.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
+)
+
+@KeepGeneratedSerializer
+@Serializable(with = MessageOriginSerializer::class)
 data class MessageOrigin(
     /**
      * The kind of actor that produced the message.
      */
-    val kind: MessageKind
+    val kind: MessageKind,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
+)
+
+internal object MessageOriginSerializer : UnknownMembersSerializer<MessageOrigin>(
+    MessageOrigin.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
 )
 
 @Serializable
@@ -2783,7 +3066,8 @@ data class ChatInputRequest(
     val answers: Map<String, ChatInputAnswer>? = null
 )
 
-@Serializable
+@KeepGeneratedSerializer
+@Serializable(with = TextPositionSerializer::class)
 data class TextPosition(
     /**
      * Zero-based line number.
@@ -2792,10 +3076,19 @@ data class TextPosition(
     /**
      * Zero-based character offset within the line.
      */
-    val character: Long
+    val character: Long,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
 )
 
-@Serializable
+internal object TextPositionSerializer : UnknownMembersSerializer<TextPosition>(
+    TextPosition.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
+)
+
+@KeepGeneratedSerializer
+@Serializable(with = TextRangeSerializer::class)
 data class TextRange(
     /**
      * Start position of the range.
@@ -2804,18 +3097,36 @@ data class TextRange(
     /**
      * End position of the range.
      */
-    val end: TextPosition
+    val end: TextPosition,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
 )
 
-@Serializable
+internal object TextRangeSerializer : UnknownMembersSerializer<TextRange>(
+    TextRange.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
+)
+
+@KeepGeneratedSerializer
+@Serializable(with = TextSelectionSerializer::class)
 data class TextSelection(
     /**
      * The range covered by the selection.
      */
-    val range: TextRange
+    val range: TextRange,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
 )
 
-@Serializable
+internal object TextSelectionSerializer : UnknownMembersSerializer<TextSelection>(
+    TextSelection.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
+)
+
+@KeepGeneratedSerializer
+@Serializable(with = SimpleMessageAttachmentSerializer::class)
 data class SimpleMessageAttachment(
     /**
      * A human-readable label for the attachment (e.g. the filename of a file
@@ -2862,10 +3173,19 @@ data class SimpleMessageAttachment(
      * property MAY be omitted when the attachment originated from a
      * `completions` response.
      */
-    val modelRepresentation: String? = null
+    val modelRepresentation: String? = null,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
 )
 
-@Serializable
+internal object SimpleMessageAttachmentSerializer : UnknownMembersSerializer<SimpleMessageAttachment>(
+    SimpleMessageAttachment.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
+)
+
+@KeepGeneratedSerializer
+@Serializable(with = MessageEmbeddedResourceAttachmentSerializer::class)
 data class MessageEmbeddedResourceAttachment(
     /**
      * A human-readable label for the attachment (e.g. the filename of a file
@@ -2917,10 +3237,19 @@ data class MessageEmbeddedResourceAttachment(
      *
      * Only meaningful for textual resources.
      */
-    val selection: TextSelection? = null
+    val selection: TextSelection? = null,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
 )
 
-@Serializable
+internal object MessageEmbeddedResourceAttachmentSerializer : UnknownMembersSerializer<MessageEmbeddedResourceAttachment>(
+    MessageEmbeddedResourceAttachment.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
+)
+
+@KeepGeneratedSerializer
+@Serializable(with = MessageResourceAttachmentSerializer::class)
 data class MessageResourceAttachment(
     /**
      * A human-readable label for the attachment (e.g. the filename of a file
@@ -2980,10 +3309,19 @@ data class MessageResourceAttachment(
      *
      * Only meaningful for textual resources.
      */
-    val selection: TextSelection? = null
+    val selection: TextSelection? = null,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
 )
 
-@Serializable
+internal object MessageResourceAttachmentSerializer : UnknownMembersSerializer<MessageResourceAttachment>(
+    MessageResourceAttachment.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
+)
+
+@KeepGeneratedSerializer
+@Serializable(with = MessageAnnotationsAttachmentSerializer::class)
 data class MessageAnnotationsAttachment(
     /**
      * A human-readable label for the attachment (e.g. the filename of a file
@@ -3023,7 +3361,7 @@ data class MessageAnnotationsAttachment(
      */
     val type: MessageAttachmentKind,
     /**
-     * The annotations channel URI (typically `ahp-session:/<uuid>/annotations`).
+     * The annotations channel URI (`ahp-annotations:/<uuid>`).
      * Matches {@link AnnotationsSummary.resource}.
      */
     val resource: String,
@@ -3031,10 +3369,19 @@ data class MessageAnnotationsAttachment(
      * Specific {@link Annotation.id | annotation ids} to reference. When
      * omitted, the attachment references all annotations on the channel.
      */
-    val annotationIds: List<String>? = null
+    val annotationIds: List<String>? = null,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
 )
 
-@Serializable
+internal object MessageAnnotationsAttachmentSerializer : UnknownMembersSerializer<MessageAnnotationsAttachment>(
+    MessageAnnotationsAttachment.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
+)
+
+@KeepGeneratedSerializer
+@Serializable(with = MessageChatAttachmentSerializer::class)
 data class MessageChatAttachment(
     /**
      * A human-readable label for the attachment (e.g. the filename of a file
@@ -3081,7 +3428,15 @@ data class MessageChatAttachment(
      * Last completed turn included in the referenced transcript. When omitted,
      * the host pins the latest completed turn when accepting the message.
      */
-    val endTurn: String? = null
+    val endTurn: String? = null,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
+)
+
+internal object MessageChatAttachmentSerializer : UnknownMembersSerializer<MessageChatAttachment>(
+    MessageChatAttachment.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
 )
 
 @Serializable
@@ -3100,7 +3455,8 @@ data class MarkdownResponsePart(
     val content: String
 )
 
-@Serializable
+@KeepGeneratedSerializer
+@Serializable(with = ContentRefSerializer::class)
 data class ContentRef(
     /**
      * Content URI
@@ -3117,7 +3473,15 @@ data class ContentRef(
     /**
      * Content nonce
      */
-    val nonce: String? = null
+    val nonce: String? = null,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
+)
+
+internal object ContentRefSerializer : UnknownMembersSerializer<ContentRef>(
+    ContentRef.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
 )
 
 @Serializable
@@ -3169,7 +3533,15 @@ data class ReasoningResponsePart(
     /**
      * Accumulated reasoning text
      */
-    val content: String
+    val content: String,
+    /**
+     * Producer-recorded ISO 8601 start of this reasoning interval; absent when unknown.
+     */
+    val startedAt: String? = null,
+    /**
+     * Final elapsed reasoning time in non-negative integer milliseconds, measured by the producer's clock; absent while unfinished or unknown. Clients MUST NOT derive it from their own clock.
+     */
+    val duration: Long? = null
 )
 
 @Serializable
@@ -3251,6 +3623,12 @@ data class ToolCallResult(
      * This mirrors the `structuredContent` field of MCP `CallToolResult`.
      */
     val structuredContent: Map<String, JsonElement>? = null,
+    /**
+     * Optional result metadata.
+     *
+     * This mirrors the `_meta` field of MCP `CallToolResult`.
+     */
+    val resultMetadata: Map<String, JsonElement>? = null,
     /**
      * Error details if the tool failed
      */
@@ -3559,6 +3937,12 @@ data class ToolCallPendingResultConfirmationState(
      */
     val structuredContent: Map<String, JsonElement>? = null,
     /**
+     * Optional result metadata.
+     *
+     * This mirrors the `_meta` field of MCP `CallToolResult`.
+     */
+    val resultMetadata: Map<String, JsonElement>? = null,
+    /**
      * Error details if the tool failed
      */
     val error: JsonElement? = null,
@@ -3637,6 +4021,12 @@ data class ToolCallCompletedState(
      * This mirrors the `structuredContent` field of MCP `CallToolResult`.
      */
     val structuredContent: Map<String, JsonElement>? = null,
+    /**
+     * Optional result metadata.
+     *
+     * This mirrors the `_meta` field of MCP `CallToolResult`.
+     */
+    val resultMetadata: Map<String, JsonElement>? = null,
     /**
      * Error details if the tool failed
      */
@@ -3924,35 +4314,72 @@ data class ToolResultSubagentContent(
     val description: String? = null
 )
 
-@Serializable
+@KeepGeneratedSerializer
+@Serializable(with = CustomizationLoadingStateSerializer::class)
 data class CustomizationLoadingState(
-    val kind: CustomizationLoadStatus
+    val kind: CustomizationLoadStatus,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
 )
 
-@Serializable
+internal object CustomizationLoadingStateSerializer : UnknownMembersSerializer<CustomizationLoadingState>(
+    CustomizationLoadingState.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
+)
+
+@KeepGeneratedSerializer
+@Serializable(with = CustomizationLoadedStateSerializer::class)
 data class CustomizationLoadedState(
-    val kind: CustomizationLoadStatus
+    val kind: CustomizationLoadStatus,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
 )
 
-@Serializable
+internal object CustomizationLoadedStateSerializer : UnknownMembersSerializer<CustomizationLoadedState>(
+    CustomizationLoadedState.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
+)
+
+@KeepGeneratedSerializer
+@Serializable(with = CustomizationDegradedStateSerializer::class)
 data class CustomizationDegradedState(
     val kind: CustomizationLoadStatus,
     /**
      * Human-readable description of the warning.
      */
-    val message: String
+    val message: String,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
 )
 
-@Serializable
+internal object CustomizationDegradedStateSerializer : UnknownMembersSerializer<CustomizationDegradedState>(
+    CustomizationDegradedState.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
+)
+
+@KeepGeneratedSerializer
+@Serializable(with = CustomizationErrorStateSerializer::class)
 data class CustomizationErrorState(
     val kind: CustomizationLoadStatus,
     /**
      * Human-readable error message.
      */
-    val message: String
+    val message: String,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
 )
 
-@Serializable
+internal object CustomizationErrorStateSerializer : UnknownMembersSerializer<CustomizationErrorState>(
+    CustomizationErrorState.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
+)
+
+@KeepGeneratedSerializer
+@Serializable(with = PluginCustomizationSerializer::class)
 data class PluginCustomization(
     /**
      * Session-unique opaque identifier. Used by every action that targets a
@@ -4025,10 +4452,19 @@ data class PluginCustomization(
      * has no version concept. Provenance / display only: the host neither
      * parses nor enforces it.
      */
-    val version: String? = null
+    val version: String? = null,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
 )
 
-@Serializable
+internal object PluginCustomizationSerializer : UnknownMembersSerializer<PluginCustomization>(
+    PluginCustomization.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
+)
+
+@KeepGeneratedSerializer
+@Serializable(with = ClientPluginCustomizationSerializer::class)
 data class ClientPluginCustomization(
     /**
      * Session-unique opaque identifier. Used by every action that targets a
@@ -4116,7 +4552,15 @@ data class ClientPluginCustomization(
      * carries the client's global decision for each one; the host applies it
      * under the child's durable key.
      */
-    val childEnablement: Map<String, List<CustomizationEnablement>>? = null
+    val childEnablement: Map<String, List<CustomizationEnablement>>? = null,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
+)
+
+internal object ClientPluginCustomizationSerializer : UnknownMembersSerializer<ClientPluginCustomization>(
+    ClientPluginCustomization.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
 )
 
 @Serializable
@@ -4194,7 +4638,8 @@ data class DirectoryCustomization(
     val writable: Boolean
 )
 
-@Serializable
+@KeepGeneratedSerializer
+@Serializable(with = AgentCustomizationSerializer::class)
 data class AgentCustomization(
     /**
      * Session-unique opaque identifier. Used by every action that targets a
@@ -4245,7 +4690,8 @@ data class AgentCustomization(
      * enabled state of a plugin child is the plugin's derived enabled value and
      * `(child.enabled ?? true)`, so a disabled plugin disables every child
      * regardless of each child's own flag. A directory child instead uses the
-     * directory's `enabled` value and its own flag.
+     * directory's `enabled` value and its own flag. An MCP-served skill uses the
+     * server's effective enabled value and its own flag.
      *
      * A child is turned on or off by id with
      * {@link SessionCustomizationToggledAction | `session/customizationToggled`}.
@@ -4284,10 +4730,19 @@ data class AgentCustomization(
      * in a picker); it remains available for the agent to auto-delegate
      * to. Absent or `false` means the user may select it.
      */
-    val disableUserInvocation: Boolean? = null
+    val disableUserInvocation: Boolean? = null,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
 )
 
-@Serializable
+internal object AgentCustomizationSerializer : UnknownMembersSerializer<AgentCustomization>(
+    AgentCustomization.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
+)
+
+@KeepGeneratedSerializer
+@Serializable(with = SkillCustomizationSerializer::class)
 data class SkillCustomization(
     /**
      * Session-unique opaque identifier. Used by every action that targets a
@@ -4338,7 +4793,8 @@ data class SkillCustomization(
      * enabled state of a plugin child is the plugin's derived enabled value and
      * `(child.enabled ?? true)`, so a disabled plugin disables every child
      * regardless of each child's own flag. A directory child instead uses the
-     * directory's `enabled` value and its own flag.
+     * directory's `enabled` value and its own flag. An MCP-served skill uses the
+     * server's effective enabled value and its own flag.
      *
      * A child is turned on or off by id with
      * {@link SessionCustomizationToggledAction | `session/customizationToggled`}.
@@ -4361,10 +4817,19 @@ data class SkillCustomization(
      * as a slash command); it remains available for the agent to
      * auto-invoke. Absent or `false` means the user may invoke it.
      */
-    val disableUserInvocation: Boolean? = null
+    val disableUserInvocation: Boolean? = null,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
 )
 
-@Serializable
+internal object SkillCustomizationSerializer : UnknownMembersSerializer<SkillCustomization>(
+    SkillCustomization.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
+)
+
+@KeepGeneratedSerializer
+@Serializable(with = PromptCustomizationSerializer::class)
 data class PromptCustomization(
     /**
      * Session-unique opaque identifier. Used by every action that targets a
@@ -4415,7 +4880,8 @@ data class PromptCustomization(
      * enabled state of a plugin child is the plugin's derived enabled value and
      * `(child.enabled ?? true)`, so a disabled plugin disables every child
      * regardless of each child's own flag. A directory child instead uses the
-     * directory's `enabled` value and its own flag.
+     * directory's `enabled` value and its own flag. An MCP-served skill uses the
+     * server's effective enabled value and its own flag.
      *
      * A child is turned on or off by id with
      * {@link SessionCustomizationToggledAction | `session/customizationToggled`}.
@@ -4425,10 +4891,19 @@ data class PromptCustomization(
     /**
      * Short description of what the prompt does.
      */
-    val description: String? = null
+    val description: String? = null,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
 )
 
-@Serializable
+internal object PromptCustomizationSerializer : UnknownMembersSerializer<PromptCustomization>(
+    PromptCustomization.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
+)
+
+@KeepGeneratedSerializer
+@Serializable(with = RuleCustomizationSerializer::class)
 data class RuleCustomization(
     /**
      * Session-unique opaque identifier. Used by every action that targets a
@@ -4479,7 +4954,8 @@ data class RuleCustomization(
      * enabled state of a plugin child is the plugin's derived enabled value and
      * `(child.enabled ?? true)`, so a disabled plugin disables every child
      * regardless of each child's own flag. A directory child instead uses the
-     * directory's `enabled` value and its own flag.
+     * directory's `enabled` value and its own flag. An MCP-served skill uses the
+     * server's effective enabled value and its own flag.
      *
      * A child is turned on or off by id with
      * {@link SessionCustomizationToggledAction | `session/customizationToggled`}.
@@ -4500,10 +4976,19 @@ data class RuleCustomization(
      * Glob patterns the rule applies to. When present, the rule is only
      * active for matching files.
      */
-    val globs: List<String>? = null
+    val globs: List<String>? = null,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
 )
 
-@Serializable
+internal object RuleCustomizationSerializer : UnknownMembersSerializer<RuleCustomization>(
+    RuleCustomization.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
+)
+
+@KeepGeneratedSerializer
+@Serializable(with = HookCustomizationSerializer::class)
 data class HookCustomization(
     /**
      * Session-unique opaque identifier. Used by every action that targets a
@@ -4554,16 +5039,26 @@ data class HookCustomization(
      * enabled state of a plugin child is the plugin's derived enabled value and
      * `(child.enabled ?? true)`, so a disabled plugin disables every child
      * regardless of each child's own flag. A directory child instead uses the
-     * directory's `enabled` value and its own flag.
+     * directory's `enabled` value and its own flag. An MCP-served skill uses the
+     * server's effective enabled value and its own flag.
      *
      * A child is turned on or off by id with
      * {@link SessionCustomizationToggledAction | `session/customizationToggled`}.
      */
     val enabled: Boolean? = null,
-    val type: CustomizationType
+    val type: CustomizationType,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
 )
 
-@Serializable
+internal object HookCustomizationSerializer : UnknownMembersSerializer<HookCustomization>(
+    HookCustomization.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
+)
+
+@KeepGeneratedSerializer
+@Serializable(with = McpServerCustomizationSerializer::class)
 data class McpServerCustomization(
     /**
      * Session-unique opaque identifier. Used by every action that targets a
@@ -4650,10 +5145,32 @@ data class McpServerCustomization(
      * MCP App support. This property SHOULD be advertised for MCP servers
      * which support apps.
      */
-    val mcpApp: McpServerCustomizationApps? = null
+    val mcpApp: McpServerCustomizationApps? = null,
+    /**
+     * Skills served by this MCP server, for example through the MCP skills
+     * extension (SEP-2640).
+     *
+     * Absent means the host has not discovered skills for this server, or
+     * does not support MCP-served skills. An empty array means the server
+     * was queried and serves none.
+     *
+     * A skill's effective enabled state is the server's effective enabled
+     * value and `(skill.enabled ?? true)`. A skill is turned on or off by id
+     * with [`session/customizationToggled`](/reference/session#sessioncustomizationtoggledaction).
+     */
+    val children: List<SkillCustomization>? = null,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
 )
 
-@Serializable
+internal object McpServerCustomizationSerializer : UnknownMembersSerializer<McpServerCustomization>(
+    McpServerCustomization.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
+)
+
+@KeepGeneratedSerializer
+@Serializable(with = McpServerCustomizationAppsSerializer::class)
 data class McpServerCustomizationApps(
     /**
      * The subset of MCP App
@@ -4662,10 +5179,19 @@ data class McpServerCustomizationApps(
      * client feeds these straight through into the `hostCapabilities` of
      * the `ui/initialize` response delivered to the View.
      */
-    val capabilities: AhpMcpUiHostCapabilities
+    val capabilities: AhpMcpUiHostCapabilities,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
 )
 
-@Serializable
+internal object McpServerCustomizationAppsSerializer : UnknownMembersSerializer<McpServerCustomizationApps>(
+    McpServerCustomizationApps.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
+)
+
+@KeepGeneratedSerializer
+@Serializable(with = AhpMcpUiHostCapabilitiesSerializer::class)
 data class AhpMcpUiHostCapabilities(
     /**
      * Producer proxies the MCP `tools/​*` methods to the upstream server.
@@ -4682,10 +5208,19 @@ data class AhpMcpUiHostCapabilities(
     /**
      * Producer serves `sampling/createMessage` via `mcpMethodCall`.
      */
-    val sampling: JsonElement? = null
+    val sampling: JsonElement? = null,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
 )
 
-@Serializable
+internal object AhpMcpUiHostCapabilitiesSerializer : UnknownMembersSerializer<AhpMcpUiHostCapabilities>(
+    AhpMcpUiHostCapabilities.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
+)
+
+@KeepGeneratedSerializer
+@Serializable(with = McpServerStartingStateSerializer::class)
 data class McpServerStartingState(
     val kind: McpServerStatus,
     /**
@@ -4698,15 +5233,33 @@ data class McpServerStartingState(
      * through an appropriate affordance to ask the host to background the
      * startup.
      */
-    val blocking: Boolean? = null
+    val blocking: Boolean? = null,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
 )
 
-@Serializable
+internal object McpServerStartingStateSerializer : UnknownMembersSerializer<McpServerStartingState>(
+    McpServerStartingState.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
+)
+
+@KeepGeneratedSerializer
+@Serializable(with = McpServerReadyStateSerializer::class)
 data class McpServerReadyState(
-    val kind: McpServerStatus
+    val kind: McpServerStatus,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
 )
 
-@Serializable
+internal object McpServerReadyStateSerializer : UnknownMembersSerializer<McpServerReadyState>(
+    McpServerReadyState.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
+)
+
+@KeepGeneratedSerializer
+@Serializable(with = McpServerAuthRequiredStateSerializer::class)
 data class McpServerAuthRequiredState(
     /**
      * Why authentication is required.
@@ -4736,24 +5289,51 @@ data class McpServerAuthRequiredState(
      * Human-readable hint, typically from the OAuth `error_description`.
      */
     val description: String? = null,
-    val kind: McpServerStatus
+    val kind: McpServerStatus,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
 )
 
-@Serializable
+internal object McpServerAuthRequiredStateSerializer : UnknownMembersSerializer<McpServerAuthRequiredState>(
+    McpServerAuthRequiredState.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
+)
+
+@KeepGeneratedSerializer
+@Serializable(with = McpServerErrorStateSerializer::class)
 data class McpServerErrorState(
     val kind: McpServerStatus,
     /**
      * Error details.
      */
-    val error: ErrorInfo
+    val error: ErrorInfo,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
 )
 
-@Serializable
+internal object McpServerErrorStateSerializer : UnknownMembersSerializer<McpServerErrorState>(
+    McpServerErrorState.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
+)
+
+@KeepGeneratedSerializer
+@Serializable(with = McpServerStoppedStateSerializer::class)
 data class McpServerStoppedState(
-    val kind: McpServerStatus
+    val kind: McpServerStatus,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
 )
 
-@Serializable
+internal object McpServerStoppedStateSerializer : UnknownMembersSerializer<McpServerStoppedState>(
+    McpServerStoppedState.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
+)
+
+@KeepGeneratedSerializer
+@Serializable(with = McpOAuthClientSerializer::class)
 data class McpOAuthClient(
     /**
      * OAuth client identifier registered with the authorization server.
@@ -4763,10 +5343,19 @@ data class McpOAuthClient(
      * OAuth client secret for a confidential client. Absence means the client is
      * public and uses a secretless flow such as authorization code with PKCE.
      */
-    val clientSecret: String? = null
+    val clientSecret: String? = null,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
 )
 
-@Serializable
+internal object McpOAuthClientSerializer : UnknownMembersSerializer<McpOAuthClient>(
+    McpOAuthClient.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
+)
+
+@KeepGeneratedSerializer
+@Serializable(with = McpAuthRequirementSerializer::class)
 data class McpAuthRequirement(
     /**
      * Why authentication is required.
@@ -4795,7 +5384,15 @@ data class McpAuthRequirement(
     /**
      * Human-readable hint, typically from the OAuth `error_description`.
      */
-    val description: String? = null
+    val description: String? = null,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
+)
+
+internal object McpAuthRequirementSerializer : UnknownMembersSerializer<McpAuthRequirement>(
+    McpAuthRequirement.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
 )
 
 @Serializable
@@ -5076,7 +5673,8 @@ data class UsageInfo(
     val meta: Map<String, JsonElement>? = null
 )
 
-@Serializable
+@KeepGeneratedSerializer
+@Serializable(with = ErrorInfoSerializer::class)
 data class ErrorInfo(
     /**
      * Error type identifier
@@ -5096,7 +5694,15 @@ data class ErrorInfo(
      * (e.g. a structured chat fetch error for richer, localized messaging).
      */
     @SerialName("_meta")
-    val meta: Map<String, JsonElement>? = null
+    val meta: Map<String, JsonElement>? = null,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
+)
+
+internal object ErrorInfoSerializer : UnknownMembersSerializer<ErrorInfo>(
+    ErrorInfo.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
 )
 
 @Serializable
@@ -5106,7 +5712,10 @@ data class Snapshot(
      */
     val resource: String,
     /**
-     * The current state of the resource
+     * The current state of the resource. A channel with no state fields, such as a
+     * telemetry channel, has an {@link EmptyState}. Later protocol versions can add
+     * new kinds of state; a client MUST NOT fail on a state that it does not
+     * recognize, and ignores that snapshot.
      */
     val state: SnapshotState,
     /**
@@ -5114,6 +5723,20 @@ data class Snapshot(
      */
     val fromSeq: Long
 )
+
+/**
+ * The state of a channel that has no state fields, such as a telemetry
+ * channel. It is always the empty object `{}`.
+ *
+ * Every windowed subscription starts with a snapshot, including subscriptions
+ * to these channels, so a channel can gain state fields in a later revision
+ * without changing how windowed subscriptions start. With ordinary delivery,
+ * the server MAY omit a snapshot whose state is an `EmptyState`.
+ *
+ * Stability: 1.0 - Early development.
+ */
+@Serializable
+class EmptyState
 
 @Serializable
 data class Changeset(
@@ -5232,8 +5855,8 @@ data class ChangesetFile(
      * the server MAY also originate it (e.g. an agent self-reviewing its own
      * output).
      *
-     * There is no content version in the protocol, so review is **not** reset
-     * automatically when a file's contents change under a stable id. The server,
+     * Review is **not** reset automatically when a file's contents or nonce
+     * change under a stable id. The server,
      * which is the authority on what changed, resets review explicitly — either
      * by re-emitting the file (via {@link ChangesetFileSetAction} or
      * {@link ChangesetContentChangedAction}) without `reviewed: true`, or by
@@ -5245,7 +5868,21 @@ data class ChangesetFile(
      * but not interpreted by the protocol.
      */
     @SerialName("_meta")
-    val meta: Map<String, JsonElement>? = null
+    val meta: Map<String, JsonElement>? = null,
+    /**
+     * Optional host-issued token for this reviewable change, which clients MAY
+     * echo in {@link ChangesetOperationTarget.nonce}.
+     * Hosts SHOULD update a published nonce whenever contents of the file change.
+     */
+    val nonce: String? = null,
+    /**
+     * Host-reported activity on this file, as a bitset of
+     * {@link ChangesetFileStatus} flags. Absent or `0` means no activity is
+     * reported. This is advisory; the absence of
+     * {@link ChangesetFileStatus.Editing} does not guarantee that modifying the
+     * file is safe.
+     */
+    val status: ChangesetFileStatus? = null
 )
 
 @Serializable
@@ -5306,9 +5943,8 @@ data class ChangesetOperation(
 data class AnnotationsSummary(
     /**
      * The subscribable annotations channel URI for the owning session
-     * (typically `ahp-session:/<uuid>/annotations`). Surfaced explicitly even
-     * though it is derivable from the session URI so badge UI does not need
-     * to know the derivation rule.
+     * (`ahp-annotations:/<uuid>`, where `<uuid>` is the owning session's id).
+     * Clients should use this value rather than derive it from the session URI.
      */
     val resource: String,
     /**
@@ -5496,7 +6132,8 @@ data class AutomationSessionOrigin(
     val run: String
 )
 
-@Serializable
+@KeepGeneratedSerializer
+@Serializable(with = AutomationScheduleSerializer::class)
 data class AutomationSchedule(
     /**
      * Five-field AHP cron expression described by {@link AutomationSchedule}.
@@ -5506,10 +6143,19 @@ data class AutomationSchedule(
      * IANA Time Zone Database identifier used to interpret the expression, for
      * example `"UTC"` or `"Europe/Berlin"`.
      */
-    val timeZone: String
+    val timeZone: String,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
 )
 
-@Serializable
+internal object AutomationScheduleSerializer : UnknownMembersSerializer<AutomationSchedule>(
+    AutomationSchedule.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
+)
+
+@KeepGeneratedSerializer
+@Serializable(with = AutomationScheduleTriggerSerializer::class)
 data class AutomationScheduleTrigger(
     /**
      * Identifier unique and stable within this automation definition. Recorded in
@@ -5526,10 +6172,19 @@ data class AutomationScheduleTrigger(
      * Policy for missed occurrences. Omission is equivalent to
      * {@link AutomationMisfirePolicy.RunOnce}.
      */
-    val misfirePolicy: AutomationMisfirePolicy? = null
+    val misfirePolicy: AutomationMisfirePolicy? = null,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
 )
 
-@Serializable
+internal object AutomationScheduleTriggerSerializer : UnknownMembersSerializer<AutomationScheduleTrigger>(
+    AutomationScheduleTrigger.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
+)
+
+@KeepGeneratedSerializer
+@Serializable(with = AutomationEventTriggerSerializer::class)
 data class AutomationEventTrigger(
     /**
      * Identifier unique and stable within this automation definition. Recorded in
@@ -5561,10 +6216,19 @@ data class AutomationEventTrigger(
      * Values described by {@link AutomationTriggerDefinition.configSchema}.
      * Clients MUST preserve unknown entries when editing other fields.
      */
-    val config: Map<String, JsonElement>? = null
+    val config: Map<String, JsonElement>? = null,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
 )
 
-@Serializable
+internal object AutomationEventTriggerSerializer : UnknownMembersSerializer<AutomationEventTrigger>(
+    AutomationEventTrigger.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
+)
+
+@KeepGeneratedSerializer
+@Serializable(with = AutomationTriggerEventDefinitionSerializer::class)
 data class AutomationTriggerEventDefinition(
     /**
      * Stable event id.
@@ -5577,7 +6241,15 @@ data class AutomationTriggerEventDefinition(
     /**
      * Optional longer explanation of when this event fires.
      */
-    val description: String? = null
+    val description: String? = null,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
+)
+
+internal object AutomationTriggerEventDefinitionSerializer : UnknownMembersSerializer<AutomationTriggerEventDefinition>(
+    AutomationTriggerEventDefinition.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
 )
 
 @Serializable
@@ -5604,7 +6276,8 @@ data class AutomationTriggerDefinition(
     val configSchema: ConfigSchema? = null
 )
 
-@Serializable
+@KeepGeneratedSerializer
+@Serializable(with = AutomationSessionTemplateSerializer::class)
 data class AutomationSessionTemplate(
     /**
      * Provider id matching {@link AgentInfo.provider}. Omit to use the host's default provider.
@@ -5657,7 +6330,15 @@ data class AutomationSessionTemplate(
      * Clients MUST NOT set this field unless the host advertises
      * {@link AutomationCapabilities.customizations}.
      */
-    val customizations: List<ClientPluginCustomization>? = null
+    val customizations: List<ClientPluginCustomization>? = null,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
+)
+
+internal object AutomationSessionTemplateSerializer : UnknownMembersSerializer<AutomationSessionTemplate>(
+    AutomationSessionTemplate.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
 )
 
 @Serializable
@@ -5748,22 +6429,40 @@ data class AutomationDefinitionPatch(
     val meta: Map<String, JsonElement>? = null
 )
 
-@Serializable
+@KeepGeneratedSerializer
+@Serializable(with = AutomationAfterRunsConditionSerializer::class)
 data class AutomationAfterRunsCondition(
     val kind: AutomationDisableConditionKind,
     /**
      * Positive-integer cap on scheduled runs.
      */
-    val max: Long
+    val max: Long,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
 )
 
-@Serializable
+internal object AutomationAfterRunsConditionSerializer : UnknownMembersSerializer<AutomationAfterRunsCondition>(
+    AutomationAfterRunsCondition.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
+)
+
+@KeepGeneratedSerializer
+@Serializable(with = AutomationAfterDateConditionSerializer::class)
 data class AutomationAfterDateCondition(
     val kind: AutomationDisableConditionKind,
     /**
      * ISO 8601 timestamp after which scheduling stops.
      */
-    val date: String
+    val date: String,
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
+)
+
+internal object AutomationAfterDateConditionSerializer : UnknownMembersSerializer<AutomationAfterDateCondition>(
+    AutomationAfterDateCondition.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
 )
 
 @Serializable
@@ -6043,23 +6742,50 @@ sealed interface CustomizationEnablement {
     @JvmInline value class Session(val value: CustomizationEnablementSession) : CustomizationEnablement
 }
 
-@Serializable
+@KeepGeneratedSerializer
+@Serializable(with = CustomizationEnablementGlobalSerializer::class)
 data class CustomizationEnablementGlobal(
     val enabled: Boolean,
     val kind: String = "global",
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
 )
 
-@Serializable
+internal object CustomizationEnablementGlobalSerializer : UnknownMembersSerializer<CustomizationEnablementGlobal>(
+    CustomizationEnablementGlobal.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
+)
+
+@KeepGeneratedSerializer
+@Serializable(with = CustomizationEnablementWorkspaceSerializer::class)
 data class CustomizationEnablementWorkspace(
     val uri: URI,
     val enabled: Boolean,
     val kind: String = "workspace",
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
 )
 
-@Serializable
+internal object CustomizationEnablementWorkspaceSerializer : UnknownMembersSerializer<CustomizationEnablementWorkspace>(
+    CustomizationEnablementWorkspace.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
+)
+
+@KeepGeneratedSerializer
+@Serializable(with = CustomizationEnablementSessionSerializer::class)
 data class CustomizationEnablementSession(
     val enabled: Boolean,
     val kind: String = "session",
+    @Transient
+    val extra: Map<String, JsonElement> = emptyMap()
+)
+
+internal object CustomizationEnablementSessionSerializer : UnknownMembersSerializer<CustomizationEnablementSession>(
+    CustomizationEnablementSession.generatedSerializer(),
+    { it.extra },
+    { value, extra -> value.copy(extra = extra) },
 )
 
 internal object CustomizationEnablementSerializer : KSerializer<CustomizationEnablement> {
@@ -7476,6 +8202,7 @@ internal object ToolResultContentSerializer : KSerializer<ToolResultContent> {
  */
 @Serializable(with = SnapshotStateSerializer::class)
 sealed interface SnapshotState {
+    @JvmInline value class Empty(val value: EmptyState) : SnapshotState
     @JvmInline value class Root(val value: RootState) : SnapshotState
     @JvmInline value class Session(val value: SessionState) : SnapshotState
     @JvmInline value class Chat(val value: ChatState) : SnapshotState
@@ -7486,6 +8213,8 @@ sealed interface SnapshotState {
     @JvmInline value class Annotations(val value: AnnotationsState) : SnapshotState
     @JvmInline value class Automations(val value: AutomationState) : SnapshotState
     @JvmInline value class AutomationRun(val value: AutomationRunState) : SnapshotState
+    /** A state that this version does not recognize, kept as raw JSON so it re-encodes unchanged. */
+    @JvmInline value class Unknown(val raw: JsonObject) : SnapshotState
 }
 
 internal object SnapshotStateSerializer : KSerializer<SnapshotState> {
@@ -7507,7 +8236,9 @@ internal object SnapshotStateSerializer : KSerializer<SnapshotState> {
         // (checked after session, whose optional annotations summary reuses the
         // key); TerminalState has required `content`; RootState is the
         // catch-all.
+        // An object with no members is an empty state, used by channels whose state has no fields.
         return when {
+            obj.isEmpty() -> SnapshotState.Empty(input.json.decodeFromJsonElement(EmptyState.serializer(), element))
             obj.containsKey("automation") && obj.containsKey("origin") && obj.containsKey("sessions") ->
                 SnapshotState.AutomationRun(input.json.decodeFromJsonElement(AutomationRunState.serializer(), element))
             obj.containsKey("entries") ->
@@ -7524,7 +8255,9 @@ internal object SnapshotStateSerializer : KSerializer<SnapshotState> {
                 SnapshotState.Annotations(input.json.decodeFromJsonElement(AnnotationsState.serializer(), element))
             obj.containsKey("content") ->
                 SnapshotState.Terminal(input.json.decodeFromJsonElement(TerminalState.serializer(), element))
-            else -> SnapshotState.Root(input.json.decodeFromJsonElement(RootState.serializer(), element))
+            obj.containsKey("agents") -> SnapshotState.Root(input.json.decodeFromJsonElement(RootState.serializer(), element))
+            // A state from a later protocol version: keep it rather than fail.
+            else -> SnapshotState.Unknown(obj)
         }
     }
 
@@ -7532,6 +8265,7 @@ internal object SnapshotStateSerializer : KSerializer<SnapshotState> {
         val output = encoder as? JsonEncoder
             ?: error("SnapshotState can only be serialized to JSON")
         val element: JsonElement = when (value) {
+            is SnapshotState.Empty -> output.json.encodeToJsonElement(EmptyState.serializer(), value.value)
             is SnapshotState.Root -> output.json.encodeToJsonElement(RootState.serializer(), value.value)
             is SnapshotState.Session -> output.json.encodeToJsonElement(SessionState.serializer(), value.value)
             is SnapshotState.Chat -> output.json.encodeToJsonElement(ChatState.serializer(), value.value)
@@ -7542,6 +8276,7 @@ internal object SnapshotStateSerializer : KSerializer<SnapshotState> {
             is SnapshotState.Annotations -> output.json.encodeToJsonElement(AnnotationsState.serializer(), value.value)
             is SnapshotState.Automations -> output.json.encodeToJsonElement(AutomationState.serializer(), value.value)
             is SnapshotState.AutomationRun -> output.json.encodeToJsonElement(AutomationRunState.serializer(), value.value)
+            is SnapshotState.Unknown -> value.raw
         }
         output.encodeJsonElement(element)
     }
