@@ -82,6 +82,8 @@ value class ActionType(val rawValue: String) {
         val CHAT_DRAFT_CHANGED: ActionType = ActionType("chat/draftChanged")
         val CHAT_IS_READ_CHANGED: ActionType = ActionType("chat/isReadChanged")
         val CHAT_IS_ARCHIVED_CHANGED: ActionType = ActionType("chat/isArchivedChanged")
+        val CHAT_CONFIG_CHANGED: ActionType = ActionType("chat/configChanged")
+        val CHAT_MOVED: ActionType = ActionType("chat/moved")
         val CHAT_INPUT_REQUESTED: ActionType = ActionType("chat/inputRequested")
         val CHAT_INPUT_ANSWER_CHANGED: ActionType = ActionType("chat/inputAnswerChanged")
         val CHAT_INPUT_COMPLETED: ActionType = ActionType("chat/inputCompleted")
@@ -232,8 +234,11 @@ data class SessionChatUpdatedAction(
     /**
      * Mutable summary fields that changed; omitted fields are unchanged.
      *
-     * Identity fields (`resource`) never change and MUST be omitted by
-     * senders; receivers SHOULD ignore them if present.
+     * `resource` is an identity field and never changes. `provider` is reported
+     * relative to the owning session and changes only when the chat moves to
+     * another session, which republishes the whole summary through
+     * `session/chatAdded`. Senders MUST omit both fields here; receivers SHOULD
+     * ignore them if present.
      */
     val changes: PartialChatSummary
 )
@@ -272,7 +277,8 @@ data class ChatTurnStartedAction(
      */
     val message: Message,
     /**
-     * If this turn was auto-started from a queued message, the ID of that message
+     * If this turn consumes a pending message, its ID. Removes the matching
+     * entry from {@link ChatState.queuedMessages}.
      */
     val queuedMessageId: String? = null,
     /**
@@ -850,6 +856,14 @@ data class ChatReasoningAction(
      */
     val content: String,
     /**
+     * Producer-recorded ISO 8601 start of the reasoning interval; omitted to preserve the existing value.
+     */
+    val startedAt: String? = null,
+    /**
+     * Final elapsed reasoning time in non-negative integer milliseconds, measured by the producer's clock; omitted to preserve the existing value. Zero is a recorded duration, not unknown.
+     */
+    val duration: Long? = null,
+    /**
      * Additional provider-specific metadata for this action.
      *
      * Clients MAY look for well-known keys here to provide enhanced UI, and
@@ -1026,7 +1040,7 @@ data class ChatPendingMessageRemovedAction(
 data class ChatQueuedMessagesReorderedAction(
     val type: ActionType,
     /**
-     * Queued message IDs in the desired order
+     * Pending message IDs in the desired raw order
      */
     val order: List<String>
 )
@@ -1056,6 +1070,60 @@ data class ChatIsArchivedChangedAction(
      * Whether the chat is archived
      */
     val isArchived: Boolean
+)
+
+/**
+ * Config values set on a chat changed.
+ *
+ * Merges `config` into the chat's
+ * {@link ChatConfigState | `ChatState.config`} values, or replaces them when
+ * `replace` is `true`; keys missing after a replace take their property's
+ * `default`. Only properties with `chatMutable: true` in
+ * the effective schema may be set.
+ *
+ * Stability: 1.0 - Early development.
+ */
+@Serializable
+data class ChatConfigChangedAction(
+    val type: ActionType,
+    /**
+     * Config values to set on the chat
+     */
+    val config: Map<String, JsonElement>,
+    /**
+     * When `true`, replaces the chat's config values instead of merging
+     */
+    val replace: Boolean? = null
+)
+
+/**
+ * The chat moved to another session.
+ *
+ * Dispatched by the host on the moved chat's channel after a cross-session
+ * `moveChat`. `provider` and `schema` are the chat's
+ * {@link ChatState.provider | agent provider} and
+ * {@link ChatConfigState.schema | `config.schema`} relative to the new
+ * session; absent clears them. `ChatState` has no session field, so the
+ * reducer does not store `session`; it tells subscribers which session now
+ * owns the chat.
+ *
+ * Stability: 1.0 - Early development.
+ */
+@Serializable
+data class ChatMovedAction(
+    val type: ActionType,
+    /**
+     * The new owning session URI.
+     */
+    val session: String,
+    /**
+     * The chat's agent provider ID in the new session; absent clears it.
+     */
+    val provider: String? = null,
+    /**
+     * The chat's config schema in the new session; absent clears it.
+     */
+    val schema: SessionConfigSchema? = null
 )
 
 @Serializable
@@ -1674,6 +1742,12 @@ data class PartialChatSummary(
      */
     val interactivity: ChatInteractivity? = null,
     /**
+     * Agent provider ID backing this chat. See {@link ChatState.provider}.
+     *
+     * Stability: 1.0 - Early development.
+     */
+    val provider: String? = null,
+    /**
      * The subset of the session's working directories this chat uses.
      * See {@link ChatState.workingDirectories} for the full semantics.
      */
@@ -1749,6 +1823,8 @@ sealed interface StateAction
 @JvmInline value class StateActionChatDraftChanged(val value: ChatDraftChangedAction) : StateAction
 @JvmInline value class StateActionChatIsReadChanged(val value: ChatIsReadChangedAction) : StateAction
 @JvmInline value class StateActionChatIsArchivedChanged(val value: ChatIsArchivedChangedAction) : StateAction
+@JvmInline value class StateActionChatConfigChanged(val value: ChatConfigChangedAction) : StateAction
+@JvmInline value class StateActionChatMoved(val value: ChatMovedAction) : StateAction
 @JvmInline value class StateActionChatInputRequested(val value: ChatInputRequestedAction) : StateAction
 @JvmInline value class StateActionChatInputAnswerChanged(val value: ChatInputAnswerChangedAction) : StateAction
 @JvmInline value class StateActionChatInputCompleted(val value: ChatInputCompletedAction) : StateAction
@@ -1870,6 +1946,8 @@ internal object StateActionSerializer : KSerializer<StateAction> {
             "chat/draftChanged" -> StateActionChatDraftChanged(input.json.decodeFromJsonElement(ChatDraftChangedAction.serializer(), element))
             "chat/isReadChanged" -> StateActionChatIsReadChanged(input.json.decodeFromJsonElement(ChatIsReadChangedAction.serializer(), element))
             "chat/isArchivedChanged" -> StateActionChatIsArchivedChanged(input.json.decodeFromJsonElement(ChatIsArchivedChangedAction.serializer(), element))
+            "chat/configChanged" -> StateActionChatConfigChanged(input.json.decodeFromJsonElement(ChatConfigChangedAction.serializer(), element))
+            "chat/moved" -> StateActionChatMoved(input.json.decodeFromJsonElement(ChatMovedAction.serializer(), element))
             "chat/inputRequested" -> StateActionChatInputRequested(input.json.decodeFromJsonElement(ChatInputRequestedAction.serializer(), element))
             "chat/inputAnswerChanged" -> StateActionChatInputAnswerChanged(input.json.decodeFromJsonElement(ChatInputAnswerChangedAction.serializer(), element))
             "chat/inputCompleted" -> StateActionChatInputCompleted(input.json.decodeFromJsonElement(ChatInputCompletedAction.serializer(), element))
@@ -1984,6 +2062,8 @@ internal object StateActionSerializer : KSerializer<StateAction> {
             is StateActionChatDraftChanged -> output.json.encodeToJsonElement(ChatDraftChangedAction.serializer(), value.value)
             is StateActionChatIsReadChanged -> output.json.encodeToJsonElement(ChatIsReadChangedAction.serializer(), value.value)
             is StateActionChatIsArchivedChanged -> output.json.encodeToJsonElement(ChatIsArchivedChangedAction.serializer(), value.value)
+            is StateActionChatConfigChanged -> output.json.encodeToJsonElement(ChatConfigChangedAction.serializer(), value.value)
+            is StateActionChatMoved -> output.json.encodeToJsonElement(ChatMovedAction.serializer(), value.value)
             is StateActionChatInputRequested -> output.json.encodeToJsonElement(ChatInputRequestedAction.serializer(), value.value)
             is StateActionChatInputAnswerChanged -> output.json.encodeToJsonElement(ChatInputAnswerChangedAction.serializer(), value.value)
             is StateActionChatInputCompleted -> output.json.encodeToJsonElement(ChatInputCompletedAction.serializer(), value.value)

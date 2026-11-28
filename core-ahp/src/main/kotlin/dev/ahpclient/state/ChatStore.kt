@@ -9,6 +9,8 @@ import com.microsoft.agenthostprotocol.generated.ActionEnvelope
 import com.microsoft.agenthostprotocol.generated.ChatState
 import com.microsoft.agenthostprotocol.generated.Snapshot
 import com.microsoft.agenthostprotocol.generated.SnapshotState
+import com.microsoft.agenthostprotocol.generated.ChatConfigChangedAction
+import com.microsoft.agenthostprotocol.generated.StateActionChatConfigChanged
 import com.microsoft.agenthostprotocol.generated.StateActionChatTurnsLoaded
 import com.microsoft.agenthostprotocol.generated.StateActionUnknown
 import kotlinx.coroutines.CancellationException
@@ -298,6 +300,20 @@ class ChatStore internal constructor(
             olderArrived?.complete(Unit)
         }
         (envelope.action as? StateActionUnknown)?.let { noteConfig(it.raw) }
+        (envelope.action as? StateActionChatConfigChanged)?.let { noteTypedConfig(it.value) }
+    }
+
+    /**
+     * A `chat/configChanged` the library now decodes (protocol 1.1.0): merges (or, with `replace`, swaps) the
+     * chat's own values, with the same filtering [noteConfig] applies to raw ones. A null value takes a setting
+     * away. Before 1.1.0 the library could not decode this action and [noteConfig] maintained the values instead.
+     * Merging into [ownConfig] rather than reading the reduced state keeps values seeded from the snapshot's
+     * [ConfigFacts] (which the decoded state may not carry) from being lost on the first change.
+     */
+    private fun noteTypedConfig(action: ChatConfigChangedAction) {
+        val sent = action.config.filterKeys { it in ChatConfigKeys.READ }
+        val base = if (action.replace == true) emptyMap() else _ownConfig.value
+        _ownConfig.value = (base + sent).filterValues { it !is JsonNull }
     }
 
     /** A `chat/configChanged` the library cannot decode: merges (or, with `replace`, swaps) the chat's own values. A null value takes a setting away. */
