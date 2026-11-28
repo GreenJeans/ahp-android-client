@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.4 (`versionCode 7`) — 2026-11-27
+
+### Protocol 1.1.0
+- **Vendored AHP sources updated from protocol 1.0.0 to 1.1.0** (upstream `clients/kotlin` at v1.1.0): windowed delivery for large chats, unknown-members round-tripping (forward-compatible with hosts already speaking newer protocol versions), and current channel shapes. Hostline negotiates 1.1.0 with current VS Code and ahpd hosts; older hosts still negotiate down cleanly.
+- **Session config changes apply as typed actions**: `chat/configChanged` is now decoded by the protocol library instead of read from the raw envelope, so model/effort/approval changes made on the host show up reliably. One visible edge: an off-spec string `"true"` for `replace` now coerces to boolean true (the old raw path ignored it).
+
 ## v0.2.3 (`versionCode 6`) — 2026-11-19
 
 ### Model picker
