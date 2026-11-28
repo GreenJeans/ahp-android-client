@@ -71,13 +71,16 @@ class ChatConfigStoreTest {
     }
 
     @Test
-    fun `replace as a string is not replace`() = runTest {
+    fun `replace as a string coerces to replace`() = runTest {
+        // Protocol 1.1.0 decodes chat/configChanged as a typed action; its
+        // decoder coerces the off-spec string "true" to Boolean true, so the
+        // raw-path distinction (string is not replace) no longer exists.
         val store = store()
         store.seed(chatSnapshot(CHAT_A, 10), facts("mode" to "plan"))
 
         store.apply(env("""{"type":"chat/configChanged","config":{"autoApprove":"assisted"},"replace":"true"}""", 11))
 
-        assertEquals(mapOf("mode" to "plan", "autoApprove" to "assisted"), store.own())
+        assertEquals(mapOf("autoApprove" to "assisted"), store.own())
     }
 
     @Test
